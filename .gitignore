@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+TestResults/
+.forge-logs/
+appsettings.*.local.json
+forge.local.cmd

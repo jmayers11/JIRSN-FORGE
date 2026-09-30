@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Forge.Kernel/Forge.Kernel.csproj" />
+    <Project Path="src/Forge.Kernel.Postgres/Forge.Kernel.Postgres.csproj" />
+    <Project Path="src/Forge.Host/Forge.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Forge.Kernel.Tests/Forge.Kernel.Tests.csproj" />
+    <Project Path="tests/Forge.Architecture.Tests/Forge.Architecture.Tests.csproj" />
+    <Project Path="tests/Forge.Integration.Tests/Forge.Integration.Tests.csproj" />
+  </Folder>
+</Solution>

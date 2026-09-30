@@ -1,0 +1,7 @@
+P:System.DateTime.Now;Use an injected TimeProvider
+P:System.DateTime.UtcNow;Use an injected TimeProvider
+P:System.DateTime.Today;Use an injected TimeProvider
+P:System.DateTimeOffset.Now;Use an injected TimeProvider
+P:System.DateTimeOffset.UtcNow;Use an injected TimeProvider
+M:System.Guid.NewGuid;Use ForgeIds.New(TimeProvider)
+T:System.Random;Engines must be deterministic; no randomness in production code

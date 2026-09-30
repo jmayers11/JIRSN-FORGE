@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Forge.Kernel</RootNamespace>
+    <Description>Platform kernel: identity context, authorization, audit, events, engine contract. No infrastructure dependencies.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Forge.Kernel.Tests" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,98 @@
+using Forge.Host.Api;
+using Forge.Host.Security;
+using Forge.Kernel.Access;
+using Forge.Kernel.Postgres;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Npgsql;
+
+var builder = WebApplication.CreateBuilder(args);
+
+var connectionString = builder.Configuration.GetConnectionString("Forge")
+    ?? throw new InvalidOperationException("Connection string 'Forge' is not configured.");
+
+builder.Services.AddForgeKernel(connectionString);
+if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
+{
+    builder.Services.AddForgeKernelBackgroundServices();
+}
+
+builder.Services.AddSingleton<RequestPrincipal>();
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<ProblemMapping>();
+
+var authMode = builder.Configuration["Forge:Authentication:Mode"] ?? "Oidc";
+if (string.Equals(authMode, "Development", StringComparison.OrdinalIgnoreCase))
+{
+    if (!builder.Environment.IsDevelopment())
+    {
+        throw new InvalidOperationException("Development authentication is only allowed in the Development environment.");
+    }
+
+    builder.Services.AddAuthentication(DevelopmentAuthenticationHandler.SchemeName)
+        .AddScheme<AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(DevelopmentAuthenticationHandler.SchemeName, null);
+}
+else if (string.Equals(authMode, "Oidc", StringComparison.OrdinalIgnoreCase))
+{
+    // Any OIDC provider (Nexus, Entra ID, Okta, Keycloak): Forge validates its access tokens.
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            options.Authority = builder.Configuration["Forge:Authentication:Authority"];
+            options.Audience = builder.Configuration["Forge:Authentication:Audience"];
+            options.MapInboundClaims = false;
+        });
+}
+else if (!string.Equals(authMode, "External", StringComparison.OrdinalIgnoreCase))
+{
+    // "External" means the caller (for example a test host) registers authentication itself.
+    throw new InvalidOperationException($"Unknown authentication mode '{authMode}'.");
+}
+
+builder.Services.AddAuthorization();
+
+var app = builder.Build();
+
+if (app.Configuration.GetValue("Forge:Database:MigrateOnStartup", false))
+{
+    await app.Services.GetRequiredService<MigrationRunner>().MigrateAsync(CancellationToken.None);
+}
+
+var bootstrapSubject = app.Configuration["Forge:Bootstrap:AdminSubject"];
+if (!string.IsNullOrWhiteSpace(bootstrapSubject))
+{
+    var created = await app.Services.GetRequiredService<AccessService>().BootstrapAdministratorAsync(
+        bootstrapSubject,
+        app.Configuration["Forge:Bootstrap:AdminDisplayName"] ?? bootstrapSubject,
+        CancellationToken.None);
+    if (created)
+    {
+        app.Logger.LogWarning("Bootstrapped the first security administrator for subject {Subject}.", bootstrapSubject);
+    }
+}
+
+app.UseExceptionHandler();
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
+app.MapGet("/health/ready", async (NpgsqlDataSource db, CancellationToken ct) =>
+{
+    try
+    {
+        await using var cmd = db.CreateCommand("SELECT 1");
+        await cmd.ExecuteScalarAsync(ct);
+        return Results.Ok(new { status = "ready" });
+    }
+    catch (NpgsqlException)
+    {
+        return Results.Problem(title: "Database unavailable", statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapKernelEndpoints();
+
+await app.RunAsync();
+
+/// <summary>Entry point; public so integration tests can host the app.</summary>
+public partial class Program;
