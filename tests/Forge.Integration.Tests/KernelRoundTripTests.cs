@@ -31,9 +31,11 @@ public sealed class KernelRoundTripTests(PostgresFixture postgres)
     public async Task Migrations_are_idempotent()
     {
         var cs = await postgres.CreateDatabaseAsync();
-        await using var dataSource = NpgsqlDataSource.Create(cs);
-        var again = await new MigrationRunner(dataSource, Microsoft.Extensions.Logging.Abstractions.NullLogger<MigrationRunner>.Instance).MigrateAsync(CancellationToken.None);
+        await using var app = new ForgeApp(cs);
+        _ = app.Services; // starting the host applies every migration
+        var again = await app.Services.GetRequiredService<MigrationRunner>().MigrateAsync(CancellationToken.None);
         Assert.Empty(again);
+        Assert.Equal(5, await Count(cs, "SELECT count(*) FROM public.forge_schema_migrations"));
     }
 
     [Fact]

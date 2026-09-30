@@ -9,10 +9,10 @@ namespace Forge.Kernel.Access;
 
 /// <summary>
 /// Manages who can do what in Forge: people known to Forge, their functional roles and their
-/// program access. Every change is authorized, idempotent, audited and emitted as an event in the
-/// same transaction. Denials and rule violations are audited too.
+/// program access. Every change goes through the <see cref="CommandPipeline"/>: authorized,
+/// reasoned, idempotent, audited and emitted as an event in one transaction.
 /// </summary>
-public sealed class AccessService(IKernelUnitOfWorkFactory unitOfWork, IForgeAuthorizer authorizer, TimeProvider time)
+public sealed class AccessService(CommandPipeline pipeline, IKernelUnitOfWorkFactory unitOfWork, TimeProvider time)
 {
     public const string SourceContext = "Kernel";
     private const string PersonEntity = "Person";
@@ -20,7 +20,7 @@ public sealed class AccessService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
     public Task<CommandResult> RegisterPersonAsync(RegisterPerson command, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return ExecuteAsync(context, nameof(RegisterPerson), command, ResourceRef.Of(PersonEntity), async (uow, now) =>
+        return pipeline.ExecuteAsync(Spec(nameof(RegisterPerson), null), command, context, async (uow, now) =>
         {
             if (string.IsNullOrWhiteSpace(command.IdpSubject) || string.IsNullOrWhiteSpace(command.DisplayName))
             {
@@ -37,18 +37,17 @@ public sealed class AccessService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
             await uow.People.InsertAsync(person, now, context.Actor, ct);
 
             var id = person.Id.ToString();
-            return new Change(
+            return new CommandOutcome(
                 CommandResult.Ok(id, "Person registered."),
-                Event(new PersonRegistered(person.Id.Value, person.IdpSubject, person.DisplayName, person.Markings.ToString()), context, id),
-                null,
-                CanonicalJson.Serialize(new { person.IdpSubject, person.DisplayName, markings = person.Markings.ToString() }));
+                [Event(new PersonRegistered(person.Id.Value, person.IdpSubject, person.DisplayName, person.Markings.ToString()), context, id)],
+                new AuditChange(PersonEntity, id, null, CanonicalJson.Serialize(new { person.IdpSubject, person.DisplayName, markings = person.Markings.ToString() })));
         }, ct);
     }
 
     public Task<CommandResult> AssignRoleAsync(AssignRole command, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return ExecuteAsync(context, nameof(AssignRole), command, ResourceRef.Of(PersonEntity, command.PersonId), async (uow, now) =>
+        return pipeline.ExecuteAsync(Spec(nameof(AssignRole), command.PersonId), command, context, async (uow, now) =>
         {
             RequireKnownRole(command.Role);
             RequireNotSelf(context, command.PersonId);
@@ -57,45 +56,44 @@ public sealed class AccessService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
             var id = command.PersonId.ToString();
             if (!await uow.People.AddRoleAsync(command.PersonId, command.Role, now, context.Actor, ct))
             {
-                return Change.None(CommandResult.NoChange(id, "Role already assigned."));
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, "Role already assigned."));
             }
 
-            return new Change(
+            return new CommandOutcome(
                 CommandResult.Ok(id, $"Role {command.Role} assigned."),
-                Event(new RoleAssigned(command.PersonId.Value, command.Role), context, id),
-                null,
-                CanonicalJson.Serialize(new { role = command.Role }));
+                [Event(new RoleAssigned(command.PersonId.Value, command.Role), context, id)],
+                new AuditChange(PersonEntity, id, null, CanonicalJson.Serialize(new { role = command.Role })));
         }, ct);
     }
 
     public Task<CommandResult> RevokeRoleAsync(RevokeRole command, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return ExecuteAsync(context, nameof(RevokeRole), command, ResourceRef.Of(PersonEntity, command.PersonId), async (uow, _) =>
+        return pipeline.ExecuteAsync(Spec(nameof(RevokeRole), command.PersonId), command, context, async (uow, _) =>
         {
             RequireKnownRole(command.Role);
-            RequireNotSelf(context, command.PersonId);
 
             // Only an active administrator can revoke, and never from themselves, so at least one
             // administrator always remains.
+            RequireNotSelf(context, command.PersonId);
+
             var id = command.PersonId.ToString();
             if (!await uow.People.RemoveRoleAsync(command.PersonId, command.Role, ct))
             {
-                return Change.None(CommandResult.NoChange(id, "Role was not assigned."));
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, "Role was not assigned."));
             }
 
-            return new Change(
+            return new CommandOutcome(
                 CommandResult.Ok(id, $"Role {command.Role} revoked."),
-                Event(new RoleRevoked(command.PersonId.Value, command.Role), context, id),
-                CanonicalJson.Serialize(new { role = command.Role }),
-                null);
+                [Event(new RoleRevoked(command.PersonId.Value, command.Role), context, id)],
+                new AuditChange(PersonEntity, id, CanonicalJson.Serialize(new { role = command.Role }), null));
         }, ct);
     }
 
     public Task<CommandResult> GrantProgramAccessAsync(GrantProgramAccess command, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return ExecuteAsync(context, nameof(GrantProgramAccess), command, ResourceRef.Of(PersonEntity, command.PersonId), async (uow, now) =>
+        return pipeline.ExecuteAsync(Spec(nameof(GrantProgramAccess), command.PersonId), command, context, async (uow, now) =>
         {
             RequireNotSelf(context, command.PersonId);
             await RequireActivePersonAsync(uow, command.PersonId, ct);
@@ -103,35 +101,34 @@ public sealed class AccessService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
             var id = command.PersonId.ToString();
             if (!await uow.People.AddProgramAccessAsync(command.PersonId, command.ProgramId, now, context.Actor, ct))
             {
-                return Change.None(CommandResult.NoChange(id, "Program access already granted."));
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, "Program access already granted."));
             }
 
-            return new Change(
+            // Access-management audit is not program-segregated: administrators must see every grant they make.
+            return new CommandOutcome(
                 CommandResult.Ok(id, "Program access granted."),
-                Event(new ProgramAccessGranted(command.PersonId.Value, command.ProgramId.Value), context, id, command.ProgramId),
-                null,
-                CanonicalJson.Serialize(new { programId = command.ProgramId.Value }));
+                [Event(new ProgramAccessGranted(command.PersonId.Value, command.ProgramId.Value), context, id, command.ProgramId)],
+                new AuditChange(PersonEntity, id, null, CanonicalJson.Serialize(new { programId = command.ProgramId.Value })));
         }, ct);
     }
 
     public Task<CommandResult> RevokeProgramAccessAsync(RevokeProgramAccess command, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return ExecuteAsync(context, nameof(RevokeProgramAccess), command, ResourceRef.Of(PersonEntity, command.PersonId), async (uow, _) =>
+        return pipeline.ExecuteAsync(Spec(nameof(RevokeProgramAccess), command.PersonId), command, context, async (uow, _) =>
         {
             RequireNotSelf(context, command.PersonId);
 
             var id = command.PersonId.ToString();
             if (!await uow.People.RemoveProgramAccessAsync(command.PersonId, command.ProgramId, ct))
             {
-                return Change.None(CommandResult.NoChange(id, "Program access was not granted."));
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, "Program access was not granted."));
             }
 
-            return new Change(
+            return new CommandOutcome(
                 CommandResult.Ok(id, "Program access revoked."),
-                Event(new ProgramAccessRevoked(command.PersonId.Value, command.ProgramId.Value), context, id, command.ProgramId),
-                CanonicalJson.Serialize(new { programId = command.ProgramId.Value }),
-                null);
+                [Event(new ProgramAccessRevoked(command.PersonId.Value, command.ProgramId.Value), context, id, command.ProgramId)],
+                new AuditChange(PersonEntity, id, CanonicalJson.Serialize(new { programId = command.ProgramId.Value }), null));
         }, ct);
     }
 
@@ -187,121 +184,12 @@ public sealed class AccessService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
         return true;
     }
 
-    private async Task<CommandResult> ExecuteAsync<TCommand>(
-        CommandContext context,
-        string commandType,
-        TCommand command,
-        ResourceRef resource,
-        Func<IKernelUnitOfWork, DateTimeOffset, Task<Change>> body,
-        CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentException.ThrowIfNullOrWhiteSpace(context.IdempotencyKey);
-
-        var decision = authorizer.Authorize(context.Principal, Permissions.AccessManage, resource);
-        if (!decision.IsPermitted)
-        {
-            await RecordFailureAsync(context, commandType, resource, AuditOutcomes.Denied, string.Join(" ", decision.Reasons), decision, ct);
-            throw new ForgeAuthorizationException(decision);
-        }
-
-        if (string.IsNullOrWhiteSpace(context.Reason))
-        {
-            await RecordFailureAsync(context, commandType, resource, AuditOutcomes.Rejected, "A reason is required for access changes.", null, ct);
-            throw new CommandRejectedException("reason_required", "A reason is required for access changes.");
-        }
-
-        var requestHash = CanonicalJson.Fingerprint(new { commandType, command });
-        CommandRejectedException? rejection = null;
-        CommandResult? result = null;
-
-        await using (var uow = await unitOfWork.BeginAsync(ct))
-        {
-            var now = time.GetUtcNow();
-            var prior = await uow.Idempotency.ReserveAsync(context.IdempotencyKey, commandType, requestHash, now, ct);
-            if (prior is not null)
-            {
-                return prior;
-            }
-
-            try
-            {
-                var change = await body(uow, now);
-                if (change.Event is not null)
-                {
-                    await uow.Outbox.EnqueueAsync(change.Event, ct);
-                    await uow.Audit.AppendAsync(
-                        new AuditEntry
-                        {
-                            AuditId = ForgeIds.New(time),
-                            RecordedAt = now,
-                            Actor = context.Actor,
-                            Action = commandType,
-                            Outcome = AuditOutcomes.Succeeded,
-                            EntityType = change.Event.EntityType,
-                            EntityId = change.Event.EntityId,
-                            OldValue = change.OldValue,
-                            NewValue = change.NewValue,
-                            Reason = context.Reason,
-                            Source = context.Source.ToString(),
-                            CorrelationId = context.CorrelationId,
-                        },
-                        ct);
-                }
-
-                await uow.Idempotency.CompleteAsync(context.IdempotencyKey, change.Result, ct);
-                await uow.CommitAsync(ct);
-                result = change.Result;
-            }
-            catch (CommandRejectedException ex)
-            {
-                rejection = ex; // the transaction rolls back on dispose
-            }
-        }
-
-        if (rejection is not null)
-        {
-            await RecordFailureAsync(context, commandType, resource, AuditOutcomes.Rejected, $"{rejection.Code}: {rejection.Message}", null, ct);
-            throw rejection;
-        }
-
-        return result!;
-    }
-
-    private async Task RecordFailureAsync(CommandContext context, string commandType, ResourceRef resource, string outcome, string detail, AuthorizationDecision? denial, CancellationToken ct)
-    {
-        var now = time.GetUtcNow();
-        await using var uow = await unitOfWork.BeginAsync(ct);
-        await uow.Audit.AppendAsync(
-            new AuditEntry
-            {
-                AuditId = ForgeIds.New(time),
-                RecordedAt = now,
-                Actor = context.Actor,
-                Action = commandType,
-                Outcome = outcome,
-                EntityType = resource.Type,
-                EntityId = resource.Id ?? string.Empty,
-                NewValue = detail,
-                Reason = context.Reason,
-                Source = context.Source.ToString(),
-                CorrelationId = context.CorrelationId,
-            },
-            ct);
-
-        if (denial is not null)
-        {
-            await uow.Outbox.EnqueueAsync(
-                EventFactory.Create(new AuthorizationDenied(Permissions.AccessManage, resource.Type, resource.Id, denial.Reasons), context, time, SourceContext, resource.Type, resource.Id ?? string.Empty),
-                ct);
-        }
-
-        await uow.CommitAsync(ct);
-    }
+    private static CommandSpec Spec(string commandType, PersonId? target) =>
+        new(SourceContext, commandType, Permissions.AccessManage, ResourceRef.Of(PersonEntity, target), ReasonRequired: true);
 
     private EventEnvelope Event<TEvent>(TEvent payload, CommandContext context, string entityId, ProgramId? program = null)
         where TEvent : IDomainEvent =>
-        EventFactory.Create(payload, context, time, SourceContext, PersonEntity, entityId, program);
+        pipeline.Event(payload, context, SourceContext, PersonEntity, entityId, program);
 
     private static void RequireKnownRole(string role)
     {
@@ -328,17 +216,4 @@ public sealed class AccessService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
             throw new CommandRejectedException("person_inactive", "Person is not active.");
         }
     }
-
-    // Access-management audit is not program-segregated: administrators must see every grant they make.
-    private sealed record Change(CommandResult Result, EventEnvelope? Event, string? OldValue, string? NewValue)
-    {
-        public static Change None(CommandResult result) => new(result, null, null, null);
-    }
-}
-
-public static class AuditOutcomes
-{
-    public const string Succeeded = "Succeeded";
-    public const string Denied = "Denied";
-    public const string Rejected = "Rejected";
 }

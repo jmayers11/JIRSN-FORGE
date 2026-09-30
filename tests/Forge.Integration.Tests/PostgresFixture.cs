@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using Forge.Kernel.Postgres;
-using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
 namespace Forge.Integration.Tests;
@@ -8,7 +6,7 @@ namespace Forge.Integration.Tests;
 /// <summary>
 /// A real PostgreSQL 16 for the whole test run. By default it starts a throwaway Docker container
 /// through the docker CLI (no extra packages); set FORGE_TEST_POSTGRES to a superuser connection
-/// string to use an existing server instead. Every test gets its own freshly migrated database.
+/// string to use an existing server instead. Every test gets its own empty database, migrated when the host starts.
 /// </summary>
 public sealed class PostgresFixture : IAsyncLifetime
 {
@@ -65,10 +63,8 @@ public sealed class PostgresFixture : IAsyncLifetime
             await cmd.ExecuteNonQueryAsync();
         }
 
-        var connectionString = new NpgsqlConnectionStringBuilder(adminConnectionString) { Database = name, Pooling = true }.ConnectionString;
-        await using var dataSource = NpgsqlDataSource.Create(connectionString);
-        await new MigrationRunner(dataSource, NullLogger<MigrationRunner>.Instance).MigrateAsync(CancellationToken.None);
-        return connectionString;
+        // Empty database; the host applies every context's migrations on start.
+        return new NpgsqlConnectionStringBuilder(adminConnectionString) { Database = name, Pooling = true }.ConnectionString;
     }
 
     public async Task DisposeAsync()

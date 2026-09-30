@@ -13,6 +13,7 @@
     <ProjectReference Include="..\..\src\Forge.Kernel\Forge.Kernel.csproj" />
     <ProjectReference Include="..\..\src\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Forge.Host\Forge.Host.csproj" />
+    <ProjectReference Include="..\..\src\Forge.Planning\Forge.Planning.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

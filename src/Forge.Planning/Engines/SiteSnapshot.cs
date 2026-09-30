@@ -1,0 +1,69 @@
+using Forge.Resources.Contracts;
+using Forge.SafetyRules.Contracts;
+using Forge.Workforce.Contracts;
+
+namespace Forge.Planning.Engines;
+
+/// <summary>
+/// A person as the engines see them at one instant. <see cref="ValidQualifications"/> already
+/// excludes expired, suspended, revoked and in-training records.
+/// </summary>
+public sealed record PersonSnapshot(
+    Guid PersonId,
+    string Name,
+    bool Active,
+    PresenceKind? Presence,
+    DateTimeOffset? PresentUntil,
+    UnavailabilityKind? Unavailability,
+    WorkAssignment? Assignment,
+    IReadOnlyList<string> ValidQualifications)
+{
+    /// <summary>Counts toward staffing only with current presence evidence and no unavailability. A schedule never counts.</summary>
+    public bool CountsAsPresent => Active && Presence is not null && Unavailability is null;
+
+    public bool Holds(string qualification) => ValidQualifications.Contains(qualification, StringComparer.Ordinal);
+}
+
+/// <summary>
+/// Everything the Phase 2 engines read, captured in one consistent read. Lists are sorted by key so
+/// iteration order can never change a result.
+/// </summary>
+public sealed record SiteSnapshot(
+    DateTimeOffset AsOf,
+    IReadOnlyList<SafetyAreaInfo> SafetyAreas,
+    IReadOnlyList<WorkCenterInfo> WorkCenters,
+    IReadOnlyList<MachineInfo> Machines,
+    IReadOnlyList<MachineActivityInfo> MachineActivities,
+    IReadOnlyList<WorkCenterActivityInfo> WorkCenterActivities,
+    IReadOnlyList<ActivityTypeInfo> Activities,
+    IReadOnlyList<PersonSnapshot> People,
+    IReadOnlyList<SafetyRuleDefinition> Rules)
+{
+    public PersonSnapshot? Person(Guid id) => People.FirstOrDefault(p => p.PersonId == id);
+
+    /// <summary>A copy with one person's assignment replaced. Used by scenarios; production data is untouched.</summary>
+    public SiteSnapshot WithAssignment(Guid personId, WorkAssignment? assignment) => this with
+    {
+        People = People.Select(p => p.PersonId == personId ? p with { Assignment = assignment } : p).ToList(),
+    };
+
+    public IEnumerable<PersonSnapshot> PresentInArea(string safetyAreaCode) =>
+        People.Where(p => p.CountsAsPresent && p.Assignment?.SafetyAreaCode == safetyAreaCode).OrderBy(p => p.PersonId);
+
+    /// <summary>Distinct pieces of work people are currently doing, in a stable order.</summary>
+    public IReadOnlyList<WorkItem> ActiveWork() => People
+        .Where(p => p.CountsAsPresent && p.Assignment is not null)
+        .Select(p => new WorkItem(p.Assignment!.SafetyAreaCode, p.Assignment.WorkCenterCode, p.Assignment.MachineCode, p.Assignment.ActivityCode))
+        .Distinct()
+        .OrderBy(w => w.SafetyAreaCode, StringComparer.Ordinal)
+        .ThenBy(w => w.MachineCode ?? string.Empty, StringComparer.Ordinal)
+        .ThenBy(w => w.WorkCenterCode ?? string.Empty, StringComparer.Ordinal)
+        .ThenBy(w => w.ActivityCode, StringComparer.Ordinal)
+        .ToList();
+}
+
+/// <summary>A piece of work: an activity at a scope. The safety area is always known.</summary>
+public sealed record WorkItem(string SafetyAreaCode, string? WorkCenterCode, string? MachineCode, string ActivityCode)
+{
+    public string Describe() => $"{ActivityCode} on {MachineCode ?? WorkCenterCode ?? SafetyAreaCode}";
+}

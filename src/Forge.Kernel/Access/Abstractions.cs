@@ -63,10 +63,23 @@ public interface IKernelUnitOfWork : IAsyncDisposable
 
     IIdempotencyStore Idempotency { get; }
 
+    /// <summary>
+    /// A bounded context's store, bound to this same transaction. Contexts register their stores
+    /// with the persistence layer; the kernel never knows their types.
+    /// </summary>
+    TStore Store<TStore>()
+        where TStore : class;
+
     Task CommitAsync(CancellationToken ct);
 }
 
 public interface IKernelUnitOfWorkFactory
 {
     Task<IKernelUnitOfWork> BeginAsync(CancellationToken ct);
+
+    /// <summary>
+    /// A read-only, repeatable-read transaction: every query sees the same instant. Engines build
+    /// their snapshots here so a calculation never mixes data from before and after a change.
+    /// </summary>
+    Task<IKernelUnitOfWork> BeginSnapshotAsync(CancellationToken ct);
 }

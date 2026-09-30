@@ -1,9 +1,15 @@
+using System.Text.Json.Serialization;
+using Forge.Competency.Infrastructure;
 using Forge.Host.Api;
 using Forge.Host.Security;
 using Forge.Kernel.Access;
 using Forge.Kernel.Postgres;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Forge.Planning.Infrastructure;
+using Forge.Resources.Infrastructure;
+using Forge.SafetyRules.Infrastructure;
+using Forge.Workforce.Infrastructure;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -11,7 +17,14 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Forge")
     ?? throw new InvalidOperationException("Connection string 'Forge' is not configured.");
 
+// Bounded contexts in dependency order (migrations run in this order).
 builder.Services.AddForgeKernel(connectionString);
+builder.Services.AddForgeCompetency();
+builder.Services.AddForgeResources();
+builder.Services.AddForgeWorkforce();
+builder.Services.AddForgeSafetyRules();
+builder.Services.AddForgePlanning();
+builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
 {
     builder.Services.AddForgeKernelBackgroundServices();
@@ -91,6 +104,7 @@ app.MapGet("/health/ready", async (NpgsqlDataSource db, CancellationToken ct) =>
 });
 
 app.MapKernelEndpoints();
+app.MapOperationsEndpoints();
 
 await app.RunAsync();
 

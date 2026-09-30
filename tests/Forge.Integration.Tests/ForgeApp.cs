@@ -10,6 +10,8 @@ public sealed class ForgeApp(string connectionString) : WebApplicationFactory<Pr
 {
     public const string AdminSubject = "admin-sub";
 
+    public string ConnectionString => connectionString;
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");

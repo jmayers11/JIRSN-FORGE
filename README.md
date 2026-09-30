@@ -4,7 +4,7 @@ A manufacturing operations platform that answers whether work can actually happe
 equipment, materials, qualifications and safety conditions available, at the time it is needed.
 
 Architecture: **JIRSN Forge Software Architecture v0.1** (approved 2026-09-30). The phase plan is
-in section 31; this repository currently implements **Phase 1 — Kernel**.
+in section 31. Implemented so far: **Phase 1 — Kernel** and **Phase 2 — Readiness slice**.
 
 ## What Phase 1 contains
 
@@ -18,6 +18,21 @@ in section 31; this repository currently implements **Phase 1 — Kernel**.
 | Access management | `src/Forge.Kernel/Access` | People, roles, program access; idempotent, audited, separation of duties |
 | PostgreSQL | `src/Forge.Kernel.Postgres` | Migrations, unit of work, transactional outbox, relay, event log, subscriptions |
 | Host | `src/Forge.Host` | ASP.NET Core API, OIDC (JWT) authentication, health checks |
+
+## What Phase 2 contains
+
+| Context | Where | Owns |
+| --- | --- | --- |
+| Competency | `src/Forge.Competency` | Qualification types and prerequisites; training; certification (by a certifier who is not the person) with expiry |
+| Resources | `src/Forge.Resources` | Site → safety area → work center → machine; activity types; machine requirement profiles; activities allowed at a work center |
+| Workforce | `src/Forge.Workforce` | Workers, assignments (incl. trainee), expiring presence evidence, unavailability without reasons |
+| Safety rules | `src/Forge.SafetyRules` | Versioned staffing rules: drafted by a safety engineer, put in force only by a different approver |
+| Planning | `src/Forge.Planning` | Engines only: personnel composition (bipartite matching), operation readiness, reallocation impact preview |
+
+Readiness in Phase 2 evaluates the machine requirement profile, the qualified operator and safety
+staffing. Equipment, material, engineering, tooling and quality are reported as "not evaluated"
+until their contexts exist. Semantics chosen for open decisions are recorded in
+`docs/adr/0002-phase-2-readiness-decisions.md`.
 
 Build rules enforced at compile time: nullable, warnings as errors, and a ban on `DateTime.Now`,
 `Guid.NewGuid` and `Random` in production code (use `TimeProvider` and `ForgeIds`).
@@ -69,3 +84,21 @@ curl -H "X-Forge-Dev-Subject: dev-admin" http://localhost:5080/api/kernel/me
 | GET | `/api/kernel/audit` | `kernel.audit.read` |
 | GET | `/api/kernel/audit/verify` | `kernel.audit.read` |
 | GET | `/health/live`, `/health/ready` | none |
+
+## Phase 2 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/resources/` | `resources.read` |
+| POST | `/api/resources/sites`, `/safety-areas`, `/work-centers`, `/machines`, `/activity-types` | `resources.manage` |
+| POST | `/api/resources/machines/{machine}/activities`, `/work-centers/{wc}/activities` | `resources.manage` |
+| GET | `/api/competency/qualification-types`, `/api/competency/people/{id}` | `competency.read` |
+| POST | `/api/competency/qualification-types` (+ `/{code}/prerequisites`), `/people/{id}/training` | `competency.manage` |
+| POST | `/api/competency/people/{id}/certifications`, `/suspensions`, `/revocations` | `competency.certify` |
+| POST | `/api/workforce/workers/{id}` | `workforce.manage` |
+| POST | `/api/workforce/workers/{id}/assignment`, `/assignment/end`, `/presence`, `/departure`, `/unavailability` | `workforce.supervise` |
+| GET | `/api/safety-rules/` | `safety.rules.read` |
+| POST | `/api/safety-rules/drafts`, `/{code}/draft/discard` | `safety.rules.draft` |
+| POST | `/api/safety-rules/{code}/versions/{v}/publish`, `/{code}/retire` | `safety.rules.approve` |
+| GET | `/api/readiness/machines/{machine}?activity=`, `/api/readiness/active-work?safetyArea=` | `planning.readiness.read` |
+| POST | `/api/readiness/reallocation-preview/{personId}` (read-only) | `planning.readiness.read` |

@@ -27,6 +27,8 @@ internal sealed class InMemoryKernel : IKernelUnitOfWorkFactory
 
     public Task<IKernelUnitOfWork> BeginAsync(CancellationToken ct) => Task.FromResult<IKernelUnitOfWork>(new Uow(this));
 
+    public Task<IKernelUnitOfWork> BeginSnapshotAsync(CancellationToken ct) => BeginAsync(ct);
+
     private sealed class Uow(InMemoryKernel k) : IKernelUnitOfWork, IPeopleStore, IEventOutbox, IAuditWriter, IIdempotencyStore
     {
         private readonly List<Action> pending = [];
@@ -69,6 +71,10 @@ internal sealed class InMemoryKernel : IKernelUnitOfWorkFactory
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        public TStore Store<TStore>()
+            where TStore : class =>
+            throw new NotSupportedException("The in-memory kernel has no context stores.");
 
         public Task<PersonRecord?> FindAsync(PersonId id, CancellationToken ct) => Task.FromResult(people.GetValueOrDefault(id));
 

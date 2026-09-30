@@ -2,10 +2,16 @@
   <Folder Name="/src/">
     <Project Path="src/Forge.Kernel/Forge.Kernel.csproj" />
     <Project Path="src/Forge.Kernel.Postgres/Forge.Kernel.Postgres.csproj" />
+    <Project Path="src/Forge.Competency/Forge.Competency.csproj" />
+    <Project Path="src/Forge.Resources/Forge.Resources.csproj" />
+    <Project Path="src/Forge.Workforce/Forge.Workforce.csproj" />
+    <Project Path="src/Forge.SafetyRules/Forge.SafetyRules.csproj" />
+    <Project Path="src/Forge.Planning/Forge.Planning.csproj" />
     <Project Path="src/Forge.Host/Forge.Host.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Forge.Kernel.Tests/Forge.Kernel.Tests.csproj" />
+    <Project Path="tests/Forge.Planning.Tests/Forge.Planning.Tests.csproj" />
     <Project Path="tests/Forge.Architecture.Tests/Forge.Architecture.Tests.csproj" />
     <Project Path="tests/Forge.Integration.Tests/Forge.Integration.Tests.csproj" />
   </Folder>

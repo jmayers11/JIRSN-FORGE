@@ -6,11 +6,17 @@ using Npgsql;
 namespace Forge.Kernel.Postgres;
 
 /// <summary>
+/// Embedded SQL migrations from one assembly. The kernel uses an empty prefix; each bounded
+/// context uses its schema name so migration ids stay unique ("resources/0001_...").
+/// </summary>
+public sealed record MigrationSource(Assembly Assembly, string Prefix);
+
+/// <summary>
 /// Applies embedded, numbered SQL migrations in order, each in its own transaction, under an
 /// advisory lock so concurrent hosts cannot race. A changed script that was already applied is an
 /// error: history is never rewritten.
 /// </summary>
-public sealed class MigrationRunner(NpgsqlDataSource dataSource, ILogger<MigrationRunner> logger)
+public sealed class MigrationRunner(NpgsqlDataSource dataSource, IEnumerable<MigrationSource> sources, ILogger<MigrationRunner> logger)
 {
     private const long LockKey = 0x46_4F_52_47_45; // "FORGE"
 
@@ -33,7 +39,9 @@ public sealed class MigrationRunner(NpgsqlDataSource dataSource, ILogger<Migrati
 
     public async Task<IReadOnlyList<string>> MigrateAsync(CancellationToken ct)
     {
-        var migrations = LoadEmbedded(typeof(MigrationRunner).Assembly);
+        var migrations = sources
+            .SelectMany(source => LoadEmbedded(source.Assembly).Select(m => (Id: source.Prefix.Length == 0 ? m.Id : source.Prefix + "/" + m.Id, m.Sql)))
+            .ToList();
         var applied = new List<string>();
 
         await using var connection = await dataSource.OpenConnectionAsync(ct);

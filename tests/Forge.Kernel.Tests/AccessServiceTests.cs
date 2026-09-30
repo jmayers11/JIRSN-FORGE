@@ -15,7 +15,7 @@ public class AccessServiceTests
 
     public AccessServiceTests()
     {
-        service = new AccessService(kernel, new ForgeAuthorizer(), time);
+        service = new AccessService(new CommandPipeline(kernel, new ForgeAuthorizer(), time), kernel, time);
     }
 
     private async Task<ForgePrincipal> AdminAsync()

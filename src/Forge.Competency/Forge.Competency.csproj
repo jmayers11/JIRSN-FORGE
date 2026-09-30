@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Forge.Competency</RootNamespace>
+    <Description>Training and qualifications: qualification types, prerequisites, training and certification.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Forge.Kernel\Forge.Kernel.csproj" />
+    <ProjectReference Include="..\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Infrastructure\Migrations\*.sql" />
+  </ItemGroup>
+</Project>

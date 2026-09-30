@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Forge.Planning</RootNamespace>
+    <Description>Deterministic engines: personnel composition, operation readiness, reallocation impact. Owns no master data.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Forge.Kernel\Forge.Kernel.csproj" />
+    <ProjectReference Include="..\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
+    <ProjectReference Include="..\Forge.Resources\Forge.Resources.csproj" />
+    <ProjectReference Include="..\Forge.Competency\Forge.Competency.csproj" />
+    <ProjectReference Include="..\Forge.Workforce\Forge.Workforce.csproj" />
+    <ProjectReference Include="..\Forge.SafetyRules\Forge.SafetyRules.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Forge.Planning.Tests" />
+  </ItemGroup>
+</Project>

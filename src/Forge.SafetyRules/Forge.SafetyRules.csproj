@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Forge.SafetyRules</RootNamespace>
+    <Description>Human-authored, approved, versioned safety staffing rules. Forge evaluates them; it never writes or relaxes them.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Forge.Kernel\Forge.Kernel.csproj" />
+    <ProjectReference Include="..\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
+    <ProjectReference Include="..\Forge.Resources\Forge.Resources.csproj" />
+    <ProjectReference Include="..\Forge.Competency\Forge.Competency.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Infrastructure\Migrations\*.sql" />
+  </ItemGroup>
+</Project>
