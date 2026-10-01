@@ -8,7 +8,7 @@
   --dark: #0F1419;
 
   --bg: var(--dark);
-  --sidebar: #12161B;
+  --sidebar: #0E181E;
   --panel: #171C22;
   --panel-2: #1C2229;
   --line: #2A3038;
@@ -48,7 +48,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ---------- Brand ---------- */
 .brand { display: flex; align-items: center; gap: 10px; }
-.brand img { width: 44px; height: 44px; }
+.brand img.lockup { height: 46px; width: auto; display: block; }
+.brand img.login-lockup { width: 100%; height: auto; display: block; border-radius: 4px; }
 .brand .word { display: flex; flex-direction: column; line-height: 1; }
 .brand .word small {
   font: 600 10px var(--font-display); letter-spacing: .55em; color: var(--light); margin-left: 3px;
@@ -63,7 +64,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* ---------- Sign-in ---------- */
 .login {
   min-height: 100vh;
-  display: grid; place-items: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px;
   background:
     linear-gradient(160deg, rgba(15,20,25,.2), rgba(15,20,25,.95) 70%),
     repeating-linear-gradient(118deg, transparent 0 46px, rgba(249,115,22,.05) 46px 48px),
@@ -71,7 +72,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding: 16px;
 }
 .login-card {
-  width: 100%; max-width: 380px;
+  width: 100%; max-width: 400px; overflow: hidden;
   background: rgba(23,28,34,.92);
   border: 1px solid var(--line);
   border-top: 3px solid var(--forge-orange);
@@ -79,10 +80,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding: 32px 28px 24px;
   display: flex; flex-direction: column; gap: 14px;
 }
-.login-card .brand { justify-content: center; flex-direction: column; gap: 8px; margin-bottom: 4px; }
-.login-card .brand img { width: 84px; height: 84px; }
-.login-card .brand .word { align-items: center; }
-.login-card .brand .word b { font-size: 36px; }
+.login-card .brand { margin: -32px -28px 4px; }
+.login-card .brand img.login-lockup { border-radius: 0; }
+.login-hero { width: 100%; max-width: 1100px; height: auto; display: block; border-radius: var(--radius); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
 .login-card .tagline { text-align: center; margin-bottom: 10px; letter-spacing: .16em; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 12px; color: var(--muted); }
@@ -114,11 +114,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex; flex-direction: column;
   position: sticky; top: 0; height: 100vh; overflow: hidden;
 }
-.sidebar::after { /* feather accent */
-  content: ""; position: absolute; left: -40px; bottom: 40px; width: 300px; height: 260px; pointer-events: none;
-  background: repeating-linear-gradient(118deg, transparent 0 18px, rgba(194,65,12,.10) 18px 21px, transparent 21px 30px, rgba(249,115,22,.06) 30px 32px);
-  mask-image: linear-gradient(20deg, #000 10%, transparent 70%);
-  -webkit-mask-image: linear-gradient(20deg, #000 10%, transparent 70%);
+.sidebar::after { /* wing pattern from the identity sheet */
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 300px; pointer-events: none;
+  background: url(/img/brand/wing.jpg) center / cover no-repeat; opacity: .35;
+  mask-image: linear-gradient(to top, #000 0%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 100%);
 }
 .sidebar .brand { padding: 16px 18px 14px; border-bottom: 1px solid var(--line); }
 .nav { list-style: none; margin: 8px 0; padding: 0 8px; flex: 1; overflow-y: auto; position: relative; z-index: 1; }
@@ -234,7 +234,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
     linear-gradient(160deg, #2A3038 0%, #161B21 100%);
   display: grid; place-items: center; color: #8B929C;
 }
-.stage .art svg { width: 40px; height: 40px; }
+.stage .art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.stage .art .machines { z-index: 1; background: rgba(15,20,25,.75); padding: 0 5px; border-radius: 3px; }
+.stage.st-stopped .art img { filter: grayscale(.6) brightness(.7); }
 .stage .art .machines { position: absolute; right: 6px; bottom: 4px; font-size: 11px; color: var(--muted); }
 .stage.st-stopped .art { background: linear-gradient(160deg, #3b1515, #191012); color: #F87171; }
 .stage.st-constrained .art { background: repeating-linear-gradient(118deg, transparent 0 14px, rgba(249,115,22,.06) 14px 16px), linear-gradient(160deg, #3a2414, #191410); color: var(--forge-orange); }

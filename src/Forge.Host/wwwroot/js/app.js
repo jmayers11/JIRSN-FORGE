@@ -37,7 +37,9 @@ const ROLE_TITLES = {
 };
 export const roleTitle = r => ROLE_TITLES[r] ?? r;
 
-const brand = (size = '') => `<div class="brand ${size}"><img src="/img/forge-mark.svg" alt=""><div class="word"><small>JIRSN</small><b>FORGE</b></div></div>`;
+// Brand artwork is cut from the JIRSN Forge identity sheet (img/brand); replace those files to update it everywhere.
+const brand = () => `<div class="brand"><img class="lockup" src="/img/brand/sidebar-lockup.png" alt="JIRSN Forge"></div>`;
+const loginBrand = () => `<div class="brand"><img class="login-lockup" src="/img/brand/login-lockup.jpg" alt="JIRSN Forge"></div>`;
 
 // ---------------------------------------------------------------- sign-in
 
@@ -61,9 +63,9 @@ function renderLogin(message) {
   }
   app.innerHTML = `
     <div class="login">
+      <img class="login-hero" src="/img/brand/hero-banner.jpg" alt="JIRSN Forge — Plan. Synchronize. Produce. Deliver.">
       <div class="login-card">
-        ${brand()}
-        <div class="tagline">PLAN. SYNCHRONIZE. PRODUCE. DELIVER.</div>
+        ${loginBrand()}
         ${message ? `<div class="notice bad">${esc(message)}</div>` : ''}
         ${form}
         <div class="faint" style="text-align:center;font-size:12px">Need help? Ask your Forge security administrator.</div>

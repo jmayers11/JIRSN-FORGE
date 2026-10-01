@@ -1,5 +1,5 @@
 import { tryGet } from '../api.js';
-import { icon, stageArt } from '../icons.js';
+import { icon, stagePhoto } from '../icons.js';
 import { esc, $, $$, fmtNumber, fmtTime, fmtDateTime, timeZone, errorBlock, emptyBlock, drawer } from '../ui.js';
 import { who } from '../people.js';
 import { WINDOWS, buildHorizon, categoryInfo, plannedOutput, localDays, myAssignments } from '../model.js';
@@ -122,7 +122,7 @@ export async function horizonPage(page, ctx) {
       const pct = c.load == null ? null : Math.round(c.load * 100);
       const barTone = c.status === 'stopped' ? 'bad' : c.status === 'constrained' ? 'warn' : c.status === 'idle' ? 'none' : '';
       return `<button class="stage st-${c.status} ${c.status === 'constrained' || c.status === 'stopped' ? 'sel' : ''}" data-wc="${esc(c.code)}" title="${esc(c.name)} — open for evidence">
-        <div class="art">${icon(stageArt(c.code, c.name))}<span class="machines">${c.machines.length} machine${c.machines.length === 1 ? '' : 's'}</span></div>
+        <div class="art"><img src="${esc(stagePhoto(c.code, c.name))}" alt="" loading="lazy"><span class="machines">${c.machines.length} machine${c.machines.length === 1 ? '' : 's'}</span></div>
         <h3>${esc(c.name)} <span title="Scheduled load: booked hours ÷ working hours, ${esc(v.window.describe)}">${pct != null ? `${pct}%` : c.bookedHours > 0 ? `${fmtNumber(c.bookedHours)} h` : '—'}</span></h3>
         <div class="bar ${barTone}"><i style="width:${Math.min(100, pct ?? 0)}%"></i></div>
         <div class="state c-${c.state.tone}">${esc(c.state.text)}</div>

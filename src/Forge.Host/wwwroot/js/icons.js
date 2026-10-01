@@ -50,13 +50,14 @@ export function icon(name, cls = '') {
   return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] ?? P.gear}</svg>`;
 }
 
-/** Picks a stage picture from words in the work center's code or name; cosmetic only. */
-export function stageArt(code, name) {
+
+/** Picks the work-center photo from the identity sheet by words in the code or name. */
+export function stagePhoto(code, name) {
   const s = `${code} ${name}`.toLowerCase();
   const rules = [
-    [/slit/, 'slit'], [/paint|coat|finish/, 'paint'], [/weld|fab|cut|laser|press|brake/, 'weld'],
-    [/assy|assem/, 'assemble'], [/insp|qual|test|qc/, 'inspect'], [/ship|pack|dock/, 'truck'],
-    [/raw|recv|receiv|stores|material|coil/, 'material'],
+    [/slit/, 'slitting'], [/paint|coat|finish/, 'paint'], [/weld|fab|cut|laser|press|brake|machin/, 'fabrication'],
+    [/assy|assem/, 'assembly'], [/insp|qual|test|qc|cmm/, 'inspection'], [/ship|pack|dock/, 'shipping'],
+    [/raw|recv|receiv|stores|material|coil|warehouse/, 'raw-material'],
   ];
-  return (rules.find(([re]) => re.test(s)) ?? [null, 'machine'])[1];
+  return `/img/stages/${(rules.find(([re]) => re.test(s)) ?? [null, 'fabrication'])[1]}.jpg`;
 }
