@@ -52,10 +52,11 @@ function renderLogin(message) {
   if (mode === 'Development') {
     form = `
       <form class="field" id="login-form" autocomplete="on" style="gap:12px">
-        <input class="input" id="employee" name="username" placeholder="Employee ID" autocomplete="username" required>
+        <input class="input" id="employee" name="username" placeholder="Sign-in name (e.g. planner or kiosk)" autocomplete="username" required>
         <button class="btn primary big" type="submit">Sign In</button>
       </form>
-      <div class="notice warn">Development sign-in: Forge trusts the Employee ID typed here and asks for no password.
+      <div class="notice warn">Development sign-in: Forge trusts the sign-in name typed here and asks for no password.
+        Badge numbers are not sign-ins: sign in as <b>kiosk</b>, open Shop Floor, and scan the badge there.
         It works only on a development build. In production, people sign in through your company identity provider.</div>`;
   } else if (mode === 'Oidc' && session.config.authority && session.config.clientId) {
     form = `<button class="btn primary big" id="oidc">Sign In</button>
@@ -215,7 +216,9 @@ async function start() {
     const subject = session.subject;
     signOut();
     return renderLogin(e.status === 403
-      ? `${subject ? `“${subject}”` : 'This account'} is not registered in Forge. Ask a security administrator to register you.`
+      ? (/^\d+$/.test(subject ?? '')
+        ? `“${subject}” looks like a badge number. Badges are scanned on the Shop Floor screen: sign in as kiosk, open Shop Floor, then scan ${subject}.`
+        : `${subject ? `“${subject}”` : 'This account'} is not registered in Forge. Ask a security administrator to register you.`)
       : e.message);
   }
   const [resources] = await Promise.all([tryGet('/api/resources/'), loadDirectory()]);
