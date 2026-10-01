@@ -16,6 +16,11 @@ public sealed class ProblemMapping : IExceptionHandler
                 title: "Not authorized",
                 statusCode: StatusCodes.Status403Forbidden,
                 extensions: new Dictionary<string, object?> { ["reasons"] = denied.Decision.Reasons }),
+            CommandRejectedException { Code: var code } rejected when code.EndsWith("_not_found", StringComparison.Ordinal) => Results.Problem(
+                title: "Not found",
+                detail: rejected.Message,
+                statusCode: StatusCodes.Status404NotFound,
+                extensions: new Dictionary<string, object?> { ["code"] = code }),
             CommandRejectedException rejected => Results.Problem(
                 title: "Command rejected",
                 detail: rejected.Message,

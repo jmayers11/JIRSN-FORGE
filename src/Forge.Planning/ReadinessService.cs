@@ -1,4 +1,6 @@
 using Forge.Competency.Contracts;
+using Forge.Engineering.Contracts;
+using Forge.Execution.Contracts;
 using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Engines;
@@ -20,6 +22,25 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
 {
     private readonly OperationReadinessEngine readiness = new();
     private readonly ReallocationImpactEngine reallocation = new();
+    private readonly OrderReadinessEngine orders = new();
+
+    /// <summary>Readiness of each operation of a production order, now.</summary>
+    public async Task<EngineRun<OrderReadinessResult>> EvaluateOrderAsync(ForgePrincipal principal, long orderNumber, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        Demand(principal);
+        await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
+        var order = await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct);
+        if (order is null || (order.ProgramId is { } program && !principal.Programs.Contains(new ProgramId(program))))
+        {
+            // A program-segregated order is reported exactly like a missing one.
+            throw new CommandRejectedException("order_not_found", $"Order {orderNumber} does not exist.");
+        }
+
+        var revision = (await uow.Store<IEngineeringLookup>().ListRevisionsAsync(order.PartNumber, ct)).SingleOrDefault(r => r.Revision == order.Revision);
+        var snapshot = await LoadSnapshotAsync(uow, ct);
+        return EngineRunner.Run(orders, snapshot, new OrderReadinessRequest(order, revision), snapshot.AsOf);
+    }
 
     public async Task<EngineRun<ReadinessResult>> EvaluateMachineAsync(ForgePrincipal principal, string machineCode, string activityCode, CancellationToken ct)
     {

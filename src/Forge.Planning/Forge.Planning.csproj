@@ -10,6 +10,8 @@
     <ProjectReference Include="..\Forge.Competency\Forge.Competency.csproj" />
     <ProjectReference Include="..\Forge.Workforce\Forge.Workforce.csproj" />
     <ProjectReference Include="..\Forge.SafetyRules\Forge.SafetyRules.csproj" />
+    <ProjectReference Include="..\Forge.Engineering\Forge.Engineering.csproj" />
+    <ProjectReference Include="..\Forge.Execution\Forge.Execution.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Forge.Planning.Tests" />

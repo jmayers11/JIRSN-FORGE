@@ -1,5 +1,7 @@
 using System.Text.Json.Serialization;
 using Forge.Competency.Infrastructure;
+using Forge.Engineering.Infrastructure;
+using Forge.Execution.Infrastructure;
 using Forge.Host.Api;
 using Forge.Host.Security;
 using Forge.Kernel.Access;
@@ -23,6 +25,8 @@ builder.Services.AddForgeCompetency();
 builder.Services.AddForgeResources();
 builder.Services.AddForgeWorkforce();
 builder.Services.AddForgeSafetyRules();
+builder.Services.AddForgeEngineering();
+builder.Services.AddForgeExecution();
 builder.Services.AddForgePlanning();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
@@ -105,6 +109,7 @@ app.MapGet("/health/ready", async (NpgsqlDataSource db, CancellationToken ct) =>
 
 app.MapKernelEndpoints();
 app.MapOperationsEndpoints();
+app.MapEngineeringEndpoints();
 
 await app.RunAsync();
 

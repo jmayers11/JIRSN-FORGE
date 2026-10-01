@@ -4,7 +4,7 @@ A manufacturing operations platform that answers whether work can actually happe
 equipment, materials, qualifications and safety conditions available, at the time it is needed.
 
 Architecture: **JIRSN Forge Software Architecture v0.1** (approved 2026-09-30). The phase plan is
-in section 31. Implemented so far: **Phase 1 — Kernel** and **Phase 2 — Readiness slice**.
+in section 31. Implemented so far: **Phase 1 — Kernel**, **Phase 2 — Readiness slice** and **Phase 3 — Engineering and orders**.
 
 ## What Phase 1 contains
 
@@ -33,6 +33,17 @@ Readiness in Phase 2 evaluates the machine requirement profile, the qualified op
 staffing. Equipment, material, engineering, tooling and quality are reported as "not evaluated"
 until their contexts exist. Semantics chosen for open decisions are recorded in
 `docs/adr/0002-phase-2-readiness-decisions.md`.
+
+## What Phase 3 contains
+
+| Context | Where | Owns |
+| --- | --- | --- |
+| Engineering | `src/Forge.Engineering` | Items, revisions with effectivity, BOMs (loop detection), routings; release validates and freezes a revision |
+| Execution | `src/Forge.Execution` | Production orders: Planned → FirmPlanned → Released, Held, Cancelled; release snapshots BOM and routing |
+| Planning | `src/Forge.Planning` | Order readiness per operation, across every eligible machine |
+
+Orders tied to a program are listed and readable only by people with access to that program; to
+everyone else they look like they do not exist. See `docs/adr/0003-phase-3-engineering-and-orders.md`.
 
 Build rules enforced at compile time: nullable, warnings as errors, and a ban on `DateTime.Now`,
 `Guid.NewGuid` and `Random` in production code (use `TimeProvider` and `ForgeIds`).
@@ -102,3 +113,15 @@ curl -H "X-Forge-Dev-Subject: dev-admin" http://localhost:5080/api/kernel/me
 | POST | `/api/safety-rules/{code}/versions/{v}/publish`, `/{code}/retire` | `safety.rules.approve` |
 | GET | `/api/readiness/machines/{machine}?activity=`, `/api/readiness/active-work?safetyArea=` | `planning.readiness.read` |
 | POST | `/api/readiness/reallocation-preview/{personId}` (read-only) | `planning.readiness.read` |
+
+## Phase 3 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/engineering/items`, `/items/{part}/revisions`, `/items/{part}/revisions/{rev}` | `engineering.read` |
+| POST | `/api/engineering/items`, `/items/{part}/revisions`, `.../bom`, `.../bom/{line}/remove`, `.../routing`, `.../routing/{seq}/remove` | `engineering.manage` |
+| POST | `/api/engineering/items/{part}/revisions/{rev}/release`, `/withdraw` | `engineering.release` |
+| GET | `/api/orders/`, `/api/orders/{number}` | `execution.orders.read` + program access |
+| POST | `/api/orders/`, `/{number}/firm`, `/hold`, `/resume`, `/cancel` | `execution.orders.manage` |
+| POST | `/api/orders/{number}/release` | `execution.orders.release` |
+| GET | `/api/orders/{number}/readiness` | `planning.readiness.read` + program access |
