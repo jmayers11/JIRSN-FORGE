@@ -20,56 +20,11 @@ public sealed class Phase3Tests(PostgresFixture postgres)
         return JsonDocument.Parse(text).RootElement;
     }
 
-    private static async Task<(SlittingPlant.Plant Plant, HttpClient Planner)> EngineeredPlantAsync(ForgeApp app)
-    {
-        var plant = await SlittingPlant.BuildAsync(app);
-        var e = plant.Engineer;
-        await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["approver"]}/roles", new { role = "EngineeringApprover", reason = "Release authority" });
-        await plant.Person("planner", "Planner");
-
-        await plant.Ok(e, "/api/engineering/items", new { partNumber = "COIL-AL", description = "Aluminum coil", unitOfMeasure = "KG", makeBuy = "Buy", leadTimeDays = 14 });
-        await plant.Ok(e, "/api/engineering/items", new { partNumber = "ROLL-100", description = "Slit roll 100 mm", unitOfMeasure = "EA", makeBuy = "Make", leadTimeDays = 2 });
-        await plant.Ok(e, "/api/engineering/items/COIL-AL/revisions", new { revision = "A" });
-        await plant.Ok(e, "/api/engineering/items/ROLL-100/revisions", new { revision = "A" });
-        await plant.Ok(e, "/api/engineering/items/ROLL-100/revisions/A/bom", new { lineNumber = 1, componentPartNumber = "COIL-AL", quantityPer = 2.5m, scrapPercent = 4m });
-        await plant.Ok(e, "/api/engineering/items/ROLL-100/revisions/A/routing", new
-        {
-            sequence = 10,
-            description = "Slit",
-            workCenterCode = "SLIT-WC",
-            activityCode = "RUN_SLITTER",
-            eligibleMachines = new[] { "SLITTER-A", "SLITTER-B" },
-            setupMinutes = 30m,
-            runMinutesPerUnit = 1.5m,
-            crewSize = 1,
-        });
-        await plant.Ok(e, "/api/engineering/items/ROLL-100/revisions/A/routing", new
-        {
-            sequence = 20,
-            description = "Kit",
-            workCenterCode = "SLIT-WC",
-            activityCode = "KITTING",
-            requiredQualifications = new[] { "FIRST-AID" },
-            setupMinutes = 0m,
-            runMinutesPerUnit = 2m,
-            crewSize = 1,
-        });
-
-        // ROLL-100 cannot be released before its component has a released revision.
-        var blocked = await plant.Try(plant.Approver, "/api/engineering/items/ROLL-100/revisions/A/release", new { reason = "ECN-1" });
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, blocked.StatusCode);
-        Assert.Contains("COIL-AL", await blocked.Content.ReadAsStringAsync(), StringComparison.Ordinal);
-
-        await plant.Ok(plant.Approver, "/api/engineering/items/COIL-AL/revisions/A/release", new { reason = "ECN-1" });
-        await plant.Ok(plant.Approver, "/api/engineering/items/ROLL-100/revisions/A/release", new { reason = "ECN-1" });
-        return (plant, plant.As("planner"));
-    }
-
     [Fact]
     public async Task Engineering_rejects_loops_and_freezes_released_revisions()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
-        var (plant, _) = await EngineeredPlantAsync(app);
+        var (plant, _) = await SlittingPlant.BuildEngineeredAsync(app);
         var e = plant.Engineer;
 
         await plant.Ok(e, "/api/engineering/items", new { partNumber = "ROLL-200", description = "Twin roll", unitOfMeasure = "EA", makeBuy = "Make", leadTimeDays = 1 });
@@ -94,7 +49,7 @@ public sealed class Phase3Tests(PostgresFixture postgres)
     public async Task Released_order_snapshots_engineering_and_shows_readiness_per_operation()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
-        var (plant, planner) = await EngineeredPlantAsync(app);
+        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
 
         // The engineer sets up the shop order; the planner releases it.
         var created = await plant.Ok(plant.Engineer, "/api/orders/", new { partNumber = "ROLL-100", quantity = 10m, dueDate = "2026-10-09", priority = 3 });
@@ -137,7 +92,7 @@ public sealed class Phase3Tests(PostgresFixture postgres)
     public async Task Order_lifecycle_requires_reasons_and_valid_transitions()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
-        var (plant, planner) = await EngineeredPlantAsync(app);
+        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
         await plant.Ok(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 5m, dueDate = "2026-10-09", priority = 3 });
 
         await plant.Ok(planner, "/api/orders/10001/firm", new { });
@@ -159,7 +114,7 @@ public sealed class Phase3Tests(PostgresFixture postgres)
     public async Task Program_orders_are_invisible_without_program_access()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
-        var (plant, planner) = await EngineeredPlantAsync(app);
+        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
 
         // Without Falcon access the planner cannot even create a Falcon order.
         var denied = await plant.Try(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 1m, dueDate = "2026-10-09", priority = 1, programId = Falcon });
@@ -183,7 +138,7 @@ public sealed class Phase3Tests(PostgresFixture postgres)
     public async Task Setting_up_and_releasing_always_takes_two_people()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
-        var (plant, planner) = await EngineeredPlantAsync(app);
+        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
 
         // A planner who sets up an order cannot release it; another planner can.
         await plant.Ok(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 5m, dueDate = "2026-10-09", priority = 3 });

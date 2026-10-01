@@ -24,10 +24,28 @@ public sealed record ReadinessResult(
 public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, ReadinessResult>
 {
     /// <summary>Dimensions that exist in the architecture but have no data in Forge yet.</summary>
-    public static readonly IReadOnlyList<string> NotYetEvaluated = ["Equipment", "Material", "Engineering", "Tooling", "Quality"];
+    public static readonly IReadOnlyList<string> NotYetEvaluated = ["Material", "Engineering", "Tooling", "Quality"];
 
     // Fixed, documented order used to name the primary constraint when several dimensions fail.
-    private static readonly string[] Precedence = ["RequirementProfile", "Safety", "Workforce"];
+    private static readonly string[] Precedence = ["RequirementProfile", "Equipment", "Safety", "Workforce"];
+
+    /// <summary>Equipment readiness from recorded downtime. Calibration and tooling arrive with their contexts.</summary>
+    public static EvidenceNode EquipmentCheck(SiteSnapshot snapshot, string machineCode, DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        var down = snapshot.DowntimeAt(machineCode, at);
+        return down is null
+            ? new EvidenceNode("Equipment", EvidenceOutcome.Pass, $"No recorded downtime on {machineCode}.")
+            : new EvidenceNode(
+                "Equipment",
+                EvidenceOutcome.Fail,
+                down.Kind == Maintenance.Contracts.DowntimeKind.Planned
+                    ? $"{machineCode} is in planned maintenance until {down.EndsAt:u}: {down.Reason}."
+                    : $"{machineCode} is down since {down.StartsAt:u}: {down.Reason}.")
+            {
+                Inputs = new(StringComparer.Ordinal) { ["downtimeId"] = down.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), ["kind"] = down.Kind.ToString() },
+            };
+    }
 
     private readonly PersonnelCompositionEngine composition = new();
 
@@ -62,6 +80,7 @@ public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, R
                 {
                     Inputs = new(StringComparer.Ordinal) { ["operatorQualifications"] = string.Join(",", profile.OperatorQualifications) },
                 });
+                Add("Equipment", EquipmentCheck(snapshot, machineCode, asOf));
                 Add("Workforce", WorkforceCheck(snapshot, parameters, profile.OperatorQualifications));
             }
         }

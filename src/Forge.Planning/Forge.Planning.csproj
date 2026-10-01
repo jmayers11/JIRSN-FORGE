@@ -12,6 +12,11 @@
     <ProjectReference Include="..\Forge.SafetyRules\Forge.SafetyRules.csproj" />
     <ProjectReference Include="..\Forge.Engineering\Forge.Engineering.csproj" />
     <ProjectReference Include="..\Forge.Execution\Forge.Execution.csproj" />
+    <ProjectReference Include="..\Forge.Maintenance\Forge.Maintenance.csproj" />
+    <PackageReference Include="NodaTime" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Infrastructure\Migrations\*.sql" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Forge.Planning.Tests" />

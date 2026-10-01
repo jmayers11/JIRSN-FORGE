@@ -1,6 +1,18 @@
 namespace Forge.Resources.Contracts;
 
-public sealed record SiteInfo(string Code, string Name);
+/// <summary>A plant. Shift times are local to its IANA time zone.</summary>
+public sealed record SiteInfo(string Code, string Name, string TimeZone = "America/New_York");
+
+/// <summary>
+/// A recurring shift: starts at <see cref="Start"/> local time on each listed ISO weekday
+/// (1 = Monday ... 7 = Sunday) and lasts <see cref="DurationMinutes"/>, possibly past midnight.
+/// </summary>
+public sealed record ShiftInfo(string Code, string SiteCode, string Name, TimeOnly Start, int DurationMinutes, IReadOnlyList<int> Days);
+
+public sealed record WorkCenterShiftInfo(string WorkCenterCode, string ShiftCode);
+
+/// <summary>A local date on which the site does not run any shift (holiday, shutdown).</summary>
+public sealed record SiteClosureInfo(string SiteCode, DateOnly Date, string? Note);
 
 /// <summary>A defined area where safety staffing is evaluated. People anywhere in the area count toward its rules.</summary>
 public sealed record SafetyAreaInfo(string Code, string SiteCode, string Name);
@@ -47,4 +59,10 @@ public interface IResourcesLookup
     Task<MachineActivityInfo?> FindMachineActivityAsync(string machineCode, string activityCode, CancellationToken ct);
 
     Task<IReadOnlyList<WorkCenterActivityInfo>> ListWorkCenterActivitiesAsync(CancellationToken ct);
+
+    Task<IReadOnlyList<ShiftInfo>> ListShiftsAsync(CancellationToken ct);
+
+    Task<IReadOnlyList<WorkCenterShiftInfo>> ListWorkCenterShiftsAsync(CancellationToken ct);
+
+    Task<IReadOnlyList<SiteClosureInfo>> ListSiteClosuresAsync(CancellationToken ct);
 }

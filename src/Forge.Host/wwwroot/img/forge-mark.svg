@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="JIRSN Forge">
+  <defs>
+    <linearGradient id="o" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#C2410C"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+    <linearGradient id="s" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F3F4F6"/>
+      <stop offset="1" stop-color="#6B7280"/>
+    </linearGradient>
+  </defs>
+  <!-- Wing feathers sweeping up and right -->
+  <polygon points="20,34 50,6 62,4 30,36" fill="url(#o)"/>
+  <polygon points="18,42 44,18 54,17 28,44" fill="url(#o)"/>
+  <polygon points="16,50 38,30 47,30 26,52" fill="url(#o)" opacity=".9"/>
+  <!-- Hawk head -->
+  <polygon points="50,6 62,4 58,12 54,11" fill="#F97316"/>
+  <!-- Silver blade: the F of Forge -->
+  <polygon points="2,26 28,26 22,32 8,32" fill="url(#s)"/>
+  <polygon points="8,32 16,32 12,60 6,60" fill="url(#s)"/>
+  <polygon points="12,40 24,40 19,45 11,45" fill="url(#s)"/>
+</svg>

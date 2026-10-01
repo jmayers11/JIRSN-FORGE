@@ -30,9 +30,9 @@ public sealed record OrderReadinessResult(long OrderNumber, string Status, IRead
 /// </summary>
 public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessRequest, OrderReadinessResult>
 {
-    public static readonly IReadOnlyList<string> NotYetEvaluated = ["Equipment", "Material", "Tooling", "Quality"];
+    public static readonly IReadOnlyList<string> NotYetEvaluated = ["Material", "Tooling", "Quality"];
 
-    private static readonly string[] Precedence = ["Order", "Engineering", "Predecessor", "RequirementProfile", "Safety", "Workforce"];
+    private static readonly string[] Precedence = ["Order", "Engineering", "Predecessor", "RequirementProfile", "Equipment", "Safety", "Workforce"];
 
     private readonly PersonnelCompositionEngine composition = new();
 
@@ -146,6 +146,8 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
         if (machine is not null)
         {
             dimensions.Add(new ReadinessDimension("RequirementProfile", EvidenceOutcome.Pass, $"{op.ActivityCode} on {machine} requires one of {string.Join(", ", operatorQualifications)}."));
+            var equipment = OperationReadinessEngine.EquipmentCheck(snapshot, machine, asOf);
+            dimensions.Add(new ReadinessDimension("Equipment", equipment.Outcome, equipment.Detail));
         }
 
         // Candidates: present, not a trainee, in this safety area or not yet assigned anywhere.

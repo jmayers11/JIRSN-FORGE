@@ -8,6 +8,7 @@
     <Project Path="src/Forge.SafetyRules/Forge.SafetyRules.csproj" />
     <Project Path="src/Forge.Engineering/Forge.Engineering.csproj" />
     <Project Path="src/Forge.Execution/Forge.Execution.csproj" />
+    <Project Path="src/Forge.Maintenance/Forge.Maintenance.csproj" />
     <Project Path="src/Forge.Planning/Forge.Planning.csproj" />
     <Project Path="src/Forge.Host/Forge.Host.csproj" />
   </Folder>

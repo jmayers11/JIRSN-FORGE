@@ -4,7 +4,7 @@ A manufacturing operations platform that answers whether work can actually happe
 equipment, materials, qualifications and safety conditions available, at the time it is needed.
 
 Architecture: **JIRSN Forge Software Architecture v0.1** (approved 2026-09-30). The phase plan is
-in section 31. Implemented so far: **Phase 1 — Kernel**, **Phase 2 — Readiness slice** and **Phase 3 — Engineering and orders**.
+in section 31. Implemented so far: **Phase 1 — Kernel**, **Phase 2 — Readiness slice**, **Phase 3 — Engineering and orders** and **Phase 4 — Capacity and scheduling**.
 
 ## What Phase 1 contains
 
@@ -44,6 +44,19 @@ until their contexts exist. Semantics chosen for open decisions are recorded in
 
 Orders tied to a program are listed and readable only by people with access to that program; to
 everyone else they look like they do not exist. See `docs/adr/0003-phase-3-engineering-and-orders.md`.
+
+## What Phase 4 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Shift calendars | `src/Forge.Resources` | Site time zone (IANA, via NodaTime), recurring shifts, work-center shifts, closures |
+| Worker schedules | `src/Forge.Workforce` | A worker's shift; future absences come from recorded unavailability |
+| Maintenance | `src/Forge.Maintenance` | Unplanned outages (open until restored) and planned maintenance windows |
+| Engines | `src/Forge.Planning/Engines` | Executable capacity over time, qualified-labor supply (Skills MRP), finite scheduler with binding constraints, drop-dead dates, constraint finder |
+| Schedules and constraints | `src/Forge.Planning` | Schedule versions (proposed, approved by a second person); constraints with an Open → Investigating → Resolved → Verified lifecycle |
+
+Readiness now evaluates Equipment from recorded downtime. Forecasts use projected presence from
+shift schedules and are labelled as projections. See `docs/adr/0004-phase-4-capacity-and-scheduling.md`.
 
 Build rules enforced at compile time: nullable, warnings as errors, and a ban on `DateTime.Now`,
 `Guid.NewGuid` and `Random` in production code (use `TimeProvider` and `ForgeIds`).
@@ -125,3 +138,19 @@ curl -H "X-Forge-Dev-Subject: dev-admin" http://localhost:5080/api/kernel/me
 | POST | `/api/orders/`, `/{number}/firm`, `/hold`, `/resume`, `/cancel` | `execution.orders.manage` |
 | POST | `/api/orders/{number}/release` | `execution.orders.release` |
 | GET | `/api/orders/{number}/readiness` | `planning.readiness.read` + program access |
+
+## Phase 4 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/resources/shifts`, `/work-centers/{wc}/shifts`, `/sites/{site}/closures` | `resources.manage` |
+| POST | `/api/workforce/workers/{id}/shift` | `workforce.manage` |
+| GET | `/api/maintenance/downtime?from=&to=` | `maintenance.read` |
+| POST | `/api/maintenance/machines/{machine}/down`, `/restore` | `maintenance.downtime.report` |
+| POST | `/api/maintenance/machines/{machine}/planned` | `maintenance.plan` |
+| GET | `/api/planning/capacity?from=&to=&workCenter=` | `planning.readiness.read` |
+| POST | `/api/planning/schedules` (propose), `/schedules/{id}/approve` | `planning.schedule.propose` / `.approve` |
+| GET | `/api/planning/schedules/proposed`, `/approved`, `/{id}` | `planning.schedule.read` (program-filtered) |
+| GET | `/api/planning/constraints?includeClosed=` | `planning.schedule.read` (program-filtered) |
+| POST | `/api/planning/constraints/{id}/investigate`, `/resolve`, `/verify` | `planning.constraints.manage` |
+| GET | `/api/orders/{number}/drop-dead-dates?shipDays=` | `planning.readiness.read` + program access |

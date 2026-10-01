@@ -88,42 +88,65 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         return await LoadSnapshotAsync(uow, ct);
     }
 
-    private async Task<SiteSnapshot> LoadSnapshotAsync(IKernelUnitOfWork uow, CancellationToken ct)
+    private Task<SiteSnapshot> LoadSnapshotAsync(IKernelUnitOfWork uow, CancellationToken ct) => SnapshotLoader.LoadAsync(uow, time, ct);
+
+    /// <summary>Executable capacity over a horizon (at most 62 days), projected from schedules.</summary>
+    public async Task<EngineRun<CapacityResult>> EvaluateCapacityAsync(ForgePrincipal principal, DateTimeOffset? from, DateTimeOffset? to, string? workCenterCode, CancellationToken ct)
     {
-        var at = time.GetUtcNow();
-        at = new DateTimeOffset(at.UtcDateTime.Ticks / 10 * 10, TimeSpan.Zero); // database precision
+        Demand(principal);
+        var snapshot = await LoadSnapshotAsync(ct);
+        var start = from?.ToUniversalTime() ?? snapshot.AsOf;
+        var end = to?.ToUniversalTime() ?? start.AddDays(7);
+        if (end <= start || end - start > TimeSpan.FromDays(62))
+        {
+            throw new CommandRejectedException("invalid_horizon", "The horizon must end after it starts and span at most 62 days.");
+        }
 
-        var resources = uow.Store<IResourcesLookup>();
-        var workers = await uow.Store<IWorkforceLookup>().GetWorkerStatesAsync(at, ct);
-        var qualifications = await uow.Store<ICompetencyLookup>().GetQualificationsAsync(workers.Select(w => new PersonId(w.PersonId)).ToList(), ct);
-        var valid = qualifications
-            .Where(q => q.IsValidAt(at))
-            .GroupBy(q => q.PersonId)
-            .ToDictionary(g => g.Key, g => (IReadOnlyList<string>)g.Select(q => q.Code).Order(StringComparer.Ordinal).ToList());
+        var wc = string.IsNullOrWhiteSpace(workCenterCode) ? null : BusinessCode.Require(workCenterCode, "Work center");
+        return EngineRunner.Run(new ExecutableCapacityEngine(), snapshot, new CapacityRequest(start, end, wc), snapshot.AsOf);
+    }
 
-        var people = workers
-            .Select(w => new PersonSnapshot(
-                w.PersonId,
-                w.DisplayName,
-                w.IsActive,
-                w.PresenceKind,
-                w.PresentUntil,
-                w.Unavailability,
-                w.Assignment,
-                valid.TryGetValue(w.PersonId, out var codes) ? codes : []))
-            .OrderBy(p => p.PersonId)
-            .ToList();
+    /// <summary>Latest dates that still meet the order's due date (spec §42).</summary>
+    public async Task<EngineRun<DropDeadResult>> EvaluateDropDeadDatesAsync(ForgePrincipal principal, long orderNumber, int shipDays, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        Demand(principal);
+        if (shipDays is < 0 or > 60)
+        {
+            throw new CommandRejectedException("invalid_ship_days", "Shipping days must be between 0 and 60.");
+        }
 
-        return new SiteSnapshot(
-            at,
-            await resources.ListSafetyAreasAsync(ct),
-            await resources.ListWorkCentersAsync(ct),
-            await resources.ListMachinesAsync(ct),
-            await resources.ListMachineActivitiesAsync(ct),
-            await resources.ListWorkCenterActivitiesAsync(ct),
-            await resources.ListActivityTypesAsync(ct),
-            people,
-            await uow.Store<ISafetyRuleLookup>().GetEffectiveRulesAsync(at, ct));
+        await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
+        var order = await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct);
+        if (order is null || (order.ProgramId is { } program && !principal.Programs.Contains(new ProgramId(program))))
+        {
+            throw new CommandRejectedException("order_not_found", $"Order {orderNumber} does not exist.");
+        }
+
+        var engineering = uow.Store<IEngineeringLookup>();
+        var detail = await engineering.GetRevisionDetailAsync(order.PartNumber, order.Revision, ct);
+        if (order.Operations.Count == 0 && detail is not null)
+        {
+            // Not released yet: use the routing of the order's revision.
+            order = order with
+            {
+                Operations = detail.Routing.Select(op => new OrderOperationInfo(
+                    op.Sequence, op.Description, op.WorkCenterCode, op.ActivityCode, op.EligibleMachines, op.RequiredQualifications,
+                    op.SetupMinutes + (op.RunMinutesPerUnit * order.Quantity), op.CrewSize, OperationStatus.Pending)).ToList(),
+            };
+        }
+
+        var purchased = new List<PurchasedComponent>();
+        foreach (var line in detail?.Bom ?? [])
+        {
+            if (await engineering.FindItemAsync(line.ComponentPartNumber, ct) is { MakeBuy: MakeBuy.Buy } item)
+            {
+                purchased.Add(new PurchasedComponent(item.PartNumber, item.LeadTimeDays));
+            }
+        }
+
+        var snapshot = await LoadSnapshotAsync(uow, ct);
+        return EngineRunner.Run(new DropDeadDateEngine(), snapshot, new DropDeadRequest(order, shipDays, purchased), snapshot.AsOf);
     }
 
     private void Demand(ForgePrincipal principal)

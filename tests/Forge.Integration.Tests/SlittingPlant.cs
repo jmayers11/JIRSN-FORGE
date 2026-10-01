@@ -133,4 +133,50 @@ internal static class SlittingPlant
         await plant.Assign("dana", new { workCenterCode = "ASSY-WC", activityCode = "ASSEMBLE", reason = "Shift start" });
         return plant;
     }
+
+    /// <summary>The plant plus released engineering: COIL-AL (bought) and ROLL-100 (slit on A or B, then kitted).</summary>
+    public static async Task<(Plant Plant, HttpClient Planner)> BuildEngineeredAsync(ForgeApp app)
+    {
+        var plant = await BuildAsync(app);
+        var e = plant.Engineer;
+        await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["approver"]}/roles", new { role = "EngineeringApprover", reason = "Release authority" });
+        await plant.Person("planner", "Planner");
+
+        await plant.Ok(e, "/api/engineering/items", new { partNumber = "COIL-AL", description = "Aluminum coil", unitOfMeasure = "KG", makeBuy = "Buy", leadTimeDays = 14 });
+        await plant.Ok(e, "/api/engineering/items", new { partNumber = "ROLL-100", description = "Slit roll 100 mm", unitOfMeasure = "EA", makeBuy = "Make", leadTimeDays = 2 });
+        await plant.Ok(e, "/api/engineering/items/COIL-AL/revisions", new { revision = "A" });
+        await plant.Ok(e, "/api/engineering/items/ROLL-100/revisions", new { revision = "A" });
+        await plant.Ok(e, "/api/engineering/items/ROLL-100/revisions/A/bom", new { lineNumber = 1, componentPartNumber = "COIL-AL", quantityPer = 2.5m, scrapPercent = 4m });
+        await plant.Ok(e, "/api/engineering/items/ROLL-100/revisions/A/routing", new
+        {
+            sequence = 10,
+            description = "Slit",
+            workCenterCode = "SLIT-WC",
+            activityCode = "RUN_SLITTER",
+            eligibleMachines = new[] { "SLITTER-A", "SLITTER-B" },
+            setupMinutes = 30m,
+            runMinutesPerUnit = 1.5m,
+            crewSize = 1,
+        });
+        await plant.Ok(e, "/api/engineering/items/ROLL-100/revisions/A/routing", new
+        {
+            sequence = 20,
+            description = "Kit",
+            workCenterCode = "SLIT-WC",
+            activityCode = "KITTING",
+            requiredQualifications = new[] { "FIRST-AID" },
+            setupMinutes = 0m,
+            runMinutesPerUnit = 2m,
+            crewSize = 1,
+        });
+
+        // ROLL-100 cannot be released before its component has a released revision.
+        var blocked = await plant.Try(plant.Approver, "/api/engineering/items/ROLL-100/revisions/A/release", new { reason = "ECN-1" });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, blocked.StatusCode);
+        Assert.Contains("COIL-AL", await blocked.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        await plant.Ok(plant.Approver, "/api/engineering/items/COIL-AL/revisions/A/release", new { reason = "ECN-1" });
+        await plant.Ok(plant.Approver, "/api/engineering/items/ROLL-100/revisions/A/release", new { reason = "ECN-1" });
+        return (plant, plant.As("planner"));
+    }
 }

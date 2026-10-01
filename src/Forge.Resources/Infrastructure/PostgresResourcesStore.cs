@@ -51,7 +51,52 @@ internal sealed class PostgresResourcesStore(PostgresUnitOfWork uow) : IResource
         Read("SELECT work_center_code, activity_code FROM resources.work_center_activity ORDER BY work_center_code, activity_code", r => new WorkCenterActivityInfo(r.GetString(0), r.GetString(1)), ct);
 
     public Task<IReadOnlyList<SiteInfo>> ListSitesAsync(CancellationToken ct) =>
-        Read("SELECT code, name FROM resources.site ORDER BY code", r => new SiteInfo(r.GetString(0), r.GetString(1)), ct);
+        Read("SELECT code, name, time_zone FROM resources.site ORDER BY code", r => new SiteInfo(r.GetString(0), r.GetString(1), r.GetString(2)), ct);
+
+    public async Task SetSiteTimeZoneAsync(string siteCode, string timeZone, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE resources.site SET time_zone = $2 WHERE code = $1", siteCode, timeZone);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<bool> InsertShiftAsync(ShiftInfo shift, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(shift);
+        await using var cmd = uow.Command(
+            "INSERT INTO resources.shift (code, site_code, name, start_time, duration_minutes, days, created_at, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING",
+            shift.Code, shift.SiteCode, shift.Name, shift.Start, shift.DurationMinutes,
+            new NpgsqlParameter { Value = shift.Days.Select(d => (short)d).ToArray(), NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Smallint },
+            at, actor);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> InsertWorkCenterShiftAsync(WorkCenterShiftInfo link, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(link);
+        await using var cmd = uow.Command("INSERT INTO resources.work_center_shift (work_center_code, shift_code) VALUES ($1, $2) ON CONFLICT DO NOTHING", link.WorkCenterCode, link.ShiftCode);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> InsertSiteClosureAsync(SiteClosureInfo closure, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(closure);
+        await using var cmd = uow.Command(
+            "INSERT INTO resources.site_closure (site_code, closed_on, note, created_at, created_by) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+            closure.SiteCode, closure.Date, Text(closure.Note), at, actor);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public Task<IReadOnlyList<ShiftInfo>> ListShiftsAsync(CancellationToken ct) =>
+        Read(
+            "SELECT code, site_code, name, start_time, duration_minutes, days FROM resources.shift ORDER BY code",
+            r => new ShiftInfo(r.GetString(0), r.GetString(1), r.GetString(2), r.GetFieldValue<TimeOnly>(3), r.GetInt32(4), r.GetFieldValue<short[]>(5).Select(d => (int)d).ToList()),
+            ct);
+
+    public Task<IReadOnlyList<WorkCenterShiftInfo>> ListWorkCenterShiftsAsync(CancellationToken ct) =>
+        Read("SELECT work_center_code, shift_code FROM resources.work_center_shift ORDER BY work_center_code, shift_code", r => new WorkCenterShiftInfo(r.GetString(0), r.GetString(1)), ct);
+
+    public Task<IReadOnlyList<SiteClosureInfo>> ListSiteClosuresAsync(CancellationToken ct) =>
+        Read("SELECT site_code, closed_on, note FROM resources.site_closure ORDER BY site_code, closed_on", r => new SiteClosureInfo(r.GetString(0), r.GetFieldValue<DateOnly>(1), r.IsDBNull(2) ? null : r.GetString(2)), ct);
 
     public Task<IReadOnlyList<SafetyAreaInfo>> ListSafetyAreasAsync(CancellationToken ct) =>
         Read("SELECT code, site_code, name FROM resources.safety_area ORDER BY code", r => new SafetyAreaInfo(r.GetString(0), r.GetString(1), r.GetString(2)), ct);

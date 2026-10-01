@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Forge.Competency.Infrastructure;
 using Forge.Engineering.Infrastructure;
 using Forge.Execution.Infrastructure;
+using Forge.Maintenance.Infrastructure;
 using Forge.Host.Api;
 using Forge.Host.Security;
 using Forge.Kernel.Access;
@@ -27,6 +28,7 @@ builder.Services.AddForgeWorkforce();
 builder.Services.AddForgeSafetyRules();
 builder.Services.AddForgeEngineering();
 builder.Services.AddForgeExecution();
+builder.Services.AddForgeMaintenance();
 builder.Services.AddForgePlanning();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
@@ -72,6 +74,11 @@ var app = builder.Build();
 
 if (app.Configuration.GetValue("Forge:Database:MigrateOnStartup", false))
 {
+    if (app.Environment.IsDevelopment() && app.Configuration.GetValue("Forge:Database:CreateIfMissing", false))
+    {
+        await DevelopmentDatabase.EnsureExistsAsync(connectionString, app.Logger, CancellationToken.None);
+    }
+
     await app.Services.GetRequiredService<MigrationRunner>().MigrateAsync(CancellationToken.None);
 }
 
@@ -89,6 +96,10 @@ if (!string.IsNullOrWhiteSpace(bootstrapSubject))
 }
 
 app.UseExceptionHandler();
+
+// The Forge web UI: static files only. Every number it shows comes from the API below.
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -107,9 +118,11 @@ app.MapGet("/health/ready", async (NpgsqlDataSource db, CancellationToken ct) =>
     }
 });
 
+app.MapUiEndpoints();
 app.MapKernelEndpoints();
 app.MapOperationsEndpoints();
 app.MapEngineeringEndpoints();
+app.MapPlanningEndpoints();
 
 await app.RunAsync();
 

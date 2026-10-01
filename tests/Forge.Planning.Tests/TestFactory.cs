@@ -1,4 +1,5 @@
 using Forge.Planning.Engines;
+using Forge.Maintenance.Contracts;
 using Forge.Resources.Contracts;
 using Forge.SafetyRules.Contracts;
 using Forge.Workforce.Contracts;
@@ -25,6 +26,42 @@ internal sealed class TestFactory
 
     private readonly List<PersonSnapshot> people = [];
     private readonly List<SafetyRuleDefinition> rules = [];
+
+    public List<DowntimeWindow> Downtime { get; } = [];
+
+    public List<UnavailabilityWindow> Absences { get; } = [];
+
+    public List<SiteClosureInfo> Closures { get; } = [];
+
+    /// <summary>Day shift 07:00-15:00 New York time, Monday to Friday, on every work center.</summary>
+    public static readonly ShiftInfo DayShift = new("DAY", "PLANT1", "Day", new TimeOnly(7, 0), 480, [1, 2, 3, 4, 5]);
+
+    /// <summary>
+    /// A worker on the day shift with a home work center. They are also present now, assigned to
+    /// support work at home, so current-state engines see them too.
+    /// </summary>
+    public Guid AddWorker(string name, string homeWorkCenter, params string[] qualifications)
+    {
+        var area = homeWorkCenter switch { "SLIT-WC" => "SLITTING", "PAINT-WC" => "PAINT", _ => "ASSEMBLY" };
+        var activity = homeWorkCenter switch { "SLIT-WC" => StageRoll, "PAINT-WC" => Paint, _ => Assemble };
+        var id = Add(name, new WorkAssignment(area, homeWorkCenter, homeWorkCenter == "PAINT-WC" ? "PAINT-BOOTH" : null, activity, false), true, null, qualifications);
+        var index = people.FindIndex(p => p.PersonId == id);
+        people[index] = people[index] with
+        {
+            HomeWorkCenterCode = homeWorkCenter,
+            ShiftCode = DayShift.Code,
+            QualificationExpiry = qualifications.Distinct().ToDictionary(q => q, _ => (DateTimeOffset?)null, StringComparer.Ordinal),
+        };
+        return id;
+    }
+
+    public TestFactory Expiring(Guid person, string qualification, DateTimeOffset expiresAt)
+    {
+        var index = people.FindIndex(p => p.PersonId == person);
+        var expiry = new Dictionary<string, DateTimeOffset?>(people[index].QualificationExpiry, StringComparer.Ordinal) { [qualification] = expiresAt };
+        people[index] = people[index] with { QualificationExpiry = expiry };
+        return this;
+    }
 
     public static TestFactory Slitting() => new();
 
@@ -84,7 +121,15 @@ internal sealed class TestFactory
             new ActivityTypeInfo(StageRoll, "Stage next roll", null),
         ],
         people.OrderBy(p => p.PersonId).ToList(),
-        rules.OrderBy(r => r.Code, StringComparer.Ordinal).ToList());
+        rules.OrderBy(r => r.Code, StringComparer.Ordinal).ToList())
+    {
+        Sites = [new SiteInfo("PLANT1", "Plant 1", "America/New_York")],
+        Shifts = [DayShift],
+        WorkCenterShifts = [new WorkCenterShiftInfo("ASSY-WC", "DAY"), new WorkCenterShiftInfo("PAINT-WC", "DAY"), new WorkCenterShiftInfo("SLIT-WC", "DAY")],
+        Closures = [.. Closures],
+        Downtime = [.. Downtime],
+        Unavailability = [.. Absences],
+    };
 
     public static WorkAssignment OnSlitter(string machine, bool trainee = false) => new("SLITTING", "SLIT-WC", machine, RunSlitter, trainee);
 

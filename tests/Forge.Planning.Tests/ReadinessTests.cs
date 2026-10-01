@@ -20,7 +20,8 @@ public class ReadinessTests
 
         Assert.True(run.Output.Executable);
         Assert.Null(run.Output.PrimaryConstraint);
-        Assert.Equal(["Equipment", "Material", "Engineering", "Tooling", "Quality"], run.Output.NotEvaluated);
+        Assert.Equal(["Material", "Engineering", "Tooling", "Quality"], run.Output.NotEvaluated);
+        Assert.Contains(run.Output.Dimensions, d => d.Name == "Equipment" && d.Outcome == EvidenceOutcome.Pass);
         Assert.DoesNotContain(run.Output.Dimensions, d => run.Output.NotEvaluated.Contains(d.Name));
     }
 

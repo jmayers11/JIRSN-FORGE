@@ -69,6 +69,30 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
         return await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<string?> SetShiftAsync(PersonId person, string? shiftCode, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE workforce.worker w SET shift_code = $2 FROM workforce.worker old WHERE old.person_id = w.person_id AND w.person_id = $1 RETURNING old.shift_code",
+            person.Value, Text(shiftCode));
+        var previous = await cmd.ExecuteScalarAsync(ct);
+        return previous is DBNull or null ? null : (string)previous;
+    }
+
+    public async Task<IReadOnlyList<UnavailabilityWindow>> ListUnavailabilityAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    {
+        var list = new List<UnavailabilityWindow>();
+        await using var cmd = uow.Command(
+            "SELECT person_id, kind, starts_at, ends_at FROM workforce.unavailability WHERE starts_at < $2 AND ends_at > $1 ORDER BY person_id, starts_at, unavailability_id",
+            from, to);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            list.Add(new UnavailabilityWindow(reader.GetGuid(0), Enum.Parse<UnavailabilityKind>(reader.GetString(1)), reader.GetFieldValue<DateTimeOffset>(2), reader.GetFieldValue<DateTimeOffset>(3)));
+        }
+
+        return list;
+    }
+
     public async Task InsertUnavailabilityAsync(PersonId person, UnavailabilityKind kind, DateTimeOffset startsAt, DateTimeOffset endsAt, DateTimeOffset at, string actor, CancellationToken ct)
     {
         await using var cmd = uow.Command(
@@ -84,7 +108,7 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
             SELECT w.person_id, w.display_name, w.home_work_center, p.is_active,
                    pr.kind, pr.valid_until,
                    un.kind,
-                   a.safety_area_code, a.work_center_code, a.machine_code, a.activity_code, a.as_trainee
+                   a.safety_area_code, a.work_center_code, a.machine_code, a.activity_code, a.as_trainee, w.shift_code
             FROM workforce.worker w
             JOIN kernel.person p ON p.person_id = w.person_id
             LEFT JOIN LATERAL (
@@ -111,7 +135,8 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
                 reader.IsDBNull(4) ? null : Enum.Parse<PresenceKind>(reader.GetString(4)),
                 reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5),
                 reader.IsDBNull(6) ? null : Enum.Parse<UnavailabilityKind>(reader.GetString(6)),
-                reader.IsDBNull(7) ? null : ReadAssignment(reader, 7)));
+                reader.IsDBNull(7) ? null : ReadAssignment(reader, 7),
+                reader.IsDBNull(12) ? null : reader.GetString(12)));
         }
 
         return states;

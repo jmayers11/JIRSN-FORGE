@@ -8,7 +8,20 @@ using Forge.Resources.Contracts;
 
 namespace Forge.Resources;
 
-public sealed record CreateSite(string Code, string Name);
+public sealed record CreateSite(string Code, string Name, string? TimeZone = null);
+
+public sealed record DefineShift(string Code, string SiteCode, string Name, TimeOnly Start, int DurationMinutes, IReadOnlyList<int> Days);
+
+public sealed record AssignWorkCenterShift(string WorkCenterCode, string ShiftCode);
+
+public sealed record AddSiteClosure(string SiteCode, DateOnly Date, string? Note);
+
+public sealed record CalendarChanged(string Change, string Subject) : IDomainEvent
+{
+    public static string EventType => nameof(CalendarChanged);
+
+    public static int SchemaVersion => 1;
+}
 
 public sealed record CreateSafetyArea(string Code, string SiteCode, string Name);
 
@@ -50,6 +63,14 @@ public interface IResourcesStore
     Task UpsertMachineActivityAsync(MachineActivityInfo profile, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task<bool> InsertWorkCenterActivityAsync(WorkCenterActivityInfo activity, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task SetSiteTimeZoneAsync(string siteCode, string timeZone, CancellationToken ct);
+
+    Task<bool> InsertShiftAsync(ShiftInfo shift, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task<bool> InsertWorkCenterShiftAsync(WorkCenterShiftInfo link, CancellationToken ct);
+
+    Task<bool> InsertSiteClosureAsync(SiteClosureInfo closure, DateTimeOffset at, string actor, CancellationToken ct);
 }
 
 /// <summary>
@@ -60,8 +81,107 @@ public sealed class ResourcesService(CommandPipeline pipeline)
 {
     public const string SourceContext = "Resources";
 
-    public Task<CommandResult> CreateSiteAsync(CreateSite c, CommandContext context, CancellationToken ct) =>
-        CreateAsync(nameof(CreateSite), "Site", c.Code, c.Name, null, null, c, context, (_, _) => Task.CompletedTask, ct);
+    public Task<CommandResult> CreateSiteAsync(CreateSite c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var zone = string.IsNullOrWhiteSpace(c.TimeZone) ? "America/New_York" : c.TimeZone.Trim();
+        if (NodaTime.DateTimeZoneProviders.Tzdb.GetZoneOrNull(zone) is null)
+        {
+            throw new CommandRejectedException("invalid_time_zone", $"'{zone}' is not an IANA time zone (for example America/New_York).");
+        }
+
+        return CreateAsync(nameof(CreateSite), "Site", c.Code, c.Name, null, null, c, context, (_, _) => Task.CompletedTask, ct, (store, code, token) => store.SetSiteTimeZoneAsync(code, zone, token));
+    }
+
+    public Task<CommandResult> DefineShiftAsync(DefineShift c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var code = BusinessCode.Require(c.Code, "Shift");
+        var site = BusinessCode.Require(c.SiteCode, "Site");
+        var spec = new CommandSpec(SourceContext, nameof(DefineShift), Permissions.ResourcesManage, ResourceRef.Of("Shift", code));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var name = BusinessCode.RequireName(c.Name, "Shift");
+            var days = (c.Days ?? []).Distinct().Order().ToList();
+            if (c.DurationMinutes is < 1 or > 1440 || days.Count == 0 || days.Any(d => d is < 1 or > 7))
+            {
+                throw new CommandRejectedException("invalid_shift", "A shift lasts 1-1440 minutes and runs on at least one ISO weekday (1 = Monday to 7 = Sunday).");
+            }
+
+            if (!(await uow.Store<IResourcesLookup>().ListSitesAsync(ct)).Any(s => s.Code == site))
+            {
+                throw new CommandRejectedException("unknown_site", $"Site {site} does not exist.");
+            }
+
+            var shift = new ShiftInfo(code, site, name, c.Start, c.DurationMinutes, days);
+            if (!await uow.Store<IResourcesStore>().InsertShiftAsync(shift, now, context.Actor, ct))
+            {
+                throw new CommandRejectedException("code_exists", $"Shift {code} already exists.");
+            }
+
+            return new CommandOutcome(
+                CommandResult.Ok(code, $"Shift {code} defined: {c.Start:HH\\:mm} for {c.DurationMinutes} minutes on days {string.Join(",", days)}."),
+                [pipeline.Event(new CalendarChanged("ShiftDefined", code), context, SourceContext, "Shift", code)],
+                new AuditChange("Shift", code, null, CanonicalJson.Serialize(shift)));
+        }, ct);
+    }
+
+    public Task<CommandResult> AssignWorkCenterShiftAsync(AssignWorkCenterShift c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var workCenter = BusinessCode.Require(c.WorkCenterCode, "Work center");
+        var shiftCode = BusinessCode.Require(c.ShiftCode, "Shift");
+        var spec = new CommandSpec(SourceContext, nameof(AssignWorkCenterShift), Permissions.ResourcesManage, ResourceRef.Of("WorkCenter", workCenter));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, _) =>
+        {
+            var lookup = uow.Store<IResourcesLookup>();
+            var wc = await lookup.FindWorkCenterAsync(workCenter, ct) ?? throw new CommandRejectedException("unknown_work_center", $"Work center {workCenter} does not exist.");
+            var area = await lookup.FindSafetyAreaAsync(wc.SafetyAreaCode, ct);
+            var shift = (await lookup.ListShiftsAsync(ct)).FirstOrDefault(s => s.Code == shiftCode)
+                ?? throw new CommandRejectedException("unknown_shift", $"Shift {shiftCode} does not exist.");
+            if (area?.SiteCode != shift.SiteCode)
+            {
+                throw new CommandRejectedException("site_mismatch", $"Shift {shiftCode} belongs to site {shift.SiteCode}, not the work center's site.");
+            }
+
+            var id = $"{workCenter}:{shiftCode}";
+            if (!await uow.Store<IResourcesStore>().InsertWorkCenterShiftAsync(new WorkCenterShiftInfo(workCenter, shiftCode), ct))
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, "Shift already assigned."));
+            }
+
+            return new CommandOutcome(
+                CommandResult.Ok(id, $"{workCenter} runs shift {shiftCode}."),
+                [pipeline.Event(new CalendarChanged("WorkCenterShiftAssigned", id), context, SourceContext, "WorkCenter", workCenter)],
+                new AuditChange("WorkCenterShift", id, null, id));
+        }, ct);
+    }
+
+    public Task<CommandResult> AddSiteClosureAsync(AddSiteClosure c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var site = BusinessCode.Require(c.SiteCode, "Site");
+        var spec = new CommandSpec(SourceContext, nameof(AddSiteClosure), Permissions.ResourcesManage, ResourceRef.Of("Site", site), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            if (!(await uow.Store<IResourcesLookup>().ListSitesAsync(ct)).Any(s => s.Code == site))
+            {
+                throw new CommandRejectedException("unknown_site", $"Site {site} does not exist.");
+            }
+
+            var closure = new SiteClosureInfo(site, c.Date, c.Note?.Trim());
+            var id = $"{site}:{c.Date:yyyy-MM-dd}";
+            if (!await uow.Store<IResourcesStore>().InsertSiteClosureAsync(closure, now, context.Actor, ct))
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, "Already closed that day."));
+            }
+
+            return new CommandOutcome(
+                CommandResult.Ok(id, $"{site} closed on {c.Date:yyyy-MM-dd}."),
+                [pipeline.Event(new CalendarChanged("SiteClosed", id), context, SourceContext, "Site", site)],
+                new AuditChange("SiteClosure", id, null, CanonicalJson.Serialize(closure)));
+        }, ct);
+    }
 
     public Task<CommandResult> CreateSafetyAreaAsync(CreateSafetyArea c, CommandContext context, CancellationToken ct)
     {
@@ -196,7 +316,8 @@ public sealed class ResourcesService(CommandPipeline pipeline)
         TCommand command,
         CommandContext context,
         Func<IResourcesLookup, CancellationToken, Task> validateParent,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<IResourcesStore, string, CancellationToken, Task>? afterInsert = null)
     {
         var code = BusinessCode.Require(rawCode, kind);
         var spec = new CommandSpec(SourceContext, commandType, Permissions.ResourcesManage, ResourceRef.Of(kind, code));
@@ -207,6 +328,11 @@ public sealed class ResourcesService(CommandPipeline pipeline)
             if (!await uow.Store<IResourcesStore>().InsertAsync(kind, code, name, parent, description, now, context.Actor, ct))
             {
                 throw new CommandRejectedException("code_exists", $"{kind} {code} already exists.");
+            }
+
+            if (afterInsert is not null)
+            {
+                await afterInsert(uow.Store<IResourcesStore>(), code, ct);
             }
 
             return new CommandOutcome(

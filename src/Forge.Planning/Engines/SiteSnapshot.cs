@@ -1,3 +1,4 @@
+using Forge.Maintenance.Contracts;
 using Forge.Resources.Contracts;
 using Forge.SafetyRules.Contracts;
 using Forge.Workforce.Contracts;
@@ -22,6 +23,17 @@ public sealed record PersonSnapshot(
     public bool CountsAsPresent => Active && Presence is not null && Unavailability is null;
 
     public bool Holds(string qualification) => ValidQualifications.Contains(qualification, StringComparer.Ordinal);
+
+    public string? HomeWorkCenterCode { get; init; }
+
+    public string? ShiftCode { get; init; }
+
+    /// <summary>Expiry of each currently valid qualification (null = never expires).</summary>
+    public IReadOnlyDictionary<string, DateTimeOffset?> QualificationExpiry { get; init; } = new Dictionary<string, DateTimeOffset?>();
+
+    /// <summary>Whether a currently valid qualification is still valid at a later instant.</summary>
+    public bool HoldsAt(string qualification, DateTimeOffset at) =>
+        Holds(qualification) && (!QualificationExpiry.TryGetValue(qualification, out var expiry) || expiry is null || at < expiry);
 }
 
 /// <summary>
@@ -39,7 +51,24 @@ public sealed record SiteSnapshot(
     IReadOnlyList<PersonSnapshot> People,
     IReadOnlyList<SafetyRuleDefinition> Rules)
 {
+    public IReadOnlyList<SiteInfo> Sites { get; init; } = [];
+
+    public IReadOnlyList<ShiftInfo> Shifts { get; init; } = [];
+
+    public IReadOnlyList<WorkCenterShiftInfo> WorkCenterShifts { get; init; } = [];
+
+    public IReadOnlyList<SiteClosureInfo> Closures { get; init; } = [];
+
+    /// <summary>Recorded machine downtime overlapping the planning horizon.</summary>
+    public IReadOnlyList<DowntimeWindow> Downtime { get; init; } = [];
+
+    /// <summary>Recorded unavailability overlapping the planning horizon (no reasons).</summary>
+    public IReadOnlyList<UnavailabilityWindow> Unavailability { get; init; } = [];
+
     public PersonSnapshot? Person(Guid id) => People.FirstOrDefault(p => p.PersonId == id);
+
+    public DowntimeWindow? DowntimeAt(string machineCode, DateTimeOffset at) =>
+        Downtime.Where(d => d.MachineCode == machineCode && d.Covers(at)).OrderBy(d => d.StartsAt).ThenBy(d => d.Id).FirstOrDefault();
 
     /// <summary>A copy with one person's assignment replaced. Used by scenarios; production data is untouched.</summary>
     public SiteSnapshot WithAssignment(Guid personId, WorkAssignment? assignment) => this with

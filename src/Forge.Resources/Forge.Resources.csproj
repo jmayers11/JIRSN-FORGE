@@ -7,6 +7,7 @@
     <ProjectReference Include="..\Forge.Kernel\Forge.Kernel.csproj" />
     <ProjectReference Include="..\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
     <ProjectReference Include="..\Forge.Competency\Forge.Competency.csproj" />
+    <PackageReference Include="NodaTime" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Infrastructure\Migrations\*.sql" />

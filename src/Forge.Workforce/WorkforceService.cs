@@ -15,6 +15,15 @@ public sealed record AssignWork(PersonId PersonId, string? SafetyAreaCode, strin
 
 public sealed record EndAssignment(PersonId PersonId);
 
+public sealed record SetWorkerShift(PersonId PersonId, string? ShiftCode);
+
+public sealed record WorkerShiftChanged(Guid PersonId, string? Previous, string? Current) : IDomainEvent
+{
+    public static string EventType => nameof(WorkerShiftChanged);
+
+    public static int SchemaVersion => 1;
+}
+
 public sealed record RecordPresence(PersonId PersonId, PresenceKind Kind, DateTimeOffset? ValidUntil);
 
 public sealed record RecordDeparture(PersonId PersonId);
@@ -68,6 +77,8 @@ public interface IWorkforceStore
 
     /// <returns>Number of presence records ended.</returns>
     Task<int> EndPresenceAsync(PersonId person, DateTimeOffset at, CancellationToken ct);
+
+    Task<string?> SetShiftAsync(PersonId person, string? shiftCode, CancellationToken ct);
 
     Task InsertUnavailabilityAsync(PersonId person, UnavailabilityKind kind, DateTimeOffset startsAt, DateTimeOffset endsAt, DateTimeOffset at, string actor, CancellationToken ct);
 }
@@ -152,6 +163,33 @@ public sealed class WorkforceService(CommandPipeline pipeline)
         }, ct);
     }
 
+    public Task<CommandResult> SetWorkerShiftAsync(SetWorkerShift c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var spec = new CommandSpec(SourceContext, nameof(SetWorkerShift), Permissions.WorkforceManage, ResourceRef.Of(WorkerEntity, c.PersonId));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, _) =>
+        {
+            await RequireWorkerAsync(uow.Store<IWorkforceLookup>(), c.PersonId, ct);
+            var shift = string.IsNullOrWhiteSpace(c.ShiftCode) ? null : BusinessCode.Require(c.ShiftCode, "Shift");
+            if (shift is not null && !(await uow.Store<IResourcesLookup>().ListShiftsAsync(ct)).Any(s => s.Code == shift))
+            {
+                throw new CommandRejectedException("unknown_shift", $"Shift {shift} does not exist.");
+            }
+
+            var id = c.PersonId.ToString();
+            var previous = await uow.Store<IWorkforceStore>().SetShiftAsync(c.PersonId, shift, ct);
+            if (previous == shift)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, "Shift unchanged."));
+            }
+
+            return new CommandOutcome(
+                CommandResult.Ok(id, shift is null ? "No scheduled shift." : $"Scheduled on shift {shift}."),
+                [pipeline.Event(new WorkerShiftChanged(c.PersonId.Value, previous, shift), context, SourceContext, WorkerEntity, id)],
+                new AuditChange(WorkerEntity, id, previous, shift));
+        }, ct);
+    }
+
     public Task<CommandResult> RecordPresenceAsync(RecordPresence c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
@@ -159,6 +197,11 @@ public sealed class WorkforceService(CommandPipeline pipeline)
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             await RequireWorkerAsync(uow.Store<IWorkforceLookup>(), c.PersonId, ct);
+            if (c.Kind is not (PresenceKind.ClockedIn or PresenceKind.SupervisorConfirmed))
+            {
+                throw new CommandRejectedException("invalid_presence_kind", "Presence must come from a clock-in or a supervisor confirmation.");
+            }
+
             var until = c.ValidUntil ?? now + DefaultPresence;
             if (until <= now || until > now + MaximumPresence)
             {

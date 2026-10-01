@@ -13,7 +13,7 @@ using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
 
-public sealed record CodeNameRequest(string Code, string Name, string? Parent, string? Description, string? Reason);
+public sealed record CodeNameRequest(string Code, string Name, string? Parent, string? Description, string? Reason, string? TimeZone = null);
 
 public sealed record MachineActivityRequest(string ActivityCode, string[] OperatorQualifications, string? Reason);
 
@@ -66,11 +66,14 @@ public static class OperationsEndpoints
             machines = await r.ListMachinesAsync(ct),
             activityTypes = await r.ListActivityTypesAsync(ct),
             machineActivities = await r.ListMachineActivitiesAsync(ct),
+            shifts = await r.ListShiftsAsync(ct),
+            workCenterShifts = await r.ListWorkCenterShiftsAsync(ct),
+            closures = await r.ListSiteClosuresAsync(ct),
             workCenterActivities = await r.ListWorkCenterActivitiesAsync(ct),
         }));
 
         api.MapPost("/sites", (HttpContext http, CodeNameRequest b, ResourcesService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.CreateSiteAsync(new CreateSite(b.Code, b.Name), c, ct)));
+            Command(http, b.Reason, c => s.CreateSiteAsync(new CreateSite(b.Code, b.Name, b.TimeZone), c, ct)));
         api.MapPost("/safety-areas", (HttpContext http, CodeNameRequest b, ResourcesService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CreateSafetyAreaAsync(new CreateSafetyArea(b.Code, b.Parent ?? string.Empty, b.Name), c, ct)));
         api.MapPost("/work-centers", (HttpContext http, CodeNameRequest b, ResourcesService s, CancellationToken ct) =>

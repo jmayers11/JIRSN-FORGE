@@ -13,8 +13,9 @@ public class ContextRules
     private static readonly Assembly Planning = typeof(Forge.Planning.ReadinessService).Assembly;
     private static readonly Assembly Engineering = typeof(Forge.Engineering.EngineeringService).Assembly;
     private static readonly Assembly Execution = typeof(Forge.Execution.ProductionOrderService).Assembly;
+    private static readonly Assembly Maintenance = typeof(Forge.Maintenance.MaintenanceService).Assembly;
 
-    public static TheoryData<string> Contexts => ["Competency", "Resources", "Workforce", "SafetyRules", "Engineering", "Execution", "Planning"];
+    public static TheoryData<string> Contexts => ["Competency", "Resources", "Workforce", "SafetyRules", "Engineering", "Execution", "Maintenance", "Planning"];
 
     private static Assembly Get(string name) => name switch
     {
@@ -24,6 +25,7 @@ public class ContextRules
         "SafetyRules" => SafetyRules,
         "Engineering" => Engineering,
         "Execution" => Execution,
+        "Maintenance" => Maintenance,
         _ => Planning,
     };
 
@@ -43,7 +45,7 @@ public class ContextRules
     public void Contexts_use_each_other_only_through_contracts(string context)
     {
         var assembly = Get(context);
-        var others = new[] { Competency, Resources, Workforce, SafetyRules, Engineering, Execution, Planning }.Where(a => a != assembly);
+        var others = new[] { Competency, Resources, Workforce, SafetyRules, Engineering, Execution, Maintenance, Planning }.Where(a => a != assembly);
 
         // Every public or internal type of another context that is not in its Contracts namespace is off limits.
         var forbidden = others
