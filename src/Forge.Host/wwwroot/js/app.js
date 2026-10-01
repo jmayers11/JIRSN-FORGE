@@ -1,0 +1,236 @@
+import { session, loadConfig, get, tryGet, signedIn, signInDevelopment, signOut, whenSignedOut, beginOidcSignIn, completeOidcSignIn } from './api.js';
+import { icon } from './icons.js';
+import { esc, $, $$, setTimeZone, closeOverlays, drawer, toast } from './ui.js';
+import { horizonPage } from './pages/horizon.js';
+import { ordersPage } from './pages/orders.js';
+import { schedulingPage } from './pages/scheduling.js';
+import { workCentersPage } from './pages/workcenters.js';
+import { maintenancePage } from './pages/maintenance.js';
+import { timelinePage } from './pages/timeline.js';
+import { workforcePage } from './pages/workforce.js';
+import { settingsPage } from './pages/settings.js';
+import { plannedPage } from './pages/planned.js';
+import { loadDirectory } from './people.js';
+
+const NAV = [
+  { route: 'home', label: 'Home', icon: 'home', page: horizonPage },
+  { route: 'horizon', label: 'Horizon', icon: 'horizon', page: timelinePage },
+  { route: 'orders', label: 'Production Orders', icon: 'orders', page: ordersPage },
+  { route: 'scheduling', label: 'Scheduling', icon: 'schedule', page: schedulingPage },
+  { route: 'work-centers', label: 'Work Centers', icon: 'workcenters', page: workCentersPage },
+  { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
+  { route: 'inventory', label: 'Inventory', icon: 'inventory', page: plannedPage('inventory') },
+  { route: 'procurement', label: 'Procurement', icon: 'procurement', page: plannedPage('procurement') },
+  { route: 'quality', label: 'Quality', icon: 'quality', page: plannedPage('quality') },
+  { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
+  { route: 'shipping', label: 'Shipping', icon: 'shipping', page: plannedPage('shipping') },
+  { route: 'reports', label: 'Reports', icon: 'reports', page: plannedPage('reports') },
+  { route: 'analyst', label: 'Forge Analyst', icon: 'analyst', page: plannedPage('analyst'), badge: '<span class="badge">AI</span>' },
+];
+const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
+
+const ROLE_TITLES = {
+  SecurityAdministrator: 'Security Administrator', ManufacturingEngineer: 'Manufacturing Engineer', Planner: 'Planner',
+  Supervisor: 'Supervisor', SafetyEngineer: 'Safety Engineer', SafetyApprover: 'Safety Approver', Certifier: 'Certifier',
+  TrainingCoordinator: 'Training Coordinator', EngineeringApprover: 'Engineering Approver', MaintenanceTechnician: 'Maintenance Technician',
+  Auditor: 'Auditor',
+};
+export const roleTitle = r => ROLE_TITLES[r] ?? r;
+
+const brand = (size = '') => `<div class="brand ${size}"><img src="/img/forge-mark.svg" alt=""><div class="word"><small>JIRSN</small><b>FORGE</b></div></div>`;
+
+// ---------------------------------------------------------------- sign-in
+
+function renderLogin(message) {
+  const mode = session.config?.authMode;
+  const app = $('#app');
+  let form;
+  if (mode === 'Development') {
+    form = `
+      <form class="field" id="login-form" autocomplete="on" style="gap:12px">
+        <input class="input" id="employee" name="username" placeholder="Employee ID" autocomplete="username" required>
+        <button class="btn primary big" type="submit">Sign In</button>
+      </form>
+      <div class="notice warn">Development sign-in: Forge trusts the Employee ID typed here and asks for no password.
+        It works only on a development build. In production, people sign in through your company identity provider.</div>`;
+  } else if (mode === 'Oidc' && session.config.authority && session.config.clientId) {
+    form = `<button class="btn primary big" id="oidc">Sign In</button>
+      <div class="notice">You will sign in with your company account, then return here.</div>`;
+  } else {
+    form = `<div class="notice bad">Sign-in is not configured on this server. Set Forge:Authentication:Authority and Forge:Authentication:ClientId, or run the development build.</div>`;
+  }
+  app.innerHTML = `
+    <div class="login">
+      <div class="login-card">
+        ${brand()}
+        <div class="tagline">PLAN. SYNCHRONIZE. PRODUCE. DELIVER.</div>
+        ${message ? `<div class="notice bad">${esc(message)}</div>` : ''}
+        ${form}
+        <div class="faint" style="text-align:center;font-size:12px">Need help? Ask your Forge security administrator.</div>
+      </div>
+    </div>`;
+  $('#login-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    signInDevelopment($('#employee').value);
+    await start();
+  });
+  $('#oidc')?.addEventListener('click', () => beginOidcSignIn().catch(err => renderLogin(err.message)));
+  $('#employee')?.focus();
+}
+
+// ---------------------------------------------------------------- shell
+
+let lookups = null; // search index, loaded lazily
+
+function renderShell() {
+  const me = session.me;
+  const initials = me.displayName.split(/\s+/).map(p => p[0]).join('').slice(0, 2).toUpperCase();
+  const navItem = n => `<li><a href="#/${n.route}" data-route="${n.route}">${icon(n.icon)}<span>${esc(n.label)}</span>${n.badge ?? ''}</a></li>`;
+  $('#app').innerHTML = `
+    <div class="shell" id="shell">
+      <nav class="sidebar" aria-label="Main">
+        ${brand()}
+        <ul class="nav">${NAV.map(navItem).join('')}</ul>
+        <ul class="nav nav-bottom">${navItem(SETTINGS)}</ul>
+      </nav>
+      <div class="main">
+        <header class="topbar">
+          <button class="icon-btn menu-btn" id="menu" aria-label="Menu">${icon('menu')}</button>
+          <div class="search">
+            ${icon('search')}
+            <input class="input" id="search" type="search" placeholder="Search orders, parts, employees, machines, or ask Forge…" autocomplete="off" aria-label="Search">
+            <div class="search-results hidden" id="search-results"></div>
+          </div>
+          <div class="top-icons">
+            <button class="icon-btn" id="bell" aria-label="Open constraints">${icon('bell')}<span class="count hidden" id="bell-count"></span></button>
+            <button class="icon-btn" id="help" aria-label="Help">${icon('help')}</button>
+          </div>
+          <div class="user-card" id="user-card" title="Settings">
+            <div class="avatar">${esc(initials)}</div>
+            <div class="who"><b>${esc(me.displayName)}</b><span>${esc(me.roles.length ? roleTitle(me.roles[0]) : 'No roles yet')}</span></div>
+            ${icon('down')}
+          </div>
+        </header>
+        <main class="content" id="page"></main>
+      </div>
+    </div>`;
+  $('#menu').onclick = () => $('#shell').classList.toggle('nav-open');
+  $('#user-card').onclick = () => { location.hash = '#/settings'; };
+  $('#bell').onclick = () => { location.hash = '#/scheduling'; };
+  $('#help').onclick = showHelp;
+  wireSearch();
+  refreshBell();
+}
+
+async function refreshBell() {
+  const { data } = await tryGet('/api/planning/constraints');
+  const n = data?.length ?? 0;
+  const el = $('#bell-count');
+  if (!el) return;
+  el.textContent = n > 99 ? '99+' : String(n);
+  el.classList.toggle('hidden', !n);
+  $('#bell').title = data ? `${n} open constraint${n === 1 ? '' : 's'}` : 'Constraints are not visible with your roles';
+}
+
+function showHelp() {
+  drawer('Help', `
+    <p>Forge shows what its engines worked out from your records. Every figure links back to the records and rules behind it — open a work center, order or constraint to see the evidence.</p>
+    <p><b>Nothing here is estimated.</b> Where Forge has no data yet (production output, material, quality, shipping) the page says so instead of showing a number.</p>
+    <p><b>Changes need a reason.</b> Releasing orders, approving schedules and resolving constraints ask for a reason that is kept in the audit trail, and several of them need a second person.</p>
+    <p class="muted">Signed in as ${esc(session.me.displayName)} (${esc(session.me.roles.map(roleTitle).join(', ') || 'no roles')}).</p>`);
+}
+
+function wireSearch() {
+  const input = $('#search'), box = $('#search-results');
+  let timer;
+  const close = () => box.classList.add('hidden');
+  input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => runSearch(input.value), 150); });
+  input.addEventListener('focus', () => { if (input.value) runSearch(input.value); });
+  input.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); input.blur(); } });
+  document.addEventListener('click', e => { if (!e.target.closest('.search')) close(); });
+  box.addEventListener('click', e => { if (e.target.closest('a')) { close(); input.value = ''; } });
+}
+
+async function runSearch(text) {
+  const box = $('#search-results');
+  const q = text.trim().toLowerCase();
+  if (!q) { box.classList.add('hidden'); return; }
+  if (!lookups) {
+    const [orders, items, resources, people] = await Promise.all([
+      tryGet('/api/orders/'), tryGet('/api/engineering/items'), tryGet('/api/resources/'), tryGet('/api/kernel/people'),
+    ]);
+    lookups = { orders: orders.data ?? [], items: items.data ?? [], resources: resources.data ?? {}, people: people.data ?? [] };
+  }
+  const hit = (...fields) => fields.some(f => String(f ?? '').toLowerCase().includes(q));
+  const rows = [
+    ...lookups.orders.filter(o => hit(o.orderNumber, o.partNumber)).map(o => ['Order', `#${o.orderNumber} · ${o.partNumber} × ${o.quantity}`, `#/orders/${o.orderNumber}`]),
+    ...lookups.items.filter(i => hit(i.partNumber, i.description)).map(i => ['Part', `${i.partNumber} — ${i.description}`, `#/orders?part=${encodeURIComponent(i.partNumber)}`]),
+    ...(lookups.resources.machines ?? []).filter(m => hit(m.code, m.name)).map(m => ['Machine', `${m.code} — ${m.name}`, `#/work-centers/${encodeURIComponent(m.workCenterCode)}`]),
+    ...(lookups.resources.workCenters ?? []).filter(w => hit(w.code, w.name)).map(w => ['Work center', `${w.code} — ${w.name}`, `#/work-centers/${encodeURIComponent(w.code)}`]),
+    ...lookups.people.filter(p => hit(p.displayName, p.idpSubject)).map(p => ['Employee', p.displayName, `#/workforce`]),
+  ].slice(0, 12);
+  const ask = `<div class="empty" style="border:0;text-align:left">Asking Forge in plain language arrives with Forge Analyst (Phase 9). Search covers orders, parts, machines, work centers and people.</div>`;
+  box.innerHTML = rows.length
+    ? rows.map(([k, label, href]) => `<a href="${esc(href)}"><span class="kind">${esc(k)}</span><span>${esc(label)}</span></a>`).join('') + (q.includes(' ') ? ask : '')
+    : `<div class="empty" style="border:0">No orders, parts, machines or people match “${esc(text)}”.</div>${q.includes(' ') ? ask : ''}`;
+  box.classList.remove('hidden');
+}
+
+// ---------------------------------------------------------------- routing
+
+let current = null;
+async function route() {
+  if (!session.me) return;
+  closeOverlays();
+  $('#shell')?.classList.remove('nav-open');
+  const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
+  const [name, ...rest] = path.split('/');
+  const entry = [...NAV, SETTINGS].find(n => n.route === (name || 'home')) ?? NAV[0];
+  $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.route === entry.route));
+  // Each visit renders into a fresh element, so a slow page that finishes after you moved on writes nowhere.
+  const page = document.createElement('div');
+  page.style.display = 'contents';
+  $('#page').replaceChildren(page);
+  current?.dispose?.();
+  page.innerHTML = '<div class="muted">Loading…</div>';
+  try {
+    current = await entry.page(page, { params: rest.map(decodeURIComponent), query: new URLSearchParams(query ?? ''), me: session.me, refreshBell }) ?? null;
+  } catch (e) {
+    page.innerHTML = `<div class="empty"><b>This page could not load</b>${esc(e.message)}</div>`;
+  }
+}
+
+// ---------------------------------------------------------------- start
+
+async function start() {
+  if (!signedIn()) return renderLogin();
+  try {
+    const me = await get('/api/kernel/me');
+    session.me = me;
+  } catch (e) {
+    const subject = session.subject;
+    signOut();
+    return renderLogin(e.status === 403
+      ? `${subject ? `“${subject}”` : 'This account'} is not registered in Forge. Ask a security administrator to register you.`
+      : e.message);
+  }
+  const [resources] = await Promise.all([tryGet('/api/resources/'), loadDirectory()]);
+  setTimeZone(resources.data?.sites?.[0]?.timeZone);
+  renderShell();
+  await route();
+}
+
+whenSignedOut(() => { renderLogin('Your sign-in has ended. Sign in again.'); });
+window.addEventListener('hashchange', route);
+
+(async () => {
+  await loadConfig();
+  try {
+    if (session.config.authMode === 'Oidc') await completeOidcSignIn();
+  } catch (e) {
+    return renderLogin(e.message);
+  }
+  await start();
+})().catch(e => toast(e.message, true));
+
+export { start, renderLogin };

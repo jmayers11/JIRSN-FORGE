@@ -81,6 +81,19 @@ On Windows, double-click `verify.cmd`; results go to `.forge-logs\verify.log`.
 
 ## Run locally
 
+On Windows with a local PostgreSQL (`forge.local.cmd` set up as above), double-click
+`run-forge.cmd`. It creates a `forge` database if needed, starts Forge and opens
+http://localhost:5080/ in your browser. Keep the window open while you use Forge.
+
+To get something to look at, double-click `seed-sample-plant.cmd` once (Forge must be running).
+It builds a clearly labeled **Sample Plant** through the ordinary API: seven work centers, six
+machines, a two-person slitting rule, certified workers, a released part, six released orders, a
+machine outage, planned maintenance, a PTO, and a schedule proposed by one planner and approved
+by another. Then sign in as `planner` (Michael Carter). Other sign-ins: `planner2`, `eng`,
+`approver`, `tech`, `dev-admin`.
+
+With Docker instead:
+
 ```
 docker compose up -d
 dotnet run --project src/Forge.Host
@@ -93,6 +106,28 @@ the Development environment. Every command needs an `Idempotency-Key` header and
 ```
 curl -H "X-Forge-Dev-Subject: dev-admin" http://localhost:5080/api/kernel/me
 ```
+
+## Web UI
+
+The UI is plain HTML, CSS and JavaScript modules in `src/Forge.Host/wwwroot` (no build step, no
+packages), in the JIRSN Forge identity: Forge Orange `#F97316`, Red Tail `#C2410C`, Graphite
+`#1E2227`, Steel `#4B5563`, Light `#E5E7EB`, Dark `#0F1419`.
+
+- **Home — Factory Horizon**: work centers in routing order with status, scheduled load and the
+  primary constraint; KPI tiles; work center status; planned output; top issues. Window: -24h,
+  Now (8 h), +24h, +3d, +1w. Click any card or row for the evidence behind it.
+- **Horizon**: the schedule as a timeline per machine, with downtime and why each operation starts when it does.
+- **Production Orders**, **Scheduling** (propose, approve, work constraints), **Work Centers**
+  (shifts, executable capacity), **Workforce** (qualified labor hours), **Maintenance**, **Settings**.
+- Inventory, Procurement, Quality, Shipping, Reports and Forge Analyst say which phase brings them.
+
+Every figure comes from the API. Metrics Forge cannot measure yet (production attainment, actual
+output, material constraint) are shown as *Not yet measured* with the reason, never as numbers.
+Phones get the same pages with a collapsible menu and a Today's Focus / My Assignments panel.
+
+Sign-in: in Development the sign-in page takes an Employee ID (no password). With
+`Forge:Authentication:Mode = Oidc`, set `Authority` and `ClientId`; the page signs in with
+authorization code + PKCE and calls the API with the access token.
 
 ## Kernel API
 

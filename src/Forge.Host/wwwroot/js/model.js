@@ -149,7 +149,12 @@ export function buildHorizon(d) {
     let state;
     if (status === 'stopped') state = { text: 'Stopped — all machines down', tone: 'bad' };
     else if (primary) state = { text: categoryInfo(primary.category).label, tone: categoryInfo(primary.category).tone === 'bad' ? 'bad' : 'warn' };
-    else if (late.length) state = { text: `${late.length} Order${late.length > 1 ? 's' : ''} Late`, tone: 'bad' };
+    else if (late.length) {
+      const stuck = late.filter(n => orderStatus.get(n) === 'Unschedulable').length;
+      state = stuck === late.length
+        ? { text: `${stuck} Order${stuck > 1 ? 's' : ''} Unschedulable`, tone: 'bad' }
+        : { text: `${late.length} Order${late.length > 1 ? 's' : ''} Late`, tone: 'bad' };
+    }
     else if (atRisk.length) state = { text: `${atRisk.length} Order${atRisk.length > 1 ? 's' : ''} At Risk`, tone: 'warn' };
     else if (status === 'ready') state = { text: 'On Track', tone: 'ok' };
     else state = { text: 'No scheduled work', tone: 'none' };
@@ -170,12 +175,24 @@ export function buildHorizon(d) {
     .filter(i => kinds.includes(i.limiting))
     .reduce((x, i) => x + overlapMs(t(i.from), t(i.until), from, to), 0), 0) / H;
 
+  // Looking back: downtime inside the window. Looking ahead: machines down now (hours so far) plus planned downtime in the window.
+  function downtimeKpi() {
+    const wcMachines = new Set(centers.flatMap(c => c.machines.map(m => m.code)));
+    const mine = downtime.filter(w => wcMachines.has(w.machineCode));
+    if (to <= now) return { value: mine.reduce((s, w) => s + downtimeHours(w, from, to, now), 0), why: `Recorded, ${win.describe}` };
+    const open = mine.filter(w => isDownAt(w, now));
+    const soFar = open.reduce((s, w) => s + (now - t(w.startsAt)) / H, 0);
+    const ahead = mine.filter(w => !isDownAt(w, now) && w.endsAt).reduce((s, w) => s + overlapMs(t(w.startsAt), t(w.endsAt), from, to) / H, 0);
+    return { value: soFar + ahead, why: `${open.length} down now (${fmt(soFar)} h so far) + ${fmt(ahead)} h planned, ${win.describe}` };
+  }
+  const fmt = n => (Math.round(n * 10) / 10).toString();
+
   const kpis = {
     attainment: { value: null, why: 'Needs production reporting from the shop floor (Phase 5).' },
     ordersAtRisk: result
       ? { value: troubled.length, why: `${troubled.filter(o => o.status === 'Late').length} late, ${troubled.filter(o => o.status === 'Unschedulable').length} unschedulable, of ${viewOrders.size} scheduled` }
       : { value: null, why: 'No schedule has been proposed yet.' },
-    downtime: { value: centers.reduce((s, c) => s + c.downHours, 0), why: `Recorded and planned, ${win.describe}` },
+    downtime: downtimeKpi(),
     laborConstraint: result ? { value: interruptionHours(['Workforce', 'OperatorsBusy']), why: 'Scheduled work paused for qualified people' } : { value: null, why: 'No schedule yet.' },
     materialConstraint: { value: null, why: 'Material is not evaluated until Materials/MRP (Phase 6).' },
     safetyConstraint: result ? { value: interruptionHours(['Safety']), why: 'Scheduled work paused for safety staffing' } : { value: null, why: 'No schedule yet.' },

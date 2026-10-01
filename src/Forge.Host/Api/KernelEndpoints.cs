@@ -36,6 +36,19 @@ public static class KernelEndpoints
                 });
         });
 
+        // Names only, for showing who did what (actors are recorded as person IDs). Any registered person may read it.
+        api.MapGet("/directory", async (HttpContext http, KernelReadStore reads, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null)
+            {
+                return NotRegistered();
+            }
+
+            var people = await reads.ListPeopleAsync(ct);
+            return Results.Ok(people.Where(p => p.IsActive).Select(p => new { p.PersonId, p.DisplayName }).ToList());
+        });
+
         api.MapGet("/people", (HttpContext http, KernelReadStore reads, CancellationToken ct) =>
             Read(http, Permissions.PeopleRead, async _ => await reads.ListPeopleAsync(ct)));
 
