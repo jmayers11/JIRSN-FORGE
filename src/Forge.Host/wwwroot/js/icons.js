@@ -61,3 +61,8 @@ export function stagePhoto(code, name) {
   ];
   return `/img/stages/${(rules.find(([re]) => re.test(s)) ?? [null, 'fabrication'])[1]}.jpg`;
 }
+
+/** A full-color icon from the JIRSN Forge icon set (img/icons/icon-<name>.png). */
+export function img(name, cls = '') {
+  return `<img class="ico ${cls}" src="/img/icons/icon-${name}.png" alt="" aria-hidden="true">`;
+}

@@ -83,7 +83,7 @@ async function orderDetail(page, ctx, number) {
       <div><h1>Order #${o.orderNumber}</h1><div class="sub">${esc(o.partNumber)} rev ${esc(o.revision)} × ${fmtNumber(o.quantity, 3)} · due ${esc(fmtDate(o.dueDate))} · priority ${o.priority}</div></div>
       <div class="spacer"></div>
       <span class="pill ${STATUS_TONE[o.status]}" style="font-size:13px">${esc(o.status)}</span>
-      <div class="head-controls">${actions.map(([k, label]) => `<button class="btn ${k === 'release' ? 'primary' : ''}" data-act="${k}">${esc(label)}</button>`).join('')}</div>
+      <div class="head-controls">${actions.map(([k, label]) => `<button class="btn ${k === 'release' ? 'primary' : k === 'cancel' ? 'danger' : ''}" data-act="${k}">${esc(label)}</button>`).join('')}</div>
     </div>
     <div class="notice">Created by ${esc(who(o.createdBy))}${o.releasedBy ? ` · released by ${esc(who(o.releasedBy))} at ${esc(fmtDateTime(o.releasedAt))}` : ''}. The person who sets up an order cannot release it.</div>
     <section class="grid-2">

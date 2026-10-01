@@ -1,5 +1,5 @@
 import { tryGet } from '../api.js';
-import { icon, stagePhoto } from '../icons.js';
+import { icon, img, stagePhoto } from '../icons.js';
 import { esc, $, $$, fmtNumber, fmtTime, fmtDateTime, timeZone, errorBlock, emptyBlock, drawer } from '../ui.js';
 import { who } from '../people.js';
 import { WINDOWS, buildHorizon, categoryInfo, plannedOutput, localDays, myAssignments } from '../model.js';
@@ -133,15 +133,15 @@ export async function horizonPage(page, ctx) {
   function kpis(v) {
     const k = v.kpis;
     const tile = (ic, title, m, unit) => m.value == null
-      ? `<div class="kpi na" title="${esc(m.why)}">${icon(ic)}<div><div class="t">${esc(title)}</div><div class="v">Not yet measured</div><div class="why">${esc(m.why)}</div></div></div>`
-      : `<div class="kpi" title="${esc(m.why)}">${icon(ic)}<div><div class="t">${esc(title)}</div><div class="v">${fmtNumber(m.value)}${unit ? `<small>${unit}</small>` : ''}</div><div class="why">${esc(m.why)}</div></div></div>`;
+      ? `<div class="kpi na" title="${esc(m.why)}">${img(ic)}<div><div class="t">${esc(title)}</div><div class="v">Not yet measured</div><div class="why">${esc(m.why)}</div></div></div>`
+      : `<div class="kpi" title="${esc(m.why)}">${img(ic)}<div><div class="t">${esc(title)}</div><div class="v">${fmtNumber(m.value)}${unit ? `<small>${unit}</small>` : ''}</div><div class="why">${esc(m.why)}</div></div></div>`;
     return [
-      tile('people', 'Production Attainment', k.attainment, '%'),
+      tile('trend', 'Production Attainment', k.attainment, '%'),
       tile('alert', 'Orders At Risk', k.ordersAtRisk, ''),
-      tile('gear', 'Machine Downtime', k.downtime, 'hr'),
-      tile('workforce', 'Qualified Labor Constraint', k.laborConstraint, 'hr'),
-      tile('box', 'Material Constraint', k.materialConstraint, 'hr'),
-      tile('shield', 'Safety Constraint', k.safetyConstraint, 'hr'),
+      tile('maintenance', 'Machine Downtime', k.downtime, 'hr'),
+      tile('qualification', 'Qualified Labor Constraint', k.laborConstraint, 'hr'),
+      tile('material', 'Material Constraint', k.materialConstraint, 'hr'),
+      tile('quality', 'Safety Constraint', k.safetyConstraint, 'hr'),
     ].join('');
   }
 
@@ -194,7 +194,7 @@ export async function horizonPage(page, ctx) {
     if (!v.issues.length) return head + emptyBlock('No open issues', `No machine is down and the schedule found no constraints in ${v.window.describe}.`);
     return `${head}<ul class="issues">${v.issues.slice(0, 6).map((i, n) => `
       <li class="click" data-issue="${n}" style="cursor:pointer">
-        <span class="ic ${i.tone}">${icon(i.icon)}</span>
+        <span class="ic img">${img(i.kind === 'down' ? 'stop' : i.tone === 'bad' ? 'alert' : i.tone === 'info' ? 'info' : 'schedule')}</span>
         <div><b>${esc(i.title)}</b><span>${i.kind === 'down' ? `Since ${esc(fmtDateTime(i.at))} · ${esc(i.reason)}` : `${new Date(i.at).getTime() > data.now ? 'From' : 'Since'} ${esc(fmtDateTime(i.at))} · Affects ${i.affects} order${i.affects === 1 ? '' : 's'}`}</span></div>
       </li>`).join('')}</ul>`;
   }
@@ -202,16 +202,16 @@ export async function horizonPage(page, ctx) {
   function mobileFocus(v) {
     const focus = [...v.centers].sort((a, b) => rank(a) - rank(b)).slice(0, 4);
     const mine = myAssignments(data.schedule, ctx.me.personId, data.now, data.now + 24 * H);
-    const ic = { bad: ['bad', 'bang'], warn: ['warn', 'alert'], ok: ['ok', 'check'], none: ['none', 'clock'] };
+    const ic = { bad: 'alert', warn: 'schedule', ok: 'complete', none: 'pause' };
     return `<div class="mobile-only"><div class="grid-2">
       <section class="panel"><header><h2>Today's Focus</h2></header>
         ${focus.length ? `<ul class="focus-list">${focus.map(c => `<li data-wc="${esc(c.code)}">
-          <span class="ic ${ic[c.state.tone][0]}">${icon(ic[c.state.tone][1])}</span>
+          <span class="ic img">${img(ic[c.state.tone])}</span>
           <div class="txt"><b>${esc(c.name)}</b><span class="c-${c.state.tone}">${esc(c.state.text)}</span></div>
           <span class="num">${c.load == null ? '' : `${Math.round(c.load * 100)}%`}</span></li>`).join('')}</ul>` : emptyBlock('Nothing yet', 'No work centers set up.')}
       </section>
       <section class="panel"><header><h2>My Assignments</h2></header>
-        ${mine.length ? `<ul class="focus-list">${mine.slice(0, 5).map(o => `<li><span class="ic none">${icon('clock')}</span>
+        ${mine.length ? `<ul class="focus-list">${mine.slice(0, 5).map(o => `<li><span class="ic img">${img('workorder')}</span>
           <div class="txt"><b>#${o.orderNumber} · ${esc(o.description)}</b><span>${esc(o.machineCode ?? o.workCenterCode)} · ${esc(fmtDateTime(o.start))}</span></div></li>`).join('')}</ul>`
         : emptyBlock('No scheduled work for you', 'In the next 24 hours the schedule has not crewed you on any operation.')}
       </section></div></div>`;

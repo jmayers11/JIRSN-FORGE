@@ -1,5 +1,5 @@
 import { session, loadConfig, get, tryGet, signedIn, signInDevelopment, signOut, whenSignedOut, beginOidcSignIn, completeOidcSignIn } from './api.js';
-import { icon } from './icons.js';
+import { icon, img } from './icons.js';
 import { esc, $, $$, setTimeZone, closeOverlays, drawer, toast } from './ui.js';
 import { horizonPage } from './pages/horizon.js';
 import { ordersPage } from './pages/orders.js';
@@ -13,19 +13,19 @@ import { plannedPage } from './pages/planned.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
-  { route: 'home', label: 'Home', icon: 'home', page: horizonPage },
-  { route: 'horizon', label: 'Horizon', icon: 'horizon', page: timelinePage },
+  { route: 'home', label: 'Home', icon: 'dashboard', page: horizonPage },
+  { route: 'horizon', label: 'Horizon', icon: 'analytics', page: timelinePage },
   { route: 'orders', label: 'Production Orders', icon: 'orders', page: ordersPage },
-  { route: 'scheduling', label: 'Scheduling', icon: 'schedule', page: schedulingPage },
-  { route: 'work-centers', label: 'Work Centers', icon: 'workcenters', page: workCentersPage },
+  { route: 'scheduling', label: 'Scheduling', icon: 'planning', page: schedulingPage },
+  { route: 'work-centers', label: 'Work Centers', icon: 'production', page: workCentersPage },
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: plannedPage('inventory') },
-  { route: 'procurement', label: 'Procurement', icon: 'procurement', page: plannedPage('procurement') },
+  { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: plannedPage('procurement') },
   { route: 'quality', label: 'Quality', icon: 'quality', page: plannedPage('quality') },
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
-  { route: 'shipping', label: 'Shipping', icon: 'shipping', page: plannedPage('shipping') },
+  { route: 'shipping', label: 'Shipping', icon: 'suppliers', page: plannedPage('shipping') },
   { route: 'reports', label: 'Reports', icon: 'reports', page: plannedPage('reports') },
-  { route: 'analyst', label: 'Forge Analyst', icon: 'analyst', page: plannedPage('analyst'), badge: '<span class="badge">AI</span>' },
+  { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: plannedPage('analyst'), badge: '<span class="badge">AI</span>' },
 ];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
 
@@ -38,7 +38,7 @@ const ROLE_TITLES = {
 export const roleTitle = r => ROLE_TITLES[r] ?? r;
 
 // Brand artwork is cut from the JIRSN Forge identity sheet (img/brand); replace those files to update it everywhere.
-const brand = () => `<div class="brand"><img class="lockup" src="/img/brand/sidebar-lockup.png" alt="JIRSN Forge"></div>`;
+const brand = () => `<div class="brand"><img class="lockup" src="/img/brand/forge-logo-primary.png" alt="JIRSN Forge"></div>`;
 const loginBrand = () => `<div class="brand"><img class="login-lockup" src="/img/brand/login-lockup.jpg" alt="JIRSN Forge"></div>`;
 
 // ---------------------------------------------------------------- sign-in
@@ -87,7 +87,7 @@ let lookups = null; // search index, loaded lazily
 function renderShell() {
   const me = session.me;
   const initials = me.displayName.split(/\s+/).map(p => p[0]).join('').slice(0, 2).toUpperCase();
-  const navItem = n => `<li><a href="#/${n.route}" data-route="${n.route}">${icon(n.icon)}<span>${esc(n.label)}</span>${n.badge ?? ''}</a></li>`;
+  const navItem = n => `<li><a href="#/${n.route}" data-route="${n.route}">${img(n.icon)}<span>${esc(n.label)}</span>${n.badge ?? ''}</a></li>`;
   $('#app').innerHTML = `
     <div class="shell" id="shell">
       <nav class="sidebar" aria-label="Main">
