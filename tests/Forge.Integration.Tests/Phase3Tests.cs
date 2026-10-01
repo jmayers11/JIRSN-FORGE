@@ -96,7 +96,8 @@ public sealed class Phase3Tests(PostgresFixture postgres)
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
         var (plant, planner) = await EngineeredPlantAsync(app);
 
-        var created = await plant.Ok(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 10m, dueDate = "2026-10-09", priority = 3 });
+        // The engineer sets up the shop order; the planner releases it.
+        var created = await plant.Ok(plant.Engineer, "/api/orders/", new { partNumber = "ROLL-100", quantity = 10m, dueDate = "2026-10-09", priority = 3 });
         var number = long.Parse(created.GetProperty("entityId").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
         Assert.Equal(10001, number);
 
@@ -176,5 +177,28 @@ public sealed class Phase3Tests(PostgresFixture postgres)
 
         var visible = await Get(planner, "/api/orders/");
         Assert.Contains(visible.EnumerateArray(), o => o.GetProperty("orderNumber").GetInt64().ToString(System.Globalization.CultureInfo.InvariantCulture) == number);
+    }
+
+    [Fact]
+    public async Task Setting_up_and_releasing_always_takes_two_people()
+    {
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        var (plant, planner) = await EngineeredPlantAsync(app);
+
+        // A planner who sets up an order cannot release it; another planner can.
+        await plant.Ok(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 5m, dueDate = "2026-10-09", priority = 3 });
+        var own = await plant.Try(planner, "/api/orders/10001/release", new { reason = "x" });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, own.StatusCode);
+        Assert.Contains("separation_of_duties", await own.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        await plant.Person("planner2", "Planner");
+        await plant.Ok(plant.As("planner2"), "/api/orders/10001/release", new { reason = "Second planner review" });
+
+        // An approver who edits a draft revision may no longer release it.
+        await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["approver"]}/roles", new { role = "ManufacturingEngineer", reason = "Covering engineering" });
+        await plant.Ok(plant.Engineer, "/api/engineering/items/ROLL-100/revisions", new { revision = "B" });
+        await plant.Ok(plant.Approver, "/api/engineering/items/ROLL-100/revisions/B/routing", new { sequence = 10, description = "Slit", workCenterCode = "SLIT-WC", activityCode = "RUN_SLITTER", eligibleMachines = new[] { "SLITTER-A" }, setupMinutes = 30m, runMinutesPerUnit = 1.5m, crewSize = 1 });
+        var ownEdit = await plant.Try(plant.Approver, "/api/engineering/items/ROLL-100/revisions/B/release", new { reason = "x" });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, ownEdit.StatusCode);
+        Assert.Contains("separation_of_duties", await ownEdit.Content.ReadAsStringAsync(), StringComparison.Ordinal);
     }
 }

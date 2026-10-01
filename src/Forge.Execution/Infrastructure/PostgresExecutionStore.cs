@@ -8,7 +8,7 @@ namespace Forge.Execution.Infrastructure;
 internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutionStore, IExecutionLookup
 {
     private const string OrderSql =
-        "SELECT order_number, part_number, revision, quantity, due_date, priority, status, held_from, program_id, released_at FROM execution.production_order";
+        "SELECT order_number, part_number, revision, quantity, due_date, priority, status, held_from, program_id, released_at, created_by, released_by FROM execution.production_order";
 
     public async Task<long> InsertOrderAsync(string partNumber, string revision, decimal quantity, DateOnly dueDate, int priority, Guid? programId, DateTimeOffset at, string actor, CancellationToken ct)
     {
@@ -58,7 +58,7 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
             await cmd.ExecuteNonQueryAsync(ct);
         }
 
-        await using var stamp = uow.Command("UPDATE execution.production_order SET released_at = $2 WHERE order_number = $1", orderNumber, at);
+        await using var stamp = uow.Command("UPDATE execution.production_order SET released_at = $2, released_by = $3 WHERE order_number = $1", orderNumber, at, actor);
         await stamp.ExecuteNonQueryAsync(ct);
     }
 
@@ -100,7 +100,9 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         r.IsDBNull(8) ? null : r.GetGuid(8),
         r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9),
         [],
-        []);
+        [],
+        r.GetString(10),
+        r.IsDBNull(11) ? null : r.GetString(11));
 
     private static NpgsqlParameter TextArray(IEnumerable<string> values) =>
         new() { Value = values.ToArray(), NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text };

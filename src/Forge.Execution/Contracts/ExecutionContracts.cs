@@ -47,7 +47,9 @@ public sealed record OrderInfo(
     Guid? ProgramId,
     DateTimeOffset? ReleasedAt,
     IReadOnlyList<OrderOperationInfo> Operations,
-    IReadOnlyList<OrderMaterialInfo> Materials);
+    IReadOnlyList<OrderMaterialInfo> Materials,
+    string? CreatedBy = null,
+    string? ReleasedBy = null);
 
 public interface IExecutionLookup
 {

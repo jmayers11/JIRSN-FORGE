@@ -82,12 +82,17 @@ public interface IEngineeringStore
     /// <summary>Parent → component edges across every revision, for loop detection.</summary>
     Task<IReadOnlyList<(string Parent, string Component)>> ListBomEdgesAsync(CancellationToken ct);
 
+    /// <summary>Records that this person changed the draft; they may no longer release it.</summary>
+    Task AddContributorAsync(string partNumber, string revision, string actor, CancellationToken ct);
+
+    Task<IReadOnlyList<string>> GetContributorsAsync(string partNumber, string revision, CancellationToken ct);
+
     Task SetEffectivityAsync(string partNumber, string revision, RevisionStatus status, DateTimeOffset? from, DateTimeOffset? to, string actor, CancellationToken ct);
 }
 
 /// <summary>
 /// Engineering definition of what is built and how. A revision's BOM and routing change only while
-/// it is a draft; release validates everything (no BOM loops, released components, a valid routing)
+/// it is a draft; release, by someone who did not create or edit it, validates everything (no BOM loops, released components, a valid routing)
 /// and freezes it. Orders snapshot a released revision, so later engineering changes never alter
 /// work already released.
 /// </summary>
@@ -291,6 +296,11 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
                 throw new CommandRejectedException("not_draft", $"Revision {part} {rev} is already released.");
             }
 
+            if ((await uow.Store<IEngineeringStore>().GetContributorsAsync(part, rev, ct)).Contains(context.Actor, StringComparer.Ordinal))
+            {
+                throw new CommandRejectedException("separation_of_duties", "You created or edited this revision; a different person must release it.");
+            }
+
             var effectiveFrom = c.EffectiveFrom?.ToUniversalTime() ?? now;
             if (effectiveFrom < now.AddMinutes(-1))
             {
@@ -392,6 +402,7 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
             }
 
             var (change, oldValue, newValue) = await body(uow, now);
+            await uow.Store<IEngineeringStore>().AddContributorAsync(part, rev, context.Actor, ct);
             return new CommandOutcome(
                 CommandResult.Ok(id, $"{part} rev {rev}: {change.Replace('_', ' ')}."),
                 [pipeline.Event(new RevisionChanged(part, rev, change), context, SourceContext, RevisionEntity, id)],

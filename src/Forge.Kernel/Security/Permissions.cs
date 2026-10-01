@@ -54,7 +54,7 @@ public static class Roles
     {
         [SecurityAdministrator] = [Permissions.AccessManage, Permissions.PeopleRead, Permissions.AuditRead],
         [Auditor] = [Permissions.AuditRead, Permissions.PeopleRead],
-        [ManufacturingEngineer] = [Permissions.ResourcesManage, Permissions.ResourcesRead, Permissions.WorkforceManage, Permissions.WorkforceRead, Permissions.SafetyRulesRead, Permissions.CompetencyRead, Permissions.ReadinessRead, Permissions.EngineeringManage, Permissions.EngineeringRead],
+        [ManufacturingEngineer] = [Permissions.ResourcesManage, Permissions.ResourcesRead, Permissions.WorkforceManage, Permissions.WorkforceRead, Permissions.SafetyRulesRead, Permissions.CompetencyRead, Permissions.ReadinessRead, Permissions.EngineeringManage, Permissions.EngineeringRead, Permissions.OrdersManage, Permissions.OrdersRead],
         [EngineeringApprover] = [Permissions.EngineeringRelease, Permissions.EngineeringRead, Permissions.ResourcesRead],
         [TrainingCoordinator] = [Permissions.CompetencyManage, Permissions.CompetencyRead, Permissions.WorkforceRead, Permissions.ResourcesRead],
         [Certifier] = [Permissions.CompetencyCertify, Permissions.CompetencyRead],

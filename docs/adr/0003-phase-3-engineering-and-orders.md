@@ -18,11 +18,15 @@ Date: 2026-10-01. Status: accepted as defaults for owner review.
   work center.
 - **Operator qualifications have one source of truth:** the machine's requirement profile
   (Resources). A routing step may add further required qualifications, all of which are required.
-- **Release authority is separate** (`EngineeringApprover`) from authoring (`ManufacturingEngineer`).
-  Unlike safety rules, the same person may hold both roles; a reason is always required.
+- **Release always takes two people** (owner decision, 2026-10-01). Release needs the
+  `EngineeringApprover` role, and nobody who created or edited the revision may release it, even if
+  they hold both roles. Every editor is recorded on the revision; a database check enforces it.
 
 ## Production orders
 
+- **Setting up and releasing an order takes two people** (owner decision, 2026-10-01): engineers
+  (`ManufacturingEngineer`) and planners can set up orders; a planner (`execution.orders.release`) who
+  did not set it up releases it. A database check enforces it.
 - Order numbers are sequential from 10001. The revision is the one in force when the order is
   created; release fails if it is no longer in force ("cancel and re-plan").
 - **Release snapshots** the routing (planned minutes = setup + run × quantity) and BOM (required =

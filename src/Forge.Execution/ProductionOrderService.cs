@@ -44,7 +44,7 @@ public interface IExecutionStore
 }
 
 /// <summary>
-/// Production orders. Release snapshots the BOM and routing of the order's revision, so later
+/// Production orders. The person who sets up an order cannot release it. Release snapshots the BOM and routing of the order's revision, so later
 /// engineering changes never alter released work. Orders tied to a program are visible and
 /// changeable only by people with access to that program.
 /// </summary>
@@ -95,6 +95,11 @@ public sealed class ProductionOrderService(CommandPipeline pipeline)
             if (order.Status is not (OrderStatus.Planned or OrderStatus.FirmPlanned))
             {
                 throw Invalid(order, "release");
+            }
+
+            if (order.CreatedBy == context.Actor)
+            {
+                throw new CommandRejectedException("separation_of_duties", "You set up this order; a different person must release it.");
             }
 
             var engineering = uow.Store<IEngineeringLookup>();

@@ -22,7 +22,7 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
     public async Task<bool> InsertRevisionAsync(string partNumber, string revision, DateTimeOffset at, string actor, CancellationToken ct)
     {
         await using var cmd = uow.Command(
-            "INSERT INTO engineering.revision (part_number, revision, status, created_at, created_by) VALUES ($1, $2, 'Draft', $3, $4) ON CONFLICT DO NOTHING",
+            "INSERT INTO engineering.revision (part_number, revision, status, created_at, created_by, contributors) VALUES ($1, $2, 'Draft', $3, $4, ARRAY[$4]) ON CONFLICT DO NOTHING",
             partNumber, revision, at, actor);
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
@@ -64,6 +64,17 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
 
     public async Task<IReadOnlyList<(string Parent, string Component)>> ListBomEdgesAsync(CancellationToken ct) =>
         await Read("SELECT DISTINCT part_number, component FROM engineering.bom_line ORDER BY part_number, component", r => (r.GetString(0), r.GetString(1)), ct);
+
+    public async Task AddContributorAsync(string partNumber, string revision, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE engineering.revision SET contributors = array_append(contributors, $3) WHERE part_number = $1 AND revision = $2 AND NOT ($3 = ANY (contributors))",
+            partNumber, revision, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<string>> GetContributorsAsync(string partNumber, string revision, CancellationToken ct) =>
+        (await Read("SELECT unnest(contributors) FROM engineering.revision WHERE part_number = $1 AND revision = $2", r => r.GetString(0), ct, partNumber, revision)).ToList();
 
     public async Task SetEffectivityAsync(string partNumber, string revision, RevisionStatus status, DateTimeOffset? from, DateTimeOffset? to, string actor, CancellationToken ct)
     {
