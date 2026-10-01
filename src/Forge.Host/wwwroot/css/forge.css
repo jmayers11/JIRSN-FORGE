@@ -389,3 +389,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .search input::placeholder { color: transparent; }
   .kpi .v { font-size: 22px; }
 }
+
+/* ---------- Shop-floor terminal ---------- */
+.kiosk-start { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 40px 16px; text-align: center; }
+.kiosk-ico { width: 72px; height: 72px; }
+.scan { display: flex; flex-direction: column; gap: 8px; width: min(420px, 100%); }
+.scan label { font: 600 18px var(--font); }
+.scan-input { font-size: 22px; padding: 14px 16px; text-align: center; letter-spacing: .2em; }
+.report-form { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)) auto auto; gap: 12px; align-items: end; }
+.big-num { font-size: 20px; padding: 10px 12px; }
+.check { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; white-space: nowrap; }
+.check input { width: 20px; height: 20px; accent-color: var(--forge-orange); }
+@media (max-width: 900px) { .report-form { grid-template-columns: 1fr 1fr; } }

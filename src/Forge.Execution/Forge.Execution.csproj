@@ -1,12 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>Forge.Execution</RootNamespace>
-    <Description>Production orders: lifecycle, release snapshots of BOM and routing, order operations.</Description>
+    <Description>Production orders and their execution: lifecycle, release snapshots, shop-floor labor, quantities, supervised training, electronic signoff.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Forge.Kernel\Forge.Kernel.csproj" />
     <ProjectReference Include="..\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
     <ProjectReference Include="..\Forge.Engineering\Forge.Engineering.csproj" />
+    <ProjectReference Include="..\Forge.Competency\Forge.Competency.csproj" />
+    <ProjectReference Include="..\Forge.Resources\Forge.Resources.csproj" />
+    <ProjectReference Include="..\Forge.Workforce\Forge.Workforce.csproj" />
+    <ProjectReference Include="..\Forge.Maintenance\Forge.Maintenance.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Infrastructure\Migrations\*.sql" />

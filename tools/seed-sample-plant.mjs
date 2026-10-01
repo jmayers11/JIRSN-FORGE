@@ -141,8 +141,39 @@ async function main() {
   const s = await post('planner', '/api/planning/schedules', { horizonDays: 14 });
   await post('planner2', `/api/planning/schedules/${s.entityId}/approve`, { reason: 'Reviewed outage and PTO impact' });
 
+  step('Shop floor: a kiosk, badges, a trainer qualification, a trainee, and some reported work');
+  await person('kiosk', 'Slitting Kiosk', 'ShopFloorTerminal');
+  await post('eng', '/api/competency/qualification-types', { code: 'TRAIN-SLIT', name: 'Slitting trainer', kind: 'Trainer', validityDays: 365 });
+  await post('eng', '/api/competency/qualification-types/TRAIN-SLIT/prerequisites', { prerequisiteCode: 'SLIT-II' });
+  await post('eng', `/api/competency/people/${people.sarah}/training`, { code: 'TRAIN-SLIT' });
+  await post('approver', `/api/competency/people/${people.sarah}/certifications`, { code: 'TRAIN-SLIT', evidence: 'Train-the-trainer course', reason: 'Trainer certified' });
+  const alex = await person('alex', 'Alex Rivera');
+  await post('eng', `/api/workforce/workers/${alex}`, { homeWorkCenterCode: 'SLIT-WC' });
+  await post('eng', `/api/workforce/workers/${alex}/shift`, { shiftCode: 'ALL' });
+  await post('eng', `/api/competency/people/${alex}/training`, { code: 'SLIT-II' });
+  const badges = {};
+  let next = 1001;
+  for (const subject of ['sarah', 'marcus', 'jennifer', 'luis', 'dana', 'priya', 'omar', 'kelly', 'alex']) {
+    badges[subject] = String(next++);
+    await post(adminSubject, `/api/workforce/people/${people[subject]}/badge`, { badge: badges[subject] });
+  }
+  await post('kiosk', '/api/shopfloor/pin', { badge: badges.sarah, newPin: '2468' });
+  for (const subject of ['omar', 'luis', 'alex']) await post('kiosk', '/api/shopfloor/clock-in', { badge: badges[subject] });
+
+  // Omar receives coil for the first two orders; Luis starts cutting the first.
+  const queue = (await get('planner', '/api/orders/')).filter(o => o.status === 'Released').map(o => o.orderNumber).sort((a, b) => a - b);
+  for (const order of queue.slice(0, 2)) {
+    await post('kiosk', '/api/shopfloor/start', { badge: badges.omar, orderNumber: order, sequence: 10 });
+    const qty = (await get('planner', `/api/orders/${order}`)).quantity;
+    await post('kiosk', '/api/shopfloor/report', { badge: badges.omar, orderNumber: order, sequence: 10, good: qty, scrap: 0, complete: true });
+  }
+  await post('kiosk', '/api/shopfloor/start', { badge: badges.luis, orderNumber: queue[0], sequence: 20, machineCode: 'LASER-1' });
+  await post('kiosk', '/api/shopfloor/report', { badge: badges.luis, orderNumber: queue[0], sequence: 20, good: 12, scrap: 1, scrapReason: 'Setup', complete: false });
+
   console.log(`\nSample plant ready. Open ${base}/ and sign in as "planner" (Michael Carter).`);
-  console.log('Other sample sign-ins: planner2, eng, approver, tech, dev-admin. Everything shown is sample data.');
+  console.log('Other sample sign-ins: planner2, eng, approver, tech, dev-admin, and "kiosk" for the Shop Floor terminal.');
+  console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
+  console.log('Everything shown is sample data.');
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

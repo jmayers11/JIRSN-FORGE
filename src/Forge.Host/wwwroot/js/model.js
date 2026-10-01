@@ -188,7 +188,7 @@ export function buildHorizon(d) {
   const fmt = n => (Math.round(n * 10) / 10).toString();
 
   const kpis = {
-    attainment: { value: null, why: 'Needs production reporting from the shop floor (Phase 5).' },
+    attainment: attainmentKpi(d.attainment),
     ordersAtRisk: result
       ? { value: troubled.length, why: `${troubled.filter(o => o.status === 'Late').length} late, ${troubled.filter(o => o.status === 'Unschedulable').length} unschedulable, of ${viewOrders.size} scheduled` }
       : { value: null, why: 'No schedule has been proposed yet.' },
@@ -212,6 +212,14 @@ export function buildHorizon(d) {
   return { from, to, window: win, centers, kpis, issues, scheduleUsed: d.schedule ?? null, hasCapacity: !!capacityMachines };
 }
 
+function attainmentKpi(result) {
+  if (!result) return { value: null, why: 'Schedule attainment is not visible with your roles.' };
+  if (result.error) return { value: null, why: result.error.message };
+  const a = result.data.output;
+  if (a.percent == null) return { value: null, why: a.explanation };
+  return { value: Number(a.percent), why: `Last 24 h: ${a.completedOperations} of ${a.plannedOperations} operations due were completed (schedule #${a.scheduleVersionId})` };
+}
+
 /** Planned completions per local day (quantity), from the schedule's projected completions. */
 export function plannedOutput(schedule, orders, days, timeZone) {
   const qty = new Map((orders ?? []).map(o => [o.orderNumber, Number(o.quantity)]));
@@ -223,6 +231,18 @@ export function plannedOutput(schedule, orders, days, timeZone) {
     if (totals.has(k)) totals.set(k, totals.get(k) + (qty.get(o.orderNumber) ?? 0));
   }
   return days.map(dd => ({ day: dd, plan: totals.get(dd) }));
+}
+
+/** Units finished per local day: good quantity reported on each order's final operation. */
+export function actualOutput(reports, days, timeZone) {
+  const key = date => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+  const totals = new Map(days.map(dd => [dd, 0]));
+  for (const r of reports ?? []) {
+    if (!r.finalOperation) continue;
+    const k = key(new Date(r.reportedAt));
+    if (totals.has(k)) totals.set(k, totals.get(k) + Number(r.goodQuantity));
+  }
+  return days.map(dd => totals.get(dd));
 }
 
 export function localDays(startMs, count, timeZone) {

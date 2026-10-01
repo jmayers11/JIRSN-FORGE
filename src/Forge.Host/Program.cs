@@ -123,6 +123,7 @@ app.MapKernelEndpoints();
 app.MapOperationsEndpoints();
 app.MapEngineeringEndpoints();
 app.MapPlanningEndpoints();
+app.MapShopFloorEndpoints();
 
 await app.RunAsync();
 

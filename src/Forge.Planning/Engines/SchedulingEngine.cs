@@ -64,7 +64,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
 
     public string Name => "finite-scheduler";
 
-    public string Version => "1";
+    public string Version => "2";
 
     public EngineEvaluation<ScheduleResult> Evaluate(SiteSnapshot snapshot, ScheduleRequest parameters, DateTimeOffset asOf)
     {
@@ -120,7 +120,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
     private static ScheduledOperation Schedule(CapacityTimeline timeline, Bookings state, OrderInfo order, OrderOperationInfo op, DateTimeOffset earliest, int? predecessor)
     {
         var snapshot = timeline.Snapshot;
-        var minutes = TimeSpan.FromMinutes((double)op.PlannedMinutes);
+        var minutes = TimeSpan.FromMinutes((double)RemainingMinutes(order, op));
         var options = new List<(WorkRequirement Requirement, Placement Placement)>();
 
         if (op.EligibleMachines.Count == 0)
@@ -189,12 +189,29 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             true,
             placement.Segments[0].Start,
             placement.End,
-            op.PlannedMinutes,
+            RemainingMinutes(order, op),
             binding,
             detail,
             placement.Segments,
             placement.Interruptions,
             names);
+    }
+
+    /// <summary>
+    /// Work left on an operation. Started work keeps the share of its planned time that matches the
+    /// quantity not yet reported good; untouched work keeps all of it.
+    /// </summary>
+    public static decimal RemainingMinutes(OrderInfo order, OrderOperationInfo op)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        ArgumentNullException.ThrowIfNull(op);
+        if (op.Status != OperationStatus.InProgress || order.Quantity <= 0)
+        {
+            return op.PlannedMinutes;
+        }
+
+        var left = Math.Clamp(1 - (op.GoodQuantity / order.Quantity), 0m, 1m);
+        return decimal.Round(op.PlannedMinutes * left, 4);
     }
 
     private sealed record Placement(IReadOnlyList<ScheduledSegment> Segments, IReadOnlyList<Interruption> Interruptions, (string Limiting, string Detail)? FirstBlocker, DateTimeOffset? End);

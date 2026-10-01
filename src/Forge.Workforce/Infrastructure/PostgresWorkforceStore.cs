@@ -6,8 +6,110 @@ using Npgsql;
 
 namespace Forge.Workforce.Infrastructure;
 
-internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforceStore, IWorkforceLookup
+internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforceStore, IWorkforceLookup, IAttendanceStore
 {
+    public async Task<bool> InsertBadgeAsync(string digest, PersonId person, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "INSERT INTO workforce.badge (badge_digest, person_id, issued_at, issued_by) VALUES ($1, $2, $3, $4) ON CONFLICT (badge_digest) DO NOTHING",
+            digest, person.Value, at, actor);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<int> RevokeBadgesAsync(PersonId person, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE workforce.badge SET revoked_at = $2, revoked_by = $3 WHERE person_id = $1 AND revoked_at IS NULL",
+            person.Value, at, actor);
+        return await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<BadgeRow?> FindBadgeAsync(string digest, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("SELECT person_id, revoked_at IS NOT NULL, pin_hash, pin_salt FROM workforce.badge WHERE badge_digest = $1", digest);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct)
+            ? new BadgeRow(digest, reader.GetGuid(0), reader.GetBoolean(1), reader.IsDBNull(2) ? null : reader.GetFieldValue<byte[]>(2), reader.IsDBNull(3) ? null : reader.GetFieldValue<byte[]>(3))
+            : null;
+    }
+
+    public async Task SetPinAsync(string digest, byte[] hash, byte[] salt, DateTimeOffset at, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE workforce.badge SET pin_hash = $2, pin_salt = $3, pin_set_at = $4 WHERE badge_digest = $1", digest, hash, salt, at);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<long> OpenAttendanceAsync(PersonId person, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "INSERT INTO workforce.attendance (person_id, clock_in_at, clock_in_by) VALUES ($1, $2, $3) RETURNING attendance_id",
+            person.Value, at, actor);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task CloseAttendanceAsync(long attendanceId, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE workforce.attendance SET clock_out_at = $2, clock_out_by = $3 WHERE attendance_id = $1", attendanceId, at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<BadgeHolder?> FindBadgeHolderAsync(string badge, CancellationToken ct)
+    {
+        if (!Badges.TryNormalize(badge, out _))
+        {
+            return null;
+        }
+
+        await using var cmd = uow.Command(
+            """
+            SELECT b.person_id, p.display_name, w.person_id IS NOT NULL, b.pin_hash IS NOT NULL
+            FROM workforce.badge b
+            JOIN kernel.person p ON p.person_id = b.person_id AND p.is_active
+            LEFT JOIN workforce.worker w ON w.person_id = b.person_id
+            WHERE b.badge_digest = $1 AND b.revoked_at IS NULL
+            """,
+            Badges.Digest(badge));
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? new BadgeHolder(reader.GetGuid(0), reader.GetString(1), reader.GetBoolean(2), reader.GetBoolean(3)) : null;
+    }
+
+    public async Task<bool> VerifyBadgePinAsync(string badge, string pin, CancellationToken ct)
+    {
+        if (!Badges.TryNormalize(badge, out _) || !Badges.IsValidPin(pin))
+        {
+            return false;
+        }
+
+        var row = await FindBadgeAsync(Badges.Digest(badge), ct);
+        return row is { Revoked: false, PinHash: { } hash, PinSalt: { } salt } && Badges.PinMatches(pin, hash, salt);
+    }
+
+    public async Task<AttendanceRecord?> FindOpenAttendanceAsync(Guid personId, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "SELECT attendance_id, person_id, clock_in_at, clock_out_at FROM workforce.attendance WHERE person_id = $1 AND clock_out_at IS NULL", personId);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? ReadAttendance(reader) : null;
+    }
+
+    public async Task<IReadOnlyList<AttendanceRecord>> ListAttendanceAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    {
+        var list = new List<AttendanceRecord>();
+        await using var cmd = uow.Command(
+            "SELECT attendance_id, person_id, clock_in_at, clock_out_at FROM workforce.attendance WHERE clock_in_at < $2 AND (clock_out_at IS NULL OR clock_out_at > $1) ORDER BY clock_in_at, attendance_id",
+            from, to);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            list.Add(ReadAttendance(reader));
+        }
+
+        return list;
+    }
+
+    private static AttendanceRecord ReadAttendance(NpgsqlDataReader r) =>
+        new(r.GetInt64(0), r.GetGuid(1), r.GetFieldValue<DateTimeOffset>(2), r.IsDBNull(3) ? null : r.GetFieldValue<DateTimeOffset>(3));
+
     public async Task<bool> InsertWorkerAsync(PersonId person, string displayName, string homeWorkCenter, DateTimeOffset at, string actor, CancellationToken ct)
     {
         await using var cmd = uow.Command(
@@ -159,7 +261,9 @@ public static class WorkforceRegistration
         services.AddForgeMigrations(typeof(WorkforceRegistration).Assembly, "workforce");
         services.AddForgeStore<IWorkforceStore>(uow => new PostgresWorkforceStore(uow));
         services.AddForgeStore<IWorkforceLookup>(uow => new PostgresWorkforceStore(uow));
+        services.AddForgeStore<IAttendanceStore>(uow => new PostgresWorkforceStore(uow));
         services.AddSingleton<WorkforceService>();
+        services.AddSingleton<AttendanceService>();
         return services;
     }
 }

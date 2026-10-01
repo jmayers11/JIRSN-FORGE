@@ -58,6 +58,19 @@ everyone else they look like they do not exist. See `docs/adr/0003-phase-3-engin
 Readiness now evaluates Equipment from recorded downtime. Forecasts use projected presence from
 shift schedules and are labelled as projections. See `docs/adr/0004-phase-4-capacity-and-scheduling.md`.
 
+## What Phase 5 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Badges and attendance | `src/Forge.Workforce` | Badge digests, PINs (PBKDF2), clock in/out; any scanner that types the badge |
+| Shop-floor execution | `src/Forge.Execution` | Direct labor, start/stop, good and scrap reporting, operation and order completion |
+| Supervised training | `src/Forge.Execution` | Operator-authorization engine; trainee + trainer sessions; trainer evaluation signed with badge + PIN; never auto-qualifies |
+| Attainment | `src/Forge.Planning/Engines` | Schedule attainment against the schedule in force; scheduler schedules only the work left on started operations |
+| Shop Floor screen | `src/Forge.Host/wwwroot` | Kiosk page for terminals; order pages show labor, reports and training |
+
+Attendance, direct labor, operation authentication and electronic signoff are separate records.
+See `docs/adr/0005-phase-5-shop-floor.md`.
+
 Build rules enforced at compile time: nullable, warnings as errors, and a ban on `DateTime.Now`,
 `Guid.NewGuid` and `Random` in production code (use `TimeProvider` and `ForgeIds`).
 Architecture dependency rules are tests in `tests/Forge.Architecture.Tests`.
@@ -173,6 +186,23 @@ authorization code + PKCE and calls the API with the access token.
 | POST | `/api/orders/`, `/{number}/firm`, `/hold`, `/resume`, `/cancel` | `execution.orders.manage` |
 | POST | `/api/orders/{number}/release` | `execution.orders.release` |
 | GET | `/api/orders/{number}/readiness` | `planning.readiness.read` + program access |
+
+## Phase 5 API
+
+Shop-floor calls come from a terminal (role `ShopFloorTerminal`) or a supervisor; the badge in the
+body identifies the person. Badge numbers and PINs are never stored or logged.
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/workforce/people/{id}/badge`, `/badge/revoke` | `workforce.badges.manage` |
+| POST | `/api/shopfloor/identify` `{badge}` | `execution.shopfloor.read` |
+| POST | `/api/shopfloor/clock-in`, `/clock-out`, `/pin` | `workforce.attendance.record` (clock-out also stops labor) |
+| POST | `/api/shopfloor/start` `{badge, orderNumber, sequence, machineCode?, trainerBadge?}` | `execution.shopfloor.record` |
+| POST | `/api/shopfloor/stop`, `/report` | `execution.shopfloor.record` |
+| POST | `/api/shopfloor/training/{id}/evaluate` `{trainerBadge, pin, evaluation, notes}` | `execution.shopfloor.record` |
+| GET | `/api/shopfloor/activity?from=&to=` | `execution.shopfloor.read` (program-filtered) |
+| GET | `/api/orders/{number}/shopfloor` | `execution.orders.read` + program access |
+| GET | `/api/planning/attainment?from=&to=` | `planning.schedule.read` (program-filtered) |
 
 ## Phase 4 API
 

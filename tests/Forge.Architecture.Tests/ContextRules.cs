@@ -62,11 +62,13 @@ public class ContextRules
         Assert.True(result.IsSuccessful, "Violations: " + string.Join(", ", result.FailingTypeNames ?? []));
     }
 
-    [Fact]
-    public void Engines_are_pure()
+    [Theory]
+    [InlineData("Planning", "Forge.Planning.Engines")]
+    [InlineData("Execution", "Forge.Execution.Engines")]
+    public void Engines_are_pure(string context, string ns)
     {
-        var result = Types.InAssembly(Planning)
-            .That().ResideInNamespace("Forge.Planning.Engines")
+        var result = Types.InAssembly(Get(context))
+            .That().ResideInNamespace(ns)
             .ShouldNot().HaveDependencyOnAny("Npgsql", "System.Data", "Forge.Kernel.Access", "Forge.Kernel.Postgres", "System.Net.Http", "Microsoft.Extensions")
             .GetResult();
         Assert.True(result.IsSuccessful, "Violations: " + string.Join(", ", result.FailingTypeNames ?? []));

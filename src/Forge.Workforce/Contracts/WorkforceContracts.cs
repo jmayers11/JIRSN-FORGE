@@ -46,8 +46,26 @@ public sealed record WorkerState(
 /// <summary>A period a worker is not available. There is deliberately no reason.</summary>
 public sealed record UnavailabilityWindow(Guid PersonId, UnavailabilityKind Kind, DateTimeOffset StartsAt, DateTimeOffset EndsAt);
 
+/// <summary>The person a badge identifies. A badge says who someone is, never what they are doing.</summary>
+public sealed record BadgeHolder(Guid PersonId, string DisplayName, bool IsWorker, bool HasPin);
+
+/// <summary>Paid time on site (clock in to clock out). Not direct labor and not presence evidence on its own.</summary>
+public sealed record AttendanceRecord(long AttendanceId, Guid PersonId, DateTimeOffset ClockInAt, DateTimeOffset? ClockOutAt);
+
 public interface IWorkforceLookup
 {
+    /// <summary>The active badge's holder, or null for an unknown or revoked badge.</summary>
+    Task<BadgeHolder?> FindBadgeHolderAsync(string badge, CancellationToken ct);
+
+    /// <summary>True only if the badge is active, has a PIN and the PIN matches.</summary>
+    Task<bool> VerifyBadgePinAsync(string badge, string pin, CancellationToken ct);
+
+    /// <summary>The person's open attendance (clocked in, not yet out), if any.</summary>
+    Task<AttendanceRecord?> FindOpenAttendanceAsync(Guid personId, CancellationToken ct);
+
+    /// <summary>Attendance overlapping [from, to), sorted by clock-in.</summary>
+    Task<IReadOnlyList<AttendanceRecord>> ListAttendanceAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct);
+
     Task<bool> WorkerExistsAsync(Guid personId, CancellationToken ct);
 
     /// <summary>Every worker's state at the instant, sorted by person id.</summary>

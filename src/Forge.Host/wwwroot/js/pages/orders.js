@@ -3,7 +3,7 @@ import { icon } from '../icons.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 
-const STATUS_TONE = { Planned: 'none', FirmPlanned: 'info', Released: 'ok', Held: 'warn', Cancelled: 'bad' };
+const STATUS_TONE = { Planned: 'none', FirmPlanned: 'info', Released: 'ok', Held: 'warn', Cancelled: 'bad', Completed: 'ok' };
 const DELIVERY_TONE = { OnTime: 'ok', AtRisk: 'warn', Late: 'bad', Unschedulable: 'bad' };
 const can = (me, ...roles) => roles.some(r => me.roles.includes(r));
 
@@ -73,7 +73,7 @@ async function orderDetail(page, ctx, number) {
   if (can(me, 'Planner') && ['Planned', 'FirmPlanned'].includes(o.status)) actions.push(['release', 'Release']);
   if (can(me, 'Planner', 'ManufacturingEngineer') && o.status === 'Released') actions.push(['hold', 'Hold']);
   if (can(me, 'Planner', 'ManufacturingEngineer') && o.status === 'Held') actions.push(['resume', 'Resume']);
-  if (can(me, 'Planner', 'ManufacturingEngineer') && !['Cancelled'].includes(o.status)) actions.push(['cancel', 'Cancel order']);
+  if (can(me, 'Planner', 'ManufacturingEngineer') && !['Cancelled', 'Completed'].includes(o.status)) actions.push(['cancel', 'Cancel order']);
 
   const r = readiness.data?.output;
   const dd = dropDead.data?.output;
@@ -110,8 +110,10 @@ async function orderDetail(page, ctx, number) {
     </section>
     <section class="grid-2">
       <div class="panel"><header><h2>Operations</h2></header>
-        ${o.operations?.length ? `<table class="table"><thead><tr><th>Op</th><th>Work center</th><th>Activity</th><th>Machines</th><th>Planned</th><th>Crew</th><th>Status</th></tr></thead><tbody>
-        ${o.operations.map(op => `<tr><td>${op.sequence}</td><td>${esc(op.workCenterCode)}</td><td>${esc(op.activityCode)}</td><td>${esc(op.eligibleMachines.join(', ') || '—')}</td><td>${fmtNumber(op.plannedMinutes / 60)} h</td><td>${op.crewSize}</td><td>${esc(op.status)}</td></tr>`).join('')}
+        ${o.operations?.length ? `<table class="table"><thead><tr><th>Op</th><th>Work center</th><th>Activity</th><th>Machines</th><th>Planned</th><th>Good</th><th>Scrap</th><th>Status</th></tr></thead><tbody>
+        ${o.operations.map(op => `<tr><td>${op.sequence}</td><td>${esc(op.workCenterCode)}</td><td>${esc(op.activityCode)}</td><td>${esc(op.eligibleMachines.join(', ') || '—')}</td><td>${fmtNumber(op.plannedMinutes / 60)} h</td>
+          <td>${fmtNumber(op.goodQuantity, 3)} / ${fmtNumber(o.quantity, 3)}</td><td>${op.scrapQuantity > 0 ? `<span class="c-warn">${fmtNumber(op.scrapQuantity, 3)}</span>` : '0'}</td>
+          <td><span class="pill ${op.status === 'Complete' ? 'ok' : op.status === 'InProgress' ? 'info' : 'none'}">${esc(op.status)}</span>${op.completedAt ? `<br><span class="faint">${esc(fmtDateTime(op.completedAt))}</span>` : op.startedAt ? `<br><span class="faint">since ${esc(fmtDateTime(op.startedAt))}</span>` : ''}</td></tr>`).join('')}
         </tbody></table>` : emptyBlock('Not released yet', 'Operations and materials are copied from the routing and BOM when the order is released.')}
       </div>
       <div class="panel"><header><h2>Materials</h2></header>
@@ -120,6 +122,25 @@ async function orderDetail(page, ctx, number) {
         </tbody></table><div class="faint" style="margin-top:6px">Availability is not checked until Materials/MRP (Phase 6).</div>` : emptyBlock('No materials yet', 'Copied from the BOM at release.')}
       </div>
     </section>`;
+
+  const floor = await tryGet(`/api/orders/${number}/shopfloor`);
+  if (floor.data && (floor.data.labor.length || floor.data.reports.length || floor.data.training.length)) {
+    const f = floor.data;
+    const section = document.createElement('section');
+    section.className = 'grid-2';
+    section.innerHTML = `
+      <div class="panel"><header><h2>Direct labor</h2></header>
+        <table class="table"><thead><tr><th>Op</th><th>Person</th><th>Role</th><th>Machine</th><th>From</th><th>To</th></tr></thead><tbody>
+        ${f.labor.map(l => `<tr><td>${l.sequence}</td><td>${esc(who('person:' + l.personId))}</td><td>${esc(l.role)}</td><td>${esc(l.machineCode ?? '—')}</td><td>${esc(fmtDateTime(l.startedAt))}</td><td>${l.endedAt ? esc(fmtDateTime(l.endedAt)) : '<span class="pill info">working</span>'}</td></tr>`).join('')}
+        </tbody></table></div>
+      <div class="panel"><header><h2>Reports and training</h2></header>
+        <table class="table"><thead><tr><th>Op</th><th>When</th><th>By</th><th>Good</th><th>Scrap</th></tr></thead><tbody>
+        ${f.reports.map(r => `<tr><td>${r.sequence}${r.completedOperation ? ' ✓' : ''}</td><td>${esc(fmtDateTime(r.reportedAt))}</td><td>${esc(who('person:' + r.personId))}</td><td>${fmtNumber(r.goodQuantity, 3)}</td><td>${r.scrapQuantity > 0 ? `${fmtNumber(r.scrapQuantity, 3)} <span class="muted">${esc(r.scrapReason)}</span>` : '0'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No quantities reported yet.</td></tr>'}
+        </tbody></table>
+        ${f.training.map(t => `<div class="notice" style="margin-top:8px">Supervised training, op ${t.sequence}: ${esc(who('person:' + t.traineeId))} under ${esc(who('person:' + t.trainerId))} for ${esc(t.qualifications.join(', '))} — ${t.evaluation ? `evaluated <b>${esc(t.evaluation)}</b>${t.evaluationNotes ? `: ${esc(t.evaluationNotes)}` : ''}` : t.endedAt ? 'awaiting the trainer\'s evaluation' : 'in progress'}. No qualification is granted by a session.</div>`).join('')}
+      </div>`;
+    page.append(section);
+  }
 
   $$('[data-act]', page).forEach(b => b.addEventListener('click', async () => {
     const act = b.dataset.act;

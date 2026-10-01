@@ -15,29 +15,46 @@ internal static class ApiSupport
         http.RequestServices.GetRequiredService<RequestPrincipal>().ResolveAsync(http.User, http.RequestAborted);
 
     /// <summary>Runs a command with the caller's principal, idempotency key, correlation ID and reason.</summary>
-    public static async Task<IResult> Command(HttpContext http, string? reason, Func<CommandContext, Task<CommandResult>> execute)
+    public static Task<IResult> Command(HttpContext http, string? reason, Func<CommandContext, Task<CommandResult>> execute) =>
+        Command(http, reason, null, CommandSource.Api, execute);
+
+    /// <summary>Runs a command with an explicit source (for example a shop-floor terminal).</summary>
+    public static async Task<IResult> Command(HttpContext http, string? reason, string? step, CommandSource source, Func<CommandContext, Task<CommandResult>> execute)
+    {
+        var (context, error) = await ContextAsync(http, reason, step, source);
+        if (context is null)
+        {
+            return error!;
+        }
+
+        return Results.Ok(await execute(context));
+    }
+
+    /// <summary>
+    /// Builds a command context. A request made of several commands passes a different
+    /// <paramref name="step"/> for each, so each step gets its own derived idempotency key.
+    /// </summary>
+    public static async Task<(CommandContext? Context, IResult? Error)> ContextAsync(HttpContext http, string? reason, string? step, CommandSource source)
     {
         var principal = await PrincipalAsync(http);
         if (principal is null)
         {
-            return NotRegistered();
+            return (null, NotRegistered());
         }
 
         var key = http.Request.Headers[IdempotencyHeader].ToString();
         if (string.IsNullOrWhiteSpace(key) || key.Length > 200)
         {
-            return Results.Problem(
+            return (null, Results.Problem(
                 title: "Idempotency key required",
                 detail: $"Send a unique '{IdempotencyHeader}' header (at most 200 characters) with every command.",
-                statusCode: StatusCodes.Status400BadRequest);
+                statusCode: StatusCodes.Status400BadRequest));
         }
 
         var time = http.RequestServices.GetRequiredService<TimeProvider>();
         var correlation = Guid.TryParse(http.Request.Headers[CorrelationHeader], out var supplied) ? supplied : ForgeIds.New(time);
-        var context = new CommandContext(principal, correlation, "person:" + principal.PersonId + ":" + key, CommandSource.Api, reason);
-        var result = await execute(context);
         http.Response.Headers[CorrelationHeader] = correlation.ToString();
-        return Results.Ok(result);
+        return (new CommandContext(principal, correlation, "person:" + principal.PersonId + ":" + key + (step is null ? string.Empty : ":" + step), source, reason), null);
     }
 
     /// <summary>Runs a read with the caller's principal after checking one permission.</summary>

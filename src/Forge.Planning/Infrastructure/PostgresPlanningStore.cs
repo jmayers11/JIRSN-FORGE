@@ -23,6 +23,9 @@ internal sealed class PostgresPlanningStore(PostgresUnitOfWork uow) : IPlanningS
     public async Task<ScheduleVersion?> LatestAsync(ScheduleStatus status, bool includeResult, CancellationToken ct) =>
         (await ReadVersions($"SELECT {VersionColumns}, {(includeResult ? "result" : "NULL")} FROM planning.schedule_version WHERE status = $1 ORDER BY version_id DESC LIMIT 1", ct, status.ToString())).SingleOrDefault();
 
+    public async Task<ScheduleVersion?> ApprovedAsOfAsync(DateTimeOffset at, CancellationToken ct) =>
+        (await ReadVersions($"SELECT {VersionColumns}, result FROM planning.schedule_version WHERE approved_at IS NOT NULL AND approved_at <= $1 ORDER BY approved_at DESC, version_id DESC LIMIT 1", ct, at)).SingleOrDefault();
+
     public async Task<long> InsertProposalAsync(ScheduleVersion version, string resultJson, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(version);

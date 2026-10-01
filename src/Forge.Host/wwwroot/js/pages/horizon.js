@@ -2,7 +2,7 @@ import { tryGet } from '../api.js';
 import { icon, img, stagePhoto } from '../icons.js';
 import { esc, $, $$, fmtNumber, fmtTime, fmtDateTime, timeZone, errorBlock, emptyBlock, drawer } from '../ui.js';
 import { who } from '../people.js';
-import { WINDOWS, buildHorizon, categoryInfo, plannedOutput, localDays, myAssignments } from '../model.js';
+import { WINDOWS, buildHorizon, categoryInfo, plannedOutput, actualOutput, localDays, myAssignments } from '../model.js';
 
 const H = 36e5;
 const STATUS = {
@@ -29,7 +29,7 @@ export async function horizonPage(page, ctx) {
     const now = Date.now();
     const win = WINDOWS[state.windowKey];
     const from = win.from(now), to = win.to(now);
-    const [resources, approved, proposed, constraints, downtime, capacity, orders, activeWork] = await Promise.all([
+    const [resources, approved, proposed, constraints, downtime, capacity, orders, activeWork, attainment, activity] = await Promise.all([
       tryGet('/api/resources/'),
       tryGet('/api/planning/schedules/approved'),
       tryGet('/api/planning/schedules/proposed'),
@@ -38,10 +38,12 @@ export async function horizonPage(page, ctx) {
       tryGet(`/api/planning/capacity?from=${encodeURIComponent(iso(from))}&to=${encodeURIComponent(iso(to))}`),
       tryGet('/api/orders/'),
       tryGet('/api/readiness/active-work'),
+      tryGet(`/api/planning/attainment?from=${encodeURIComponent(iso(now - 24 * H))}&to=${encodeURIComponent(iso(now))}`),
+      tryGet(`/api/shopfloor/activity?from=${encodeURIComponent(iso(now - 7 * 24 * H))}&to=${encodeURIComponent(iso(now))}`),
     ]);
     // Prefer the approved schedule; fall back to the latest proposal and say so.
     const schedule = approved.data ?? proposed.data ?? null;
-    data = { now, resources, approved, proposed, schedule, constraints, downtime, capacity, orders, activeWork };
+    data = { now, resources, approved, proposed, schedule, constraints, downtime, capacity, orders, activeWork, attainment, activity };
     render();
   }
 
@@ -50,6 +52,7 @@ export async function horizonPage(page, ctx) {
       resources: data.resources.data, schedule: data.schedule, constraints: data.constraints.data,
       downtime: data.downtime.data, capacity: data.capacity.data, orders: data.orders.data,
       activeWork: data.activeWork.data, now: data.now, windowKey: state.windowKey, safetyArea: state.safetyArea || null,
+      attainment: data.attainment,
     });
   }
 
@@ -167,25 +170,33 @@ export async function horizonPage(page, ctx) {
   function outputChart() {
     const head = `<header><h2>Production Output</h2><span class="spacer"></span>
       <div class="seg"><button data-range="last" class="${state.outputRange === 'last' ? 'on' : ''}">Last 7 Days</button><button data-range="next" class="${state.outputRange === 'next' ? 'on' : ''}">Next 7 Days</button></div></header>`;
-    if (!data.schedule) return head + emptyBlock('No schedule yet', 'Planned output comes from the schedule. A planner proposes one under Scheduling.');
     const start = state.outputRange === 'next' ? data.now : data.now - 6 * 24 * H;
     const days = localDays(start, 7, timeZone()).slice(0, 7);
-    const series = plannedOutput(data.schedule, data.orders.data, days, timeZone());
-    const max = Math.max(1, ...series.map(s => s.plan));
+    const plan = data.schedule ? plannedOutput(data.schedule, data.orders.data, days, timeZone()).map(s => s.plan) : days.map(() => 0);
+    const actual = data.activity.data ? actualOutput(data.activity.data.reports, days, timeZone()) : null;
+    if (!data.schedule && !(actual ?? []).some(v => v > 0)) {
+      return head + emptyBlock('Nothing planned or reported yet', 'Planned output comes from the approved schedule; actual output from quantities reported on final operations.');
+    }
+
+    const max = Math.max(1, ...plan, ...(actual ?? []));
     const nice = niceMax(max);
     const W = 360, Hh = 190, L = 34, B = 22, T = 8;
-    const bw = (W - L - 8) / series.length;
+    const bw = (W - L - 8) / days.length;
     const y = val => T + (Hh - T - B) * (1 - val / nice);
     const grid = [0, 0.5, 1].map(f => `<line x1="${L}" x2="${W}" y1="${y(nice * f)}" y2="${y(nice * f)}" stroke="#2A3038"/><text x="${L - 6}" y="${y(nice * f) + 4}" text-anchor="end" fill="#9CA3AF" font-size="10">${fmtNumber(nice * f, 0)}</text>`).join('');
-    const bars = series.map((s, i) => {
-      const x = L + i * bw + bw * 0.22;
-      const label = new Date(`${s.day}T12:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', timeZone: 'UTC' });
-      return `<rect x="${x}" y="${y(s.plan)}" width="${bw * 0.56}" height="${Math.max(0, Hh - B - y(s.plan))}" fill="#6B7280" rx="1"><title>${esc(s.day)}: ${fmtNumber(s.plan)} planned</title></rect>
-        <text x="${x + bw * 0.28}" y="${Hh - 6}" text-anchor="middle" fill="#9CA3AF" font-size="10">${esc(label)}</text>`;
+    const bar = (x, v, fill, title) => `<rect x="${x}" y="${y(v)}" width="${bw * 0.3}" height="${Math.max(0, Hh - B - y(v))}" fill="${fill}" rx="1"><title>${esc(title)}</title></rect>`;
+    const bars = days.map((d, i) => {
+      const x = L + i * bw + bw * 0.18;
+      const label = new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', timeZone: 'UTC' });
+      return bar(x, plan[i], '#6B7280', `${d}: ${fmtNumber(plan[i])} planned`)
+        + (actual ? bar(x + bw * 0.34, actual[i], '#F97316', `${d}: ${fmtNumber(actual[i])} completed`) : '')
+        + `<text x="${x + bw * 0.32}" y="${Hh - 6}" text-anchor="middle" fill="#9CA3AF" font-size="10">${esc(label)}</text>`;
     }).join('');
     return `${head}
-      <div class="legend"><span><i style="background:#6B7280"></i>Plan (units completing)</span><span class="faint"><i style="background:transparent;border:1px dashed #F97316"></i>Actual — not recorded until shop-floor reporting (Phase 5)</span></div>
-      <div class="chart"><svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Planned units completing per day">${grid}${bars}</svg></div>`;
+      <div class="legend"><span><i style="background:#6B7280"></i>Plan (scheduled completions)</span>${actual
+        ? '<span><i style="background:#F97316"></i>Actual (good units, final operation)</span>'
+        : `<span class="faint">Actual — ${esc(data.activity.error?.status === 403 ? 'not visible with your roles' : 'could not load')}</span>`}</div>
+      <div class="chart"><svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Planned and actual units per day">${grid}${bars}</svg></div>`;
   }
 
   function topIssues(v) {

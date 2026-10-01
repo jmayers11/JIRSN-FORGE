@@ -10,6 +10,7 @@ import { timelinePage } from './pages/timeline.js';
 import { workforcePage } from './pages/workforce.js';
 import { settingsPage } from './pages/settings.js';
 import { plannedPage } from './pages/planned.js';
+import { shopFloorPage } from './pages/shopfloor.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
@@ -18,6 +19,7 @@ const NAV = [
   { route: 'orders', label: 'Production Orders', icon: 'orders', page: ordersPage },
   { route: 'scheduling', label: 'Scheduling', icon: 'planning', page: schedulingPage },
   { route: 'work-centers', label: 'Work Centers', icon: 'production', page: workCentersPage },
+  { route: 'shop-floor', label: 'Shop Floor', icon: 'operator', page: shopFloorPage },
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: plannedPage('inventory') },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: plannedPage('procurement') },

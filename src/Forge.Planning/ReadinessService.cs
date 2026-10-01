@@ -23,6 +23,7 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
     private readonly OperationReadinessEngine readiness = new();
     private readonly ReallocationImpactEngine reallocation = new();
     private readonly OrderReadinessEngine orders = new();
+    private readonly AttainmentEngine attainment = new();
 
     /// <summary>Readiness of each operation of a production order, now.</summary>
     public async Task<EngineRun<OrderReadinessResult>> EvaluateOrderAsync(ForgePrincipal principal, long orderNumber, CancellationToken ct)
@@ -147,6 +148,50 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
 
         var snapshot = await LoadSnapshotAsync(uow, ct);
         return EngineRunner.Run(new DropDeadDateEngine(), snapshot, new DropDeadRequest(order, shipDays, purchased), snapshot.AsOf);
+    }
+
+    /// <summary>
+    /// Schedule attainment for a past (or current) period, against the schedule approved and in force
+    /// when the period began. Orders of programs the caller cannot see are left out entirely.
+    /// </summary>
+    public async Task<EngineRun<AttainmentResult>> EvaluateAttainmentAsync(ForgePrincipal principal, DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        var decision = authorizer.Authorize(principal, Permissions.ScheduleRead, ResourceRef.Of("Schedule"));
+        if (!decision.IsPermitted)
+        {
+            throw new ForgeAuthorizationException(decision);
+        }
+
+        if (to <= from || to - from > TimeSpan.FromDays(62))
+        {
+            throw new CommandRejectedException("invalid_period", "The period must end after it starts and span at most 62 days.");
+        }
+
+        await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
+        var version = await uow.Store<IPlanningStore>().ApprovedAsOfAsync(from, ct);
+        var plan = version?.Result;
+        if (plan is not null)
+        {
+            plan = plan with
+            {
+                Operations = plan.Operations.Where(o => o.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))).ToList(),
+                Orders = plan.Orders.Where(o => o.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))).ToList(),
+            };
+        }
+
+        var lookup = uow.Store<IExecutionLookup>();
+        var executed = new List<OrderInfo>();
+        foreach (var number in (plan?.Operations ?? []).Select(o => o.OrderNumber).Distinct().Order())
+        {
+            if (await lookup.FindOrderAsync(number, ct) is { } order)
+            {
+                executed.Add(order);
+            }
+        }
+
+        var snapshot = new AttainmentSnapshot(version?.VersionId, version?.ApprovedAt, plan, executed);
+        return EngineRunner.Run(attainment, snapshot, new AttainmentRequest(from.ToUniversalTime(), to.ToUniversalTime()), time.GetUtcNow());
     }
 
     private void Demand(ForgePrincipal principal)

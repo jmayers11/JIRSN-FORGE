@@ -67,6 +67,9 @@ public interface IPlanningStore
 
     Task<ScheduleVersion?> LatestAsync(ScheduleStatus status, bool includeResult, CancellationToken ct);
 
+    /// <summary>The schedule that was approved and in force at an instant (approved at or before it, latest first).</summary>
+    Task<ScheduleVersion?> ApprovedAsOfAsync(DateTimeOffset at, CancellationToken ct);
+
     Task<long> InsertProposalAsync(ScheduleVersion version, string resultJson, CancellationToken ct);
 
     Task SetStatusAsync(long versionId, ScheduleStatus status, string? approvedBy, DateTimeOffset? approvedAt, CancellationToken ct);
