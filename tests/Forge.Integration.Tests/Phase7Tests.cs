@@ -88,7 +88,12 @@ public sealed class Phase7Tests(PostgresFixture postgres)
         await plant.Ok(k, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" });
         await plant.Ok(k, "/api/shopfloor/report", new { badge = Sarah, orderNumber = order, sequence = 10, good = 10m, scrap = 0m, complete = true });
 
-        // Operation 20 waits for the inspection after operation 10.
+        // Operation 20 waits for the inspection after operation 10, at the kiosk as well as in readiness.
+        var notInspected = await Try(plant, k, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 20 });
+        Assert.Contains("order_on_hold", notInspected.Body, StringComparison.Ordinal);
+        Assert.Contains("inspection after operation 10", notInspected.Body, StringComparison.Ordinal);
+        var queue = await plant.Ok(k, "/api/shopfloor/identify", new { badge = Sarah });
+        Assert.Contains(queue.GetProperty("queue").EnumerateArray(), q => q.GetProperty("orderNumber").GetInt64() == order && q.GetProperty("hold").ValueKind == JsonValueKind.String);
         var readiness = await Get(planner, $"/api/orders/{order}/readiness");
         Assert.Equal("Fail", Dimension(readiness, 20, "Quality").GetProperty("outcome").GetString());
         Assert.Equal("Quality", readiness.GetProperty("output").GetProperty("operations")[1].GetProperty("primaryConstraint").GetString());
@@ -112,6 +117,8 @@ public sealed class Phase7Tests(PostgresFixture postgres)
         Assert.Contains("Width 100.8 outside 99.5-100.5", ncr.GetProperty("description").GetString(), StringComparison.Ordinal);
         readiness = await Get(planner, $"/api/orders/{order}/readiness");
         Assert.Contains($"NCR {ncrId}", Dimension(readiness, 20, "Quality").GetProperty("detail").GetString(), StringComparison.Ordinal);
+        var held = await Try(plant, k, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 20 });
+        Assert.Contains($"NCR {ncrId}", held.Body, StringComparison.Ordinal);
 
         // Use-as-is needs a reason, the disposition authority, and a different person to approve it.
         Assert.Contains("reason", (await Try(plant, qe, $"/api/quality/ncrs/{ncrId}/disposition", new { disposition = "UseAsIs", note = "Within customer tolerance" })).Body, StringComparison.OrdinalIgnoreCase);

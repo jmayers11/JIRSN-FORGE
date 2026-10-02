@@ -30,9 +30,13 @@ programs/contracts and preventive maintenance.
 6. **Quality is a readiness dimension.** Order readiness (engine v3) fails an unfinished operation
    when an earlier inspection point has not passed or the order has an NCR that is Open or awaiting
    approval. Precedence: Order, Engineering, Predecessor, Quality, Material, then resources.
-   Execution cannot see Quality (Quality depends on Execution), so starting work is not blocked by
-   the kiosk; the hold is enforced where material moves: a production receipt needs every inspection
-   point of the order passed and no undecided NCR.
+   The hold is also enforced on the shop floor. Execution owns a small port, `IWorkHoldLookup`
+   (in its contracts), and Quality implements it, so Execution never depends on Quality. Starting an
+   operation is refused while an undecided NCR holds the order, or while an inspection point before
+   that operation has not passed. Reporting good output or completing an operation is refused while an
+   NCR holds the order; scrap can still be reported, and anyone working can stop. The kiosk queue
+   shows held work with the reason instead of a Start button. A production receipt needs every
+   inspection point of the order passed and no undecided NCR.
 7. **Shipping is two-person and ledger-based.** A shipment (customer, optional demand, lines of
    part/location/lot/quantity) is created and packed by a material handler; packing checks Available
    stock and that no lot is on an undecided NCR (a lot `WO<n>` belongs to order n). Shipping is done
@@ -45,6 +49,7 @@ programs/contracts and preventive maintenance.
 9. **New roles.** Inspector, Quality Engineer, Quality Manager and Shipper, each holding one duty.
 
 ## Consequences
-- An undecided NCR or a missed inspection shows on the order, on Quality, and as the order's primary
-  constraint; finished goods cannot be received or shipped past it.
+- An undecided NCR or a missed inspection shows on the order, on Quality, as the order's primary
+  constraint and on the kiosk; work cannot start past it, and finished goods cannot be received or
+  shipped past it.
 - Programs/contract quality clauses, first-article inspection and sampling plans are left for later.

@@ -187,12 +187,20 @@ internal static class ShopFloorEndpoints
         var scheduleStart = (schedule?.Operations ?? []).Where(o => o.Scheduled).ToDictionary(o => (o.OrderNumber, o.Sequence), o => (o.Start, o.MachineCode));
         var home = state?.HomeWorkCenterCode;
         var assigned = state?.Assignment;
-        var queue = (await exec.ListOpenOperationsAsync(ct))
+        var mine = (await exec.ListOpenOperationsAsync(ct))
             .Where(o => Visible(o.ProgramId))
             .Where(o => o.Operation.WorkCenterCode == home
                 || o.Operation.WorkCenterCode == assigned?.WorkCenterCode
                 || (assigned?.MachineCode is { } m && o.Operation.EligibleMachines.Contains(m))
                 || scheduledForMe.ContainsKey((o.OrderNumber, o.Operation.Sequence)))
+            .ToList();
+        var holds = new Dictionary<long, IReadOnlyList<WorkHold>>();
+        foreach (var o in mine.DistinctBy(o => o.OrderNumber))
+        {
+            holds[o.OrderNumber] = await uow.Store<IWorkHoldLookup>().ListHoldsAsync(o.OrderNumber, o.PartNumber, ct);
+        }
+
+        var queue = mine
             .Select(o => new
             {
                 o.OrderNumber,
@@ -204,6 +212,7 @@ internal static class ShopFloorEndpoints
                 scheduledStart = scheduleStart.TryGetValue((o.OrderNumber, o.Operation.Sequence), out var at) ? at.Start : null,
                 scheduledMachine = scheduleStart.TryGetValue((o.OrderNumber, o.Operation.Sequence), out var sm) ? sm.MachineCode : null,
                 scheduledForYou = scheduledForMe.ContainsKey((o.OrderNumber, o.Operation.Sequence)),
+                hold = string.Join(" ", holds[o.OrderNumber].Where(h => h.Blocks(o.Operation.Sequence)).Select(h => h.Detail)) is { Length: > 0 } why ? why : null,
             })
             .OrderByDescending(o => o.scheduledForYou)
             .ThenBy(o => o.scheduledStart ?? DateTimeOffset.MaxValue)

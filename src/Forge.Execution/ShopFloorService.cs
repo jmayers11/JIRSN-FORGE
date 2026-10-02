@@ -122,11 +122,13 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var worker = await HolderAsync(uow, c.Badge, ct);
-            var (_, op, program) = await OperationAsync(uow, context, worker, c.OrderNumber, c.Sequence, ct);
+            var (order, op, program) = await OperationAsync(uow, context, worker, c.OrderNumber, c.Sequence, ct);
             if (op.Status == OperationStatus.Complete)
             {
                 throw new CommandRejectedException("operation_complete", $"Operation {id} is already complete.");
             }
+
+            await RequireNoHoldAsync(uow, order, c.Sequence, wholeOrderOnly: false, ct);
 
             var store = uow.Store<IShopFloorStore>();
             var current = await store.FindOpenLaborAsync(worker.PersonId, ct);
@@ -269,6 +271,12 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
                 throw new CommandRejectedException("not_on_operation", $"{worker.DisplayName} is not working on operation {id}. Start it first; trainers report through the trainee.");
             }
 
+            // Scrap may always be reported; good output and completion wait while the order is on hold.
+            if (c.GoodQuantity > 0 || c.CompleteOperation)
+            {
+                await RequireNoHoldAsync(uow, order, c.Sequence, wholeOrderOnly: true, ct);
+            }
+
             var good = op.GoodQuantity + c.GoodQuantity;
             if (good > order.Quantity)
             {
@@ -372,6 +380,22 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             .Select(s => new FloorPerson(s.PersonId, s.DisplayName, s.IsActive && s.PresenceKind is not null && s.Unavailability is null, quals.Where(q => q.PersonId == s.PersonId).ToList()))
             .ToList();
         return new OperatorSnapshot(await competency.ListTypesAsync(ct), people);
+    }
+
+    /// <summary>
+    /// Holds from other contexts (an undecided NCR, an inspection not yet passed). Starting checks every
+    /// hold that reaches the operation; reporting good output checks only whole-order holds, so work
+    /// already under way after a passed inspection is not stopped by a later inspection point.
+    /// </summary>
+    private static async Task RequireNoHoldAsync(IKernelUnitOfWork uow, OrderInfo order, int sequence, bool wholeOrderOnly, CancellationToken ct)
+    {
+        var holds = (await uow.Store<IWorkHoldLookup>().ListHoldsAsync(order.OrderNumber, order.PartNumber, ct))
+            .Where(h => wholeOrderOnly ? h.AfterSequence is null : h.Blocks(sequence))
+            .ToList();
+        if (holds.Count > 0)
+        {
+            throw new CommandRejectedException("order_on_hold", $"Order {order.OrderNumber} is on hold: {string.Join(" ", holds.Select(h => h.Detail))} See Quality.");
+        }
     }
 
     private static async Task<BadgeHolder> HolderAsync(IKernelUnitOfWork uow, Secret badge, CancellationToken ct)

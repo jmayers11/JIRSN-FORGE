@@ -122,7 +122,7 @@ export async function shopFloorPage(page, ctx) {
             : esc(q.operation.eligibleMachines[0] ?? '—')}</td>
           <td>${fmtNumber(q.operation.goodQuantity, 3)} / ${fmtNumber(q.orderQuantity, 3)}</td>
           <td>${q.scheduledStart ? esc(fmtDateTime(q.scheduledStart)) : '<span class="faint">—</span>'}${q.scheduledForYou ? '<br><span class="pill info">Scheduled for you</span>' : ''}</td>
-          <td><button class="btn primary" data-start="${i}" ${clocked ? '' : 'disabled title="Clock in first"'}>Start</button></td></tr>`).join('')}
+          <td>${q.hold ? `<span class="pill bad">On hold</span><div class="faint" style="max-width:260px">${esc(q.hold)}</div>` : `<button class="btn primary" data-start="${i}" ${clocked ? '' : 'disabled title="Clock in first"'}>Start</button>`}</td></tr>`).join('')}
         </tbody></table>` : emptyBlock('Nothing to start', 'No released work at your work center, your assignment or in the schedule for you.')}
       </section>` : ''}`;
 

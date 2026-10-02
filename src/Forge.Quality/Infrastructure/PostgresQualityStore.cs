@@ -1,3 +1,4 @@
+using Forge.Execution.Contracts;
 using Forge.Kernel.Postgres;
 using Forge.Quality.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -6,7 +7,7 @@ using NpgsqlTypes;
 
 namespace Forge.Quality.Infrastructure;
 
-internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualityStore, IQualityLookup
+internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualityStore, IQualityLookup, IWorkHoldLookup
 {
     private const string NcrSql =
         """
@@ -231,6 +232,19 @@ internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualitySto
         return new OrderQuality(orderNumber, planned, passed, open);
     }
 
+    /// <summary>Quality's holds for the shop floor: undecided NCRs hold the whole order; an inspection point not yet passed holds the operations after it.</summary>
+    public async Task<IReadOnlyList<WorkHold>> ListHoldsAsync(long orderNumber, string partNumber, CancellationToken ct)
+    {
+        var quality = await GetOrderQualityAsync(orderNumber, partNumber, ct);
+        var holds = quality.OpenNcrs
+            .Select(n => new WorkHold("Quality", $"NCR {n.NcrId}", null, $"NCR {n.NcrId} ({n.Defect}) is {(n.Status == NcrStatus.AwaitingApproval ? "waiting for use-as-is approval" : "waiting for a disposition")}."))
+            .ToList();
+        holds.AddRange(quality.PlannedSequences
+            .Where(s => !quality.PassedSequences.Contains(s))
+            .Select(s => new WorkHold("Quality", $"Inspection {orderNumber}/{s}", s, $"The inspection after operation {s} has not passed.")));
+        return holds;
+    }
+
     private static NcrInfo ReadNcr(NpgsqlDataReader r) => new(
         r.GetInt64(0),
         r.GetString(1),
@@ -301,6 +315,7 @@ public static class QualityRegistration
         services.AddForgeMigrations(typeof(QualityRegistration).Assembly, "quality");
         services.AddForgeStore<IQualityStore>(uow => new PostgresQualityStore(uow));
         services.AddForgeStore<IQualityLookup>(uow => new PostgresQualityStore(uow));
+        services.AddForgeStore<IWorkHoldLookup>(uow => new PostgresQualityStore(uow));
         services.AddSingleton<QualityService>();
         return services;
     }

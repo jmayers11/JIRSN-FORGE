@@ -114,6 +114,24 @@ public sealed record TrainingSession(
 /// <summary>A released, unfinished operation: the shop floor's work queue.</summary>
 public sealed record OpenOperation(long OrderNumber, string PartNumber, decimal OrderQuantity, DateOnly DueDate, int Priority, Guid? ProgramId, OrderOperationInfo Operation);
 
+/// <summary>
+/// Something another context says must stop work on an order. <see cref="AfterSequence"/> null holds
+/// every operation; otherwise operations after that sequence wait (an inspection after it has not passed).
+/// </summary>
+public sealed record WorkHold(string Source, string Reference, int? AfterSequence, string Detail)
+{
+    public bool Blocks(int sequence) => AfterSequence is not { } after || sequence > after;
+}
+
+/// <summary>
+/// Holds placed on orders by other contexts (Quality). Execution owns this port so it never depends on
+/// them; they implement it. Starting and reporting work check it.
+/// </summary>
+public interface IWorkHoldLookup
+{
+    Task<IReadOnlyList<WorkHold>> ListHoldsAsync(long orderNumber, string partNumber, CancellationToken ct);
+}
+
 public interface IExecutionLookup
 {
     /// <summary>Operations of released orders that are not complete, by order then sequence.</summary>
