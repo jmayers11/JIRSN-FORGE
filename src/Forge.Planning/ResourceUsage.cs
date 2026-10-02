@@ -24,9 +24,11 @@ internal sealed class ResourceUsage(IKernelUnitOfWork uow) : IResourceUsage
             _ => false,
         };
 
-        foreach (var order in await uow.Store<IExecutionLookup>().ListOrdersAsync(ct))
+        var execution = uow.Store<IExecutionLookup>();
+        foreach (var summary in await execution.ListOrdersAsync(ct))
         {
-            if (order.Status is not (OrderStatus.Released or OrderStatus.Held))
+            // The list carries no operations; read each unfinished order in full.
+            if (summary.Status is not (OrderStatus.Released or OrderStatus.Held) || await execution.FindOrderAsync(summary.OrderNumber, ct) is not { } order)
             {
                 continue;
             }

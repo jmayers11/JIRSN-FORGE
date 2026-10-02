@@ -75,7 +75,8 @@ public sealed class ScheduleService(CommandPipeline pipeline, IKernelUnitOfWorkF
                 orders.Add((await lookup.FindOrderAsync(summary.OrderNumber, ct))!);
             }
 
-            var request = new ScheduleRequest(snapshot.AsOf, snapshot.AsOf.AddDays(c.HorizonDays), orders);
+            var material = (await MaterialPlanningService.RunMaterialAsync(read, time, ct)).Output;
+            var request = new ScheduleRequest(snapshot.AsOf, snapshot.AsOf.AddDays(c.HorizonDays), orders, material);
             run = EngineRunner.Run(new SchedulingEngine(), snapshot, request, snapshot.AsOf);
             findings = new ConstraintEngine().Evaluate(snapshot, new ConstraintRequest(run.Output), snapshot.AsOf).Output;
         }

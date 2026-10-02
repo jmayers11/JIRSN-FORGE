@@ -3,6 +3,8 @@ using Forge.Competency.Infrastructure;
 using Forge.Engineering.Infrastructure;
 using Forge.Execution.Infrastructure;
 using Forge.Maintenance.Infrastructure;
+using Forge.Inventory.Infrastructure;
+using Forge.Procurement.Infrastructure;
 using Forge.Host.Api;
 using Forge.Host.Security;
 using Forge.Kernel.Access;
@@ -29,6 +31,8 @@ builder.Services.AddForgeSafetyRules();
 builder.Services.AddForgeEngineering();
 builder.Services.AddForgeExecution();
 builder.Services.AddForgeMaintenance();
+builder.Services.AddForgeProcurement();
+builder.Services.AddForgeInventory();
 builder.Services.AddForgePlanning();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
@@ -124,6 +128,7 @@ app.MapOperationsEndpoints();
 app.MapEngineeringEndpoints();
 app.MapPlanningEndpoints();
 app.MapShopFloorEndpoints();
+app.MapMaterialsEndpoints();
 
 await app.RunAsync();
 

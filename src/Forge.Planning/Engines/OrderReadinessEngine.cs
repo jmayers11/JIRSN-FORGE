@@ -4,8 +4,11 @@ using Forge.Kernel.Engines;
 
 namespace Forge.Planning.Engines;
 
-/// <summary>The order to evaluate, and its revision as engineering sees it now.</summary>
-public sealed record OrderReadinessRequest(OrderInfo Order, RevisionInfo? RevisionNow);
+/// <summary>
+/// The order to evaluate, its revision as engineering sees it now, and (for a released order) its
+/// material allocation. Without material status, material is listed as not evaluated.
+/// </summary>
+public sealed record OrderReadinessRequest(OrderInfo Order, RevisionInfo? RevisionNow, OrderMaterialStatus? Material = null);
 
 /// <summary>How one eligible machine (or the work center, for work without a machine) looks for an operation.</summary>
 public sealed record OperationCandidate(string? MachineCode, bool Executable, string? PrimaryConstraint, IReadOnlyList<ReadinessDimension> Dimensions);
@@ -32,13 +35,15 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
 {
     public static readonly IReadOnlyList<string> NotYetEvaluated = ["Material", "Tooling", "Quality"];
 
-    private static readonly string[] Precedence = ["Order", "Engineering", "Predecessor", "RequirementProfile", "Equipment", "Safety", "Workforce"];
+    public static readonly IReadOnlyList<string> NotYetEvaluatedWithMaterial = ["Tooling", "Quality"];
+
+    private static readonly string[] Precedence = ["Order", "Engineering", "Predecessor", "Material", "RequirementProfile", "Equipment", "Safety", "Workforce"];
 
     private readonly PersonnelCompositionEngine composition = new();
 
     public string Name => "order-readiness";
 
-    public string Version => "1";
+    public string Version => "2";
 
     public EngineEvaluation<OrderReadinessResult> Evaluate(SiteSnapshot snapshot, OrderReadinessRequest parameters, DateTimeOffset asOf)
     {
@@ -61,6 +66,16 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
             _ => new ReadinessDimension("Engineering", EvidenceOutcome.Fail, $"{order.PartNumber} rev {order.Revision} is not in force."),
         };
 
+        var started = order.Operations.Any(o => o.Status != OperationStatus.Pending);
+        var material = parameters.Material switch
+        {
+            null => null,
+            { State: MaterialState.Ready } m => new ReadinessDimension("Material", EvidenceOutcome.Pass, m.Summary),
+            { } m when started => new ReadinessDimension("Material", EvidenceOutcome.Info, $"Work has started. Material still to issue: {m.Summary}"),
+            { } m => new ReadinessDimension("Material", EvidenceOutcome.Fail, m.Summary),
+        };
+        var notEvaluated = material is null ? NotYetEvaluated : NotYetEvaluatedWithMaterial;
+
         var operations = new List<OperationReadiness>();
         var nodes = new List<EvidenceNode>();
         foreach (var op in order.Operations.OrderBy(o => o.Sequence))
@@ -79,12 +94,17 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
                 .First();
 
             var dimensions = new List<ReadinessDimension> { orderDimension, engineering, predecessor };
+            if (material is not null && op.Status != OperationStatus.Complete)
+            {
+                dimensions.Add(material);
+            }
+
             dimensions.AddRange(best.Dimensions);
             var failed = dimensions.Where(d => d.Outcome is EvidenceOutcome.Fail or EvidenceOutcome.Indeterminate).Select(d => d.Name).ToList();
             var executable = failed.Count == 0;
             var primary = Precedence.FirstOrDefault(failed.Contains);
 
-            operations.Add(new OperationReadiness(op.Sequence, op.Description, executable, primary, best.MachineCode, dimensions, candidates, NotYetEvaluated));
+            operations.Add(new OperationReadiness(op.Sequence, op.Description, executable, primary, best.MachineCode, dimensions, candidates, notEvaluated));
             nodes.Add(new EvidenceNode(
                 "Operation",
                 executable ? EvidenceOutcome.Pass : EvidenceOutcome.Fail,

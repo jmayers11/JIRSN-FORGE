@@ -12,6 +12,9 @@ import { settingsPage } from './pages/settings.js';
 import { plannedPage } from './pages/planned.js';
 import { shopFloorPage } from './pages/shopfloor.js';
 import { plantSetupPage } from './pages/plantsetup.js';
+import { inventoryPage } from './pages/inventory.js';
+import { mrpPage } from './pages/mrp.js';
+import { procurementPage } from './pages/procurement.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
@@ -19,12 +22,13 @@ const NAV = [
   { route: 'horizon', label: 'Horizon', icon: 'analytics', page: timelinePage },
   { route: 'orders', label: 'Production Orders', icon: 'orders', page: ordersPage },
   { route: 'scheduling', label: 'Scheduling', icon: 'planning', page: schedulingPage },
+  { route: 'material-plan', label: 'Material Plan', icon: 'material', page: mrpPage },
   { route: 'work-centers', label: 'Work Centers', icon: 'production', page: workCentersPage },
   { route: 'shop-floor', label: 'Shop Floor', icon: 'operator', page: shopFloorPage },
   { route: 'plant-setup', label: 'Plant Setup', icon: 'workorder', page: plantSetupPage },
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
-  { route: 'inventory', label: 'Inventory', icon: 'inventory', page: plannedPage('inventory') },
-  { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: plannedPage('procurement') },
+  { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
+  { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: plannedPage('quality') },
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
   { route: 'shipping', label: 'Shipping', icon: 'suppliers', page: plannedPage('shipping') },
@@ -37,7 +41,8 @@ const ROLE_TITLES = {
   SecurityAdministrator: 'Security Administrator', ManufacturingEngineer: 'Manufacturing Engineer', Planner: 'Planner',
   Supervisor: 'Supervisor', SafetyEngineer: 'Safety Engineer', SafetyApprover: 'Safety Approver', Certifier: 'Certifier',
   TrainingCoordinator: 'Training Coordinator', EngineeringApprover: 'Engineering Approver', MaintenanceTechnician: 'Maintenance Technician',
-  Auditor: 'Auditor',
+  Auditor: 'Auditor', MaterialHandler: 'Material Handler', InventoryController: 'Inventory Controller', Buyer: 'Buyer',
+  PurchasingManager: 'Purchasing Manager', ShopFloorTerminal: 'Shop Floor Terminal',
 };
 export const roleTitle = r => ROLE_TITLES[r] ?? r;
 

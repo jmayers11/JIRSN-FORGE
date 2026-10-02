@@ -588,7 +588,7 @@ public sealed class ResourcesService(CommandPipeline pipeline)
         var uses = await uow.Store<IResourceUsage>().FindUsesAsync(kind, code, activity, now, ct);
         if (uses.Count > 0)
         {
-            var shown = string.Join("; ", uses.Take(6)) + (uses.Count > 6 ? $"; and {uses.Count - 6} more" : string.Empty);
+            var shown = string.Join("; ", uses.Take(8)) + (uses.Count > 8 ? $"; and {uses.Count - 8} more" : string.Empty);
             throw new CommandRejectedException("in_use", $"{code}{(activity is null ? string.Empty : " " + activity)} cannot be {verb} while it is in use: {shown}.");
         }
     }

@@ -32,7 +32,7 @@ public sealed class ConstraintEngine : IEngine<SiteSnapshot, ConstraintRequest, 
 {
     public string Name => "constraints";
 
-    public string Version => "1";
+    public string Version => "2";
 
     public EngineEvaluation<IReadOnlyList<ConstraintFinding>> Evaluate(SiteSnapshot snapshot, ConstraintRequest parameters, DateTimeOffset asOf)
     {
@@ -64,7 +64,7 @@ public sealed class ConstraintEngine : IEngine<SiteSnapshot, ConstraintRequest, 
 
         var timeline = new CapacityTimeline(snapshot, new Span(schedule.From, schedule.To));
         var findings = raw
-            .Where(r => r.Category is "Maintenance" or "SafetyStaffing" or "QualifiedLabor" or "RequirementProfile" or "Horizon" || troubled.Contains(r.Op.OrderNumber))
+            .Where(r => r.Category is "Maintenance" or "SafetyStaffing" or "QualifiedLabor" or "RequirementProfile" or "Horizon" or "Material" || troubled.Contains(r.Op.OrderNumber))
             .Where(r => r.Category != "LatePredecessor")
             .GroupBy(r => (r.Category, r.Subject, Day: WorkCalendar.LocalDate(snapshot, WorkCalendar.SiteOfWorkCenter(snapshot, r.Op.WorkCenterCode), r.From)))
             .OrderBy(g => g.Key.Day)
@@ -119,6 +119,7 @@ public sealed class ConstraintEngine : IEngine<SiteSnapshot, ConstraintRequest, 
         "Calendar" => "No working time",
         "RequirementProfile" => "Missing machine requirement",
         "Horizon" => "Not enough capacity in the horizon",
+        "Material" => "Material not available",
         _ => category,
     };
 

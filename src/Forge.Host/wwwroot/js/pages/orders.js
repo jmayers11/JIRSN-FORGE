@@ -62,8 +62,9 @@ async function newOrder() {
 }
 
 async function orderDetail(page, ctx, number) {
-  const [order, readiness, dropDead] = await Promise.all([
+  const [order, readiness, dropDead, material, issues] = await Promise.all([
     tryGet(`/api/orders/${number}`), tryGet(`/api/orders/${number}/readiness`), tryGet(`/api/orders/${number}/drop-dead-dates`),
+    tryGet('/api/planning/material'), tryGet(`/api/inventory/transactions?order=${number}`),
   ]);
   if (order.error) { page.innerHTML = `<a href="#/orders">← Production Orders</a>${errorBlock(order.error, `order #${number}`)}`; return; }
   const o = order.data;
@@ -119,7 +120,7 @@ async function orderDetail(page, ctx, number) {
       <div class="panel"><header><h2>Materials</h2></header>
         ${o.materials?.length ? `<table class="table"><thead><tr><th>Line</th><th>Component</th><th>Rev</th><th>Required</th></tr></thead><tbody>
         ${o.materials.map(m => `<tr><td>${m.lineNumber}</td><td>${esc(m.componentPartNumber)}</td><td>${esc(m.componentRevision ?? '—')}</td><td>${fmtNumber(m.requiredQuantity, 3)} ${esc(m.unitOfMeasure)}</td></tr>`).join('')}
-        </tbody></table><div class="faint" style="margin-top:6px">Availability is not checked until Materials/MRP (Phase 6).</div>` : emptyBlock('No materials yet', 'Copied from the BOM at release.')}
+        </tbody></table>${materialStatus(o, material, issues)}` : emptyBlock('No materials yet', 'Copied from the BOM at release.')}
       </div>
     </section>`;
 
@@ -150,3 +151,16 @@ async function orderDetail(page, ctx, number) {
   }));
 }
 
+
+const MATERIAL_TONE = { Ready: 'ok', Expected: 'warn', Shortfall: 'bad' };
+
+/** Allocation of stock and open supply to this order, and what has been issued to it. */
+function materialStatus(o, material, issues) {
+  if (o.status !== 'Released') return '<div class="faint" style="margin-top:6px">Material is allocated once the order is released.</div>';
+  const m = (material.data?.output ?? []).find(x => x.orderNumber === o.orderNumber);
+  const moves = issues.data ?? [];
+  return `${m ? `<div style="margin-top:8px"><span class="pill ${MATERIAL_TONE[m.state]}">${esc(m.state === 'Expected' ? 'Waiting for receipts' : m.state === 'Shortfall' ? 'Short' : m.state)}</span> ${esc(m.summary)}</div>
+    <ul class="evidence">${m.lines.map(l => `<li><b>${esc(l.partNumber)}</b>: needs ${fmtNumber(l.required, 3)}, issued ${fmtNumber(l.issued, 3)}${l.remaining > 0 ? ` — still to issue ${fmtNumber(l.remaining, 3)}: ${l.allocations.map(a => `${fmtNumber(a.quantity, 3)} from ${esc(a.description)}${a.dueDate ? ` (due ${esc(fmtDate(a.dueDate))})` : ''}`).join(', ') || 'nothing allocated'}${l.shortfall > 0 ? ` <span class="c-bad">short ${fmtNumber(l.shortfall, 3)}</span>` : ''}` : ''}</li>`).join('')}</ul>`
+    : material.error ? errorBlock(material.error, 'material status') : ''}
+    ${moves.length ? `<div class="faint" style="margin-top:6px">${moves.length} inventory movement(s) for this order — <a href="#/inventory?tab=ledger">ledger</a>.</div>` : ''}`;
+}

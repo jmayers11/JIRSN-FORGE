@@ -15,7 +15,35 @@ public enum RevisionStatus
     Released,
 }
 
-public sealed record ItemInfo(string PartNumber, string Description, string UnitOfMeasure, MakeBuy MakeBuy, int LeadTimeDays, bool LotTracked, bool Serialized);
+/// <summary>How MRP sizes a planned order once it knows the net requirement.</summary>
+public enum LotPolicy
+{
+    /// <summary>Exactly the net requirement.</summary>
+    LotForLot,
+
+    /// <summary>Whole multiples of <see cref="ItemInfo.OrderQuantity"/> (for example a full coil or pallet).</summary>
+    FixedQuantity,
+
+    /// <summary>At least <see cref="ItemInfo.OrderQuantity"/>.</summary>
+    MinimumQuantity,
+}
+
+/// <summary>
+/// An item and its planning parameters. Lead time is in calendar days. Safety stock is the quantity
+/// MRP keeps on hand; <see cref="OrderMultiple"/> (when above zero) rounds every planned order up.
+/// </summary>
+public sealed record ItemInfo(
+    string PartNumber,
+    string Description,
+    string UnitOfMeasure,
+    MakeBuy MakeBuy,
+    int LeadTimeDays,
+    bool LotTracked,
+    bool Serialized,
+    decimal SafetyStock = 0,
+    LotPolicy LotPolicy = LotPolicy.LotForLot,
+    decimal OrderQuantity = 0,
+    decimal OrderMultiple = 0);
 
 /// <summary>
 /// One revision of an item. A released revision is in force from <see cref="EffectiveFrom"/> until
@@ -45,6 +73,9 @@ public sealed record RoutingOperationInfo(
     decimal RunMinutesPerUnit,
     int CrewSize);
 
+/// <summary>A released revision and its bill of materials, for MRP explosion.</summary>
+public sealed record RevisionStructure(RevisionInfo Revision, IReadOnlyList<BomLineInfo> Bom);
+
 public sealed record RevisionDetail(ItemInfo Item, RevisionInfo Revision, IReadOnlyList<BomLineInfo> Bom, IReadOnlyList<RoutingOperationInfo> Routing);
 
 public interface IEngineeringLookup
@@ -59,4 +90,7 @@ public interface IEngineeringLookup
 
     /// <summary>The released revision in force at the instant, if any.</summary>
     Task<RevisionInfo?> GetEffectiveRevisionAsync(string partNumber, DateTimeOffset at, CancellationToken ct);
+
+    /// <summary>Every released revision (in force, future or ended) with its BOM, by part then effective date.</summary>
+    Task<IReadOnlyList<RevisionStructure>> ListReleasedStructuresAsync(CancellationToken ct);
 }

@@ -7,7 +7,7 @@ namespace Forge.Engineering.Infrastructure;
 
 internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngineeringStore, IEngineeringLookup
 {
-    private const string ItemSql = "SELECT part_number, description, unit_of_measure, make_buy, lead_time_days, lot_tracked, serialized FROM engineering.item";
+    private const string ItemSql = "SELECT part_number, description, unit_of_measure, make_buy, lead_time_days, lot_tracked, serialized, safety_stock, lot_policy, order_quantity, order_multiple FROM engineering.item";
     private const string RevisionSql = "SELECT part_number, revision, status, effective_from, effective_to FROM engineering.revision";
 
     public async Task<bool> InsertItemAsync(ItemInfo item, DateTimeOffset at, string actor, CancellationToken ct)
@@ -128,7 +128,31 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
     }
 
     private static ItemInfo ReadItem(NpgsqlDataReader r) =>
-        new(r.GetString(0), r.GetString(1), r.GetString(2), Enum.Parse<MakeBuy>(r.GetString(3)), r.GetInt32(4), r.GetBoolean(5), r.GetBoolean(6));
+        new(r.GetString(0), r.GetString(1), r.GetString(2), Enum.Parse<MakeBuy>(r.GetString(3)), r.GetInt32(4), r.GetBoolean(5), r.GetBoolean(6), r.GetDecimal(7), Enum.Parse<LotPolicy>(r.GetString(8)), r.GetDecimal(9), r.GetDecimal(10));
+
+    public async Task UpdatePlanningAsync(ItemInfo item, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        await using var cmd = uow.Command(
+            "UPDATE engineering.item SET lead_time_days = $2, safety_stock = $3, lot_policy = $4, order_quantity = $5, order_multiple = $6, planning_updated_at = $7, planning_updated_by = $8 WHERE part_number = $1",
+            item.PartNumber, item.LeadTimeDays, item.SafetyStock, item.LotPolicy.ToString(), item.OrderQuantity, item.OrderMultiple, at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<RevisionStructure>> ListReleasedStructuresAsync(CancellationToken ct)
+    {
+        var revisions = await Read(RevisionSql + " WHERE status = 'Released' ORDER BY part_number, effective_from", ReadRevision, ct);
+        var lines = await Read(
+            """
+            SELECT b.part_number, b.revision, b.line_number, b.component, b.quantity_per, b.scrap_percent
+            FROM engineering.bom_line b JOIN engineering.revision r USING (part_number, revision)
+            WHERE r.status = 'Released' ORDER BY b.part_number, b.revision, b.line_number
+            """,
+            r => (Part: r.GetString(0), Revision: r.GetString(1), Line: new BomLineInfo(r.GetInt32(2), r.GetString(3), r.GetDecimal(4), r.GetDecimal(5))),
+            ct);
+        var byRevision = lines.ToLookup(l => (l.Part, l.Revision), l => l.Line);
+        return revisions.Select(rev => new RevisionStructure(rev, byRevision[(rev.PartNumber, rev.Revision)].ToList())).ToList();
+    }
 
     private static RevisionInfo ReadRevision(NpgsqlDataReader r) => new(
         r.GetString(0),

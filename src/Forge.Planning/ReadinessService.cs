@@ -39,8 +39,11 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         }
 
         var revision = (await uow.Store<IEngineeringLookup>().ListRevisionsAsync(order.PartNumber, ct)).SingleOrDefault(r => r.Revision == order.Revision);
+        var material = order.Status == OrderStatus.Released
+            ? (await MaterialPlanningService.RunMaterialAsync(uow, time, ct)).Output.FirstOrDefault(m => m.OrderNumber == order.OrderNumber)
+            : null;
         var snapshot = await LoadSnapshotAsync(uow, ct);
-        return EngineRunner.Run(orders, snapshot, new OrderReadinessRequest(order, revision), snapshot.AsOf);
+        return EngineRunner.Run(orders, snapshot, new OrderReadinessRequest(order, revision, material), snapshot.AsOf);
     }
 
     public async Task<EngineRun<ReadinessResult>> EvaluateMachineAsync(ForgePrincipal principal, string machineCode, string activityCode, CancellationToken ct)

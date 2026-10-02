@@ -2,8 +2,6 @@ import { esc } from '../ui.js';
 
 // Areas in the plan that have no data in Forge yet. They say so instead of showing sample numbers.
 const PLANNED = {
-  inventory: { title: 'Inventory', phase: 'Phase 6 — Materials and MRP', items: ['On-hand by location, lot and serial', 'Material availability as a readiness dimension', 'Material constraint hours on Factory Horizon'] },
-  procurement: { title: 'Procurement', phase: 'Phase 6 — Materials and MRP', items: ['Purchase requirements from released orders and drop-dead dates', 'Supplier dates and their effect on orders', 'Buy-by dates per component'] },
   quality: { title: 'Quality', phase: 'Phase 7 — Programs, quality, maintenance and shipping', items: ['Inspection plans and results', 'Nonconformances and holds', 'Quality as a readiness dimension'] },
   shipping: { title: 'Shipping', phase: 'Phase 7 — Programs, quality, maintenance and shipping', items: ['Ship dates against customer need dates', 'Late shipments by cause', 'Shipping work center flow'] },
   reports: { title: 'Reports', phase: 'Phase 8 — Insight and Horizon history', items: ['Plan versus actual output', 'Production attainment', 'Constraint history and time-to-resolve'] },

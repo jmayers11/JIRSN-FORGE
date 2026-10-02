@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Forge.Inventory</RootNamespace>
+    <Description>Transactional inventory: locations, lots and an append-only ledger every quantity is explained by.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Forge.Kernel\Forge.Kernel.csproj" />
+    <ProjectReference Include="..\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
+    <ProjectReference Include="..\Forge.Resources\Forge.Resources.csproj" />
+    <ProjectReference Include="..\Forge.Engineering\Forge.Engineering.csproj" />
+    <ProjectReference Include="..\Forge.Execution\Forge.Execution.csproj" />
+    <ProjectReference Include="..\Forge.Procurement\Forge.Procurement.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Infrastructure\Migrations\*.sql" />
+  </ItemGroup>
+</Project>

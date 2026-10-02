@@ -117,8 +117,12 @@ public sealed class PlantSetupTests(PostgresFixture postgres)
     public async Task Nothing_in_use_by_routings_orders_or_people_can_be_retired_moved_or_removed()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
-        var (plant, _) = await SlittingPlant.BuildEngineeredAsync(app);
+        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
         var e = plant.Engineer;
+        var due = DateTime.UtcNow.AddDays(10).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var created = await plant.Ok(e, "/api/orders/", new { partNumber = "ROLL-100", quantity = 5m, dueDate = due, priority = 3 });
+        var order = created.GetProperty("entityId").GetString();
+        await plant.Ok(planner, $"/api/orders/{order}/release", new { reason = "Customer order" });
 
         // SLITTER-A is an eligible machine in ROLL-100 rev A's released routing.
         var routing = await Try(plant, e, "/api/resources/machines/SLITTER-A/retire", new { reason = "Worn out" });
@@ -141,6 +145,7 @@ public sealed class PlantSetupTests(PostgresFixture postgres)
         var move = await Try(plant, e, "/api/resources/work-centers/SLIT-WC/edit", new { name = "Slitting", parent = "PAINT", reason = "Re-layout" });
         Assert.Equal(HttpStatusCode.UnprocessableEntity, move.Status);
         Assert.Contains("home work center", move.Body, StringComparison.Ordinal);
+        Assert.Contains($"order {order} operation 10", move.Body, StringComparison.Ordinal);
 
         // Renaming in place is always fine.
         await plant.Ok(e, "/api/resources/work-centers/SLIT-WC/edit", new { name = "Slitting line", parent = "SLITTING", reason = "Name on the floor signs" });

@@ -3,7 +3,12 @@ using Forge.Kernel.Engines;
 
 namespace Forge.Planning.Engines;
 
-public sealed record ScheduleRequest(DateTimeOffset From, DateTimeOffset To, IReadOnlyList<OrderInfo> Orders);
+/// <summary>
+/// Orders to schedule over a horizon. When <paramref name="Material"/> is given, an order that has
+/// not started waits for its material: short or overdue material leaves it unscheduled, expected
+/// material holds its first operation until the receipt's date.
+/// </summary>
+public sealed record ScheduleRequest(DateTimeOffset From, DateTimeOffset To, IReadOnlyList<OrderInfo> Orders, IReadOnlyList<OrderMaterialStatus>? Material = null);
 
 public sealed record ScheduledSegment(DateTimeOffset Start, DateTimeOffset End, IReadOnlyList<Guid> Operators);
 
@@ -64,7 +69,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
 
     public string Name => "finite-scheduler";
 
-    public string Version => "2";
+    public string Version => "3";
 
     public EngineEvaluation<ScheduleResult> Evaluate(SiteSnapshot snapshot, ScheduleRequest parameters, DateTimeOffset asOf)
     {
@@ -92,11 +97,21 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             DateTimeOffset? predecessorEnd = horizon.Start;
             var predecessorSequence = (int?)null;
             var orderOps = new List<ScheduledOperation>();
+            var (materialStart, materialBlock) = MaterialGate(snapshot, horizon, order, parameters.Material);
             foreach (var op in order.Operations.Where(o => o.Status != OperationStatus.Complete).OrderBy(o => o.Sequence))
             {
-                var scheduled = (predecessorEnd is { } earliest
-                    ? Schedule(timeline, state, order, op, earliest, predecessorSequence)
-                    : Unscheduled(order, op, "Predecessor", $"Operation {predecessorSequence} could not be scheduled.")) with { ProgramId = order.ProgramId };
+                (string Limiting, string Detail)? waited = null;
+                if (predecessorSequence is null && materialStart is { } arrives && arrives > horizon.Start)
+                {
+                    predecessorEnd = arrives;
+                    waited = ("Material", materialBlock ?? "Waiting for material.");
+                }
+
+                var scheduled = (predecessorSequence is null && materialStart is null && materialBlock is not null
+                    ? Unscheduled(order, op, "Material", materialBlock)
+                    : predecessorEnd is { } earliest
+                        ? Schedule(timeline, state, order, op, earliest, predecessorSequence, waited)
+                        : Unscheduled(order, op, "Predecessor", $"Operation {predecessorSequence} could not be scheduled.")) with { ProgramId = order.ProgramId };
                 orderOps.Add(scheduled);
                 predecessorEnd = scheduled.End;
                 predecessorSequence = op.Sequence;
@@ -117,7 +132,34 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
         return new EngineEvaluation<ScheduleResult>(new ScheduleResult(horizon.Start, horizon.End, orders, operations), root);
     }
 
-    private static ScheduledOperation Schedule(CapacityTimeline timeline, Bookings state, OrderInfo order, OrderOperationInfo op, DateTimeOffset earliest, int? predecessor)
+    /// <summary>
+    /// When an order that has not started may begin, given its material: (null, null) when there is no
+    /// material status or nothing to wait for; (null, why) when it cannot start; (start, why) when it waits.
+    /// </summary>
+    private static (DateTimeOffset? Start, string? Block) MaterialGate(SiteSnapshot snapshot, Span horizon, OrderInfo order, IReadOnlyList<OrderMaterialStatus>? material)
+    {
+        var status = material?.FirstOrDefault(m => m.OrderNumber == order.OrderNumber);
+        if (status is null || status.State == MaterialState.Ready || order.Operations.Any(o => o.Status != OperationStatus.Pending))
+        {
+            return (null, null);
+        }
+
+        if (status.State == MaterialState.Shortfall || status.Overdue || status.ReadyOn is null)
+        {
+            return (null, status.Summary + (status.Overdue ? " Receive it or record the supplier's new date." : string.Empty));
+        }
+
+        var site = WorkCalendar.SiteOfWorkCenter(snapshot, order.Operations.OrderBy(o => o.Sequence).First().WorkCenterCode);
+        var start = WorkCalendar.EndOfDay(snapshot, site, status.ReadyOn.Value.AddDays(-1)).ToUniversalTime();
+        if (start >= horizon.End)
+        {
+            return (null, $"{status.Summary} That is after the end of the planning horizon.");
+        }
+
+        return start > horizon.Start ? (start, status.Summary) : (null, null);
+    }
+
+    private static ScheduledOperation Schedule(CapacityTimeline timeline, Bookings state, OrderInfo order, OrderOperationInfo op, DateTimeOffset earliest, int? predecessor, (string Limiting, string Detail)? waited = null)
     {
         var snapshot = timeline.Snapshot;
         var minutes = TimeSpan.FromMinutes((double)RemainingMinutes(order, op));
@@ -172,7 +214,9 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             }
         }
 
-        var (binding, detail) = placement.FirstBlocker
+        // Waiting for material explains the start even when the calendar also had a gap then.
+        var (binding, detail) = waited
+            ?? placement.FirstBlocker
             ?? (predecessor is { } p && earliest > timeline.Horizon.Start
                 ? ("Predecessor", $"Operation {p} finishes at {earliest:u}.")
                 : ("Now", "Starts at the earliest possible time."));

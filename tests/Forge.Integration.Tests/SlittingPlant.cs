@@ -177,6 +177,12 @@ internal static class SlittingPlant
 
         await plant.Ok(plant.Approver, "/api/engineering/items/COIL-AL/revisions/A/release", new { reason = "ECN-1" });
         await plant.Ok(plant.Approver, "/api/engineering/items/ROLL-100/revisions/A/release", new { reason = "ECN-1" });
+
+        // Material readiness is checked for released orders, so the stores hold plenty of coil.
+        await plant.Person("stores", "MaterialHandler", "InventoryController");
+        var stores = plant.As("stores");
+        await plant.Ok(stores, "/api/inventory/locations", new { code = "STORES", siteCode = "PLANT1", name = "Main stores", kind = "Stores" });
+        await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "COIL-AL", quantity = 1_000_000m, locationCode = "STORES", reason = "Opening balance" });
         return (plant, plant.As("planner"));
     }
 }

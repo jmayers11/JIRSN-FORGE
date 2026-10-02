@@ -1,0 +1,244 @@
+import { tryGet, command } from '../api.js';
+import { img } from '../icons.js';
+import { esc, $, $$, fmtDate, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from '../ui.js';
+import { formModal, qty, can, plusDays } from '../forms.js';
+
+// Material Plan (spec §12-13): independent demand, item planning parameters and a deterministic MRP
+// whose every recommendation shows its arithmetic and the requirements it is pegged to.
+
+const EXCEPTION_LABEL = {
+  PastDueRelease: 'Release past due', RescheduleIn: 'Bring receipt in', OverdueReceipt: 'Receipt overdue', PastDueRequirement: 'Requirement past due',
+  NoRevision: 'No released revision', BomLoop: 'BOM loop', UnknownItem: 'Unknown item',
+};
+const DEMAND_KINDS = [['CustomerOrder', 'Customer order'], ['Forecast', 'Forecast'], ['ContractDelivery', 'Contract delivery'], ['Service', 'Service / spares'], ['Internal', 'Internal']];
+const POLICIES = [['LotForLot', 'Lot-for-lot (exactly what is needed)'], ['FixedQuantity', 'Fixed quantity (whole lots)'], ['MinimumQuantity', 'Minimum quantity']];
+
+export async function mrpPage(page, ctx) {
+  const me = ctx.me;
+  const planner = can(me, 'Planner');
+  const engineer = can(me, 'ManufacturingEngineer');
+  const buyer = can(me, 'Buyer');
+  let tab = ctx.query.get('tab') ?? 'planned';
+  const focus = ctx.query.get('part');
+  let data = {};
+
+  async function load() {
+    const [mrp, demand, items] = await Promise.all([tryGet('/api/planning/mrp'), tryGet('/api/planning/demand'), tryGet('/api/engineering/items')]);
+    data = { mrp, demand, items };
+  }
+  const reload = async () => { await load(); render(); };
+  const out = () => data.mrp.data?.output;
+  const itemPlan = part => out()?.items.find(i => i.partNumber === part);
+  const itemInfo = part => (data.items.data ?? []).find(i => i.partNumber === part);
+
+  function kpis() {
+    const o = out();
+    const tile = (icon, title, value, why) => `<div class="kpi">${img(icon)}<div><div class="t">${esc(title)}</div><div class="v">${value}</div><div class="why">${esc(why)}</div></div></div>`;
+    return `<div class="kpis kpis-4">
+      ${tile('planning', 'Planned orders', o?.plannedOrders.length ?? '—', 'Recommended make and buy orders that cover every requirement.')}
+      ${tile('alert', 'Past-due releases', o?.plannedOrders.filter(p => p.pastDue).length ?? '—', 'Should already have been released to meet the need date.')}
+      ${tile('trend', 'Exceptions', o?.exceptions.length ?? '—', 'Receipts to bring in, overdue receipts and data problems.')}
+      ${tile('orders', 'Open demand', data.demand.data?.length ?? '—', 'Customer orders, forecasts and other independent demand.')}
+    </div>`;
+  }
+
+  function plannedTab() {
+    if (data.mrp.error) return errorBlock(data.mrp.error, 'the material plan');
+    const list = out().plannedOrders;
+    if (!list.length) return emptyBlock('Nothing to order', 'Stock, open purchase orders and production orders cover every requirement and safety stock.');
+    return `<table class="table"><thead><tr><th>Release by</th><th>Need by</th><th>Part</th><th></th><th class="num">Quantity</th><th>Covers</th><th></th></tr></thead><tbody>
+      ${list.map((p, i) => `<tr>
+        <td class="nowrap">${p.pastDue ? '<span class="pill bad">Past due</span> ' : ''}${esc(fmtDate(p.releaseDate))}</td><td class="nowrap">${esc(fmtDate(p.dueDate))}</td>
+        <td><b>${esc(p.partNumber)}</b>${p.revision ? ` <span class="faint">rev ${esc(p.revision)}</span>` : ''}</td>
+        <td><span class="pill ${p.makeBuy === 'Make' ? 'info' : 'none'}">${p.makeBuy === 'Make' ? 'Make' : 'Buy'}</span></td>
+        <td class="num"><b>${qty(p.quantity)}</b> <span class="faint">${esc(p.unitOfMeasure)}</span></td>
+        <td class="muted">${esc(p.pegging.map(g => g.description).filter((v, j, a) => a.indexOf(v) === j).slice(0, 2).join('; '))}${p.pegging.length > 2 ? '…' : ''}</td>
+        <td class="nowrap"><button class="btn small" data-why="${i}">Why?</button>
+          ${p.makeBuy === 'Buy' && buyer ? `<button class="btn small primary" data-buy="${i}">Draft PO</button>` : ''}
+          ${p.makeBuy === 'Make' && engineer ? `<button class="btn small primary" data-make="${i}">Create order</button>` : ''}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="faint" style="margin-top:6px">Recommendations only: nothing is ordered until a buyer drafts a purchase order (approved by someone else) or an engineer sets up a production order (released by a planner).</div>`;
+  }
+
+  function exceptionsTab() {
+    if (data.mrp.error) return errorBlock(data.mrp.error, 'the material plan');
+    const list = out().exceptions;
+    if (!list.length) return emptyBlock('No exceptions', 'Every receipt is on time for its need and the data is complete.');
+    return `<table class="table"><thead><tr><th>Part</th><th>What</th><th>Detail</th></tr></thead><tbody>
+      ${list.map(e => `<tr><td><b>${esc(e.partNumber)}</b></td><td><span class="pill ${['PastDueRelease', 'OverdueReceipt', 'BomLoop', 'NoRevision'].includes(e.kind) ? 'bad' : 'warn'}">${esc(EXCEPTION_LABEL[e.kind] ?? e.kind)}</span></td><td>${esc(e.detail)}</td></tr>`).join('')}
+      </tbody></table>`;
+  }
+
+  function itemsTab() {
+    if (data.mrp.error) return errorBlock(data.mrp.error, 'the material plan');
+    const list = out().items;
+    const canEdit = planner || engineer;
+    if (!list.length) return emptyBlock('Nothing to plan yet', 'Items appear here once they have demand, stock, supply or safety stock.');
+    return `<table class="table"><thead><tr><th>Part</th><th>Level</th><th class="num">Available</th><th class="num">Insp./hold</th><th class="num">Safety stock</th><th>Lot policy</th><th class="num">Lead time</th><th class="num">Ends at</th><th></th></tr></thead><tbody>
+      ${list.map(i => `<tr class="click" data-item="${esc(i.partNumber)}">
+        <td><b>${esc(i.partNumber)}</b> <span class="faint">${esc(i.makeBuy)}</span><br><span class="muted">${esc(i.description)}</span></td><td>${i.level}</td>
+        <td class="num">${qty(i.available)}</td><td class="num">${i.inspection + i.hold ? qty(i.inspection + i.hold) : '—'}</td><td class="num">${i.safetyStock ? qty(i.safetyStock) : '—'}</td>
+        <td>${esc(policyText(i))}</td><td class="num">${i.leadTimeDays} d</td>
+        <td class="num">${qty(i.buckets.at(-1)?.projectedAvailable ?? i.available)}</td>
+        <td>${canEdit ? `<button class="btn small" data-params="${esc(i.partNumber)}">Planning</button>` : ''}</td></tr>`).join('')}
+      </tbody></table>
+      ${canEdit ? '<div class="toolbar" style="margin-top:8px"><button class="btn small" data-params-any="1">Set planning for another part…</button></div>' : ''}`;
+  }
+
+  function demandTab() {
+    if (data.demand.error) return errorBlock(data.demand.error, 'demand');
+    const list = data.demand.data;
+    return `${planner ? '<div class="toolbar"><button class="btn primary" data-add-demand="1">+ Demand</button></div>' : ''}
+      ${!list.length ? emptyBlock('No open demand', 'Record customer orders, forecasts and contract deliveries here; MRP plans to cover them.') : `
+      <table class="table"><thead><tr><th>#</th><th>Part</th><th class="num">Qty</th><th>Need by</th><th>Priority</th><th>Kind</th><th>Customer / reference</th><th></th></tr></thead><tbody>
+      ${list.map(d => `<tr><td>D${d.demandId}</td><td><b>${esc(d.partNumber)}</b></td><td class="num">${qty(d.quantity)}</td><td>${esc(fmtDate(d.needDate))}</td><td>${d.priority}</td>
+        <td>${esc((DEMAND_KINDS.find(k => k[0] === d.kind) ?? [0, d.kind])[1])}</td><td>${esc([d.customer, d.reference].filter(Boolean).join(' · ') || '—')}</td>
+        <td class="nowrap">${planner ? `<button class="btn small" data-change="${d.demandId}">Change</button> <button class="btn small" data-close="${d.demandId}">Close</button> <button class="btn small ghost" data-cancel="${d.demandId}">Cancel</button>` : ''}</td></tr>`).join('')}
+      </tbody></table>`}`;
+  }
+
+  function render() {
+    const run = data.mrp.data;
+    page.innerHTML = `
+      <div class="page-head">
+        <div><h1>Material Plan</h1><div class="sub">MRP nets demand and order material against stock and open supply, item by item down the bill of materials. Click <b>Why?</b> on any recommendation to see the arithmetic.</div></div>
+        <div class="spacer"></div><button class="btn" id="rerun">Run again</button>
+      </div>
+      ${kpis()}
+      <section class="panel">
+        <header><div class="seg">${[['planned', 'Recommendations'], ['exceptions', 'Exceptions'], ['items', 'Items'], ['demand', 'Demand']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        ${tab === 'exceptions' ? exceptionsTab() : tab === 'items' ? itemsTab() : tab === 'demand' ? demandTab() : plannedTab()}
+      </section>
+      ${run ? `<div class="faint mono" style="font-size:11px">${esc(run.engineName)} v${esc(run.engineVersion)} · as of ${esc(fmtDate(run.output.today))} · input ${esc(run.inputFingerprint.slice(0, 12))} · output ${esc(run.outputFingerprint.slice(0, 12))} — the same inputs always give the same plan.</div>` : ''}`;
+
+    $('#rerun', page)?.addEventListener('click', reload);
+    $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
+    $$('[data-why]', page).forEach(b => b.addEventListener('click', () => why(out().plannedOrders[Number(b.dataset.why)])));
+    $$('[data-buy]', page).forEach(b => b.addEventListener('click', () => draftPo(out().plannedOrders[Number(b.dataset.buy)])));
+    $$('[data-make]', page).forEach(b => b.addEventListener('click', () => createOrder(out().plannedOrders[Number(b.dataset.make)])));
+    $$('[data-item]', page).forEach(r => r.addEventListener('click', e => { if (!e.target.closest('button')) itemDrawer(r.dataset.item); }));
+    $$('[data-params]', page).forEach(b => b.addEventListener('click', () => planning(b.dataset.params)));
+    $$('[data-params-any]', page).forEach(b => b.addEventListener('click', () => planning(null)));
+    $$('[data-add-demand]', page).forEach(b => b.addEventListener('click', addDemand));
+    $$('[data-change]', page).forEach(b => b.addEventListener('click', () => changeDemand(Number(b.dataset.change))));
+    $$('[data-close]', page).forEach(b => b.addEventListener('click', () => closeDemand(Number(b.dataset.close), 'close')));
+    $$('[data-cancel]', page).forEach(b => b.addEventListener('click', () => closeDemand(Number(b.dataset.cancel), 'cancel')));
+    if (focus && itemPlan(focus)) { const f = focus; setTimeout(() => itemDrawer(f), 0); }
+  }
+
+  function bucketsTable(i) {
+    return `<table class="table"><thead><tr><th>Date</th><th class="num">Needed</th><th class="num">Arriving</th><th class="num">Planned</th><th class="num">Projected available</th></tr></thead><tbody>
+      ${i.buckets.map(b => `<tr><td>${esc(fmtDate(b.date))}</td><td class="num">${b.gross ? qty(b.gross) : ''}</td><td class="num">${b.scheduledReceipts ? qty(b.scheduledReceipts) : ''}</td>
+        <td class="num">${b.plannedReceipts ? `<b class="c-warn">${qty(b.plannedReceipts)}</b>` : ''}</td><td class="num ${b.projectedAvailable < i.safetyStock ? 'c-bad' : ''}">${qty(b.projectedAvailable)}</td></tr>`).join('')}
+      </tbody></table>`;
+  }
+
+  function why(p) {
+    const i = itemPlan(p.partNumber);
+    drawer(`Why ${qty(p.quantity)} ${p.unitOfMeasure} of ${p.partNumber}?`, `
+      <p>${esc(p.explanation)}</p>
+      <h3 style="margin:0">What it covers</h3>
+      <table class="table"><thead><tr><th>Requirement</th><th>Needed</th><th class="num">Qty</th></tr></thead><tbody>
+        ${p.pegging.map(g => `<tr><td>${esc(g.description)}</td><td>${esc(fmtDate(g.needDate))}</td><td class="num">${qty(g.quantity)}</td></tr>`).join('')}</tbody></table>
+      ${i ? `<h3 style="margin:0">${esc(p.partNumber)} day by day</h3>${bucketsTable(i)}
+        <dl class="kv"><dt>Available now</dt><dd>${qty(i.available)}${i.inspection + i.hold ? ` (plus ${qty(i.inspection)} in inspection, ${qty(i.hold)} on hold — not counted)` : ''}</dd>
+          <dt>Planning</dt><dd>${esc(policyText(i))}; safety stock ${qty(i.safetyStock)}; lead time ${i.leadTimeDays} days</dd></dl>` : ''}`);
+  }
+
+  function itemDrawer(part) {
+    const i = itemPlan(part);
+    if (!i) return;
+    drawer(`${part} — ${i.description}`, `
+      <dl class="kv"><dt>Make or buy</dt><dd>${esc(i.makeBuy)} · level ${i.level}</dd><dt>Planning</dt><dd>${esc(policyText(i))}; safety stock ${qty(i.safetyStock)}; lead time ${i.leadTimeDays} days</dd>
+        <dt>Available now</dt><dd>${qty(i.available)} ${esc(i.unitOfMeasure)}${i.inspection + i.hold ? ` (${qty(i.inspection)} in inspection, ${qty(i.hold)} on hold — not counted)` : ''}</dd></dl>
+      <h3 style="margin:0">Day by day</h3>${bucketsTable(i)}
+      <h3 style="margin:0">Requirements</h3>
+      ${i.requirements.length ? `<table class="table"><tbody>${i.requirements.map(r => `<tr><td>${esc(r.description)}</td><td>${esc(fmtDate(r.needDate))}</td><td class="num">${qty(r.quantity)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None.</div>'}
+      <h3 style="margin:0">Scheduled receipts</h3>
+      ${i.receipts.length ? `<table class="table"><tbody>${i.receipts.map(r => `<tr><td>${esc(r.description)}</td><td>${esc(fmtDate(r.dueDate))}</td><td class="num">${qty(r.quantity)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None.</div>'}
+      <div class="faint"><a href="#/inventory">Stock and ledger in Inventory →</a></div>`);
+  }
+
+  function planning(part) {
+    const info = part ? itemInfo(part) : null;
+    const fields = [
+      part ? { name: 'part', label: 'Part', value: part, readonly: true } : { name: 'part', label: 'Part', type: 'select', options: (data.items.data ?? []).map(x => [x.partNumber, `${x.partNumber} — ${x.description}`]), required: true },
+      { name: 'leadTimeDays', label: 'Lead time (calendar days)', type: 'number', min: 0, value: info?.leadTimeDays ?? 0, required: true },
+      { name: 'safetyStock', label: 'Safety stock', type: 'number', min: 0, step: 'any', value: info?.safetyStock ?? 0 },
+      { name: 'lotPolicy', label: 'Lot policy', type: 'select', options: POLICIES, value: info?.lotPolicy ?? 'LotForLot' },
+      { name: 'orderQuantity', label: 'Order quantity (fixed lot or minimum)', type: 'number', min: 0, step: 'any', value: info?.orderQuantity ?? 0 },
+      { name: 'orderMultiple', label: 'Round up to multiples of (0 = none)', type: 'number', min: 0, step: 'any', value: info?.orderMultiple ?? 0 },
+    ];
+    return formModal({ title: part ? `Planning for ${part}` : 'Planning parameters', detail: 'MRP uses these on its next run. The change is audited.', fields },
+      (v, reason) => command(`/api/engineering/items/${encodeURIComponent(v.part)}/planning`, { ...v, safetyStock: v.safetyStock ?? 0, orderQuantity: v.orderQuantity ?? 0, orderMultiple: v.orderMultiple ?? 0 }, reason),
+      async () => { const items = await tryGet('/api/engineering/items'); data.items = items; await reload(); });
+  }
+
+  function addDemand() {
+    return formModal({
+      title: 'Record demand', confirmLabel: 'Record',
+      fields: [
+        { name: 'partNumber', label: 'Part', type: 'select', options: (data.items.data ?? []).map(x => [x.partNumber, `${x.partNumber} — ${x.description}`]), required: true },
+        { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true },
+        { name: 'needDate', label: 'Needed by', type: 'date', value: plusDays(14), required: true },
+        { name: 'priority', label: 'Priority (1 = highest)', type: 'number', min: 1, value: 5 },
+        { name: 'kind', label: 'Kind', type: 'select', options: DEMAND_KINDS },
+        { name: 'customer', label: 'Customer (optional)' },
+        { name: 'reference', label: 'Reference — customer PO, contract line (optional)' },
+      ],
+    }, (v, reason) => command('/api/planning/demand', v, reason), reload);
+  }
+
+  function changeDemand(id) {
+    const d = data.demand.data.find(x => x.demandId === id);
+    return formModal({
+      title: `Change demand D${id}`, detail: `${d.partNumber}. MRP results move with this change.`, reasonRequired: true,
+      fields: [
+        { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', value: d.quantity, required: true },
+        { name: 'needDate', label: 'Needed by', type: 'date', value: d.needDate, required: true },
+        { name: 'priority', label: 'Priority (1 = highest)', type: 'number', min: 1, value: d.priority, required: true },
+      ],
+    }, (v, reason) => command(`/api/planning/demand/${id}/change`, v, reason), reload);
+  }
+
+  async function closeDemand(id, verb) {
+    const done = await confirmWithReason({ title: `${verb === 'close' ? 'Close' : 'Cancel'} demand D${id}`, detail: verb === 'close' ? 'Closed demand is kept for history and no longer planned.' : 'Cancelled demand is kept for history and no longer planned.', confirmLabel: verb === 'close' ? 'Close' : 'Cancel demand' },
+      reason => command(`/api/planning/demand/${id}/${verb}`, {}, reason));
+    if (done) { toast(done.message); await reload(); }
+  }
+
+  function draftPo(p) {
+    return formModal({
+      title: `Draft a purchase order for ${p.partNumber}`, detail: 'Created as a draft; a different person approves it before it counts as supply.', confirmLabel: 'Draft PO',
+      fields: [
+        { name: 'supplier', label: 'Supplier', required: true },
+        { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', value: p.quantity, required: true },
+        { name: 'promisedDate', label: 'Promised date', type: 'date', value: p.dueDate, required: true },
+      ],
+    }, (v, reason) => command('/api/procurement/purchase-orders', { supplier: v.supplier, lines: [{ partNumber: p.partNumber, quantity: v.quantity, promisedDate: v.promisedDate }] }, reason),
+    async () => { location.hash = '#/procurement'; });
+  }
+
+  function createOrder(p) {
+    return formModal({
+      title: `Set up a production order for ${p.partNumber}`, detail: 'Created as Planned; a planner (not you) releases it.', confirmLabel: 'Create order',
+      fields: [
+        { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', value: p.quantity, required: true },
+        { name: 'dueDate', label: 'Due', type: 'date', value: p.dueDate, required: true },
+        { name: 'priority', label: 'Priority (1 = highest)', type: 'number', min: 1, value: 5 },
+      ],
+    }, (v, reason) => command('/api/orders/', { partNumber: p.partNumber, ...v }, reason),
+    async r => { location.hash = `#/orders/${r.entityId}`; });
+  }
+
+  await load();
+  render();
+}
+
+function policyText(i) {
+  const multiple = i.orderMultiple > 0 ? `, multiples of ${qty(i.orderMultiple)}` : '';
+  if (i.lotPolicy === 'FixedQuantity') return `Fixed lots of ${qty(i.orderQuantity)}${multiple}`;
+  if (i.lotPolicy === 'MinimumQuantity') return `Minimum ${qty(i.orderQuantity)}${multiple}`;
+  return `Lot-for-lot${multiple}`;
+}
+

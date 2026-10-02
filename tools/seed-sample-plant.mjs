@@ -3,7 +3,8 @@
 // audited, with the two-person rules applied (the engineer sets up, others approve and release).
 //
 // Usage: node tools/seed-sample-plant.mjs [http://localhost:5080] [admin-subject]
-// Sign in afterwards as: planner (Michael Carter, planner), planner2, eng, approver, tech or dev-admin.
+// Sign in afterwards as: planner (Michael Carter, planner), planner2, eng, approver, tech or dev-admin;
+// for materials: stores, ivy, bob, pat. Run it again on an older sample plant to add only the materials.
 
 const base = (process.argv[2] ?? 'http://localhost:5080').replace(/\/+$/, '');
 const adminSubject = process.argv[3] ?? 'dev-admin';
@@ -35,7 +36,13 @@ async function person(subject, displayName, ...roles) {
 async function main() {
   try { await fetch(`${base}/health/ready`); } catch { throw new Error(`Forge is not running at ${base}. Start run-forge.cmd first.`); }
   const existing = (await get(adminSubject, '/api/kernel/people')).map(p => p.idpSubject);
-  if (existing.includes('eng')) throw new Error('This database already has the sample people. The sample plant is set up once per database.');
+  if (existing.includes('eng')) {
+    // An earlier sample plant: add only what is new (Phase 6 materials), once.
+    if (existing.includes('stores')) throw new Error('This database already has the sample plant, including materials. It is set up once per database.');
+    console.log('Sample plant found; adding sample materials (inventory, purchase orders, demand).');
+    await seedMaterials();
+    return finish();
+  }
 
   step('People and roles (each duty held by a different person)');
   await person('eng', 'Erin Engineer', 'ManufacturingEngineer', 'TrainingCoordinator', 'SafetyEngineer', 'Supervisor');
@@ -170,10 +177,58 @@ async function main() {
   await post('kiosk', '/api/shopfloor/start', { badge: badges.luis, orderNumber: queue[0], sequence: 20, machineCode: 'LASER-1' });
   await post('kiosk', '/api/shopfloor/report', { badge: badges.luis, orderNumber: queue[0], sequence: 20, good: 12, scrap: 1, scrapReason: 'Setup', complete: false });
 
-  console.log(`\nSample plant ready. Open ${base}/ and sign in as "planner" (Michael Carter).`);
-  console.log('Other sample sign-ins: planner2, eng, approver, tech, dev-admin, and "kiosk" for the Shop Floor terminal.');
+  await seedMaterials();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
+  finish();
+}
+
+function finish() {
+  console.log(`\nSample plant ready. Open ${base}/ and sign in as "planner" (Michael Carter).`);
+  console.log('Other sample sign-ins: planner2, eng, approver, tech, dev-admin, "kiosk" for the Shop Floor terminal,');
+  console.log('and for materials: stores (material handler), ivy (inventory controller), bob (buyer), pat (purchasing manager).');
   console.log('Everything shown is sample data.');
+}
+
+// Phase 6: locations, opening stock, a purchase order (approved by someone other than the buyer),
+// incoming inspection, a count waiting for approval, demand and item planning parameters.
+async function seedMaterials() {
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  step('Materials: people (each duty held by a different person)');
+  await person('stores', 'Sam Stores', 'MaterialHandler');
+  await person('ivy', 'Ivy Inventory', 'InventoryController');
+  await person('bob', 'Bob Buyer', 'Buyer');
+  await person('pat', 'Pat Purchasing', 'PurchasingManager');
+
+  step('Materials: locations and opening stock');
+  for (const [code, name, kind] of [['STORES', 'Main stores', 'Stores'], ['RECV', 'Receiving dock', 'Receiving'], ['QA-HOLD', 'Quarantine cage', 'Quarantine']]) {
+    await post('ivy', '/api/inventory/locations', { code, siteCode: 'PLANT1', name, kind });
+  }
+  await post('stores', '/api/inventory/receipts', { partNumber: 'COIL-AL', quantity: 2000, locationCode: 'STORES', reason: 'Opening balance from the physical count' });
+  await post('planner', '/api/engineering/items/COIL-AL/planning', { leadTimeDays: 14, safetyStock: 500, lotPolicy: 'FixedQuantity', orderQuantity: 1000, orderMultiple: 0 });
+
+  step('Materials: a purchase order raised by Bob, approved by Pat, partly received into inspection');
+  const po = await post('bob', '/api/procurement/purchase-orders', { supplier: 'Alcoa', lines: [{ partNumber: 'COIL-AL', quantity: 1000, promisedDate: day(5) }] });
+  await post('pat', `/api/procurement/purchase-orders/${po.entityId}/approve`, { reason: 'Within budget' });
+  await post('stores', '/api/inventory/receipts', { partNumber: 'COIL-AL', quantity: 200, locationCode: 'RECV', poNumber: Number(po.entityId), inspect: true });
+  await post('bob', '/api/procurement/purchase-orders', { supplier: 'Novelis', lines: [{ partNumber: 'COIL-AL', quantity: 2000, promisedDate: day(20) }] });
+
+  step('Materials: coil issued to the first order, a count waiting for a second person');
+  const released = (await get('planner', '/api/orders/')).filter(o => o.status === 'Released').map(o => o.orderNumber).sort((a, b) => a - b);
+  if (released.length) {
+    const first = await get('planner', `/api/orders/${released[0]}`);
+    const coil = first.materials.find(m => m.componentPartNumber === 'COIL-AL');
+    if (coil) await post('stores', '/api/inventory/issues', { orderNumber: first.orderNumber, partNumber: 'COIL-AL', quantity: coil.requiredQuantity, locationCode: 'STORES' });
+  }
+  const onHand = (await get('stores', '/api/inventory/stock?part=COIL-AL')).filter(b => b.locationCode === 'STORES' && b.status === 'Available').reduce((t, b) => t + b.quantity, 0);
+  await post('stores', '/api/inventory/counts', { partNumber: 'COIL-AL', locationCode: 'STORES', counted: Math.max(0, Math.round(onHand) - 10) });
+
+  step('Materials: customer demand and a forecast for MRP');
+  await post('planner', '/api/planning/demand', { partNumber: 'PANEL-500', quantity: 150, needDate: day(21), priority: 2, kind: 'CustomerOrder', customer: 'Acme Fabrication', reference: 'PO-77812' });
+  await post('planner', '/api/planning/demand', { partNumber: 'PANEL-500', quantity: 200, needDate: day(35), priority: 5, kind: 'Forecast' });
+
+  step('Schedule: re-run with material availability, approved by a second planner');
+  const s = await post('planner', '/api/planning/schedules', { horizonDays: 14 });
+  await post('planner2', `/api/planning/schedules/${s.entityId}/approve`, { reason: 'Reviewed material shortages' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

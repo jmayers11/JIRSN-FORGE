@@ -71,6 +71,20 @@ shift schedules and are labelled as projections. See `docs/adr/0004-phase-4-capa
 Attendance, direct labor, operation authentication and electronic signoff are separate records.
 See `docs/adr/0005-phase-5-shop-floor.md`.
 
+## What Phase 6 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Inventory | `src/Forge.Inventory` | Locations, lots, an append-only ledger (receipt, issue, return, move, scrap, hold, release, production receipt, adjustment, count); balances are sums of the ledger |
+| Procurement | `src/Forge.Procurement` | Purchase orders drafted by a buyer, approved by someone else; supplier date changes with a reason |
+| Demand and item planning | `src/Forge.Planning`, `src/Forge.Engineering` | Customer orders, forecasts and other demand; safety stock, lot policy, order quantity and multiple per item |
+| MRP | `src/Forge.Planning/Engines/MrpEngine.cs` | Deterministic netting, lot sizing, lead-time offset, multi-level explosion, pegging and a written "why" for every recommendation |
+| Material readiness | `src/Forge.Planning/Engines/MaterialEngine.cs` | Stock and supply allocated to released orders; feeds order readiness, the scheduler and constraints |
+| Screens | `src/Forge.Host/wwwroot` | Inventory, Material Plan and Procurement pages; material status on each order |
+
+Two people are needed to approve a purchase order, post an adjustment or count variance, or release
+stock from hold or inspection. See `docs/adr/0007-phase-6-materials-and-mrp.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.

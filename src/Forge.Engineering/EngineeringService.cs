@@ -37,6 +37,16 @@ public sealed record ReleaseRevision(string PartNumber, string Revision, DateTim
 
 public sealed record WithdrawRevision(string PartNumber, string Revision);
 
+/// <summary>Sets how MRP plans an item. Lead time is in calendar days.</summary>
+public sealed record SetItemPlanning(string PartNumber, int LeadTimeDays, decimal SafetyStock, LotPolicy LotPolicy, decimal OrderQuantity, decimal OrderMultiple);
+
+public sealed record ItemPlanningChanged(string PartNumber) : IDomainEvent
+{
+    public static string EventType => nameof(ItemPlanningChanged);
+
+    public static int SchemaVersion => 1;
+}
+
 public sealed record ItemCreated(string PartNumber, string MakeBuy) : IDomainEvent
 {
     public static string EventType => nameof(ItemCreated);
@@ -88,6 +98,8 @@ public interface IEngineeringStore
     Task<IReadOnlyList<string>> GetContributorsAsync(string partNumber, string revision, CancellationToken ct);
 
     Task SetEffectivityAsync(string partNumber, string revision, RevisionStatus status, DateTimeOffset? from, DateTimeOffset? to, string actor, CancellationToken ct);
+
+    Task UpdatePlanningAsync(ItemInfo item, DateTimeOffset at, string actor, CancellationToken ct);
 }
 
 /// <summary>
@@ -126,6 +138,47 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
                 CommandResult.Ok(part, $"Part {part} created."),
                 [pipeline.Event(new ItemCreated(part, c.MakeBuy.ToString()), context, SourceContext, ItemEntity, part)],
                 new AuditChange(ItemEntity, part, null, CanonicalJson.Serialize(item)));
+        }, ct);
+    }
+
+    /// <summary>Planning parameters belong to the item, not a revision, so they can change at any time; every change is audited.</summary>
+    public Task<CommandResult> SetItemPlanningAsync(SetItemPlanning c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var part = BusinessCode.Require(c.PartNumber, "Part");
+        var spec = new CommandSpec(SourceContext, nameof(SetItemPlanning), Permissions.ItemPlanningManage, ResourceRef.Of(ItemEntity, part));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            if (c.LeadTimeDays is < 0 or > 730 || c.SafetyStock < 0 || c.OrderQuantity < 0 || c.OrderMultiple < 0 || c.SafetyStock > 100_000_000 || c.OrderQuantity > 100_000_000 || c.OrderMultiple > 100_000_000)
+            {
+                throw new CommandRejectedException("invalid_planning", "Lead time 0-730 days; safety stock, order quantity and multiple zero or more.");
+            }
+
+            if (c.LotPolicy is (LotPolicy.FixedQuantity or LotPolicy.MinimumQuantity) && c.OrderQuantity <= 0)
+            {
+                throw new CommandRejectedException("order_quantity_required", $"{c.LotPolicy} needs an order quantity above zero.");
+            }
+
+            var item = await uow.Store<IEngineeringLookup>().FindItemAsync(part, ct)
+                ?? throw new CommandRejectedException("item_not_found", $"Part {part} does not exist.");
+            var updated = item with
+            {
+                LeadTimeDays = c.LeadTimeDays,
+                SafetyStock = c.SafetyStock,
+                LotPolicy = c.LotPolicy,
+                OrderQuantity = c.LotPolicy == LotPolicy.LotForLot ? 0 : c.OrderQuantity,
+                OrderMultiple = c.OrderMultiple,
+            };
+            if (updated == item)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(part, "Planning parameters unchanged."));
+            }
+
+            await uow.Store<IEngineeringStore>().UpdatePlanningAsync(updated, now, context.Actor, ct);
+            return new CommandOutcome(
+                CommandResult.Ok(part, $"{part}: lead time {updated.LeadTimeDays} days, safety stock {updated.SafetyStock}, {updated.LotPolicy}" + (updated.OrderQuantity > 0 ? $" {updated.OrderQuantity}" : string.Empty) + (updated.OrderMultiple > 0 ? $", multiples of {updated.OrderMultiple}." : ".")),
+                [pipeline.Event(new ItemPlanningChanged(part), context, SourceContext, ItemEntity, part)],
+                new AuditChange(ItemEntity, part, CanonicalJson.Serialize(item), CanonicalJson.Serialize(updated)));
         }, ct);
     }
 
