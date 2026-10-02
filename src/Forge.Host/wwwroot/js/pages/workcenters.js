@@ -28,9 +28,9 @@ export async function workCentersPage(page, ctx) {
   });
 
   page.innerHTML = `
-    <div class="page-head"><div><h1>Work Centers</h1><div class="sub">${esc(r.sites.map(s => `${s.name} (${s.timeZone})`).join(' · ') || 'No site set up yet')}</div></div></div>
+    <div class="page-head"><div><h1>Work Centers</h1><div class="sub">${esc(r.sites.map(s => `${s.name} (${s.timeZone})`).join(' · ') || 'No site set up yet')}</div></div><div class="spacer"></div><a class="btn" href="#/plant-setup">Add or edit work centers</a></div>
     <section class="panel">
-      ${!rows.length ? emptyBlock('No work centers yet', 'A manufacturing engineer creates sites, safety areas, work centers and machines through the API.') : `
+      ${!rows.length ? emptyBlock('No work centers yet', 'A manufacturing engineer sets up sites, safety areas, work centers and machines under Plant Setup.') : `
       <table class="table"><thead><tr><th>Work center</th><th>Safety area</th><th>Machines</th><th>Shifts</th><th>Now</th><th></th></tr></thead><tbody>
       ${rows.map(x => `<tr class="click" data-wc="${esc(x.wc.code)}" ${x.wc.code === selected ? 'style="outline:1px solid #F97316"' : ''}>
         <td><b>${esc(x.wc.name)}</b><br><span class="faint">${esc(x.wc.code)}</span></td>

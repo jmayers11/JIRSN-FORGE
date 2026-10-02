@@ -401,3 +401,51 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .check { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; white-space: nowrap; }
 .check input { width: 20px; height: 20px; accent-color: var(--forge-orange); }
 @media (max-width: 900px) { .report-form { grid-template-columns: 1fr 1fr; } }
+
+/* ---------- Plant setup ---------- */
+.btn.small { padding: 5px 10px; font-size: 12.5px; }
+.btn.tiny { padding: 1px 8px; font-size: 12px; line-height: 18px; }
+.opt { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--muted); font-size: 13px; cursor: pointer; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.modal { max-height: calc(100vh - 32px); overflow: auto; }
+.modal:has(.pictures) { width: min(640px, calc(100% - 32px)); }
+.form-grid { display: flex; flex-direction: column; gap: 10px; }
+.plant-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+.plant-tree, .plant-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.plant-site > header { flex-wrap: wrap; align-items: flex-start; }
+.plant-site > header h2 { white-space: normal; }
+.plant-area { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+.plant-area-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.plant-area-head > img.ico { width: 26px; height: 26px; object-fit: contain; }
+.plant-area-head .spacer, .wc-head .spacer { flex: 1; }
+.wc-card { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; margin: 0 0 10px 34px; padding: 10px; background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--forge-orange); border-radius: var(--radius); }
+.wc-photo { width: 120px; height: 84px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line-strong); }
+.wc-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wc-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wc-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.wc-line > .faint:first-child { min-width: 150px; }
+.wc-machines { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; align-items: flex-start; }
+.plant-row { display: flex; align-items: flex-start; gap: 10px; justify-content: space-between; padding: 7px 0; border-top: 1px solid var(--line); width: 100%; }
+.plant-row:first-of-type { border-top: 0; }
+.plant-row.machine { border-top: 1px dashed var(--line); }
+.plant-row img.ico.sm { width: 18px; height: 18px; vertical-align: -4px; }
+.plant-sub { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 4px; }
+.row-actions { display: flex; gap: 6px; flex: none; }
+.machine-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: #12161B; font-size: 12px; }
+.chip:not(:has(.chip-x)) { padding-right: 10px; }
+.chip-x { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 13px; line-height: 1; }
+.chip-x:hover { color: var(--forge-orange); }
+.retired { opacity: .55; }
+.pictures { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.pic { display: flex; flex-direction: column; gap: 3px; cursor: pointer; font-size: 11px; color: var(--muted); text-align: center; }
+.pic input { position: absolute; opacity: 0; pointer-events: none; }
+.pic img, .pic .auto { width: 100%; height: 60px; object-fit: cover; border-radius: 4px; border: 2px solid var(--line-strong); }
+.pic .auto { display: grid; place-items: center; background: var(--panel-2); color: var(--text); font-size: 12px; line-height: 1.2; }
+.pic input:checked + img, .pic input:checked + .auto { border-color: var(--forge-orange); box-shadow: 0 0 8px rgba(249,115,22,.4); }
+.pic input:focus-visible + img, .pic input:focus-visible + .auto { outline: 2px solid var(--forge-orange); }
+@media (max-width: 1100px) { .plant-grid { grid-template-columns: 1fr; } }
+@media (max-width: 600px) {
+  .wc-card { grid-template-columns: 1fr; margin-left: 0; }
+  .wc-photo { width: 100%; height: 110px; }
+}

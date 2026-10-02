@@ -160,7 +160,7 @@ export function buildHorizon(d) {
     else state = { text: 'No scheduled work', tone: 'none' };
 
     return {
-      code: wc.code, name: wc.name, safetyAreaCode: wc.safetyAreaCode, machines: ms, downNow, downHours,
+      code: wc.code, name: wc.name, picture: wc.picture, safetyAreaCode: wc.safetyAreaCode, machines: ms, downNow, downHours,
       workingHours, executableHours, bookedHours, load, constraints: wcConstraints, readiness, blocked,
       orders: orderNumbers, late, atRisk, primary, status, state, operations: wcOps,
     };

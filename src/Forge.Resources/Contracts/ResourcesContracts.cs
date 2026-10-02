@@ -15,14 +15,25 @@ public sealed record WorkCenterShiftInfo(string WorkCenterCode, string ShiftCode
 public sealed record SiteClosureInfo(string SiteCode, DateOnly Date, string? Note);
 
 /// <summary>A defined area where safety staffing is evaluated. People anywhere in the area count toward its rules.</summary>
-public sealed record SafetyAreaInfo(string Code, string SiteCode, string Name);
+/// <remarks>A retired (inactive) record is kept for history but nothing new can be planned, assigned or run there.</remarks>
+public sealed record SafetyAreaInfo(string Code, string SiteCode, string Name, bool Active = true);
 
-public sealed record WorkCenterInfo(string Code, string SafetyAreaCode, string Name);
+/// <summary>
+/// A place where a kind of work is done: slitting, bonding, winding, kitting. <see cref="Picture"/> is the
+/// photo shown for it (one of <see cref="WorkCenterPictures.All"/>); null means "choose from the name".
+/// </summary>
+public sealed record WorkCenterInfo(string Code, string SafetyAreaCode, string Name, bool Active = true, string? Picture = null);
 
-public sealed record MachineInfo(string Code, string WorkCenterCode, string SafetyAreaCode, string Name);
+public sealed record MachineInfo(string Code, string WorkCenterCode, string SafetyAreaCode, string Name, bool Active = true);
 
 /// <summary>Kinds of work: "RUN_SLITTER", "STAGE_ROLL", "KITTING". Safety rules and requirements refer to them.</summary>
-public sealed record ActivityTypeInfo(string Code, string Name, string? Description);
+public sealed record ActivityTypeInfo(string Code, string Name, string? Description, bool Active = true);
+
+/// <summary>The photos a work center can show. "plain" is a neutral texture for work that matches none of them.</summary>
+public static class WorkCenterPictures
+{
+    public static readonly IReadOnlyList<string> All = ["plain", "slitting", "fabrication", "assembly", "paint", "inspection", "shipping", "raw-material"];
+}
 
 /// <summary>
 /// Part of a machine's requirement profile: this activity can be performed on the machine by a person
@@ -33,7 +44,23 @@ public sealed record MachineActivityInfo(string MachineCode, string ActivityCode
 /// <summary>An activity that may be performed at a work center without a machine (staging, kitting, cleaning).</summary>
 public sealed record WorkCenterActivityInfo(string WorkCenterCode, string ActivityCode);
 
-/// <summary>What other contexts may ask Resources. Available through the unit of work.</summary>
+/// <summary>
+/// Answers "is anything still using this?" before a work center, machine, safety area or activity is
+/// retired, moved or removed. Implemented outside Resources (it reads orders, routings and workers);
+/// each entry is a short description such as "order 1002 op 20".
+/// </summary>
+public interface IResourceUsage
+{
+    /// <param name="kind">SafetyArea, WorkCenter or Machine.</param>
+    /// <param name="activityCode">When set, only uses for that activity count.</param>
+    Task<IReadOnlyList<string>> FindUsesAsync(string kind, string code, string? activityCode, DateTimeOffset at, CancellationToken ct);
+}
+
+/// <summary>
+/// What other contexts may ask Resources. Available through the unit of work. Lists include retired
+/// records (see the Active flags); Find and Exists methods see only active ones, so nothing new can
+/// refer to a retired record.
+/// </summary>
 public interface IResourcesLookup
 {
     Task<IReadOnlyList<SiteInfo>> ListSitesAsync(CancellationToken ct);

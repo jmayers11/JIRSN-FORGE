@@ -47,6 +47,69 @@ internal sealed class PostgresResourcesStore(PostgresUnitOfWork uow) : IResource
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
+    public async Task<ResourceRecord?> FindAnyAsync(string kind, string code, CancellationToken ct)
+    {
+        var sql = kind switch
+        {
+            "Site" => "SELECT code, name, NULL, true, time_zone, NULL FROM resources.site WHERE code = $1",
+            "SafetyArea" => "SELECT code, name, site_code, active, NULL, NULL FROM resources.safety_area WHERE code = $1",
+            "WorkCenter" => "SELECT code, name, safety_area_code, active, NULL, picture FROM resources.work_center WHERE code = $1",
+            "Machine" => "SELECT code, name, work_center_code, active, NULL, NULL FROM resources.machine WHERE code = $1",
+            "ActivityType" => "SELECT code, name, NULL, active, description, NULL FROM resources.activity_type WHERE code = $1",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown resource kind."),
+        };
+        return (await Read(
+            sql,
+            r => new ResourceRecord(kind, r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetBoolean(3), r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5)),
+            ct,
+            code)).SingleOrDefault();
+    }
+
+    public async Task UpdateAsync(ResourceRecord record, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        var sql = record.Kind switch
+        {
+            // Every statement receives the same eight parameters; each uses the ones that apply to its table.
+            "Site" => "UPDATE resources.site SET name = $2, time_zone = $5, updated_at = $7, updated_by = $8 WHERE code = $1",
+            "SafetyArea" => "UPDATE resources.safety_area SET name = $2, active = $4, updated_at = $7, updated_by = $8 WHERE code = $1",
+            "WorkCenter" => "UPDATE resources.work_center SET name = $2, safety_area_code = $3, active = $4, picture = $6, updated_at = $7, updated_by = $8 WHERE code = $1",
+            "Machine" => "UPDATE resources.machine SET name = $2, work_center_code = $3, active = $4, updated_at = $7, updated_by = $8 WHERE code = $1",
+            "ActivityType" => "UPDATE resources.activity_type SET name = $2, active = $4, description = $5, updated_at = $7, updated_by = $8 WHERE code = $1",
+            _ => throw new ArgumentOutOfRangeException(nameof(record), record.Kind, "Unknown resource kind."),
+        };
+        await using var cmd = uow.Command(sql, record.Code, record.Name, Text(record.Parent), record.Active, Text(record.Detail), Text(record.Picture), at, actor);
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1)
+        {
+            throw new InvalidOperationException($"{record.Kind} {record.Code} was not updated.");
+        }
+    }
+
+    public async Task<bool> DeleteMachineActivityAsync(string machineCode, string activityCode, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("DELETE FROM resources.machine_activity WHERE machine_code = $1 AND activity_code = $2", machineCode, activityCode);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> DeleteWorkCenterActivityAsync(string workCenterCode, string activityCode, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("DELETE FROM resources.work_center_activity WHERE work_center_code = $1 AND activity_code = $2", workCenterCode, activityCode);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> DeleteWorkCenterShiftAsync(WorkCenterShiftInfo link, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(link);
+        await using var cmd = uow.Command("DELETE FROM resources.work_center_shift WHERE work_center_code = $1 AND shift_code = $2", link.WorkCenterCode, link.ShiftCode);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task SetWorkCenterPictureAsync(string code, string? picture, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE resources.work_center SET picture = $2 WHERE code = $1", code, Text(picture));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public Task<IReadOnlyList<WorkCenterActivityInfo>> ListWorkCenterActivitiesAsync(CancellationToken ct) =>
         Read("SELECT work_center_code, activity_code FROM resources.work_center_activity ORDER BY work_center_code, activity_code", r => new WorkCenterActivityInfo(r.GetString(0), r.GetString(1)), ct);
 
@@ -99,31 +162,31 @@ internal sealed class PostgresResourcesStore(PostgresUnitOfWork uow) : IResource
         Read("SELECT site_code, closed_on, note FROM resources.site_closure ORDER BY site_code, closed_on", r => new SiteClosureInfo(r.GetString(0), r.GetFieldValue<DateOnly>(1), r.IsDBNull(2) ? null : r.GetString(2)), ct);
 
     public Task<IReadOnlyList<SafetyAreaInfo>> ListSafetyAreasAsync(CancellationToken ct) =>
-        Read("SELECT code, site_code, name FROM resources.safety_area ORDER BY code", r => new SafetyAreaInfo(r.GetString(0), r.GetString(1), r.GetString(2)), ct);
+        Read(AreaSql + " ORDER BY code", ReadArea, ct);
 
     public Task<IReadOnlyList<WorkCenterInfo>> ListWorkCentersAsync(CancellationToken ct) =>
-        Read("SELECT code, safety_area_code, name FROM resources.work_center ORDER BY code", r => new WorkCenterInfo(r.GetString(0), r.GetString(1), r.GetString(2)), ct);
+        Read(WorkCenterSql + " ORDER BY code", ReadWorkCenter, ct);
 
     public Task<IReadOnlyList<MachineInfo>> ListMachinesAsync(CancellationToken ct) =>
         Read(MachineSql + " ORDER BY m.code", ReadMachine, ct);
 
     public Task<IReadOnlyList<ActivityTypeInfo>> ListActivityTypesAsync(CancellationToken ct) =>
-        Read("SELECT code, name, description FROM resources.activity_type ORDER BY code", r => new ActivityTypeInfo(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2)), ct);
+        Read(ActivitySql + " ORDER BY code", ReadActivity, ct);
 
     public Task<IReadOnlyList<MachineActivityInfo>> ListMachineActivitiesAsync(CancellationToken ct) =>
         Read("SELECT machine_code, activity_code, operator_qualifications FROM resources.machine_activity ORDER BY machine_code, activity_code", ReadMachineActivity, ct);
 
     public async Task<SafetyAreaInfo?> FindSafetyAreaAsync(string code, CancellationToken ct) =>
-        (await Read("SELECT code, site_code, name FROM resources.safety_area WHERE code = $1", r => new SafetyAreaInfo(r.GetString(0), r.GetString(1), r.GetString(2)), ct, code)).SingleOrDefault();
+        (await Read(AreaSql + " WHERE code = $1 AND active", ReadArea, ct, code)).SingleOrDefault();
 
     public async Task<WorkCenterInfo?> FindWorkCenterAsync(string code, CancellationToken ct) =>
-        (await Read("SELECT code, safety_area_code, name FROM resources.work_center WHERE code = $1", r => new WorkCenterInfo(r.GetString(0), r.GetString(1), r.GetString(2)), ct, code)).SingleOrDefault();
+        (await Read(WorkCenterSql + " WHERE code = $1 AND active", ReadWorkCenter, ct, code)).SingleOrDefault();
 
     public async Task<MachineInfo?> FindMachineAsync(string code, CancellationToken ct) =>
-        (await Read(MachineSql + " WHERE m.code = $1", ReadMachine, ct, code)).SingleOrDefault();
+        (await Read(MachineSql + " WHERE m.code = $1 AND m.active", ReadMachine, ct, code)).SingleOrDefault();
 
     public async Task<bool> ActivityTypeExistsAsync(string code, CancellationToken ct) =>
-        (await Read("SELECT 1 FROM resources.activity_type WHERE code = $1", _ => true, ct, code)).Count > 0;
+        (await Read("SELECT 1 FROM resources.activity_type WHERE code = $1 AND active", _ => true, ct, code)).Count > 0;
 
     public async Task<MachineActivityInfo?> FindMachineActivityAsync(string machineCode, string activityCode, CancellationToken ct) =>
         (await Read(
@@ -134,9 +197,21 @@ internal sealed class PostgresResourcesStore(PostgresUnitOfWork uow) : IResource
             activityCode)).SingleOrDefault();
 
     private const string MachineSql =
-        "SELECT m.code, m.work_center_code, w.safety_area_code, m.name FROM resources.machine m JOIN resources.work_center w ON w.code = m.work_center_code";
+        "SELECT m.code, m.work_center_code, w.safety_area_code, m.name, m.active FROM resources.machine m JOIN resources.work_center w ON w.code = m.work_center_code";
 
-    private static MachineInfo ReadMachine(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3));
+    private const string AreaSql = "SELECT code, site_code, name, active FROM resources.safety_area";
+
+    private const string WorkCenterSql = "SELECT code, safety_area_code, name, active, picture FROM resources.work_center";
+
+    private const string ActivitySql = "SELECT code, name, description, active FROM resources.activity_type";
+
+    private static MachineInfo ReadMachine(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetBoolean(4));
+
+    private static SafetyAreaInfo ReadArea(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetBoolean(3));
+
+    private static WorkCenterInfo ReadWorkCenter(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetBoolean(3), r.IsDBNull(4) ? null : r.GetString(4));
+
+    private static ActivityTypeInfo ReadActivity(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetBoolean(3));
 
     private static MachineActivityInfo ReadMachineActivity(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetFieldValue<string[]>(2));
 

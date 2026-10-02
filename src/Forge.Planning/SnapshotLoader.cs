@@ -53,14 +53,20 @@ internal static class SnapshotLoader
 
         var from = at.AddDays(-1);
         var to = at + Reach;
+
+        // Retired records stay in Resources for history; planning only sees what can still be used.
+        var workCenters = (await resources.ListWorkCentersAsync(ct)).Where(w => w.Active).ToList();
+        var machines = (await resources.ListMachinesAsync(ct)).Where(m => m.Active).ToList();
+        var machineCodes = machines.Select(m => m.Code).ToHashSet(StringComparer.Ordinal);
+        var workCenterCodes = workCenters.Select(w => w.Code).ToHashSet(StringComparer.Ordinal);
         return new SiteSnapshot(
             at,
-            await resources.ListSafetyAreasAsync(ct),
-            await resources.ListWorkCentersAsync(ct),
-            await resources.ListMachinesAsync(ct),
-            await resources.ListMachineActivitiesAsync(ct),
-            await resources.ListWorkCenterActivitiesAsync(ct),
-            await resources.ListActivityTypesAsync(ct),
+            (await resources.ListSafetyAreasAsync(ct)).Where(a => a.Active).ToList(),
+            workCenters,
+            machines,
+            (await resources.ListMachineActivitiesAsync(ct)).Where(a => machineCodes.Contains(a.MachineCode)).ToList(),
+            (await resources.ListWorkCenterActivitiesAsync(ct)).Where(a => workCenterCodes.Contains(a.WorkCenterCode)).ToList(),
+            (await resources.ListActivityTypesAsync(ct)).Where(a => a.Active).ToList(),
             people,
             await uow.Store<ISafetyRuleLookup>().GetEffectiveRulesAsync(at, ct))
         {

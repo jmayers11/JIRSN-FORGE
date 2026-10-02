@@ -52,14 +52,27 @@ export function icon(name, cls = '') {
 
 
 /** Picks the work-center photo from the identity sheet by words in the code or name. */
-export function stagePhoto(code, name) {
+/** The photos a work center can show (matches WorkCenterPictures on the server). */
+export const PICTURES = [
+  ['slitting', 'Slitting / winding / roll goods'], ['fabrication', 'Fabrication / machining'], ['assembly', 'Assembly / bonding'],
+  ['paint', 'Paint / coating'], ['inspection', 'Inspection / test'], ['shipping', 'Shipping / packing'],
+  ['raw-material', 'Raw material / stores'], ['plain', 'Plain (no photo)'],
+];
+
+export function pictureUrl(picture) {
+  return picture === 'plain' ? '/img/brand/texture-metal.jpg' : `/img/stages/${picture}.jpg`;
+}
+
+/** The work center's chosen picture, else one guessed from its name, else a plain texture (never a wrong photo). */
+export function stagePhoto(code, name, picture) {
+  if (picture) return pictureUrl(picture);
   const s = `${code} ${name}`.toLowerCase();
   const rules = [
-    [/slit/, 'slitting'], [/paint|coat|finish/, 'paint'], [/weld|fab|cut|laser|press|brake|machin/, 'fabrication'],
-    [/assy|assem/, 'assembly'], [/insp|qual|test|qc|cmm/, 'inspection'], [/ship|pack|dock/, 'shipping'],
+    [/slit|wind|rewind|reel|roll/, 'slitting'], [/paint|coat|finish|powder/, 'paint'], [/weld|fab|cut|laser|press|brake|machin|cnc|mill|lathe/, 'fabrication'],
+    [/assy|assem|bond|lamin|glue|adhes/, 'assembly'], [/insp|qual|test|qc|cmm/, 'inspection'], [/ship|pack|dock/, 'shipping'],
     [/raw|recv|receiv|stores|material|coil|warehouse/, 'raw-material'],
   ];
-  return `/img/stages/${(rules.find(([re]) => re.test(s)) ?? [null, 'fabrication'])[1]}.jpg`;
+  return pictureUrl((rules.find(([re]) => re.test(s)) ?? [null, 'plain'])[1]);
 }
 
 /** A full-color icon from the JIRSN Forge icon set (img/icons/icon-<name>.png). */

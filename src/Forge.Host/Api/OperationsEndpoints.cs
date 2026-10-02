@@ -13,7 +13,10 @@ using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
 
-public sealed record CodeNameRequest(string Code, string Name, string? Parent, string? Description, string? Reason, string? TimeZone = null);
+public sealed record CodeNameRequest(string Code, string Name, string? Parent, string? Description, string? Reason, string? TimeZone = null, string? Picture = null);
+
+/// <summary>Edits a plant record. Parent moves a work center (safety area) or machine (work center).</summary>
+public sealed record ResourceEditRequest(string Name, string? Parent, string? Description, string? TimeZone, string? Picture, string? Reason);
 
 public sealed record MachineActivityRequest(string ActivityCode, string[] OperatorQualifications, string? Reason);
 
@@ -58,18 +61,28 @@ public static class OperationsEndpoints
 
     private static void MapResources(RouteGroupBuilder api)
     {
-        api.MapGet("/", (HttpContext http, CancellationToken _) => ReadStore<IResourcesLookup>(http, Permissions.ResourcesRead, async (r, ct) => new
+        // Retired records are left out unless asked for (plant setup shows them so they can be reactivated).
+        api.MapGet("/", (HttpContext http, bool? includeRetired, CancellationToken _) => ReadStore<IResourcesLookup>(http, Permissions.ResourcesRead, async (r, ct) =>
         {
-            sites = await r.ListSitesAsync(ct),
-            safetyAreas = await r.ListSafetyAreasAsync(ct),
-            workCenters = await r.ListWorkCentersAsync(ct),
-            machines = await r.ListMachinesAsync(ct),
-            activityTypes = await r.ListActivityTypesAsync(ct),
-            machineActivities = await r.ListMachineActivitiesAsync(ct),
-            shifts = await r.ListShiftsAsync(ct),
-            workCenterShifts = await r.ListWorkCenterShiftsAsync(ct),
-            closures = await r.ListSiteClosuresAsync(ct),
-            workCenterActivities = await r.ListWorkCenterActivitiesAsync(ct),
+            var all = includeRetired == true;
+            var areas = (await r.ListSafetyAreasAsync(ct)).Where(a => all || a.Active).ToList();
+            var workCenters = (await r.ListWorkCentersAsync(ct)).Where(w => all || w.Active).ToList();
+            var machines = (await r.ListMachinesAsync(ct)).Where(m => all || m.Active).ToList();
+            var machineCodes = machines.Select(m => m.Code).ToHashSet(StringComparer.Ordinal);
+            var workCenterCodes = workCenters.Select(w => w.Code).ToHashSet(StringComparer.Ordinal);
+            return new
+            {
+                sites = await r.ListSitesAsync(ct),
+                safetyAreas = areas,
+                workCenters,
+                machines,
+                activityTypes = (await r.ListActivityTypesAsync(ct)).Where(a => all || a.Active).ToList(),
+                machineActivities = (await r.ListMachineActivitiesAsync(ct)).Where(a => machineCodes.Contains(a.MachineCode)).ToList(),
+                shifts = await r.ListShiftsAsync(ct),
+                workCenterShifts = (await r.ListWorkCenterShiftsAsync(ct)).Where(s => workCenterCodes.Contains(s.WorkCenterCode)).ToList(),
+                closures = await r.ListSiteClosuresAsync(ct),
+                workCenterActivities = (await r.ListWorkCenterActivitiesAsync(ct)).Where(a => workCenterCodes.Contains(a.WorkCenterCode)).ToList(),
+            };
         }));
 
         api.MapPost("/sites", (HttpContext http, CodeNameRequest b, ResourcesService s, CancellationToken ct) =>
@@ -77,7 +90,7 @@ public static class OperationsEndpoints
         api.MapPost("/safety-areas", (HttpContext http, CodeNameRequest b, ResourcesService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CreateSafetyAreaAsync(new CreateSafetyArea(b.Code, b.Parent ?? string.Empty, b.Name), c, ct)));
         api.MapPost("/work-centers", (HttpContext http, CodeNameRequest b, ResourcesService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.CreateWorkCenterAsync(new CreateWorkCenter(b.Code, b.Parent ?? string.Empty, b.Name), c, ct)));
+            Command(http, b.Reason, c => s.CreateWorkCenterAsync(new CreateWorkCenter(b.Code, b.Parent ?? string.Empty, b.Name, b.Picture), c, ct)));
         api.MapPost("/machines", (HttpContext http, CodeNameRequest b, ResourcesService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CreateMachineAsync(new CreateMachine(b.Code, b.Parent ?? string.Empty, b.Name), c, ct)));
         api.MapPost("/activity-types", (HttpContext http, CodeNameRequest b, ResourcesService s, CancellationToken ct) =>
@@ -86,6 +99,33 @@ public static class OperationsEndpoints
             Command(http, b.Reason, c => s.SetMachineActivityAsync(new SetMachineActivity(machine, b.ActivityCode, b.OperatorQualifications), c, ct)));
         api.MapPost("/work-centers/{workCenter}/activities", (HttpContext http, string workCenter, WorkCenterActivityRequest b, ResourcesService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AllowWorkCenterActivityAsync(new AllowWorkCenterActivity(workCenter, b.ActivityCode), c, ct)));
+
+        // Plant setup: edit, retire and reactivate. Codes never change; every edit carries a reason.
+        api.MapPost("/sites/{code}/edit", (HttpContext http, string code, ResourceEditRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateSiteAsync(new UpdateSite(code, b.Name, b.TimeZone), c, ct)));
+        api.MapPost("/safety-areas/{code}/edit", (HttpContext http, string code, ResourceEditRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateSafetyAreaAsync(new UpdateSafetyArea(code, b.Name), c, ct)));
+        api.MapPost("/work-centers/{code}/edit", (HttpContext http, string code, ResourceEditRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateWorkCenterAsync(new UpdateWorkCenter(code, b.Name, b.Parent ?? string.Empty, b.Picture), c, ct)));
+        api.MapPost("/machines/{code}/edit", (HttpContext http, string code, ResourceEditRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateMachineAsync(new UpdateMachine(code, b.Name, b.Parent ?? string.Empty), c, ct)));
+        api.MapPost("/activity-types/{code}/edit", (HttpContext http, string code, ResourceEditRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateActivityTypeAsync(new UpdateActivityType(code, b.Name, b.Description), c, ct)));
+
+        foreach (var (path, kind) in new[] { ("safety-areas", "SafetyArea"), ("work-centers", "WorkCenter"), ("machines", "Machine"), ("activity-types", "ActivityType") })
+        {
+            api.MapPost($"/{path}/{{code}}/retire", (HttpContext http, string code, ReasonRequest b, ResourcesService s, CancellationToken ct) =>
+                Command(http, b.Reason, c => s.SetResourceActiveAsync(new SetResourceActive(kind, code, false), c, ct)));
+            api.MapPost($"/{path}/{{code}}/reactivate", (HttpContext http, string code, ReasonRequest b, ResourcesService s, CancellationToken ct) =>
+                Command(http, b.Reason, c => s.SetResourceActiveAsync(new SetResourceActive(kind, code, true), c, ct)));
+        }
+
+        api.MapPost("/machines/{machine}/activities/{activity}/remove", (HttpContext http, string machine, string activity, ReasonRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RemoveMachineActivityAsync(new RemoveMachineActivity(machine, activity), c, ct)));
+        api.MapPost("/work-centers/{workCenter}/activities/{activity}/remove", (HttpContext http, string workCenter, string activity, ReasonRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RemoveWorkCenterActivityAsync(new RemoveWorkCenterActivity(workCenter, activity), c, ct)));
+        api.MapPost("/work-centers/{workCenter}/shifts/{shift}/remove", (HttpContext http, string workCenter, string shift, ReasonRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UnassignWorkCenterShiftAsync(new UnassignWorkCenterShift(workCenter, shift), c, ct)));
     }
 
     private static void MapCompetency(RouteGroupBuilder api)

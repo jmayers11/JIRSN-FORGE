@@ -71,6 +71,23 @@ shift schedules and are labelled as projections. See `docs/adr/0004-phase-4-capa
 Attendance, direct labor, operation authentication and electronic signoff are separate records.
 See `docs/adr/0005-phase-5-shop-floor.md`.
 
+## Plant setup
+
+Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
+**Plant Setup** in the web UI lets a manufacturing engineer build and edit the plant without code:
+sites, safety areas, work centers (with a picture), machines, the kinds of work (activity types) each
+machine or work center supports and who may run them, and shifts.
+
+- Codes are permanent business keys; names, pictures and placement can be edited. Every edit carries a reason.
+- Nothing is deleted. Retired records stay in history, drop out of planning, and can be reactivated.
+- Forge refuses to retire, move or remove anything still used by an unfinished order, a live or draft
+  routing, a worker's home work center or a current work assignment, and lists what is in the way.
+
+API: `POST /api/resources/{sites|safety-areas|work-centers|machines|activity-types}/{code}/edit`,
+`.../{code}/retire` and `.../{code}/reactivate`, `POST /api/resources/machines/{m}/activities/{a}/remove`,
+`/work-centers/{wc}/activities/{a}/remove` and `/work-centers/{wc}/shifts/{s}/remove`.
+`GET /api/resources/?includeRetired=true` includes retired records. See `docs/adr/0006-plant-setup.md`.
+
 Build rules enforced at compile time: nullable, warnings as errors, and a ban on `DateTime.Now`,
 `Guid.NewGuid` and `Random` in production code (use `TimeProvider` and `ForgeIds`).
 Architecture dependency rules are tests in `tests/Forge.Architecture.Tests`.

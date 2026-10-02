@@ -118,14 +118,14 @@ export async function horizonPage(page, ctx) {
     if (!centers.length) {
       return (data.resources.data?.workCenters ?? []).length
         ? emptyBlock('Nothing to show with this filter', 'Every work center in this view has no scheduled work. Click Filters to show all.')
-        : emptyBlock('No work centers yet', 'An engineer sets up sites, safety areas, work centers and machines under Work Centers. They appear here in routing order.');
+        : emptyBlock('No work centers yet', 'An engineer sets up sites, safety areas, work centers and machines under Plant Setup. They appear here in routing order.');
     }
     const arrow = `<div class="flow-arrow">${icon('arrow')}</div>`;
     return `<div class="flow">${centers.map(c => {
       const pct = c.load == null ? null : Math.round(c.load * 100);
       const barTone = c.status === 'stopped' ? 'bad' : c.status === 'constrained' ? 'warn' : c.status === 'idle' ? 'none' : '';
       return `<button class="stage st-${c.status} ${c.status === 'constrained' || c.status === 'stopped' ? 'sel' : ''}" data-wc="${esc(c.code)}" title="${esc(c.name)} — open for evidence">
-        <div class="art"><img src="${esc(stagePhoto(c.code, c.name))}" alt="" loading="lazy"><span class="machines">${c.machines.length} machine${c.machines.length === 1 ? '' : 's'}</span></div>
+        <div class="art"><img src="${esc(stagePhoto(c.code, c.name, c.picture))}" alt="" loading="lazy"><span class="machines">${c.machines.length} machine${c.machines.length === 1 ? '' : 's'}</span></div>
         <h3>${esc(c.name)} <span title="Scheduled load: booked hours ÷ working hours, ${esc(v.window.describe)}">${pct != null ? `${pct}%` : c.bookedHours > 0 ? `${fmtNumber(c.bookedHours)} h` : '—'}</span></h3>
         <div class="bar ${barTone}"><i style="width:${Math.min(100, pct ?? 0)}%"></i></div>
         <div class="state c-${c.state.tone}">${esc(c.state.text)}</div>
