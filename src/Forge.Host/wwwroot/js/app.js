@@ -17,11 +17,13 @@ import { mrpPage } from './pages/mrp.js';
 import { procurementPage } from './pages/procurement.js';
 import { qualityPage } from './pages/quality.js';
 import { shippingPage } from './pages/shipping.js';
+import { programsPage } from './pages/programs.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
   { route: 'home', label: 'Home', icon: 'dashboard', page: horizonPage },
   { route: 'horizon', label: 'Horizon', icon: 'analytics', page: timelinePage },
+  { route: 'programs', label: 'Programs', icon: 'trend', page: programsPage },
   { route: 'orders', label: 'Production Orders', icon: 'orders', page: ordersPage },
   { route: 'scheduling', label: 'Scheduling', icon: 'planning', page: schedulingPage },
   { route: 'material-plan', label: 'Material Plan', icon: 'material', page: mrpPage },
@@ -46,6 +48,7 @@ const ROLE_TITLES = {
   Auditor: 'Auditor', MaterialHandler: 'Material Handler', InventoryController: 'Inventory Controller', Buyer: 'Buyer',
   PurchasingManager: 'Purchasing Manager', ShopFloorTerminal: 'Shop Floor Terminal', Inspector: 'Inspector',
   QualityEngineer: 'Quality Engineer', QualityManager: 'Quality Manager', Shipper: 'Shipper',
+  ProgramManager: 'Program Manager', MaintenancePlanner: 'Maintenance Planner',
 };
 export const roleTitle = r => ROLE_TITLES[r] ?? r;
 

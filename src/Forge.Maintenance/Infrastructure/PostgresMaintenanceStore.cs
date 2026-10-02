@@ -30,8 +30,148 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    // Recorded downtime, plus a derived lock-out for every lock-out PM work order overdue past its grace
+    // days: from the end of the last grace day (site time) until the work is completed. Its id is the
+    // negative work order number, so it is never confused with a recorded window.
+    private const string DowntimeSql =
+        """
+        SELECT * FROM (
+            SELECT downtime_id, machine_code, kind, starts_at, ends_at, reason FROM maintenance.downtime
+            UNION ALL
+            SELECT -w.work_order_id, w.machine_code, 'MaintenanceOverdue',
+                   ((w.due_date + p.grace_days + 1)::timestamp AT TIME ZONE COALESCE((SELECT time_zone FROM resources.site ORDER BY code LIMIT 1), 'UTC')),
+                   NULL::timestamptz,
+                   'Preventive maintenance ' || w.work_order_id || ' (' || w.title || ') was due ' || to_char(w.due_date, 'YYYY-MM-DD')
+                       || CASE WHEN p.grace_days > 0 THEN ' with ' || p.grace_days || ' day(s) grace' ELSE '' END
+                       || '; the machine is locked out until it is done'
+            FROM maintenance.work_order w JOIN maintenance.pm_plan p ON p.plan_id = w.plan_id
+            WHERE p.lock_out_when_overdue AND w.status IN ('Open', 'Scheduled', 'InProgress')
+        ) d
+        WHERE starts_at < $2 AND (ends_at IS NULL OR ends_at > $1)
+        ORDER BY machine_code, starts_at, downtime_id
+        """;
+
+    private const string PlanSql = "SELECT plan_id, machine_code, title, interval_days, duration_minutes, tasks, lock_out_when_overdue, grace_days, active FROM maintenance.pm_plan";
+
+    private const string WorkOrderSql =
+        """
+        SELECT work_order_id, machine_code, kind, plan_id, title, description, tasks, due_date, status, scheduled_start, scheduled_end, downtime_id,
+               created_by, created_at, started_by, started_at, completed_by, completed_at, findings, closed_by, closed_at, cancel_reason
+        FROM maintenance.work_order
+        """;
+
     public Task<IReadOnlyList<DowntimeWindow>> ListDowntimeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct) =>
-        ReadAsync(Select + " WHERE starts_at < $2 AND (ends_at IS NULL OR ends_at > $1) ORDER BY machine_code, starts_at, downtime_id", ct, from, to);
+        ReadAsync(DowntimeSql, ct, from, to);
+
+    public async Task<long> InsertPlanAsync(PmPlanInfo plan, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO maintenance.pm_plan (machine_code, title, interval_days, duration_minutes, tasks, lock_out_when_overdue, grace_days, active, created_at, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9) RETURNING plan_id
+            """,
+            plan.MachineCode, plan.Title, plan.IntervalDays, plan.DurationMinutes, plan.Tasks.ToArray(), plan.LockOutWhenOverdue, plan.GraceDays, at, actor);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task UpdatePlanAsync(PmPlanInfo plan, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        await using var cmd = uow.Command(
+            "UPDATE maintenance.pm_plan SET title = $2, interval_days = $3, duration_minutes = $4, tasks = $5, lock_out_when_overdue = $6, grace_days = $7, active = $8 WHERE plan_id = $1",
+            plan.PlanId, plan.Title, plan.IntervalDays, plan.DurationMinutes, plan.Tasks.ToArray(), plan.LockOutWhenOverdue, plan.GraceDays, plan.Active);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<long> InsertWorkOrderAsync(WorkOrderInfo order, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO maintenance.work_order (machine_code, kind, plan_id, title, description, tasks, due_date, status, downtime_id, created_at, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING work_order_id
+            """,
+            order.MachineCode, order.Kind.ToString(), Long(order.PlanId), order.Title, Text(order.Description), order.Tasks.ToArray(), order.DueDate, order.Status.ToString(), Long(order.DowntimeId), order.CreatedAt, order.CreatedBy);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task UpdateWorkOrderAsync(WorkOrderInfo order, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        await using var cmd = uow.Command(
+            """
+            UPDATE maintenance.work_order SET status = $2, scheduled_start = $3, scheduled_end = $4, downtime_id = $5, started_by = $6, started_at = $7,
+                completed_by = $8, completed_at = $9, findings = $10, closed_by = $11, closed_at = $12, cancel_reason = $13, due_date = $14, title = $15, tasks = $16
+            WHERE work_order_id = $1
+            """,
+            order.WorkOrderId, order.Status.ToString(), Time(order.ScheduledStart), Time(order.ScheduledEnd), Long(order.DowntimeId), Text(order.StartedBy), Time(order.StartedAt),
+            Text(order.CompletedBy), Time(order.CompletedAt), Text(order.Findings), Text(order.ClosedBy), Time(order.ClosedAt), Text(order.CancelReason), order.DueDate, order.Title, order.Tasks.ToArray());
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task SetPlannedWindowAsync(long downtimeId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE maintenance.downtime SET starts_at = $2, ends_at = $3 WHERE downtime_id = $1 AND kind = 'Planned'", downtimeId, start, end);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task RemovePlannedWindowAsync(long downtimeId, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("DELETE FROM maintenance.downtime WHERE downtime_id = $1 AND kind = 'Planned'", downtimeId);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public Task<IReadOnlyList<PmPlanInfo>> ListPlansAsync(CancellationToken ct) => ReadRowsAsync(PlanSql + " ORDER BY machine_code, plan_id", ReadPlan, ct);
+
+    public async Task<PmPlanInfo?> FindPlanAsync(long planId, CancellationToken ct) => (await ReadRowsAsync(PlanSql + " WHERE plan_id = $1", ReadPlan, ct, planId)).SingleOrDefault();
+
+    public Task<IReadOnlyList<WorkOrderInfo>> ListWorkOrdersAsync(bool includeClosed, CancellationToken ct) =>
+        ReadRowsAsync(
+            WorkOrderSql + (includeClosed ? string.Empty : " WHERE status IN ('Open', 'Scheduled', 'InProgress', 'Completed')")
+                + " ORDER BY CASE WHEN status IN ('Open', 'Scheduled', 'InProgress', 'Completed') THEN 0 ELSE 1 END, due_date, work_order_id LIMIT 500",
+            ReadWorkOrder,
+            ct);
+
+    public async Task<WorkOrderInfo?> FindWorkOrderAsync(long workOrderId, CancellationToken ct) =>
+        (await ReadRowsAsync(WorkOrderSql + " WHERE work_order_id = $1", ReadWorkOrder, ct, workOrderId)).SingleOrDefault();
+
+    public async Task<WorkOrderInfo?> FindOpenWorkOrderForOutageAsync(long downtimeId, CancellationToken ct)
+    {
+        var rows = await ReadRowsAsync(WorkOrderSql + " WHERE downtime_id = $1 AND kind = 'Corrective' AND status IN ('Open', 'Scheduled', 'InProgress', 'Completed') ORDER BY work_order_id LIMIT 1", ReadWorkOrder, ct, downtimeId);
+        return rows.Count > 0 ? rows[0] : null;
+    }
+
+    private static PmPlanInfo ReadPlan(NpgsqlDataReader r) => new(
+        r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt32(3), r.GetInt32(4), r.GetFieldValue<string[]>(5), r.GetBoolean(6), r.GetInt32(7), r.GetBoolean(8));
+
+    private static WorkOrderInfo ReadWorkOrder(NpgsqlDataReader r) => new(
+        r.GetInt64(0), r.GetString(1), Enum.Parse<WorkOrderKind>(r.GetString(2)), r.IsDBNull(3) ? null : r.GetInt64(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5),
+        r.GetFieldValue<string[]>(6), r.GetFieldValue<DateOnly>(7), Enum.Parse<WorkOrderStatus>(r.GetString(8)), NTime(r, 9), NTime(r, 10), r.IsDBNull(11) ? null : r.GetInt64(11),
+        r.GetString(12), r.GetFieldValue<DateTimeOffset>(13), NText(r, 14), NTime(r, 15), NText(r, 16), NTime(r, 17), NText(r, 18), NText(r, 19), NTime(r, 20), NText(r, 21));
+
+    private static string? NText(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
+
+    private static DateTimeOffset? NTime(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetFieldValue<DateTimeOffset>(i);
+
+    private static NpgsqlParameter Text(string? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text };
+
+    private static NpgsqlParameter Long(long? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint };
+
+    private static NpgsqlParameter Time(DateTimeOffset? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.TimestampTz };
+
+    private async Task<IReadOnlyList<T>> ReadRowsAsync<T>(string sql, Func<NpgsqlDataReader, T> map, CancellationToken ct, params object?[] args)
+    {
+        var list = new List<T>();
+        await using var cmd = uow.Command(sql, args);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            list.Add(map(reader));
+        }
+
+        return list;
+    }
 
     private async Task<IReadOnlyList<DowntimeWindow>> ReadAsync(string sql, CancellationToken ct, params object?[] args)
     {

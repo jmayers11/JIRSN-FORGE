@@ -5,6 +5,7 @@ using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
+using Forge.Programs.Contracts;
 
 namespace Forge.Execution;
 
@@ -64,6 +65,16 @@ public sealed class ProductionOrderService(CommandPipeline pipeline)
             if (c.Quantity <= 0 || c.Quantity > 1_000_000 || c.Priority is < 1 or > 9)
             {
                 throw new CommandRejectedException("invalid_order", "Quantity must be above zero and priority between 1 (highest) and 9.");
+            }
+
+            if (c.ProgramId is { } programId)
+            {
+                var registered = await uow.Store<IProgramsLookup>().FindProgramAsync(programId, ct)
+                    ?? throw new CommandRejectedException("program_not_found", $"Program {programId} does not exist.");
+                if (registered.Status != ProgramStatus.Active)
+                {
+                    throw new CommandRejectedException("program_closed", $"Program {registered.Code} is closed; it takes no new orders.");
+                }
             }
 
             var engineering = uow.Store<IEngineeringLookup>();

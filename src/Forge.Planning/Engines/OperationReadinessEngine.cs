@@ -39,9 +39,12 @@ public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, R
             : new EvidenceNode(
                 "Equipment",
                 EvidenceOutcome.Fail,
-                down.Kind == Maintenance.Contracts.DowntimeKind.Planned
-                    ? $"{machineCode} is in planned maintenance until {down.EndsAt:u}: {down.Reason}."
-                    : $"{machineCode} is down since {down.StartsAt:u}: {down.Reason}.")
+                down.Kind switch
+                {
+                    Maintenance.Contracts.DowntimeKind.Planned => $"{machineCode} is in planned maintenance until {down.EndsAt:u}: {down.Reason}.",
+                    Maintenance.Contracts.DowntimeKind.MaintenanceOverdue => $"{machineCode} is locked out: {down.Reason}.",
+                    _ => $"{machineCode} is down since {down.StartsAt:u}: {down.Reason}.",
+                })
             {
                 Inputs = new(StringComparer.Ordinal) { ["downtimeId"] = down.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), ["kind"] = down.Kind.ToString() },
             };

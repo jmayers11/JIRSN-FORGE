@@ -98,6 +98,20 @@ Use-as-is dispositions, corrective-action verification and shipping each need a 
 Finished goods enter stock only after every inspection point of the order has passed.
 See `docs/adr/0008-phase-7a-quality-and-shipping.md`.
 
+## What Phase 7b contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Programs and contracts | `src/Forge.Programs` | Programs, contracts, CLINs/SLINs, delivery schedules, requirements, milestones; segregated by program |
+| Contract demand | `src/Forge.Planning/Demand.cs` | A planner turns a contract delivery into demand, and brings it back in step when the contract changes |
+| Program Horizon | `src/Forge.Planning/ProgramHorizon.cs` | Units required, delivered and planned; orders on schedule, at risk and projected late; primary constraint |
+| Preventive maintenance | `src/Forge.Maintenance` | PM plans, preventive and corrective work orders, planned downtime, lock-out when safety-critical PM is overdue |
+| Shop-floor holds | `src/Forge.Execution` | An undecided NCR or a missed inspection stops work at the kiosk |
+| Screens | `src/Forge.Host/wwwroot` | Programs and Program Horizon, Maintenance work orders and PM plans, program access in Settings |
+
+Maintenance work is completed by a technician and signed off by someone else; program access is granted
+by a security administrator. See `docs/adr/0009-phase-7b-programs-and-maintenance.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.

@@ -9,6 +9,7 @@ using Forge.Kernel.Security;
 using Forge.Planning;
 using Forge.Procurement;
 using Forge.Procurement.Contracts;
+using Forge.Programs.Contracts;
 using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
@@ -44,7 +45,7 @@ public sealed record DemandRequest(string PartNumber, decimal Quantity, DateOnly
 public sealed record DemandChangeRequest(decimal Quantity, DateOnly NeedDate, int Priority, string? Reason);
 
 /// <summary>A demand with what has shipped against it.</summary>
-public sealed record DemandView(long DemandId, string PartNumber, decimal Quantity, decimal Shipped, decimal Remaining, DateOnly NeedDate, int Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId, DemandStatus Status, string CreatedBy, DateTimeOffset CreatedAt);
+public sealed record DemandView(long DemandId, string PartNumber, decimal Quantity, decimal Shipped, decimal Remaining, DateOnly NeedDate, int Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId, DemandStatus Status, string CreatedBy, DateTimeOffset CreatedAt, long? DeliveryId = null, string? ContractNote = null);
 
 /// <summary>A purchase order line with what Inventory has received against it.</summary>
 public sealed record PurchaseLineView(int LineNumber, string PartNumber, decimal Quantity, string UnitOfMeasure, DateOnly PromisedDate, PurchaseLineStatus Status, decimal Received, decimal Open);
@@ -65,14 +66,26 @@ public static class MaterialsEndpoints
             {
                 await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
                 var shipped = (await uow.Store<IInventoryLookup>().ListShippedByDemandAsync(http.RequestAborted)).ToDictionary(d => (d.DemandId, d.PartNumber), d => d.Shipped);
-                return (await uow.Store<IDemandStore>().ListAsync(includeClosed ?? false, http.RequestAborted))
-                    .Where(d => d.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p)))
-                    .Select(d =>
+                var programs = uow.Store<IProgramsLookup>();
+                var views = new List<DemandView>();
+                foreach (var d in (await uow.Store<IDemandStore>().ListAsync(includeClosed ?? false, http.RequestAborted))
+                    .Where(d => d.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))))
+                {
+                    var got = shipped.GetValueOrDefault((d.DemandId, d.PartNumber));
+                    long? deliveryId = d.SourceKey is { } key && key.StartsWith("delivery:", StringComparison.Ordinal) && long.TryParse(key.AsSpan(9), System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : null;
+                    string? note = null;
+                    if (deliveryId is { } did && d.Status == DemandStatus.Open && await programs.FindDeliveryAsync(did, http.RequestAborted) is { } contract)
                     {
-                        var got = shipped.GetValueOrDefault((d.DemandId, d.PartNumber));
-                        return new DemandView(d.DemandId, d.PartNumber, d.Quantity, got, Math.Max(0, d.Quantity - got), d.NeedDate, d.Priority, d.Kind, d.Customer, d.Reference, d.ProgramId, d.Status, d.CreatedBy, d.CreatedAt);
-                    })
-                    .ToList();
+                        note = contract.Delivery.Cancelled ? "Cancelled on the contract"
+                            : contract.Delivery.Quantity != d.Quantity || contract.Delivery.DueDate != d.NeedDate
+                                ? $"Contract now says {contract.Delivery.Quantity:0.###} by {contract.Delivery.DueDate:yyyy-MM-dd}"
+                                : null;
+                    }
+
+                    views.Add(new DemandView(d.DemandId, d.PartNumber, d.Quantity, got, Math.Max(0, d.Quantity - got), d.NeedDate, d.Priority, d.Kind, d.Customer, d.Reference, d.ProgramId, d.Status, d.CreatedBy, d.CreatedAt, deliveryId, note));
+                }
+
+                return views;
             }));
         planning.MapPost("/demand", (HttpContext http, DemandRequest b, DemandService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordAsync(new RecordDemand(b.PartNumber, b.Quantity, b.NeedDate, b.Priority ?? 5, b.Kind, b.Customer, b.Reference, b.ProgramId), c, ct)));

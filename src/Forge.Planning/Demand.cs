@@ -1,4 +1,6 @@
 using Forge.Engineering.Contracts;
+using Forge.Kernel.Access;
+using Forge.Programs.Contracts;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
@@ -39,13 +41,17 @@ public sealed record DemandInfo(
     Guid? ProgramId,
     DemandStatus Status,
     string CreatedBy,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? SourceKey = null);
 
 public sealed record RecordDemand(string PartNumber, decimal Quantity, DateOnly NeedDate, int Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId);
 
 public sealed record ChangeDemand(long DemandId, decimal Quantity, DateOnly NeedDate, int Priority);
 
 public sealed record CloseDemand(long DemandId, bool Cancel);
+
+/// <summary>Turns a contract delivery into demand, or brings that demand back in step with the contract.</summary>
+public sealed record PlanDelivery(long DeliveryId, int? Priority);
 
 public sealed record DemandChanged(long DemandId, string PartNumber, string Change) : IDomainEvent
 {
@@ -61,6 +67,8 @@ public interface IDemandStore
     Task UpdateAsync(DemandInfo demand, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task<DemandInfo?> FindAsync(long demandId, CancellationToken ct);
+
+    Task<DemandInfo?> FindBySourceAsync(string sourceKey, CancellationToken ct);
 
     /// <summary>Demand by need date; closed and cancelled only when asked.</summary>
     Task<IReadOnlyList<DemandInfo>> ListAsync(bool includeClosed, CancellationToken ct);
@@ -86,6 +94,11 @@ public sealed class DemandService(CommandPipeline pipeline)
                 throw new CommandRejectedException("unknown_part", $"Part {part} does not exist.");
             }
 
+            if (c.ProgramId is { } programId)
+            {
+                await RequireProgramAsync(uow, programId, context, ct);
+            }
+
             var demand = new DemandInfo(0, part, c.Quantity, c.NeedDate, c.Priority, c.Kind, Trim(c.Customer, 200), Trim(c.Reference, 100), c.ProgramId, DemandStatus.Open, context.Actor, now);
             var demandId = await uow.Store<IDemandStore>().InsertAsync(demand, ct);
             var id = demandId.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -93,6 +106,71 @@ public sealed class DemandService(CommandPipeline pipeline)
                 CommandResult.Ok(id, $"Demand {id}: {c.Quantity} {part} needed {c.NeedDate:yyyy-MM-dd} ({c.Kind})."),
                 [pipeline.Event(new DemandChanged(demandId, part, "Recorded"), context, SourceContext, Entity, id, program)],
                 new AuditChange(Entity, id, null, CanonicalJson.Serialize(demand with { DemandId = demandId }), program));
+        }, ct);
+    }
+
+    /// <summary>
+    /// Plans a contract delivery: creates ContractDelivery demand for it, or updates the demand it
+    /// already made to the contract's current quantity and date, or cancels it when the delivery was
+    /// cancelled. The demand carries the program, so it is segregated like the contract.
+    /// </summary>
+    public Task<CommandResult> PlanDeliveryAsync(PlanDelivery c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var spec = new CommandSpec(SourceContext, nameof(PlanDelivery), Permissions.DemandManage, ResourceRef.Of("Delivery", c.DeliveryId));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var reference = await uow.Store<IProgramsLookup>().FindDeliveryAsync(c.DeliveryId, ct);
+            if (reference is null || !context.Principal.Programs.Contains(new ProgramId(reference.ProgramId)))
+            {
+                throw new CommandRejectedException("delivery_not_found", $"Delivery {c.DeliveryId} does not exist.");
+            }
+
+            Validate(reference.Delivery.Quantity, c.Priority ?? 3);
+            var program = new ProgramId(reference.ProgramId);
+            var store = uow.Store<IDemandStore>();
+            var existing = await store.FindBySourceAsync(reference.SourceKey, ct);
+            var delivery = reference.Delivery;
+            var label = $"{reference.ContractNumber} CLIN {delivery.Clin} delivery {delivery.DeliveryId}";
+
+            if (existing is null)
+            {
+                if (delivery.Cancelled || reference.ContractStatus != ContractStatus.Active || reference.PartNumber is null)
+                {
+                    throw new CommandRejectedException("delivery_not_plannable", $"{label} is cancelled or its contract is not active; there is nothing to plan.");
+                }
+
+                var demand = new DemandInfo(0, reference.PartNumber, delivery.Quantity, delivery.DueDate, c.Priority ?? 3, DemandKind.ContractDelivery, reference.Customer, label, reference.ProgramId,
+                    DemandStatus.Open, context.Actor, now, reference.SourceKey);
+                var demandId = await store.InsertAsync(demand, ct);
+                var newId = demandId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return new CommandOutcome(
+                    CommandResult.Ok(newId, $"Demand {newId}: {delivery.Quantity} {reference.PartNumber} for {label}, needed {delivery.DueDate:yyyy-MM-dd}."),
+                    [pipeline.Event(new DemandChanged(demandId, reference.PartNumber, "Recorded"), context, SourceContext, Entity, newId, program)],
+                    new AuditChange(Entity, newId, null, CanonicalJson.Serialize(demand with { DemandId = demandId }), program));
+            }
+
+            var id = existing.DemandId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (existing.Status != DemandStatus.Open)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, $"Demand {id} for {label} is already {existing.Status.ToString().ToLowerInvariant()}."));
+            }
+
+            var updated = delivery.Cancelled || reference.ContractStatus == ContractStatus.Cancelled
+                ? existing with { Status = DemandStatus.Cancelled }
+                : existing with { Quantity = delivery.Quantity, NeedDate = delivery.DueDate, Priority = c.Priority ?? existing.Priority };
+            if (updated == existing)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, $"Demand {id} already matches {label}."));
+            }
+
+            await store.UpdateAsync(updated, now, context.Actor, ct);
+            return new CommandOutcome(
+                CommandResult.Ok(id, updated.Status == DemandStatus.Cancelled
+                    ? $"Demand {id} cancelled: {label} was cancelled on the contract."
+                    : $"Demand {id} now {updated.Quantity} needed {updated.NeedDate:yyyy-MM-dd}, as {label} says."),
+                [pipeline.Event(new DemandChanged(existing.DemandId, existing.PartNumber, updated.Status == DemandStatus.Open ? "Changed" : "Cancelled"), context, SourceContext, Entity, id, program)],
+                new AuditChange(Entity, id, CanonicalJson.Serialize(existing), CanonicalJson.Serialize(updated), program));
         }, ct);
     }
 
@@ -145,6 +223,20 @@ public sealed class DemandService(CommandPipeline pipeline)
                 [pipeline.Event(new DemandChanged(demandId, demand.PartNumber, updated.Status == DemandStatus.Open ? "Changed" : updated.Status.ToString()), context, SourceContext, Entity, id, program)],
                 new AuditChange(Entity, id, CanonicalJson.Serialize(demand), CanonicalJson.Serialize(updated), program));
         }, ct);
+    }
+
+    private static async Task RequireProgramAsync(IKernelUnitOfWork uow, Guid programId, CommandContext context, CancellationToken ct)
+    {
+        var program = await uow.Store<IProgramsLookup>().FindProgramAsync(programId, ct);
+        if (program is null || !context.Principal.Programs.Contains(new ProgramId(programId)))
+        {
+            throw new CommandRejectedException("program_not_found", $"Program {programId} does not exist.");
+        }
+
+        if (program.Status != ProgramStatus.Active)
+        {
+            throw new CommandRejectedException("program_closed", $"Program {program.Code} is closed.");
+        }
     }
 
     private static void Validate(decimal quantity, int priority)

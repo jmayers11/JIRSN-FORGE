@@ -10,7 +10,6 @@ namespace Forge.Integration.Tests;
 [Collection(PostgresCollection.Name)]
 public sealed class Phase3Tests(PostgresFixture postgres)
 {
-    private static readonly Guid Falcon = Guid.Parse("018f0000-0000-7000-8000-00000000fa1c");
 
     private static async Task<JsonElement> Get(HttpClient client, string url)
     {
@@ -115,13 +114,16 @@ public sealed class Phase3Tests(PostgresFixture postgres)
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
         var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
+        await plant.Person("pm", "ProgramManager");
+        var created = await plant.Ok(plant.As("pm"), "/api/programs/", new { code = "FALCON", name = "Program Falcon", customer = "USAF" });
+        var falcon = Guid.Parse(created.GetProperty("entityId").GetString()!);
 
         // Without Falcon access the planner cannot even create a Falcon order.
-        var denied = await plant.Try(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 1m, dueDate = "2026-10-09", priority = 1, programId = Falcon });
+        var denied = await plant.Try(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 1m, dueDate = "2026-10-09", priority = 1, programId = falcon });
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
 
-        await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["planner"]}/programs", new { programId = Falcon, reason = "Falcon planner" });
-        var falconOrder = await plant.Ok(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 1m, dueDate = "2026-10-09", priority = 1, programId = Falcon });
+        await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["planner"]}/programs", new { programId = falcon, reason = "Falcon planner" });
+        var falconOrder = await plant.Ok(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 1m, dueDate = "2026-10-09", priority = 1, programId = falcon });
         var number = falconOrder.GetProperty("entityId").GetString();
 
         // The engineer (supervisor role, no Falcon access) sees nothing of it.

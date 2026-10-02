@@ -11,6 +11,7 @@
     <ProjectReference Include="..\Forge.Resources\Forge.Resources.csproj" />
     <ProjectReference Include="..\Forge.Workforce\Forge.Workforce.csproj" />
     <ProjectReference Include="..\Forge.Maintenance\Forge.Maintenance.csproj" />
+    <ProjectReference Include="..\Forge.Programs\Forge.Programs.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Infrastructure\Migrations\*.sql" />

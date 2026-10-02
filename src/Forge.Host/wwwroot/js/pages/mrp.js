@@ -92,8 +92,8 @@ export async function mrpPage(page, ctx) {
       ${!list.length ? emptyBlock('No open demand', 'Record customer orders, forecasts and contract deliveries here; MRP plans to cover them.') : `
       <table class="table"><thead><tr><th>#</th><th>Part</th><th class="num">Qty</th><th>Need by</th><th>Priority</th><th>Kind</th><th>Customer / reference</th><th></th></tr></thead><tbody>
       ${list.map(d => `<tr><td>D${d.demandId}</td><td><b>${esc(d.partNumber)}</b></td><td class="num">${qty(d.quantity)}</td><td>${esc(fmtDate(d.needDate))}</td><td>${d.priority}</td>
-        <td>${esc((DEMAND_KINDS.find(k => k[0] === d.kind) ?? [0, d.kind])[1])}</td><td>${esc([d.customer, d.reference].filter(Boolean).join(' · ') || '—')}</td>
-        <td class="nowrap">${planner ? `<button class="btn small" data-change="${d.demandId}">Change</button> <button class="btn small" data-close="${d.demandId}">Close</button> <button class="btn small ghost" data-cancel="${d.demandId}">Cancel</button>` : ''}</td></tr>`).join('')}
+        <td>${esc((DEMAND_KINDS.find(k => k[0] === d.kind) ?? [0, d.kind])[1])}</td><td>${esc([d.customer, d.reference].filter(Boolean).join(' · ') || '—')}${d.shipped ? ` <span class="faint">· ${qty(d.shipped)} shipped</span>` : ''}${d.contractNote ? `<div class="c-warn">${esc(d.contractNote)}</div>` : ''}</td>
+        <td class="nowrap">${planner && d.contractNote ? `<button class="btn small primary" data-resync="${d.deliveryId}">Update from contract</button> ` : ''}${planner ? `<button class="btn small" data-change="${d.demandId}">Change</button> <button class="btn small" data-close="${d.demandId}">Close</button> <button class="btn small ghost" data-cancel="${d.demandId}">Cancel</button>` : ''}</td></tr>`).join('')}
       </tbody></table>`}`;
   }
 
@@ -120,6 +120,11 @@ export async function mrpPage(page, ctx) {
     $$('[data-params]', page).forEach(b => b.addEventListener('click', () => planning(b.dataset.params)));
     $$('[data-params-any]', page).forEach(b => b.addEventListener('click', () => planning(null)));
     $$('[data-add-demand]', page).forEach(b => b.addEventListener('click', addDemand));
+    $$('[data-resync]', page).forEach(b => b.addEventListener('click', async () => {
+      const done = await confirmWithReason({ title: `Update demand from contract delivery ${b.dataset.resync}`, detail: 'The demand takes the contract delivery\'s current quantity and date, or is cancelled if the delivery was.', confirmLabel: 'Update', reasonRequired: false },
+        reason => command(`/api/planning/demand/from-delivery/${b.dataset.resync}`, {}, reason));
+      if (done) { toast(done.message); await reload(); }
+    }));
     $$('[data-change]', page).forEach(b => b.addEventListener('click', () => changeDemand(Number(b.dataset.change))));
     $$('[data-close]', page).forEach(b => b.addEventListener('click', () => closeDemand(Number(b.dataset.close), 'close')));
     $$('[data-cancel]', page).forEach(b => b.addEventListener('click', () => closeDemand(Number(b.dataset.cancel), 'cancel')));

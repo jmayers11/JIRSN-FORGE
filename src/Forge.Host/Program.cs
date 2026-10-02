@@ -5,6 +5,7 @@ using Forge.Execution.Infrastructure;
 using Forge.Maintenance.Infrastructure;
 using Forge.Inventory.Infrastructure;
 using Forge.Procurement.Infrastructure;
+using Forge.Programs.Infrastructure;
 using Forge.Quality.Infrastructure;
 using Forge.Host.Api;
 using Forge.Host.Security;
@@ -30,6 +31,7 @@ builder.Services.AddForgeResources();
 builder.Services.AddForgeWorkforce();
 builder.Services.AddForgeSafetyRules();
 builder.Services.AddForgeEngineering();
+builder.Services.AddForgePrograms();
 builder.Services.AddForgeExecution();
 builder.Services.AddForgeMaintenance();
 builder.Services.AddForgeQuality();
@@ -132,6 +134,7 @@ app.MapPlanningEndpoints();
 app.MapShopFloorEndpoints();
 app.MapMaterialsEndpoints();
 app.MapQualityEndpoints();
+app.MapProgramsEndpoints();
 
 await app.RunAsync();
 

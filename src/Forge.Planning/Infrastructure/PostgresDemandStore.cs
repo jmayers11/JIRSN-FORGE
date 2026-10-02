@@ -5,19 +5,19 @@ namespace Forge.Planning.Infrastructure;
 
 internal sealed class PostgresDemandStore(PostgresUnitOfWork uow) : IDemandStore
 {
-    private const string Select = "SELECT demand_id, part_number, quantity, need_date, priority, kind, customer, reference, program_id, status, created_by, created_at FROM planning.demand";
+    private const string Select = "SELECT demand_id, part_number, quantity, need_date, priority, kind, customer, reference, program_id, status, created_by, created_at, source_key FROM planning.demand";
 
     public async Task<long> InsertAsync(DemandInfo demand, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(demand);
         await using var cmd = uow.Command(
             """
-            INSERT INTO planning.demand (part_number, quantity, need_date, priority, kind, customer, reference, program_id, status, created_at, created_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING demand_id
+            INSERT INTO planning.demand (part_number, quantity, need_date, priority, kind, customer, reference, program_id, status, created_at, created_by, source_key)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING demand_id
             """,
             demand.PartNumber, demand.Quantity, demand.NeedDate, demand.Priority, demand.Kind.ToString(), Text(demand.Customer), Text(demand.Reference),
             new NpgsqlParameter { Value = (object?)demand.ProgramId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid },
-            demand.Status.ToString(), demand.CreatedAt, demand.CreatedBy);
+            demand.Status.ToString(), demand.CreatedAt, demand.CreatedBy, Text(demand.SourceKey));
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -32,6 +32,9 @@ internal sealed class PostgresDemandStore(PostgresUnitOfWork uow) : IDemandStore
 
     public async Task<DemandInfo?> FindAsync(long demandId, CancellationToken ct) =>
         (await ReadAsync(Select + " WHERE demand_id = $1", ct, demandId)).SingleOrDefault();
+
+    public async Task<DemandInfo?> FindBySourceAsync(string sourceKey, CancellationToken ct) =>
+        (await ReadAsync(Select + " WHERE source_key = $1", ct, sourceKey)).SingleOrDefault();
 
     public Task<IReadOnlyList<DemandInfo>> ListAsync(bool includeClosed, CancellationToken ct) =>
         ReadAsync(Select + (includeClosed ? string.Empty : " WHERE status = 'Open'") + " ORDER BY need_date, priority, demand_id", ct);
@@ -57,7 +60,8 @@ internal sealed class PostgresDemandStore(PostgresUnitOfWork uow) : IDemandStore
                 r.IsDBNull(8) ? null : r.GetGuid(8),
                 Enum.Parse<DemandStatus>(r.GetString(9)),
                 r.GetString(10),
-                r.GetFieldValue<DateTimeOffset>(11)));
+                r.GetFieldValue<DateTimeOffset>(11),
+                r.IsDBNull(12) ? null : r.GetString(12)));
         }
 
         return list;

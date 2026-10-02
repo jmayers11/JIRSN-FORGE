@@ -4,7 +4,7 @@
 //
 // Usage: node tools/seed-sample-plant.mjs [http://localhost:5080] [admin-subject]
 // Sign in afterwards as: planner (Michael Carter, planner), planner2, eng, approver, tech or dev-admin;
-// for materials: stores, ivy, bob, pat; for quality and shipping: insp, qe, qm, ship.
+// for materials: stores, ivy, bob, pat; for quality and shipping: insp, qe, qm, ship; pm and mp.
 // Run it again on an older sample plant to add only what it is missing.
 
 const base = (process.argv[2] ?? 'http://localhost:5080').replace(/\/+$/, '');
@@ -39,13 +39,17 @@ async function main() {
   const existing = (await get(adminSubject, '/api/kernel/people')).map(p => p.idpSubject);
   if (existing.includes('eng')) {
     // An earlier sample plant: add only what is new (Phase 6 materials), once.
-    if (existing.includes('insp')) throw new Error('This database already has the sample plant, including materials and quality. It is set up once per database.');
+    if (existing.includes('pm')) throw new Error('This database already has the full sample plant. It is set up once per database.');
     if (!existing.includes('stores')) {
       console.log('Sample plant found; adding sample materials (inventory, purchase orders, demand).');
       await seedMaterials();
     }
-    console.log('Adding sample quality and shipping.');
-    await seedQuality();
+    if (!existing.includes('insp')) {
+      console.log('Adding sample quality and shipping.');
+      await seedQuality();
+    }
+    console.log('Adding sample programs and preventive maintenance.');
+    await seedPrograms();
     return finish();
   }
 
@@ -184,6 +188,7 @@ async function main() {
 
   await seedMaterials();
   await seedQuality();
+  await seedPrograms();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -192,7 +197,8 @@ function finish() {
   console.log(`\nSample plant ready. Open ${base}/ and sign in as "planner" (Michael Carter).`);
   console.log('Other sample sign-ins: planner2, eng, approver, tech, dev-admin, "kiosk" for the Shop Floor terminal,');
   console.log('for materials: stores (material handler), ivy (inventory controller), bob (buyer), pat (purchasing manager);');
-  console.log('for quality and shipping: insp (inspector), qe (quality engineer), qm (quality manager), ship (shipper).');
+  console.log('for quality and shipping: insp (inspector), qe (quality engineer), qm (quality manager), ship (shipper);');
+  console.log('for programs and maintenance: pm (program manager), mp (maintenance planner).');
   console.log('Everything shown is sample data.');
 }
 
@@ -277,6 +283,45 @@ async function seedQuality() {
   const shipment = await post('stores', '/api/inventory/shipments', { demandId: acme?.demandId ?? null, customer: acme ? null : 'Acme Fabrication', reference: 'PO-77812 partial', shipTo: 'Acme Fabrication, Dock 2',
     lines: [{ partNumber: 'PANEL-500', quantity: 25, locationCode: 'FG' }] });
   await post('stores', `/api/inventory/shipments/${shipment.entityId}/pack`);
+}
+
+// Phase 7b: Program Falcon with a contract, CLINs, deliveries (two planned as demand), requirements and
+// milestones; preventive-maintenance plans (one lock-out plan overdue) and a breakdown being repaired.
+async function seedPrograms() {
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  step('Programs: Program Falcon, its contract and deliveries');
+  await person('pm', 'Paige Program', 'ProgramManager');
+  await person('mp', 'Max Maintenance Planner', 'MaintenancePlanner');
+  const falcon = (await post('pm', '/api/programs/', { code: 'FALCON', name: 'Program Falcon', customer: 'US Air Force', description: 'Painted panel assemblies for the Falcon airframe upgrade' })).entityId;
+  const everyone = await get(adminSubject, '/api/kernel/people');
+  for (const who of ['pm', 'planner', 'planner2', 'stores', 'ship']) {
+    const p = everyone.find(x => x.idpSubject === who);
+    if (p) await post(adminSubject, `/api/kernel/people/${p.personId}/programs`, { programId: falcon, reason: 'Falcon program team' });
+  }
+  const contract = (await post('pm', `/api/programs/${falcon}/contracts`, { number: 'FA8650-26-C-0042', customer: 'US Air Force', title: 'Falcon panel assemblies, Lot 1', periodStart: day(-30), periodEnd: day(335), ceiling: 180000 })).entityId;
+  await post('pm', `/api/programs/contracts/${contract}/clins`, { clin: '0001', description: 'Painted panel assembly', partNumber: 'PANEL-500', quantity: 120, unitPrice: 850 });
+  await post('pm', `/api/programs/contracts/${contract}/clins`, { clin: '0001AA', parentClin: '0001', description: 'First article inspection report' });
+  await post('pm', `/api/programs/contracts/${contract}/clins`, { clin: '0002', description: 'Technical data package' });
+  const deliveries = [];
+  for (const [quantity, due] of [[40, 28], [40, 56], [40, 84]]) {
+    deliveries.push((await post('pm', `/api/programs/contracts/${contract}/deliveries`, { clin: '0001', quantity, dueDate: day(due) })).entityId);
+  }
+  await post('pm', `/api/programs/contracts/${contract}/requirements`, { code: 'AS9102', text: 'First article inspection report with the first delivery.' });
+  await post('pm', `/api/programs/contracts/${contract}/requirements`, { code: 'DFARS 252.225-7009', text: 'Specialty metals must be melted or produced in a qualifying country.' });
+  const cdr = (await post('pm', `/api/programs/${falcon}/milestones`, { title: 'Critical design review', dueDate: day(-10) })).entityId;
+  await post('pm', `/api/programs/milestones/${cdr}/complete`, { completedOn: day(-12) });
+  await post('pm', `/api/programs/${falcon}/milestones`, { title: 'First article inspection', dueDate: day(21) });
+  for (const id of deliveries.slice(0, 2)) await post('planner', `/api/planning/demand/from-delivery/${id}`, { priority: 2 });
+  await post('planner', '/api/orders/', { partNumber: 'PANEL-500', quantity: 40, dueDate: day(24), priority: 2, programId: falcon });
+
+  step('Maintenance: PM plans (one lock-out plan overdue) and a breakdown under repair');
+  await post('mp', '/api/maintenance/plans', { machineCode: 'PAINT-BOOTH', title: 'Booth filter change', intervalDays: 14, firstDue: day(3), durationMinutes: 45,
+    tasks: ['Lock out booth fans', 'Replace intake and exhaust filters', 'Record manometer reading'], lockOutWhenOverdue: false, graceDays: 0 });
+  await post('mp', '/api/maintenance/plans', { machineCode: 'SLITTER-A', title: 'Knife and guard inspection', intervalDays: 30, firstDue: day(-4), durationMinutes: 90,
+    tasks: ['Lock out and tag out', 'Inspect and rotate knives', 'Check guard interlocks'], lockOutWhenOverdue: true, graceDays: 2 });
+  await post('mp', '/api/maintenance/plans', { machineCode: 'LASER-1', title: 'Lens and nozzle clean', intervalDays: 7, firstDue: day(1), durationMinutes: 30,
+    tasks: ['Clean focus lens', 'Replace nozzle if worn', 'Test cut'], lockOutWhenOverdue: false, graceDays: 0 });
+  await post('tech', '/api/maintenance/machines/CMM-1/down', { description: 'Probe crash on fixture; stylus bent' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

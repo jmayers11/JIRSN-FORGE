@@ -463,3 +463,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .card-row .grow { flex: 1; display: grid; gap: 4px; min-width: 0; }
 .card-row .nowrap { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 @media (max-width: 720px) { .card-row { flex-direction: column; } .card-row .nowrap { justify-content: flex-start; } }
+
+/* Programs */
+.program-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.program-card { display: block; color: inherit; text-decoration: none; }
+.program-card:hover { border-color: var(--forge-orange); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; text-align: right; font-weight: 600; }
