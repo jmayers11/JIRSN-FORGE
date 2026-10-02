@@ -27,6 +27,12 @@ public sealed record DeliveryInfo(long DeliveryId, long ContractId, string Clin,
 
 public sealed record RequirementInfo(int Number, string Code, string Text);
 
+/// <summary>An obligation of funds by a contract action; negative amounts de-obligate.</summary>
+public sealed record FundingInfo(long FundingId, long ContractId, string? Clin, string Modification, decimal Amount, DateOnly ObligatedOn, string CreatedBy, DateTimeOffset CreatedAt);
+
+/// <summary>A work breakdown structure element. A child's code extends its parent's (1.2 under 1).</summary>
+public sealed record WbsElement(Guid ProgramId, string Code, string? ParentCode, string Title);
+
 public sealed record ContractInfo(
     long ContractId,
     Guid ProgramId,
@@ -39,7 +45,12 @@ public sealed record ContractInfo(
     ContractStatus Status,
     IReadOnlyList<ClinInfo> Clins,
     IReadOnlyList<DeliveryInfo> Deliveries,
-    IReadOnlyList<RequirementInfo> Requirements);
+    IReadOnlyList<RequirementInfo> Requirements,
+    IReadOnlyList<FundingInfo> Funding)
+{
+    /// <summary>Total obligated so far: the sum of every funding action.</summary>
+    public decimal Funded => Funding.Sum(f => f.Amount);
+}
 
 public sealed record MilestoneInfo(long MilestoneId, Guid ProgramId, string Title, DateOnly DueDate, DateOnly? CompletedOn, string? CompletedBy);
 
@@ -65,4 +76,6 @@ public interface IProgramsLookup
     Task<DeliveryReference?> FindDeliveryAsync(long deliveryId, CancellationToken ct);
 
     Task<IReadOnlyList<MilestoneInfo>> ListMilestonesAsync(Guid? programId, CancellationToken ct);
+
+    Task<IReadOnlyList<WbsElement>> ListWbsAsync(Guid programId, CancellationToken ct);
 }

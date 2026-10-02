@@ -112,7 +112,8 @@ public sealed record NewTransaction(
     string? Reason = null,
     long? RequestId = null,
     string? ApprovedBy = null,
-    long? ShipmentId = null);
+    long? ShipmentId = null,
+    long? WorkOrderId = null);
 
 public interface IInventoryStore
 {

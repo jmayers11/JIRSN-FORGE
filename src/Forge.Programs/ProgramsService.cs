@@ -37,6 +37,11 @@ public sealed record AddMilestone(Guid ProgramId, string Title, DateOnly DueDate
 
 public sealed record CompleteMilestone(long MilestoneId, DateOnly CompletedOn);
 
+/// <summary>Funds obligated (or, negative, de-obligated) by a contract action such as a modification.</summary>
+public sealed record AddFunding(long ContractId, string? Clin, string Modification, decimal Amount, DateOnly ObligatedOn);
+
+public sealed record AddWbsElement(Guid ProgramId, string Code, string? ParentCode, string Title);
+
 public sealed record ProgramChanged(Guid ProgramId, string Kind, string Id, string Change) : IDomainEvent
 {
     public static string EventType => nameof(ProgramChanged);
@@ -65,6 +70,10 @@ public interface IProgramsStore
     Task<long> InsertMilestoneAsync(MilestoneInfo milestone, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task<MilestoneInfo?> FindMilestoneAsync(long milestoneId, CancellationToken ct);
+
+    Task<long> InsertFundingAsync(FundingInfo funding, CancellationToken ct);
+
+    Task<bool> InsertWbsAsync(WbsElement element, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task UpdateMilestoneAsync(MilestoneInfo milestone, CancellationToken ct);
 }
@@ -127,7 +136,7 @@ public sealed class ProgramsService(CommandPipeline pipeline, TimeProvider time)
             var number = BusinessCode.Require(c.Number, "Contract");
             ValidatePeriod(c.PeriodStart, c.PeriodEnd, c.Ceiling);
             var contract = new ContractInfo(0, program.ProgramId, number, BusinessCode.RequireName(c.Customer, "Customer"), BusinessCode.RequireName(c.Title, "Contract"),
-                c.PeriodStart, c.PeriodEnd, c.Ceiling, ContractStatus.Active, [], [], []);
+                c.PeriodStart, c.PeriodEnd, c.Ceiling, ContractStatus.Active, [], [], [], []);
             var contractId = await uow.Store<IProgramsStore>().InsertContractAsync(contract, now, context.Actor, ct)
                 ?? throw new CommandRejectedException("number_exists", $"Contract {number} already exists.");
             return Outcome(context, program.ProgramId, ContractEntity, Key(contractId), "Created", $"Contract {number} added to {program.Code}.", null, contract with { ContractId = contractId });
@@ -298,7 +307,90 @@ public sealed class ProgramsService(CommandPipeline pipeline, TimeProvider time)
         }, ct);
     }
 
+    /// <summary>
+    /// Records a funding action (a contract modification). Total funds obligated never exceed the
+    /// ceiling, and a de-obligation never takes the total below zero.
+    /// </summary>
+    public Task<CommandResult> AddFundingAsync(AddFunding c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        return ContractAsync(nameof(AddFunding), c.ContractId, c, context, true, async (uow, contract, now) =>
+        {
+            var mod = BusinessCode.RequireName(c.Modification, "Contract action");
+            string? clin = null;
+            if (!string.IsNullOrWhiteSpace(c.Clin))
+            {
+                clin = ClinCode(c.Clin);
+                if (contract.Clins.All(x => x.Clin != clin))
+                {
+                    throw new CommandRejectedException("unknown_clin", $"Contract {contract.Number} has no CLIN {clin}.");
+                }
+            }
+
+            var total = contract.Funded + c.Amount;
+            if (c.Amount == 0 || Math.Abs(c.Amount) > 10_000_000_000m)
+            {
+                throw new CommandRejectedException("invalid_amount", "Give a non-zero amount; a negative amount de-obligates.");
+            }
+
+            if (total < 0)
+            {
+                throw new CommandRejectedException("negative_funding", $"Contract {contract.Number} has {contract.Funded:0.00} obligated; it cannot go below zero.");
+            }
+
+            if (contract.Ceiling is { } ceiling && total > ceiling)
+            {
+                throw new CommandRejectedException("over_ceiling", $"That would obligate {total:0.00} against a ceiling of {ceiling:0.00}. Modify the ceiling first.");
+            }
+
+            var funding = new FundingInfo(0, contract.ContractId, clin, mod, c.Amount, c.ObligatedOn, context.Actor, now);
+            var id = await uow.Store<IProgramsStore>().InsertFundingAsync(funding, ct);
+            return (contract with { Funding = [.. contract.Funding, funding with { FundingId = id }] },
+                $"{(c.Amount > 0 ? "obligated" : "de-obligated")} {Math.Abs(c.Amount):0.00} ({mod}); {total:0.00} funded");
+        }, ct);
+    }
+
+    public Task<CommandResult> AddWbsElementAsync(AddWbsElement c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var pid = new ProgramId(c.ProgramId);
+        var spec = new CommandSpec(SourceContext, nameof(AddWbsElement), Permissions.ProgramsManage, new ResourceRef("Wbs", c.Code, pid));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var program = await ActiveProgramAsync(uow, c.ProgramId, context, ct);
+            var code = WbsCode(c.Code);
+            var parent = string.IsNullOrWhiteSpace(c.ParentCode) ? null : WbsCode(c.ParentCode);
+            var existing = await uow.Store<IProgramsLookup>().ListWbsAsync(program.ProgramId, ct);
+            if (parent is null ? code.Contains('.', StringComparison.Ordinal) : !code.StartsWith(parent + ".", StringComparison.Ordinal) || code[(parent.Length + 1)..].Contains('.', StringComparison.Ordinal))
+            {
+                throw new CommandRejectedException("invalid_wbs", parent is null ? $"A top-level element has a single number (1, 2…), not {code}." : $"An element under {parent} is numbered {parent}.n, not {code}.");
+            }
+
+            if (parent is not null && existing.All(e => e.Code != parent))
+            {
+                throw new CommandRejectedException("unknown_wbs", $"{program.Code} has no WBS element {parent}.");
+            }
+
+            var element = new WbsElement(program.ProgramId, code, parent, BusinessCode.RequireName(c.Title, "WBS element"));
+            if (!await uow.Store<IProgramsStore>().InsertWbsAsync(element, now, context.Actor, ct))
+            {
+                throw new CommandRejectedException("wbs_exists", $"{program.Code} already has WBS {code}.");
+            }
+
+            return Outcome(context, program.ProgramId, "Wbs", code, "Created", $"WBS {code} {element.Title} added to {program.Code}.", null, element);
+        }, ct);
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    private static string WbsCode(string? raw)
+    {
+        var code = raw?.Trim() ?? string.Empty;
+        var parts = code.Split('.');
+        return code.Length is > 0 and <= 40 && parts.All(p => p.Length is > 0 and <= 4 && p.All(char.IsAsciiDigit) && p[0] != '0')
+            ? code
+            : throw new CommandRejectedException("invalid_wbs", $"'{raw}' is not a WBS code. Use dotted numbers such as 1, 1.2 or 1.2.3.");
+    }
 
     private Task<CommandResult> ProgramAsync<TCommand>(string commandType, Guid programId, TCommand command, CommandContext context, bool reasonRequired, Func<ProgramInfo, (ProgramInfo Next, string Message)> change, CancellationToken ct)
     {

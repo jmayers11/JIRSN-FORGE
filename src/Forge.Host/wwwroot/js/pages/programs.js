@@ -82,6 +82,8 @@ async function programDetail(page, ctx, id) {
     <div class="faint" style="margin:-6px 0 10px">${h.scheduleVersion ? `Order status from approved schedule v${h.scheduleVersion} (${esc(fmtDateTime(h.scheduleApprovedAt))}).` : 'No schedule has been approved yet, so no order has a projected status.'}
       ${h.primaryConstraint ? ` Example: ${esc(h.primaryConstraint.example)}` : ''}</div>
 
+    ${evPanel(h.earnedValue)}
+
     <section class="panel"><header><h2>Deliveries</h2><span class="spacer"></span><span class="muted">scheduled on contract CLINs; a planner turns each into demand</span></header>
       ${!h.deliveries.length ? emptyBlock('No deliveries scheduled', manager ? 'Add a contract and a CLIN for a part, then schedule deliveries against it.' : 'The program manager schedules contract deliveries.') : `
       <table class="table"><thead><tr><th>#</th><th>Contract / CLIN</th><th>Part</th><th class="num">Qty</th><th>Due</th><th class="num">Shipped</th><th>Status</th><th></th></tr></thead><tbody>
@@ -95,13 +97,25 @@ async function programDetail(page, ctx, id) {
 
     <section class="panel"><header><h2>Production orders</h2></header>
       ${!h.orders.length ? emptyBlock('No open orders on this program', 'Orders created for this program appear here with their projected delivery.') : `
-      <table class="table"><thead><tr><th>Order</th><th>Part</th><th class="num">Qty</th><th>Due</th><th>Status</th><th>Delivery</th><th>Why</th></tr></thead><tbody>
-      ${h.orders.map(o => `<tr><td><a href="#/orders/${o.orderNumber}">#${o.orderNumber}</a></td><td>${esc(o.partNumber)}</td><td class="num">${qty(o.quantity)}</td><td>${esc(fmtDate(o.dueDate))}</td><td>${esc(o.orderStatus)}</td>
+      <table class="table"><thead><tr><th>Order</th><th>Part</th><th class="num">Qty</th><th>Due</th><th>WBS</th><th>Status</th><th>Delivery</th><th>Why</th></tr></thead><tbody>
+      ${h.orders.map(o => `<tr><td><a href="#/orders/${o.orderNumber}">#${o.orderNumber}</a></td><td>${esc(o.partNumber)}</td><td class="num">${qty(o.quantity)}</td><td>${esc(fmtDate(o.dueDate))}</td>
+        <td class="nowrap">${esc(o.wbsCode ?? '—')}${manager && h.wbs.length ? ` <button class="btn small ghost" data-wbs-order="${o.orderNumber}">${o.wbsCode ? 'Change' : 'Assign'}</button>` : ''}</td><td>${esc(o.orderStatus)}</td>
         <td><span class="pill ${ORDER_TONE[o.delivery] ?? 'none'}">${esc(ORDER_LABEL[o.delivery] ?? o.delivery)}</span>${o.projectedCompletion ? ` <span class="faint">${esc(fmtDateTime(o.projectedCompletion))}</span>` : ''}</td>
         <td class="faint">${esc(o.explanation ?? '')}</td></tr>`).join('')}</tbody></table>`}
     </section>
 
     ${contracts.error ? errorBlock(contracts.error, 'contracts') : all.map(c => contractPanel(c, h, manager && active)).join('') || `<section class="panel">${emptyBlock('No contracts', manager ? 'Add the contract or award this program works under.' : 'The program manager records contracts.')}</section>`}
+
+    <section class="panel"><header><h2>Work breakdown structure</h2><span class="spacer"></span>${manager && active ? '<button class="btn small" id="wbs">+ WBS element</button>' : ''}</header>
+      ${!h.wbs.length ? emptyBlock('No WBS yet', 'Break the program into elements (1, 1.1, 1.2…) and charge orders to them to see progress by element.') : `
+      <table class="table"><thead><tr><th>WBS</th><th>Element</th><th class="num">Orders</th><th class="num">Quantity</th><th class="num">Completed</th><th>Progress</th></tr></thead><tbody>
+      ${h.wbs.map(w => {
+        const pct = w.quantity ? Math.round((100 * w.completed) / w.quantity) : 0;
+        const depth = w.code.split('.').length - 1;
+        return `<tr><td class="mono">${'&nbsp;&nbsp;&nbsp;'.repeat(depth)}${esc(w.code)}</td><td>${esc(w.title)}</td><td class="num">${w.orders}</td><td class="num">${qty(w.quantity)}</td><td class="num">${qty(w.completed)}</td>
+          <td>${w.quantity ? `<div class="bar" style="display:inline-block;width:120px;vertical-align:middle"><i style="width:${pct}%"></i></div> <span class="faint">${pct}%</span>` : '<span class="faint">no orders</span>'}</td></tr>`;
+      }).join('')}</tbody></table>`}
+    </section>
 
     <section class="panel"><header><h2>Milestones</h2></header>
       ${!h.milestones.length ? emptyBlock('No milestones', 'Design reviews, first articles, data deliverables and other dated commitments.') : `
@@ -132,6 +146,25 @@ async function programDetail(page, ctx, id) {
       reason => command(`/api/programs/${id}/${active ? 'close' : 'reopen'}`, {}, reason));
     if (done) { toast(done.message); await reload(); }
   });
+  $('#wbs', page)?.addEventListener('click', () => formModal({ title: `Add a WBS element to ${p.code}`, detail: 'Top-level elements are 1, 2, 3…; an element under 1.2 is 1.2.1, 1.2.2…', confirmLabel: 'Add element',
+    fields: [
+      { name: 'parentCode', label: 'Under', type: 'select', blank: '— top level —', options: h.wbs.map(w => [w.code, `${w.code} ${w.title}`]) },
+      { name: 'code', label: 'WBS code', required: true, placeholder: '1.2' },
+      { name: 'title', label: 'Element', required: true },
+    ] }, (v, reason) => command(`/api/programs/${id}/wbs`, v, reason), reload));
+  $$('[data-wbs-order]', page).forEach(b => b.addEventListener('click', () => formModal({ title: `Charge order #${b.dataset.wbsOrder} to a WBS element`, confirmLabel: 'Save',
+    fields: [{ name: 'wbsCode', label: 'WBS element', type: 'select', blank: '— none —', options: h.wbs.map(w => [w.code, `${w.code} ${w.title}`]) }] },
+  (v, reason) => command(`/api/orders/${b.dataset.wbsOrder}/wbs`, v, reason), reload)));
+  $$('[data-funding]', page).forEach(b => b.addEventListener('click', () => {
+    const c = contractById(b.dataset.funding);
+    return formModal({ title: `Record funding on ${c.number}`, detail: `Funded so far ${money(c.funding.reduce((t, f) => t + f.amount, 0))} of a ${money(c.ceiling)} ceiling. A negative amount de-obligates.`, confirmLabel: 'Record funding', reasonRequired: true,
+      fields: [
+        { name: 'modification', label: 'Contract action', required: true, placeholder: 'P00002' },
+        { name: 'amount', label: 'Amount (USD)', type: 'number', step: 'any', required: true },
+        { name: 'obligatedOn', label: 'Obligated on', type: 'date', value: today(), required: true },
+        { name: 'clin', label: 'CLIN (optional)', type: 'select', blank: '— whole contract —', options: c.clins.map(l => [l.clin, `${l.clin} ${l.description}`]) },
+      ] }, (v, reason) => command(`/api/programs/contracts/${c.contractId}/funding`, v, reason), reload);
+  }));
   $$('[data-done]', page).forEach(b => b.addEventListener('click', () => formModal({ title: 'Milestone done', confirmLabel: 'Mark done',
     fields: [{ name: 'completedOn', label: 'Completed on', type: 'date', value: today(), required: true }] },
   (v, reason) => command(`/api/programs/milestones/${b.dataset.done}/complete`, v, reason), reload)));
@@ -193,8 +226,9 @@ function contractPanel(c, h, edit) {
   const summary = h.contracts.find(s => s.contractId === c.contractId);
   return `<section class="panel">
     <header><h2>${esc(c.number)}</h2><span class="muted">${esc(c.title)} · ${esc(c.customer)}</span><span class="pill ${c.status === 'Active' ? 'ok' : 'none'}">${esc(c.status)}</span><span class="spacer"></span>
-      ${edit && c.status === 'Active' ? `<button class="btn small" data-clin="${c.contractId}">+ CLIN</button> <button class="btn small" data-delivery="${c.contractId}">+ Delivery</button> <button class="btn small" data-requirement="${c.contractId}">+ Requirement</button> <button class="btn small ghost" data-modify="${c.contractId}">Modify</button>` : ''}</header>
-    <div class="faint" style="margin-bottom:6px">Period of performance ${esc(fmtDate(c.periodStart))} – ${esc(fmtDate(c.periodEnd))} · ceiling ${money(c.ceiling)}${summary?.value != null ? ` · CLIN value ${money(summary.value)}` : ''}</div>
+      ${edit && c.status === 'Active' ? `<button class="btn small" data-clin="${c.contractId}">+ CLIN</button> <button class="btn small" data-delivery="${c.contractId}">+ Delivery</button> <button class="btn small" data-requirement="${c.contractId}">+ Requirement</button> <button class="btn small" data-funding="${c.contractId}">+ Funding</button> <button class="btn small ghost" data-modify="${c.contractId}">Modify</button>` : ''}</header>
+    <div class="faint" style="margin-bottom:6px">Period of performance ${esc(fmtDate(c.periodStart))} – ${esc(fmtDate(c.periodEnd))} · ceiling ${money(c.ceiling)}${summary?.value != null ? ` · CLIN value ${money(summary.value)}` : ''}
+      · funded ${money(summary?.funded ?? 0)} · delivered ${money(summary?.deliveredValue ?? 0)} of ${money(summary?.scheduledValue ?? 0)} scheduled</div>
     ${c.clins.length ? `<table class="table"><thead><tr><th>CLIN</th><th>Description</th><th>Part</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Scheduled</th></tr></thead><tbody>
       ${c.clins.map(l => {
         const scheduled = c.deliveries.filter(d => d.clin === l.clin && !d.cancelled).reduce((s, d) => s + d.quantity, 0);
@@ -202,6 +236,27 @@ function contractPanel(c, h, edit) {
           <td class="num">${l.quantity != null ? qty(l.quantity) : '—'}</td><td class="num">${l.unitPrice != null ? money(l.unitPrice) : '—'}</td>
           <td class="num ${l.quantity != null && scheduled < l.quantity ? 'c-warn' : ''}">${l.partNumber ? qty(scheduled) : '—'}</td></tr>`;
       }).join('')}</tbody></table>` : '<div class="muted">No CLINs yet.</div>'}
+    ${c.funding.length ? `<div style="margin-top:8px"><b>Funding</b><table class="table"><thead><tr><th>Action</th><th>Obligated</th><th>CLIN</th><th class="num">Amount</th><th>Recorded by</th></tr></thead><tbody>
+      ${c.funding.map(f => `<tr><td>${esc(f.modification)}</td><td>${esc(fmtDate(f.obligatedOn))}</td><td>${esc(f.clin ?? '—')}</td><td class="num ${f.amount < 0 ? 'c-bad' : ''}">${money(f.amount)}</td><td>${esc(who(f.createdBy))}</td></tr>`).join('')}</tbody></table></div>` : ''}
     ${c.requirements.length ? `<div style="margin-top:8px"><b>Requirements</b><ul>${c.requirements.map(r => `<li><b>${esc(r.code)}</b> — ${esc(r.text)}</li>`).join('')}</ul></div>` : ''}
   </section>`;
+}
+
+// Schedule-based earned value from contract prices and recorded deliveries. No cost data, so no CPI.
+function evPanel(ev) {
+  if (!ev || (!ev.budgetAtCompletion && !ev.funded)) return '';
+  const spi = ev.schedulePerformanceIndex;
+  const tone = spi == null ? '' : spi >= 0.95 ? 'ok' : spi >= 0.85 ? 'warn' : 'bad';
+  return `<section class="panel"><header><h2>Earned value and funding</h2></header>
+    <section class="kpis">
+      ${kpi('Budget at completion', money(ev.budgetAtCompletion), 'value of part CLINs')}
+      ${kpi('Planned value', money(ev.plannedValue), 'deliveries due by today')}
+      ${kpi('Earned value', money(ev.earnedValue), 'value shipped against deliveries')}
+      ${kpi('Schedule variance', money(ev.scheduleVariance), 'earned less planned', ev.scheduleVariance < 0 ? 'bad' : 'ok')}
+      ${kpi('SPI', spi == null ? '—' : spi.toFixed(2), spi == null ? 'nothing due yet' : 'earned ÷ planned', tone)}
+      ${kpi('Funding remaining', money(ev.fundingRemaining), `${money(ev.funded)} funded`, ev.fundingRemaining < 0 ? 'bad' : '')}
+    </section>
+    ${ev.scheduledBeyondFunding > 0 ? `<div class="notice warn">Scheduled deliveries are worth ${money(ev.scheduledBeyondFunding)} more than is funded. Record incremental funding before shipping past it.</div>` : ''}
+    ${ev.unpricedDeliveries ? `<div class="notice">${ev.unpricedDeliveries} delivery(ies) are on CLINs with no unit price, so they add no value here.</div>` : ''}
+    <div class="faint">${esc(ev.note)}</div></section>`;
 }

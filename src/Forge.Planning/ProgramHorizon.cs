@@ -23,9 +23,44 @@ public sealed record DeliveryStatusView(
     decimal Shipped,
     string State);
 
-public sealed record ContractSummary(long ContractId, string Number, string Title, string Customer, ContractStatus Status, DateOnly PeriodStart, DateOnly PeriodEnd, decimal? Ceiling, decimal? Value, int Clins, int Requirements);
+public sealed record ContractSummary(
+    long ContractId,
+    string Number,
+    string Title,
+    string Customer,
+    ContractStatus Status,
+    DateOnly PeriodStart,
+    DateOnly PeriodEnd,
+    decimal? Ceiling,
+    decimal? Value,
+    int Clins,
+    int Requirements,
+    decimal Funded,
+    decimal DeliveredValue,
+    decimal ScheduledValue);
 
-public sealed record ProgramOrderView(long OrderNumber, string PartNumber, decimal Quantity, DateOnly DueDate, string OrderStatus, string Delivery, DateTimeOffset? ProjectedCompletion, string? Explanation);
+/// <summary>
+/// Schedule-based earned value, from contract prices and recorded deliveries. Budget at completion is the
+/// value of part CLINs; planned value is the value of deliveries due by today; earned value is the value
+/// of what shipped against them. Cost performance needs actual cost, which Forge does not record.
+/// </summary>
+public sealed record EarnedValueView(
+    decimal BudgetAtCompletion,
+    decimal PlannedValue,
+    decimal EarnedValue,
+    decimal ScheduleVariance,
+    decimal? SchedulePerformanceIndex,
+    decimal Funded,
+    decimal FundingRemaining,
+    decimal ScheduledValue,
+    decimal ScheduledBeyondFunding,
+    int UnpricedDeliveries,
+    string Note);
+
+/// <summary>One WBS element with the orders charged to it and everything below it.</summary>
+public sealed record WbsRollup(string Code, string? ParentCode, string Title, int Orders, decimal Quantity, decimal Completed, IReadOnlyList<long> OrderNumbers);
+
+public sealed record ProgramOrderView(long OrderNumber, string PartNumber, decimal Quantity, DateOnly DueDate, string OrderStatus, string Delivery, DateTimeOffset? ProjectedCompletion, string? Explanation, string? WbsCode = null);
 
 public sealed record ConstraintCount(string Constraint, int Operations, string Example);
 
@@ -46,7 +81,9 @@ public sealed record ProgramHorizonView(
     IReadOnlyList<ContractSummary> Contracts,
     IReadOnlyList<DeliveryStatusView> Deliveries,
     IReadOnlyList<ProgramOrderView> Orders,
-    IReadOnlyList<MilestoneInfo> Milestones);
+    IReadOnlyList<MilestoneInfo> Milestones,
+    EarnedValueView EarnedValue,
+    IReadOnlyList<WbsRollup> Wbs);
 
 /// <summary>
 /// Program Horizon (spec §7): one program through contracts, deliveries, demand, orders and the approved
@@ -127,8 +164,8 @@ public sealed class ProgramHorizonService(IKernelUnitOfWorkFactory unitOfWork, I
             .Where(o => o.ProgramId == program.ProgramId && o.Status is not (OrderStatus.Cancelled or OrderStatus.Completed))
             .OrderBy(o => o.DueDate).ThenBy(o => o.OrderNumber)
             .Select(o => projected.TryGetValue(o.OrderNumber, out var p)
-                ? new ProgramOrderView(o.OrderNumber, o.PartNumber, o.Quantity, o.DueDate, o.Status.ToString(), p.Status.ToString(), p.ProjectedCompletion, p.Explanation)
-                : new ProgramOrderView(o.OrderNumber, o.PartNumber, o.Quantity, o.DueDate, o.Status.ToString(), "NotScheduled", null, o.Status == OrderStatus.Released ? "Not in the approved schedule; propose and approve a new schedule." : "Not released, so not scheduled."))
+                ? new ProgramOrderView(o.OrderNumber, o.PartNumber, o.Quantity, o.DueDate, o.Status.ToString(), p.Status.ToString(), p.ProjectedCompletion, p.Explanation, o.WbsCode)
+                : new ProgramOrderView(o.OrderNumber, o.PartNumber, o.Quantity, o.DueDate, o.Status.ToString(), "NotScheduled", null, o.Status == OrderStatus.Released ? "Not in the approved schedule; propose and approve a new schedule." : "Not released, so not scheduled.", o.WbsCode))
             .ToList();
 
         var constraints = (approved?.Result?.Operations ?? [])
@@ -138,10 +175,47 @@ public sealed class ProgramHorizonService(IKernelUnitOfWorkFactory unitOfWork, I
             .OrderByDescending(c => c.Operations).ThenBy(c => c.Constraint, StringComparer.Ordinal)
             .ToList();
 
-        var summaries = contracts.Select(c => new ContractSummary(
-            c.ContractId, c.Number, c.Title, c.Customer, c.Status, c.PeriodStart, c.PeriodEnd, c.Ceiling,
-            c.Clins.All(l => l.Quantity is null || l.UnitPrice is null) ? null : c.Clins.Where(l => l.ParentClin is null).Sum(l => (l.Quantity ?? 0) * (l.UnitPrice ?? 0)),
-            c.Clins.Count, c.Requirements.Count)).ToList();
+        // Earned value: every delivery priced at its CLIN's unit price.
+        decimal? Price(long contractId, string clin) => contracts.First(c => c.ContractId == contractId).Clins.FirstOrDefault(l => l.Clin == clin)?.UnitPrice;
+        var priced = live.Select(d => (d, Price: Price(contracts.First(c => c.Number == d.ContractNumber).ContractId, d.Clin))).ToList();
+        var bac = contracts.Where(c => c.Status != ContractStatus.Cancelled)
+            .SelectMany(c => c.Clins.Where(l => l.ParentClin is null && l.PartNumber is not null))
+            .Sum(l => (l.Quantity ?? 0) * (l.UnitPrice ?? 0));
+        var pv = priced.Where(x => x.d.DueDate <= today).Sum(x => x.d.Quantity * (x.Price ?? 0));
+        var ev = priced.Sum(x => Math.Min(x.d.Shipped, x.d.Quantity) * (x.Price ?? 0));
+        var scheduledValue = priced.Sum(x => x.d.Quantity * (x.Price ?? 0));
+        var funded = contracts.Where(c => c.Status != ContractStatus.Cancelled).Sum(c => c.Funded);
+        var earned = new EarnedValueView(
+            bac, pv, ev, ev - pv, pv == 0 ? null : decimal.Round(ev / pv, 3, MidpointRounding.AwayFromZero),
+            funded, funded - ev, scheduledValue, Math.Max(0, scheduledValue - funded), priced.Count(x => x.Price is null),
+            "Schedule-based: planned value is deliveries due by today, earned value is what shipped against them, at CLIN prices. Cost performance (CPI) needs actual cost, which Forge does not record.");
+
+        var summaries = contracts.Select(c =>
+        {
+            var mine = priced.Where(x => x.d.ContractNumber == c.Number).ToList();
+            return new ContractSummary(
+                c.ContractId, c.Number, c.Title, c.Customer, c.Status, c.PeriodStart, c.PeriodEnd, c.Ceiling,
+                c.Clins.All(l => l.Quantity is null || l.UnitPrice is null) ? null : c.Clins.Where(l => l.ParentClin is null).Sum(l => (l.Quantity ?? 0) * (l.UnitPrice ?? 0)),
+                c.Clins.Count, c.Requirements.Count, c.Funded,
+                mine.Sum(x => Math.Min(x.d.Shipped, x.d.Quantity) * (x.Price ?? 0)),
+                mine.Sum(x => x.d.Quantity * (x.Price ?? 0)));
+        }).ToList();
+
+        // WBS: orders charged to an element count toward it and every element above it.
+        var wbs = await programs.ListWbsAsync(program.ProgramId, ct);
+        var programOrders = (await uow.Store<IExecutionLookup>().ListOrdersAsync(ct)).Where(o => o.ProgramId == program.ProgramId && o.Status != OrderStatus.Cancelled && o.WbsCode is not null).ToList();
+        var completed = new Dictionary<long, decimal>();
+        foreach (var o in programOrders)
+        {
+            var full = await uow.Store<IExecutionLookup>().FindOrderAsync(o.OrderNumber, ct);
+            completed[o.OrderNumber] = full is { Operations.Count: > 0 } ? full.Operations.OrderBy(op => op.Sequence).Last().GoodQuantity : 0;
+        }
+
+        var rollup = wbs.Select(w =>
+        {
+            var under = programOrders.Where(o => o.WbsCode == w.Code || o.WbsCode!.StartsWith(w.Code + ".", StringComparison.Ordinal)).ToList();
+            return new WbsRollup(w.Code, w.ParentCode, w.Title, under.Count, under.Sum(o => o.Quantity), under.Sum(o => completed[o.OrderNumber]), under.Select(o => o.OrderNumber).Order().ToList());
+        }).ToList();
 
         return new ProgramHorizonView(
             program,
@@ -160,7 +234,9 @@ public sealed class ProgramHorizonService(IKernelUnitOfWorkFactory unitOfWork, I
             summaries,
             deliveries.OrderBy(d => d.DueDate).ThenBy(d => d.DeliveryId).ToList(),
             orders,
-            milestones);
+            milestones,
+            earned,
+            rollup);
     }
 
     private void Demand(ForgePrincipal principal)

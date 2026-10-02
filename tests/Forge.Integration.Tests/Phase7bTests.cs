@@ -34,6 +34,10 @@ public sealed class Phase7bTests(PostgresFixture postgres)
         return (response.StatusCode, await response.Content.ReadAsStringAsync());
     }
 
+    /// <summary>The work orders as stored (each list entry wraps one with its run hours and parts).</summary>
+    private static async Task<List<JsonElement>> WorkOrders(HttpClient client) =>
+        (await Get(client, "/api/maintenance/work-orders")).EnumerateArray().Select(v => v.GetProperty("order")).ToList();
+
     private static long Id(JsonElement result) => long.Parse(result.GetProperty("entityId").GetString()!, CultureInfo.InvariantCulture);
 
     [Fact]
@@ -147,7 +151,7 @@ public sealed class Phase7bTests(PostgresFixture postgres)
             lockOutWhenOverdue = true,
             graceDays = 1,
         });
-        var pm = Assert.Single((await Get(mp, "/api/maintenance/work-orders")).EnumerateArray());
+        var pm = Assert.Single(await WorkOrders(mp));
         var pmId = pm.GetProperty("workOrderId").GetInt64();
         Assert.Equal(Day(-3), pm.GetProperty("dueDate").GetString());
 
@@ -169,7 +173,7 @@ public sealed class Phase7bTests(PostgresFixture postgres)
         var signed = await plant.Ok(mp, $"/api/maintenance/work-orders/{pmId}/sign-off", new { });
         Assert.Contains($"due {LocalDay(30)}", signed.GetProperty("message").GetString(), StringComparison.Ordinal);
         Assert.DoesNotContain((await Get(mp, "/api/maintenance/downtime?" + window)).EnumerateArray(), w => w.GetProperty("kind").GetString() == "MaintenanceOverdue");
-        var next = Assert.Single((await Get(mp, "/api/maintenance/work-orders")).EnumerateArray(), o => o.GetProperty("kind").GetString() == "Preventive");
+        var next = Assert.Single(await WorkOrders(mp), o => o.GetProperty("kind").GetString() == "Preventive");
         Assert.Equal("Open", next.GetProperty("status").GetString());
 
         // Skipping a PM needs a reason and raises the one after.
@@ -181,7 +185,7 @@ public sealed class Phase7bTests(PostgresFixture postgres)
         // A breakdown raises a corrective order; the machine is back only when the repair is signed off.
         var down = await plant.Ok(eng, "/api/maintenance/machines/SLITTER-B/down", new { description = "Rewind motor tripping" });
         Assert.Contains("Corrective work order", down.GetProperty("message").GetString(), StringComparison.Ordinal);
-        var repair = (await Get(mp, "/api/maintenance/work-orders")).EnumerateArray().Single(o => o.GetProperty("kind").GetString() == "Corrective").GetProperty("workOrderId").GetInt64();
+        var repair = (await WorkOrders(mp)).Single(o => o.GetProperty("kind").GetString() == "Corrective").GetProperty("workOrderId").GetInt64();
         await plant.Ok(tech, $"/api/maintenance/work-orders/{repair}/start", new { });
         await plant.Ok(tech, $"/api/maintenance/work-orders/{repair}/complete", new { findings = "Replaced overload relay", tasksDone = Array.Empty<bool>() });
         Assert.Contains("repair_in_progress", (await Try(plant, eng, "/api/maintenance/machines/SLITTER-B/restore", new { reason = "x" })).Body, StringComparison.Ordinal);
@@ -190,5 +194,76 @@ public sealed class Phase7bTests(PostgresFixture postgres)
         Assert.Contains("back in service", back.GetProperty("message").GetString(), StringComparison.Ordinal);
         var later = $"from={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddSeconds(1).ToString("o"))}&to={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddHours(1).ToString("o"))}";
         Assert.DoesNotContain((await Get(mp, "/api/maintenance/downtime?" + later)).EnumerateArray(), w => w.GetProperty("machineCode").GetString() == "SLITTER-B");
+    }
+
+    [Fact]
+    public async Task Funding_wbs_spare_parts_and_run_hour_pm_follow_adr_0009()
+    {
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
+        await plant.Person("pm", "ProgramManager");
+        await plant.Person("mp", "MaintenancePlanner");
+        await plant.Person("tech", "MaintenanceTechnician");
+        var (pm, mp, tech, eng, stores) = (plant.As("pm"), plant.As("mp"), plant.As("tech"), plant.Engineer, plant.As("stores"));
+
+        var falcon = Guid.Parse((await plant.Ok(pm, "/api/programs/", new { code = "FALCON", name = "Program Falcon" })).GetProperty("entityId").GetString()!);
+        foreach (var who in new[] { "pm", "planner", "eng" })
+        {
+            await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People[who]}/programs", new { programId = falcon, reason = "Falcon team" });
+        }
+
+        // Funding: obligations need a reason, stay within the ceiling and never go below zero.
+        var contract = Id(await plant.Ok(pm, $"/api/programs/{falcon}/contracts", new { number = "FA-0042", customer = "USAF", title = "Falcon rolls", periodStart = Day(0), periodEnd = Day(365), ceiling = 50000m }));
+        await plant.Ok(pm, $"/api/programs/contracts/{contract}/clins", new { clin = "0001", description = "Slit rolls", partNumber = "ROLL-100", quantity = 30m, unitPrice = 1200m });
+        await plant.Ok(pm, $"/api/programs/contracts/{contract}/deliveries", new { clin = "0001", quantity = 20m, dueDate = Day(30) });
+        Assert.Contains("reason", (await Try(plant, pm, $"/api/programs/contracts/{contract}/funding", new { modification = "P00001", amount = 20000m, obligatedOn = Day(0) })).Body, StringComparison.OrdinalIgnoreCase);
+        await plant.Ok(pm, $"/api/programs/contracts/{contract}/funding", new { clin = "0001", modification = "P00001", amount = 20000m, obligatedOn = Day(0), reason = "Initial obligation" });
+        Assert.Contains("over_ceiling", (await Try(plant, pm, $"/api/programs/contracts/{contract}/funding", new { modification = "P00002", amount = 40000m, obligatedOn = Day(0), reason = "x" })).Body, StringComparison.Ordinal);
+        Assert.Contains("negative_funding", (await Try(plant, pm, $"/api/programs/contracts/{contract}/funding", new { modification = "P00003", amount = -25000m, obligatedOn = Day(0), reason = "x" })).Body, StringComparison.Ordinal);
+
+        // WBS: dotted numbers under an existing parent.
+        await plant.Ok(pm, $"/api/programs/{falcon}/wbs", new { code = "1", title = "Falcon production" });
+        await plant.Ok(pm, $"/api/programs/{falcon}/wbs", new { code = "1.1", parentCode = "1", title = "Slit rolls" });
+        Assert.Contains("invalid_wbs", (await Try(plant, pm, $"/api/programs/{falcon}/wbs", new { code = "2.1", parentCode = "1", title = "x" })).Body, StringComparison.Ordinal);
+        Assert.Contains("invalid_wbs", (await Try(plant, pm, $"/api/programs/{falcon}/wbs", new { code = "A", title = "x" })).Body, StringComparison.Ordinal);
+        Assert.Contains("wbs_exists", (await Try(plant, pm, $"/api/programs/{falcon}/wbs", new { code = "1", title = "x" })).Body, StringComparison.Ordinal);
+        Assert.Contains("unknown_wbs", (await Try(plant, pm, $"/api/programs/{falcon}/wbs", new { code = "3.1", parentCode = "3", title = "x" })).Body, StringComparison.Ordinal);
+
+        var order = Id(await plant.Ok(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 20m, dueDate = Day(25), priority = 2, programId = falcon }));
+        var plain = Id(await plant.Ok(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 5m, dueDate = Day(25), priority = 3 }));
+        Assert.Contains("unknown_wbs", (await Try(plant, pm, $"/api/orders/{order}/wbs", new { wbsCode = "9", reason = "x" })).Body, StringComparison.Ordinal);
+        Assert.Contains("not_program_order", (await Try(plant, pm, $"/api/orders/{plain}/wbs", new { wbsCode = "1.1", reason = "x" })).Body, StringComparison.Ordinal);
+        await plant.Ok(pm, $"/api/orders/{order}/wbs", new { wbsCode = "1.1", reason = "Charge to slit rolls" });
+
+        var horizon = await Get(pm, $"/api/programs/{falcon}");
+        var ev = horizon.GetProperty("earnedValue");
+        Assert.Equal(36000m, ev.GetProperty("budgetAtCompletion").GetDecimal());
+        Assert.Equal(20000m, ev.GetProperty("funded").GetDecimal());
+        Assert.Equal(24000m, ev.GetProperty("scheduledValue").GetDecimal());
+        Assert.Equal(4000m, ev.GetProperty("scheduledBeyondFunding").GetDecimal());
+        Assert.Equal(20000m, horizon.GetProperty("contracts")[0].GetProperty("funded").GetDecimal());
+        var wbs = horizon.GetProperty("wbs").EnumerateArray().ToDictionary(w => w.GetProperty("code").GetString()!);
+        Assert.Equal(1, wbs["1"].GetProperty("orders").GetInt32());
+        Assert.Equal(order, wbs["1.1"].GetProperty("orderNumbers")[0].GetInt64());
+        Assert.Equal("1.1", horizon.GetProperty("orders").EnumerateArray().Single(o => o.GetProperty("orderNumber").GetInt64() == order).GetProperty("wbsCode").GetString());
+
+        // Spare parts issued to a repair and returned; never more back than went out.
+        await plant.Ok(eng, "/api/maintenance/machines/SLITTER-B/down", new { description = "Rewind motor tripping" });
+        var repair = (await WorkOrders(mp)).Single(o => o.GetProperty("kind").GetString() == "Corrective").GetProperty("workOrderId").GetInt64();
+        await plant.Ok(tech, $"/api/maintenance/work-orders/{repair}/parts", new { partNumber = "COIL-AL", quantity = 5m, locationCode = "STORES" });
+        Assert.Contains("over_return", (await Try(plant, tech, $"/api/maintenance/work-orders/{repair}/parts/return", new { partNumber = "COIL-AL", quantity = 6m, locationCode = "STORES", reason = "Unused" })).Body, StringComparison.Ordinal);
+        await plant.Ok(stores, $"/api/maintenance/work-orders/{repair}/parts/return", new { partNumber = "COIL-AL", quantity = 2m, locationCode = "STORES", reason = "Unused" });
+        var view = (await Get(mp, "/api/maintenance/work-orders")).EnumerateArray().Single(v => v.GetProperty("order").GetProperty("workOrderId").GetInt64() == repair);
+        var part = Assert.Single(view.GetProperty("parts").EnumerateArray());
+        Assert.Equal(3m, part.GetProperty("netIssued").GetDecimal());
+
+        // A run-hour PM plan: due after the machine has run 250 hours, with no calendar date.
+        await plant.Ok(mp, "/api/maintenance/plans", new { machineCode = "SLITTER-A", title = "Bearing lubrication", intervalRunHours = 250m, durationMinutes = 30, tasks = new[] { "Grease main bearings" }, lockOutWhenOverdue = true, graceDays = 0, graceRunHours = 25m });
+        var lube = (await Get(mp, "/api/maintenance/work-orders")).EnumerateArray().Single(v => v.GetProperty("order").GetProperty("title").GetString() == "Bearing lubrication");
+        Assert.Equal(JsonValueKind.Null, lube.GetProperty("order").GetProperty("dueDate").ValueKind);
+        Assert.Equal(250m, lube.GetProperty("order").GetProperty("dueRunHours").GetDecimal());
+        Assert.True(lube.GetProperty("runHours").GetDecimal() < 1m);
+        Assert.False(lube.GetProperty("dueByRunHours").GetBoolean());
+        Assert.Contains("run hours", (await Try(plant, mp, "/api/maintenance/plans", new { machineCode = "SLITTER-A", title = "x", intervalRunHours = 0m, durationMinutes = 30, tasks = new[] { "x" }, lockOutWhenOverdue = false, graceDays = 0 })).Body, StringComparison.Ordinal);
     }
 }

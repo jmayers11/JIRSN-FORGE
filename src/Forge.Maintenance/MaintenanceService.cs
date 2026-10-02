@@ -14,9 +14,10 @@ public sealed record RestoreMachine(string MachineCode);
 
 public sealed record PlanMaintenance(string MachineCode, DateTimeOffset StartsAt, DateTimeOffset EndsAt, string Description);
 
-public sealed record DefinePmPlan(string MachineCode, string Title, int IntervalDays, DateOnly FirstDue, int DurationMinutes, IReadOnlyList<string> Tasks, bool LockOutWhenOverdue, int GraceDays);
+/// <summary>A PM plan due every <see cref="IntervalDays"/> days and/or every <see cref="IntervalRunHours"/> machine run hours, whichever comes first.</summary>
+public sealed record DefinePmPlan(string MachineCode, string Title, int? IntervalDays, DateOnly? FirstDue, int DurationMinutes, IReadOnlyList<string> Tasks, bool LockOutWhenOverdue, int GraceDays, decimal? IntervalRunHours = null, decimal GraceRunHours = 0);
 
-public sealed record ChangePmPlan(long PlanId, string Title, int IntervalDays, int DurationMinutes, IReadOnlyList<string> Tasks, bool LockOutWhenOverdue, int GraceDays);
+public sealed record ChangePmPlan(long PlanId, string Title, int? IntervalDays, int DurationMinutes, IReadOnlyList<string> Tasks, bool LockOutWhenOverdue, int GraceDays, decimal? IntervalRunHours = null, decimal GraceRunHours = 0);
 
 public sealed record RetirePmPlan(long PlanId);
 

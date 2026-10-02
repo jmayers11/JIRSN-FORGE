@@ -54,7 +54,8 @@ public sealed record OrderInfo(
     IReadOnlyList<OrderOperationInfo> Operations,
     IReadOnlyList<OrderMaterialInfo> Materials,
     string? CreatedBy = null,
-    string? ReleasedBy = null);
+    string? ReleasedBy = null,
+    string? WbsCode = null);
 
 /// <summary>Who was on an operation, in what role. Direct labor: not attendance and not signoff.</summary>
 public enum LaborRole

@@ -51,27 +51,70 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
         ORDER BY machine_code, starts_at, downtime_id
         """;
 
-    private const string PlanSql = "SELECT plan_id, machine_code, title, interval_days, duration_minutes, tasks, lock_out_when_overdue, grace_days, active FROM maintenance.pm_plan";
+    private const string PlanSql = "SELECT plan_id, machine_code, title, interval_days, duration_minutes, tasks, lock_out_when_overdue, grace_days, active, interval_run_hours, grace_run_hours FROM maintenance.pm_plan";
 
     private const string WorkOrderSql =
         """
         SELECT work_order_id, machine_code, kind, plan_id, title, description, tasks, due_date, status, scheduled_start, scheduled_end, downtime_id,
-               created_by, created_at, started_by, started_at, completed_by, completed_at, findings, closed_by, closed_at, cancel_reason
+               created_by, created_at, started_by, started_at, completed_by, completed_at, findings, closed_by, closed_at, cancel_reason, due_run_hours, run_hours_from
         FROM maintenance.work_order
         """;
 
-    public Task<IReadOnlyList<DowntimeWindow>> ListDowntimeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct) =>
-        ReadAsync(DowntimeSql, ct, from, to);
+    public async Task<IReadOnlyList<DowntimeWindow>> ListDowntimeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    {
+        var windows = (await ReadAsync(DowntimeSql, ct, from, to)).ToList();
+
+        // Lock-out PM due by run hours: locked out from the instant the machine reached the due hours
+        // (plus grace). Hours come from shop-floor labor; once locked out the machine stops accruing them.
+        var due = await ReadRowsAsync(
+            """
+            SELECT w.work_order_id, w.machine_code, w.title, w.due_run_hours + p.grace_run_hours, w.run_hours_from
+            FROM maintenance.work_order w JOIN maintenance.pm_plan p ON p.plan_id = w.plan_id
+            WHERE p.lock_out_when_overdue AND w.due_run_hours IS NOT NULL AND w.status IN ('Open', 'Scheduled', 'InProgress')
+            """,
+            r => (Id: r.GetInt64(0), Machine: r.GetString(1), Title: r.GetString(2), Hours: Dec(r, 3), From: r.GetFieldValue<DateTimeOffset>(4)),
+            ct);
+        if (due.Count == 0)
+        {
+            return windows;
+        }
+
+        var usage = uow.Store<IMachineUsageLookup>();
+        // "Now" is the transaction's clock, so every reader in one transaction sees the same instant.
+        DateTimeOffset now;
+        await using (var clock = uow.Command("SELECT now()"))
+        {
+            var value = await clock.ExecuteScalarAsync(ct);
+            now = value is DateTimeOffset at ? at : new DateTimeOffset(DateTime.SpecifyKind((DateTime)value!, DateTimeKind.Utc));
+        }
+
+        var asOf = now < to ? now : to;
+        foreach (var d in due)
+        {
+            if (windows.Any(w => w.Id == -d.Id))
+            {
+                continue; // already locked out by its calendar due date
+            }
+
+            if (await usage.ReachedAsync(d.Machine, d.From, d.Hours, asOf, ct) is { } reached && reached < to)
+            {
+                windows.Add(new DowntimeWindow(-d.Id, d.Machine, DowntimeKind.MaintenanceOverdue, reached, null,
+                    $"Preventive maintenance {d.Id} ({d.Title}) reached its run-hour limit; the machine is locked out until it is done"));
+            }
+        }
+
+        return windows.OrderBy(w => w.MachineCode, StringComparer.Ordinal).ThenBy(w => w.StartsAt).ThenBy(w => w.Id).ToList();
+    }
 
     public async Task<long> InsertPlanAsync(PmPlanInfo plan, DateTimeOffset at, string actor, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(plan);
         await using var cmd = uow.Command(
             """
-            INSERT INTO maintenance.pm_plan (machine_code, title, interval_days, duration_minutes, tasks, lock_out_when_overdue, grace_days, active, created_at, created_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9) RETURNING plan_id
+            INSERT INTO maintenance.pm_plan (machine_code, title, interval_days, duration_minutes, tasks, lock_out_when_overdue, grace_days, active, created_at, created_by, interval_run_hours, grace_run_hours)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10, $11) RETURNING plan_id
             """,
-            plan.MachineCode, plan.Title, plan.IntervalDays, plan.DurationMinutes, plan.Tasks.ToArray(), plan.LockOutWhenOverdue, plan.GraceDays, at, actor);
+            plan.MachineCode, plan.Title, Int(plan.IntervalDays), plan.DurationMinutes, plan.Tasks.ToArray(), plan.LockOutWhenOverdue, plan.GraceDays, at, actor, Num(plan.IntervalRunHours), plan.GraceRunHours);
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -79,8 +122,8 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
     {
         ArgumentNullException.ThrowIfNull(plan);
         await using var cmd = uow.Command(
-            "UPDATE maintenance.pm_plan SET title = $2, interval_days = $3, duration_minutes = $4, tasks = $5, lock_out_when_overdue = $6, grace_days = $7, active = $8 WHERE plan_id = $1",
-            plan.PlanId, plan.Title, plan.IntervalDays, plan.DurationMinutes, plan.Tasks.ToArray(), plan.LockOutWhenOverdue, plan.GraceDays, plan.Active);
+            "UPDATE maintenance.pm_plan SET title = $2, interval_days = $3, duration_minutes = $4, tasks = $5, lock_out_when_overdue = $6, grace_days = $7, active = $8, interval_run_hours = $9, grace_run_hours = $10 WHERE plan_id = $1",
+            plan.PlanId, plan.Title, Int(plan.IntervalDays), plan.DurationMinutes, plan.Tasks.ToArray(), plan.LockOutWhenOverdue, plan.GraceDays, plan.Active, Num(plan.IntervalRunHours), plan.GraceRunHours);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -89,10 +132,11 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
         ArgumentNullException.ThrowIfNull(order);
         await using var cmd = uow.Command(
             """
-            INSERT INTO maintenance.work_order (machine_code, kind, plan_id, title, description, tasks, due_date, status, downtime_id, created_at, created_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING work_order_id
+            INSERT INTO maintenance.work_order (machine_code, kind, plan_id, title, description, tasks, due_date, status, downtime_id, created_at, created_by, due_run_hours, run_hours_from)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING work_order_id
             """,
-            order.MachineCode, order.Kind.ToString(), Long(order.PlanId), order.Title, Text(order.Description), order.Tasks.ToArray(), order.DueDate, order.Status.ToString(), Long(order.DowntimeId), order.CreatedAt, order.CreatedBy);
+            order.MachineCode, order.Kind.ToString(), Long(order.PlanId), order.Title, Text(order.Description), order.Tasks.ToArray(), Date(order.DueDate), order.Status.ToString(), Long(order.DowntimeId), order.CreatedAt, order.CreatedBy,
+            Num(order.DueRunHours), Time(order.RunHoursFrom));
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -106,7 +150,7 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
             WHERE work_order_id = $1
             """,
             order.WorkOrderId, order.Status.ToString(), Time(order.ScheduledStart), Time(order.ScheduledEnd), Long(order.DowntimeId), Text(order.StartedBy), Time(order.StartedAt),
-            Text(order.CompletedBy), Time(order.CompletedAt), Text(order.Findings), Text(order.ClosedBy), Time(order.ClosedAt), Text(order.CancelReason), order.DueDate, order.Title, order.Tasks.ToArray());
+            Text(order.CompletedBy), Time(order.CompletedAt), Text(order.Findings), Text(order.ClosedBy), Time(order.ClosedAt), Text(order.CancelReason), Date(order.DueDate), order.Title, order.Tasks.ToArray());
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -143,12 +187,24 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
     }
 
     private static PmPlanInfo ReadPlan(NpgsqlDataReader r) => new(
-        r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt32(3), r.GetInt32(4), r.GetFieldValue<string[]>(5), r.GetBoolean(6), r.GetInt32(7), r.GetBoolean(8));
+        r.GetInt64(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetInt32(3), r.GetInt32(4), r.GetFieldValue<string[]>(5), r.GetBoolean(6), r.GetInt32(7), r.GetBoolean(8),
+        NDec(r, 9), Dec(r, 10));
 
     private static WorkOrderInfo ReadWorkOrder(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetString(1), Enum.Parse<WorkOrderKind>(r.GetString(2)), r.IsDBNull(3) ? null : r.GetInt64(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5),
-        r.GetFieldValue<string[]>(6), r.GetFieldValue<DateOnly>(7), Enum.Parse<WorkOrderStatus>(r.GetString(8)), NTime(r, 9), NTime(r, 10), r.IsDBNull(11) ? null : r.GetInt64(11),
-        r.GetString(12), r.GetFieldValue<DateTimeOffset>(13), NText(r, 14), NTime(r, 15), NText(r, 16), NTime(r, 17), NText(r, 18), NText(r, 19), NTime(r, 20), NText(r, 21));
+        r.GetFieldValue<string[]>(6), r.IsDBNull(7) ? null : r.GetFieldValue<DateOnly>(7), Enum.Parse<WorkOrderStatus>(r.GetString(8)), NTime(r, 9), NTime(r, 10), r.IsDBNull(11) ? null : r.GetInt64(11),
+        r.GetString(12), r.GetFieldValue<DateTimeOffset>(13), NText(r, 14), NTime(r, 15), NText(r, 16), NTime(r, 17), NText(r, 18), NText(r, 19), NTime(r, 20), NText(r, 21),
+        NDec(r, 22), NTime(r, 23));
+
+    private static decimal Dec(NpgsqlDataReader r, int i) => r.GetDecimal(i) / 1.000000000000000000000000000000000m;
+
+    private static decimal? NDec(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : Dec(r, i);
+
+    private static NpgsqlParameter Int(int? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer };
+
+    private static NpgsqlParameter Num(decimal? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric };
+
+    private static NpgsqlParameter Date(DateOnly? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Date };
 
     private static string? NText(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
 

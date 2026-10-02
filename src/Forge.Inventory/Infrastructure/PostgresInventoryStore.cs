@@ -8,7 +8,7 @@ namespace Forge.Inventory.Infrastructure;
 internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventoryStore, IInventoryLookup
 {
     private const string TransactionSql =
-        "SELECT transaction_id, kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number, order_number, po_number, po_line, reason, at, actor, approved_by, request_id, shipment_id FROM inventory.transaction";
+        "SELECT transaction_id, kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number, order_number, po_number, po_line, reason, at, actor, approved_by, request_id, shipment_id, work_order_id FROM inventory.transaction";
 
     private const string ShipmentSql =
         "SELECT shipment_id, customer, reference, demand_id, ship_to, status, created_by, created_at, packed_by, packed_at, shipped_by, shipped_at, carrier, tracking, cancel_reason FROM inventory.shipment";
@@ -36,8 +36,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
         await using var cmd = uow.Command(
             """
             INSERT INTO inventory.transaction (kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number,
-                order_number, po_number, po_line, reason, request_id, at, actor, approved_by, shipment_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                order_number, po_number, po_line, reason, request_id, at, actor, approved_by, shipment_id, work_order_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             RETURNING transaction_id
             """,
             transaction.Kind.ToString(),
@@ -56,7 +56,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
             at,
             actor,
             Text(transaction.ApprovedBy),
-            Long(transaction.ShipmentId));
+            Long(transaction.ShipmentId),
+            Long(transaction.WorkOrderId));
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -139,6 +140,12 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
             Long(orderNumber),
             Math.Clamp(take, 1, 1000));
 
+    public Task<IReadOnlyList<InventoryTransaction>> ListTransactionsBetweenAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct) =>
+        ReadAsync(TransactionSql + " WHERE at >= $1 AND at < $2 ORDER BY at, transaction_id", ReadTransaction, ct, from, to);
+
+    public Task<IReadOnlyList<ShipmentInfo>> ListShippedForDemandsAsync(IReadOnlyCollection<long> demandIds, CancellationToken ct) =>
+        ShipmentsAsync(ShipmentSql + " WHERE status = 'Shipped' AND demand_id = ANY($1) ORDER BY shipped_at, shipment_id", ct, demandIds.ToArray());
+
     public Task<IReadOnlyList<LotInfo>> ListLotsAsync(string? partNumber, CancellationToken ct) =>
         ReadAsync(
             "SELECT part_number, lot_number, supplier_lot, first_received_at FROM inventory.lot WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, first_received_at, lot_number",
@@ -209,6 +216,13 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
     public Task<IReadOnlyList<ShipmentInfo>> ListShipmentsAsync(bool includeClosed, CancellationToken ct) =>
         ShipmentsAsync(ShipmentSql + (includeClosed ? string.Empty : " WHERE status IN ('Open', 'Packed')") + " ORDER BY shipment_id DESC LIMIT 500", ct);
 
+    public Task<IReadOnlyList<WorkOrderPart>> ListWorkOrderPartsAsync(long? workOrderId, CancellationToken ct) =>
+        ReadAsync(
+            "SELECT work_order_id, part_number, sum(CASE WHEN kind = 'MaintenanceIssue' THEN quantity ELSE -quantity END) FROM inventory.transaction WHERE work_order_id IS NOT NULL AND ($1::bigint IS NULL OR work_order_id = $1) GROUP BY work_order_id, part_number ORDER BY work_order_id, part_number",
+            r => new WorkOrderPart(r.GetInt64(0), r.GetString(1), Dec(r, 2)),
+            ct,
+            Long(workOrderId));
+
     public Task<IReadOnlyList<DemandShipped>> ListShippedByDemandAsync(CancellationToken ct) =>
         ReadAsync(
             """
@@ -264,7 +278,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
         r.GetString(14),
         r.IsDBNull(15) ? null : r.GetString(15),
         r.IsDBNull(16) ? null : r.GetInt64(16),
-        r.IsDBNull(17) ? null : r.GetInt64(17));
+        r.IsDBNull(17) ? null : r.GetInt64(17),
+        r.IsDBNull(18) ? null : r.GetInt64(18));
 
     private static AdjustmentRequest ReadRequest(NpgsqlDataReader r) => new(
         r.GetInt64(0),

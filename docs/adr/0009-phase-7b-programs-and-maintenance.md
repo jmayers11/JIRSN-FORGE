@@ -48,6 +48,23 @@ feeding capacity and scheduling). Before this phase a program was only a uuid us
     passed; reporting good output is refused while an NCR is undecided.
 11. **New roles.** Program Manager and Maintenance Planner.
 
-## Not yet
-Funding and obligation tracking, WBS, earned value, spare-parts issue to work orders and run-hour
-(meter) based PM are left for later phases.
+## Follow-ups (built after the first 7b release)
+12. **Funding.** Obligations are recorded per contract modification (optionally per CLIN), with a reason.
+    Total obligated funding never exceeds the ceiling and never goes below zero (a negative obligation
+    is a de-obligation).
+13. **WBS.** A program's work breakdown structure uses dotted numbers (1, 1.2, 1.2.3); an element's
+    parent must exist and its code extends the parent's. A program manager charges a program order to
+    one element; Program Horizon rolls orders up through the tree.
+14. **Earned value is schedule-based.** Budget at completion is the value of part CLINs; planned value
+    is deliveries due by today and earned value what shipped against them, at CLIN unit prices. It also
+    shows deliveries scheduled beyond the funding obligated. Forge records no actual cost, so there is no
+    CPI and Program Horizon says so.
+15. **Spare parts on work orders.** Spares are issued from stock to an open maintenance work order and
+    returned from it (inventory transaction kinds `MaintenanceIssue` and `MaintenanceReturn`, carrying
+    the work order). A return never exceeds what is net issued. Maintenance technicians and material
+    handlers may issue spares.
+16. **Run-hour PM.** A plan can be due every N calendar days, every N machine run hours, or whichever
+    comes first. Run hours are the machine's recorded labor intervals merged (trainers' time excluded),
+    read through Maintenance's `IMachineUsageLookup` port, which Execution implements. A lock-out plan
+    locks the machine out once the hours pass the due hours plus the grace hours.
+

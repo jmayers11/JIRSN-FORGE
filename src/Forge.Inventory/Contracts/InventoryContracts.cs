@@ -37,6 +37,12 @@ public enum InventoryTransactionKind
 
     /// <summary>Stock leaving the plant on a customer shipment.</summary>
     Shipment,
+
+    /// <summary>Spare parts issued to a maintenance work order.</summary>
+    MaintenanceIssue,
+
+    /// <summary>Unused spare parts returned from a maintenance work order.</summary>
+    MaintenanceReturn,
 }
 
 public sealed record LocationInfo(string Code, string SiteCode, string Name, LocationKind Kind, bool Active);
@@ -66,7 +72,8 @@ public sealed record InventoryTransaction(
     string Actor,
     string? ApprovedBy,
     long? RequestId,
-    long? ShipmentId = null);
+    long? ShipmentId = null,
+    long? WorkOrderId = null);
 
 public sealed record LotInfo(string PartNumber, string LotNumber, string? SupplierLot, DateTimeOffset FirstReceivedAt);
 
@@ -153,6 +160,9 @@ public sealed record ShipmentInfo(
     string? CancelReason,
     IReadOnlyList<ShipmentLineInfo> Lines);
 
+/// <summary>Spare parts used on a maintenance work order (issues less returns), by part.</summary>
+public sealed record WorkOrderPart(long WorkOrderId, string PartNumber, decimal NetIssued);
+
 /// <summary>What has shipped against a demand, by part.</summary>
 public sealed record DemandShipped(long DemandId, string PartNumber, decimal Shipped);
 
@@ -166,6 +176,12 @@ public interface IInventoryLookup
 
     /// <summary>Latest entries first, optionally for one part or one production order.</summary>
     Task<IReadOnlyList<InventoryTransaction>> ListTransactionsAsync(string? partNumber, long? orderNumber, int take, CancellationToken ct);
+
+    /// <summary>Every transaction recorded in [from, to), oldest first (for reports).</summary>
+    Task<IReadOnlyList<InventoryTransaction>> ListTransactionsBetweenAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct);
+
+    /// <summary>Shipped shipments made against any of the given demands, with their lines.</summary>
+    Task<IReadOnlyList<ShipmentInfo>> ListShippedForDemandsAsync(IReadOnlyCollection<long> demandIds, CancellationToken ct);
 
     Task<IReadOnlyList<LotInfo>> ListLotsAsync(string? partNumber, CancellationToken ct);
 
@@ -183,4 +199,7 @@ public interface IInventoryLookup
     Task<ShipmentInfo?> FindShipmentAsync(long shipmentId, CancellationToken ct);
 
     Task<IReadOnlyList<DemandShipped>> ListShippedByDemandAsync(CancellationToken ct);
+
+    /// <summary>Spare parts per work order; one order, or all.</summary>
+    Task<IReadOnlyList<WorkOrderPart>> ListWorkOrderPartsAsync(long? workOrderId, CancellationToken ct);
 }

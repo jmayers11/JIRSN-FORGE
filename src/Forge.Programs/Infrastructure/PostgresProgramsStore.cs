@@ -102,6 +102,31 @@ internal sealed class PostgresProgramsStore(PostgresUnitOfWork uow) : IProgramsS
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<long> InsertFundingAsync(FundingInfo funding, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(funding);
+        await using var cmd = uow.Command(
+            "INSERT INTO programs.funding (contract_id, clin, modification, amount, obligated_on, created_at, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING funding_id",
+            funding.ContractId, Text(funding.Clin), funding.Modification, funding.Amount, funding.ObligatedOn, funding.CreatedAt, funding.CreatedBy);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<bool> InsertWbsAsync(WbsElement element, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        await using var cmd = uow.Command(
+            "INSERT INTO programs.wbs (program_id, code, parent_code, title, created_at, created_by) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING",
+            element.ProgramId, element.Code, Text(element.ParentCode), element.Title, at, actor);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public Task<IReadOnlyList<WbsElement>> ListWbsAsync(Guid programId, CancellationToken ct) =>
+        ReadAsync(
+            "SELECT program_id, code, parent_code, title FROM programs.wbs WHERE program_id = $1 ORDER BY string_to_array(code, '.')::int[]",
+            r => new WbsElement(r.GetGuid(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetString(3)),
+            ct,
+            programId);
+
     public Task<IReadOnlyList<ProgramInfo>> ListProgramsAsync(CancellationToken ct) => ReadAsync(ProgramSql + " ORDER BY code", ReadProgram, ct);
 
     public async Task<ProgramInfo?> FindProgramAsync(Guid programId, CancellationToken ct) =>
@@ -113,7 +138,7 @@ internal sealed class PostgresProgramsStore(PostgresUnitOfWork uow) : IProgramsS
         var heads = await ReadAsync(
             "SELECT contract_id, program_id, number, customer, title, period_start, period_end, ceiling, status FROM programs.contract WHERE ($1::uuid IS NULL OR program_id = $1) ORDER BY number",
             r => new ContractInfo(r.GetInt64(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetFieldValue<DateOnly>(5), r.GetFieldValue<DateOnly>(6),
-                NDec(r, 7), Enum.Parse<ContractStatus>(r.GetString(8)), [], [], []),
+                NDec(r, 7), Enum.Parse<ContractStatus>(r.GetString(8)), [], [], [], []),
             ct,
             programArg);
         if (heads.Count == 0)
@@ -137,7 +162,18 @@ internal sealed class PostgresProgramsStore(PostgresUnitOfWork uow) : IProgramsS
             r => (Id: r.GetInt64(0), Requirement: new RequirementInfo(r.GetInt32(1), r.GetString(2), r.GetString(3))),
             ct,
             ids)).ToLookup(x => x.Id, x => x.Requirement);
-        return heads.Select(h => h with { Clins = clins[h.ContractId].ToList(), Deliveries = deliveries[h.ContractId].ToList(), Requirements = requirements[h.ContractId].ToList() }).ToList();
+        var funding = (await ReadAsync(
+            "SELECT funding_id, contract_id, clin, modification, amount, obligated_on, created_by, created_at FROM programs.funding WHERE contract_id = ANY($1) ORDER BY obligated_on, funding_id",
+            r => new FundingInfo(r.GetInt64(0), r.GetInt64(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetString(3), Dec(r, 4), r.GetFieldValue<DateOnly>(5), r.GetString(6), r.GetFieldValue<DateTimeOffset>(7)),
+            ct,
+            ids)).ToLookup(f => f.ContractId);
+        return heads.Select(h => h with
+        {
+            Clins = clins[h.ContractId].ToList(),
+            Deliveries = deliveries[h.ContractId].ToList(),
+            Requirements = requirements[h.ContractId].ToList(),
+            Funding = funding[h.ContractId].ToList(),
+        }).ToList();
     }
 
     public async Task<DeliveryReference?> FindDeliveryAsync(long deliveryId, CancellationToken ct) =>

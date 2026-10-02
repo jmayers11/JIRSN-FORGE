@@ -8,7 +8,7 @@ namespace Forge.Execution.Infrastructure;
 internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutionStore, IExecutionLookup, IShopFloorStore
 {
     private const string OrderSql =
-        "SELECT order_number, part_number, revision, quantity, due_date, priority, status, held_from, program_id, released_at, created_by, released_by FROM execution.production_order";
+        "SELECT order_number, part_number, revision, quantity, due_date, priority, status, held_from, program_id, released_at, created_by, released_by, wbs_code FROM execution.production_order";
 
     public async Task<long> InsertOrderAsync(string partNumber, string revision, decimal quantity, DateOnly dueDate, int priority, Guid? programId, DateTimeOffset at, string actor, CancellationToken ct)
     {
@@ -84,6 +84,14 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
             ct,
             orderNumber);
         return order with { Operations = operations, Materials = materials };
+    }
+
+    public async Task SetWbsAsync(long orderNumber, string? wbsCode, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE execution.production_order SET wbs_code = $2, updated_at = $3, updated_by = $4 WHERE order_number = $1",
+            orderNumber, new NpgsqlParameter { Value = (object?)wbsCode ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text }, at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public Task<IReadOnlyList<OrderInfo>> ListOrdersAsync(CancellationToken ct) => Read(OrderSql + " ORDER BY order_number DESC", ReadOrder, ct);
@@ -264,7 +272,8 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         [],
         [],
         r.GetString(10),
-        r.IsDBNull(11) ? null : r.GetString(11));
+        r.IsDBNull(11) ? null : r.GetString(11),
+        r.IsDBNull(12) ? null : r.GetString(12));
 
     private static NpgsqlParameter TextArray(IEnumerable<string> values) =>
         new() { Value = values.ToArray(), NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text };
@@ -291,6 +300,7 @@ public static class ExecutionRegistration
         services.AddForgeStore<IExecutionStore>(uow => new PostgresExecutionStore(uow));
         services.AddForgeStore<IExecutionLookup>(uow => new PostgresExecutionStore(uow));
         services.AddForgeStore<IShopFloorStore>(uow => new PostgresExecutionStore(uow));
+        services.AddForgeStore<Forge.Maintenance.Contracts.IMachineUsageLookup>(uow => new MachineUsage(uow));
         services.AddSingleton<ProductionOrderService>();
         services.AddSingleton<Engines.OperatorAuthorizationEngine>();
         services.AddSingleton<ShopFloorService>();

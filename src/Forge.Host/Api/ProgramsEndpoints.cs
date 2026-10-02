@@ -33,11 +33,22 @@ public sealed record MilestoneRequest(string Title, DateOnly DueDate, string? Re
 
 public sealed record MilestoneDoneRequest(DateOnly CompletedOn, string? Reason);
 
+public sealed record FundingRequest(string? Clin, string Modification, decimal Amount, DateOnly ObligatedOn, string? Reason);
+
+public sealed record WbsRequest(string Code, string? ParentCode, string Title, string? Reason);
+
+public sealed record OrderWbsRequest(string? WbsCode, string? Reason);
+
 public sealed record PlanDeliveryRequest(int? Priority, string? Reason);
 
-public sealed record PmPlanRequest(string MachineCode, string Title, int IntervalDays, DateOnly? FirstDue, int DurationMinutes, string[] Tasks, bool LockOutWhenOverdue, int GraceDays, string? Reason);
+public sealed record PmPlanRequest(string MachineCode, string Title, int? IntervalDays, DateOnly? FirstDue, int DurationMinutes, string[] Tasks, bool LockOutWhenOverdue, int GraceDays, string? Reason, decimal? IntervalRunHours = null, decimal? GraceRunHours = null);
 
-public sealed record PmPlanChangeRequest(string Title, int IntervalDays, int DurationMinutes, string[] Tasks, bool LockOutWhenOverdue, int GraceDays, string? Reason);
+public sealed record PmPlanChangeRequest(string Title, int? IntervalDays, int DurationMinutes, string[] Tasks, bool LockOutWhenOverdue, int GraceDays, string? Reason, decimal? IntervalRunHours = null, decimal? GraceRunHours = null);
+
+public sealed record SparesRequest(long WorkOrderId, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason);
+
+/// <summary>A work order with what it has used and, for run-hour PM, how far the machine has run.</summary>
+public sealed record WorkOrderView(WorkOrderInfo Order, decimal? RunHours, bool DueByRunHours, IReadOnlyList<Forge.Inventory.Contracts.WorkOrderPart> Parts);
 
 public sealed record WorkOrderRequest(string MachineCode, string Title, string? Description, DateOnly DueDate, string? Reason);
 
@@ -105,6 +116,13 @@ public static class ProgramsEndpoints
             Command(http, b.Reason, c => s.AddClinAsync(new AddClin(id, b.Clin, b.ParentClin, b.Description, b.PartNumber, b.Quantity, b.UnitPrice), c, ct)));
         api.MapPost("/contracts/{id:long}/deliveries", (HttpContext http, long id, DeliveryRequest b, ProgramsService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ScheduleDeliveryAsync(new ScheduleDelivery(id, b.Clin, b.Quantity, b.DueDate), c, ct)));
+        api.MapPost("/contracts/{id:long}/funding", (HttpContext http, long id, FundingRequest b, ProgramsService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AddFundingAsync(new AddFunding(id, b.Clin, b.Modification, b.Amount, b.ObligatedOn), c, ct)));
+        api.MapPost("/{programId:guid}/wbs", (HttpContext http, Guid programId, WbsRequest b, ProgramsService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AddWbsElementAsync(new AddWbsElement(programId, b.Code, b.ParentCode, b.Title), c, ct)));
+        app.MapPost("/api/orders/{orderNumber:long}/wbs", (HttpContext http, long orderNumber, OrderWbsRequest b, Forge.Execution.ProductionOrderService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AssignWbsAsync(new Forge.Execution.AssignOrderWbs(orderNumber, b.WbsCode), c, ct)))
+            .RequireAuthorization();
         api.MapPost("/contracts/{id:long}/requirements", (HttpContext http, long id, RequirementRequest b, ProgramsService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AddRequirementAsync(new AddRequirement(id, b.Code, b.Text), c, ct)));
         api.MapPost("/deliveries/{id:long}/change", (HttpContext http, long id, DeliveryChangeRequest b, ProgramsService s, CancellationToken ct) =>
@@ -120,12 +138,33 @@ public static class ProgramsEndpoints
         var maintenance = app.MapGroup("/api/maintenance").RequireAuthorization();
         maintenance.MapGet("/plans", (HttpContext http, CancellationToken _) =>
             ReadStore<IMaintenanceLookup>(http, Permissions.MaintenanceRead, async (l, ct) => await l.ListPlansAsync(ct)));
-        maintenance.MapGet("/work-orders", (HttpContext http, bool? includeClosed, CancellationToken _) =>
-            ReadStore<IMaintenanceLookup>(http, Permissions.MaintenanceRead, async (l, ct) => await l.ListWorkOrdersAsync(includeClosed ?? false, ct)));
+        maintenance.MapGet("/work-orders", (HttpContext http, bool? includeClosed, TimeProvider time, CancellationToken _) =>
+            Read(http, Permissions.MaintenanceRead, async _ =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var ct = http.RequestAborted;
+                var now = time.GetUtcNow();
+                var usage = uow.Store<IMachineUsageLookup>();
+                var parts = (await uow.Store<Forge.Inventory.Contracts.IInventoryLookup>().ListWorkOrderPartsAsync(null, ct)).ToLookup(p => p.WorkOrderId);
+                var views = new List<WorkOrderView>();
+                foreach (var o in await uow.Store<IMaintenanceLookup>().ListWorkOrdersAsync(includeClosed ?? false, ct))
+                {
+                    decimal? hours = o is { DueRunHours: not null, RunHoursFrom: { } from, IsOpen: true } ? await usage.RunHoursAsync(o.MachineCode, from, now, ct) : null;
+                    views.Add(new WorkOrderView(o, hours, hours is { } h && h >= o.DueRunHours, parts[o.WorkOrderId].ToList()));
+                }
+
+                return views;
+            }));
+        maintenance.MapPost("/work-orders/{id:long}/parts", (HttpContext http, long id, SparesRequest b, Forge.Inventory.InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.IssueToWorkOrderAsync(new Forge.Inventory.IssueToWorkOrder(id, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber), c, ct)));
+        maintenance.MapPost("/work-orders/{id:long}/parts/return", (HttpContext http, long id, SparesRequest b, Forge.Inventory.InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReturnFromWorkOrderAsync(new Forge.Inventory.ReturnFromWorkOrder(id, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber), c, ct)));
         maintenance.MapPost("/plans", (HttpContext http, PmPlanRequest b, MaintenanceService s, TimeProvider time, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.DefinePmPlanAsync(new DefinePmPlan(b.MachineCode, b.Title, b.IntervalDays, b.FirstDue ?? DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime), b.DurationMinutes, b.Tasks ?? [], b.LockOutWhenOverdue, b.GraceDays), c, ct)));
+            Command(http, b.Reason, c => s.DefinePmPlanAsync(new DefinePmPlan(
+                b.MachineCode, b.Title, b.IntervalDays, b.FirstDue ?? (b.IntervalDays is null ? null : DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime)),
+                b.DurationMinutes, b.Tasks ?? [], b.LockOutWhenOverdue, b.GraceDays, b.IntervalRunHours, b.GraceRunHours ?? 0), c, ct)));
         maintenance.MapPost("/plans/{id:long}", (HttpContext http, long id, PmPlanChangeRequest b, MaintenanceService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ChangePmPlanAsync(new ChangePmPlan(id, b.Title, b.IntervalDays, b.DurationMinutes, b.Tasks ?? [], b.LockOutWhenOverdue, b.GraceDays), c, ct)));
+            Command(http, b.Reason, c => s.ChangePmPlanAsync(new ChangePmPlan(id, b.Title, b.IntervalDays, b.DurationMinutes, b.Tasks ?? [], b.LockOutWhenOverdue, b.GraceDays, b.IntervalRunHours, b.GraceRunHours ?? 0), c, ct)));
         maintenance.MapPost("/plans/{id:long}/retire", (HttpContext http, long id, ReasonRequest b, MaintenanceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RetirePmPlanAsync(new RetirePmPlan(id), c, ct)));
         maintenance.MapPost("/work-orders", (HttpContext http, WorkOrderRequest b, MaintenanceService s, CancellationToken ct) =>

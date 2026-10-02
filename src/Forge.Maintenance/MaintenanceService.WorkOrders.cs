@@ -31,13 +31,19 @@ public sealed partial class MaintenanceService
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             await RequireMachineAsync(uow.Store<IResourcesLookup>(), machine, ct);
-            var plan = Plan(0, machine, c.Title, c.IntervalDays, c.DurationMinutes, c.Tasks, c.LockOutWhenOverdue, c.GraceDays, true);
+            var plan = Plan(0, machine, c.Title, c.IntervalDays, c.DurationMinutes, c.Tasks, c.LockOutWhenOverdue, c.GraceDays, true, c.IntervalRunHours, c.GraceRunHours);
+            if (plan.IntervalDays is not null && c.FirstDue is null)
+            {
+                throw new CommandRejectedException("first_due_required", "A plan with a calendar interval needs the date the first one is due.");
+            }
+
             var store = uow.Store<IMaintenanceStore>();
             var planId = await store.InsertPlanAsync(plan, now, context.Actor, ct);
-            var orderId = await store.InsertWorkOrderAsync(Preventive(plan with { PlanId = planId }, c.FirstDue, context.Actor, now), ct);
+            var first = Preventive(plan with { PlanId = planId }, plan.IntervalDays is null ? null : c.FirstDue, plan.IntervalRunHours, now, context.Actor, now);
+            var orderId = await store.InsertWorkOrderAsync(first, ct);
             var id = Key(planId);
             return new CommandOutcome(
-                CommandResult.Ok(id, $"PM plan {id} for {machine}: every {c.IntervalDays} day(s). First work order {orderId} due {c.FirstDue:yyyy-MM-dd}."),
+                CommandResult.Ok(id, $"PM plan {id} for {machine}: {Every(plan)}. First work order {orderId} {Due(first)}."),
                 [pipeline.Event(new WorkOrderChanged(orderId, machine, nameof(WorkOrderKind.Preventive), nameof(WorkOrderStatus.Open)), context, SourceContext, WorkOrderEntity, Key(orderId))],
                 new AuditChange(PlanEntity, id, null, CanonicalJson.Serialize(plan with { PlanId = planId })));
         }, ct);
@@ -52,7 +58,7 @@ public sealed partial class MaintenanceService
         {
             var store = uow.Store<IMaintenanceStore>();
             var plan = await store.FindPlanAsync(c.PlanId, ct) ?? throw new CommandRejectedException("plan_not_found", $"PM plan {id} does not exist.");
-            var next = Plan(plan.PlanId, plan.MachineCode, c.Title, c.IntervalDays, c.DurationMinutes, c.Tasks, c.LockOutWhenOverdue, c.GraceDays, plan.Active);
+            var next = Plan(plan.PlanId, plan.MachineCode, c.Title, c.IntervalDays, c.DurationMinutes, c.Tasks, c.LockOutWhenOverdue, c.GraceDays, plan.Active, c.IntervalRunHours, c.GraceRunHours);
             await store.UpdatePlanAsync(next, ct);
 
             // Work not yet started follows the new checklist; work under way keeps the one it started with.
@@ -242,11 +248,13 @@ public sealed partial class MaintenanceService
 
             if (order.PlanId is { } planId && await store.FindPlanAsync(planId, ct) is { Active: true } plan)
             {
-                var doneOn = await LocalDateAsync(uow, order.CompletedAt ?? now, ct);
-                var nextDue = doneOn.AddDays(plan.IntervalDays);
+                // The next one counts from when the work was done: calendar days and machine run hours alike.
+                var doneAt = order.CompletedAt ?? now;
+                var doneOn = await LocalDateAsync(uow, doneAt, ct);
+                var next = Preventive(plan, plan.IntervalDays is { } days ? doneOn.AddDays(days) : null, plan.IntervalRunHours, doneAt, context.Actor, now);
                 await store.UpdateWorkOrderAsync(order with { Status = WorkOrderStatus.Closed, ClosedBy = context.Actor, ClosedAt = now }, ct);
-                var nextId = await store.InsertWorkOrderAsync(Preventive(plan, nextDue, context.Actor, now), ct);
-                message += $"; next PM is work order {nextId}, due {nextDue:yyyy-MM-dd}";
+                var nextId = await store.InsertWorkOrderAsync(next, ct);
+                message += $"; next PM is work order {nextId}, {Due(next)}";
             }
 
             return (order with { Status = WorkOrderStatus.Closed, ClosedBy = context.Actor, ClosedAt = now }, message);
@@ -275,9 +283,14 @@ public sealed partial class MaintenanceService
             {
                 // A skipped PM is due again one interval after the one skipped.
                 await store.UpdateWorkOrderAsync(order with { Status = WorkOrderStatus.Cancelled, CancelReason = context.Reason, DowntimeId = null }, ct);
-                var nextDue = order.DueDate.AddDays(plan.IntervalDays);
-                var nextId = await store.InsertWorkOrderAsync(Preventive(plan, nextDue, context.Actor, now), ct);
-                message += $"; next PM is work order {nextId}, due {nextDue:yyyy-MM-dd}";
+                // A skipped PM's next one is one interval further on, by date and by run hours from the same start.
+                var today = await LocalDateAsync(uow, now, ct);
+                var nextDue = plan.IntervalDays is { } days ? (order.DueDate ?? today).AddDays(days) : (DateOnly?)null;
+                var next = plan.IntervalRunHours is { } hours
+                    ? Preventive(plan, nextDue, (order.DueRunHours ?? 0) + hours, order.RunHoursFrom ?? now, context.Actor, now)
+                    : Preventive(plan, nextDue, null, now, context.Actor, now);
+                var nextId = await store.InsertWorkOrderAsync(next, ct);
+                message += $"; next PM is work order {nextId}, {Due(next)}";
             }
 
             return (order with { Status = WorkOrderStatus.Cancelled, CancelReason = context.Reason, DowntimeId = null }, message);
@@ -341,12 +354,17 @@ public sealed partial class MaintenanceService
         return new DateOnly(date.Year, date.Month, date.Day);
     }
 
-    private static PmPlanInfo Plan(long planId, string machine, string title, int interval, int duration, IReadOnlyList<string>? tasks, bool lockOut, int grace, bool active)
+    private static PmPlanInfo Plan(long planId, string machine, string title, int? interval, int duration, IReadOnlyList<string>? tasks, bool lockOut, int grace, bool active, decimal? runHours, decimal graceHours)
     {
         var checklist = (tasks ?? []).Select(t => t?.Trim() ?? string.Empty).Where(t => t.Length > 0).Select(t => t.Length > 300 ? t[..300] : t).ToList();
-        if (interval is < 1 or > 3650 || duration is < 1 or > 10080 || grace is < 0 or > 90)
+        if (interval is null && runHours is null)
         {
-            throw new CommandRejectedException("invalid_plan", "Interval must be 1 to 3650 days, duration 1 minute to 7 days, and grace 0 to 90 days.");
+            throw new CommandRejectedException("interval_required", "Give a calendar interval in days, a run-hour interval, or both.");
+        }
+
+        if (interval is < 1 or > 3650 || runHours is < 1 or > 100000 || duration is < 1 or > 10080 || grace is < 0 or > 90 || graceHours is < 0 or > 10000)
+        {
+            throw new CommandRejectedException("invalid_plan", "Interval must be 1 to 3650 days and/or 1 to 100,000 run hours, duration 1 minute to 7 days, and grace 0 to 90 days (0 to 10,000 run hours).");
         }
 
         if (checklist.Count is 0 or > 50)
@@ -354,12 +372,25 @@ public sealed partial class MaintenanceService
             throw new CommandRejectedException("tasks_required", "A PM plan has 1 to 50 checklist tasks.");
         }
 
-        return new PmPlanInfo(planId, machine, BusinessCode.RequireName(title, "PM plan"), interval, duration, checklist, lockOut, grace, active);
+        return new PmPlanInfo(planId, machine, BusinessCode.RequireName(title, "PM plan"), interval, duration, checklist, lockOut, grace, active, runHours, graceHours);
     }
 
-    private static WorkOrderInfo Preventive(PmPlanInfo plan, DateOnly due, string actor, DateTimeOffset now) =>
+    private static WorkOrderInfo Preventive(PmPlanInfo plan, DateOnly? due, decimal? dueRunHours, DateTimeOffset runHoursFrom, string actor, DateTimeOffset now) =>
         new(0, plan.MachineCode, WorkOrderKind.Preventive, plan.PlanId, plan.Title, null, plan.Tasks, due, WorkOrderStatus.Open,
-            null, null, null, actor, now, null, null, null, null, null, null, null, null);
+            null, null, null, actor, now, null, null, null, null, null, null, null, null,
+            dueRunHours, dueRunHours is null ? null : runHoursFrom);
+
+    private static string Every(PmPlanInfo plan) => string.Join(" or ", new[]
+    {
+        plan.IntervalDays is { } days ? $"every {days} day(s)" : null,
+        plan.IntervalRunHours is { } hours ? $"every {hours:0.##} run hours" : null,
+    }.Where(x => x is not null)) + (plan.IntervalDays is not null && plan.IntervalRunHours is not null ? ", whichever comes first" : string.Empty);
+
+    private static string Due(WorkOrderInfo order) => "due " + string.Join(" or ", new[]
+    {
+        order.DueDate is { } date ? date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null,
+        order.DueRunHours is { } hours ? $"after {hours:0.##} run hours" : null,
+    }.Where(x => x is not null));
 
     private static string Key(long value) => value.ToString(CultureInfo.InvariantCulture);
 

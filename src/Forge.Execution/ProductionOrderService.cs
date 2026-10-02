@@ -13,6 +13,16 @@ public sealed record CreateProductionOrder(string PartNumber, decimal Quantity, 
 
 public sealed record FirmProductionOrder(long OrderNumber);
 
+/// <summary>Charges a program order to an element of its program's WBS (or clears it).</summary>
+public sealed record AssignOrderWbs(long OrderNumber, string? WbsCode);
+
+public sealed record OrderWbsChanged(long OrderNumber, string? WbsCode) : IDomainEvent
+{
+    public static string EventType => nameof(OrderWbsChanged);
+
+    public static int SchemaVersion => 1;
+}
+
 public sealed record ReleaseProductionOrder(long OrderNumber);
 
 public sealed record HoldProductionOrder(long OrderNumber);
@@ -40,6 +50,8 @@ public interface IExecutionStore
     Task<long> InsertOrderAsync(string partNumber, string revision, decimal quantity, DateOnly dueDate, int priority, Guid? programId, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task SetStatusAsync(long orderNumber, OrderStatus status, OrderStatus? heldFrom, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task SetWbsAsync(long orderNumber, string? wbsCode, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task SaveReleaseAsync(long orderNumber, IReadOnlyList<OrderOperationInfo> operations, IReadOnlyList<OrderMaterialInfo> materials, DateTimeOffset at, string actor, CancellationToken ct);
 }
@@ -92,6 +104,44 @@ public sealed class ProductionOrderService(CommandPipeline pipeline)
                 CommandResult.Ok(id, $"Order {id} planned: {c.Quantity} x {part} rev {revision.Revision}, due {c.DueDate:yyyy-MM-dd}."),
                 [pipeline.Event(new ProductionOrderCreated(number, part, revision.Revision, c.Quantity, c.DueDate), context, SourceContext, OrderEntity, id, program)],
                 new AuditChange(OrderEntity, id, null, CanonicalJson.Serialize(new { part, revision = revision.Revision, c.Quantity, c.DueDate, c.Priority, c.ProgramId }), program));
+        }, ct);
+    }
+
+    public Task<CommandResult> AssignWbsAsync(AssignOrderWbs c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var id = c.OrderNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var spec = new CommandSpec(SourceContext, nameof(AssignOrderWbs), Permissions.ProgramsManage, ResourceRef.Of(OrderEntity, id));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var order = await uow.Store<IExecutionLookup>().FindOrderAsync(c.OrderNumber, ct);
+            if (order is null || (order.ProgramId is { } p && !context.Principal.Programs.Contains(new ProgramId(p))))
+            {
+                throw new CommandRejectedException("order_not_found", $"Order {id} does not exist.");
+            }
+
+            if (order.ProgramId is not { } programId)
+            {
+                throw new CommandRejectedException("not_program_order", $"Order {id} belongs to no program, so it has no WBS.");
+            }
+
+            var code = string.IsNullOrWhiteSpace(c.WbsCode) ? null : c.WbsCode.Trim();
+            if (code is not null && (await uow.Store<IProgramsLookup>().ListWbsAsync(programId, ct)).All(w => w.Code != code))
+            {
+                throw new CommandRejectedException("unknown_wbs", $"The order's program has no WBS element {code}.");
+            }
+
+            if (code == order.WbsCode)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, "Nothing changed."));
+            }
+
+            await uow.Store<IExecutionStore>().SetWbsAsync(order.OrderNumber, code, now, context.Actor, ct);
+            var program = new ProgramId(programId);
+            return new CommandOutcome(
+                CommandResult.Ok(id, code is null ? $"Order {id} no longer charged to a WBS element." : $"Order {id} charged to WBS {code}."),
+                [pipeline.Event(new OrderWbsChanged(order.OrderNumber, code), context, SourceContext, OrderEntity, id, program)],
+                new AuditChange(OrderEntity, id, CanonicalJson.Serialize(new { wbs = order.WbsCode }), CanonicalJson.Serialize(new { wbs = code }), program));
         }, ct);
     }
 

@@ -21,7 +21,22 @@ public sealed record DowntimeWindow(long Id, string MachineCode, DowntimeKind Ki
     public bool Covers(DateTimeOffset at) => StartsAt <= at && (EndsAt is null || at < EndsAt);
 }
 
-public sealed record PmPlanInfo(long PlanId, string MachineCode, string Title, int IntervalDays, int DurationMinutes, IReadOnlyList<string> Tasks, bool LockOutWhenOverdue, int GraceDays, bool Active);
+/// <summary>
+/// A preventive-maintenance plan, due every <see cref="IntervalDays"/> calendar days and/or every
+/// <see cref="IntervalRunHours"/> hours the machine actually ran, whichever comes first.
+/// </summary>
+public sealed record PmPlanInfo(
+    long PlanId,
+    string MachineCode,
+    string Title,
+    int? IntervalDays,
+    int DurationMinutes,
+    IReadOnlyList<string> Tasks,
+    bool LockOutWhenOverdue,
+    int GraceDays,
+    bool Active,
+    decimal? IntervalRunHours = null,
+    decimal GraceRunHours = 0);
 
 public enum WorkOrderKind
 {
@@ -50,7 +65,7 @@ public sealed record WorkOrderInfo(
     string Title,
     string? Description,
     IReadOnlyList<string> Tasks,
-    DateOnly DueDate,
+    DateOnly? DueDate,
     WorkOrderStatus Status,
     DateTimeOffset? ScheduledStart,
     DateTimeOffset? ScheduledEnd,
@@ -64,9 +79,23 @@ public sealed record WorkOrderInfo(
     string? Findings,
     string? ClosedBy,
     DateTimeOffset? ClosedAt,
-    string? CancelReason)
+    string? CancelReason,
+    decimal? DueRunHours = null,
+    DateTimeOffset? RunHoursFrom = null)
 {
     public bool IsOpen => Status is WorkOrderStatus.Open or WorkOrderStatus.Scheduled or WorkOrderStatus.InProgress or WorkOrderStatus.Completed;
+}
+
+/// <summary>
+/// How long a machine actually ran, from shop-floor labor recorded on it. Maintenance owns this port so it
+/// never depends on Execution; Execution implements it. Overlapping labor (a crew) counts once.
+/// </summary>
+public interface IMachineUsageLookup
+{
+    Task<decimal> RunHoursAsync(string machineCode, DateTimeOffset from, DateTimeOffset to, CancellationToken ct);
+
+    /// <summary>The instant the machine's run hours since <paramref name="from"/> reached <paramref name="hours"/>, or null if not yet (as of <paramref name="asOf"/>).</summary>
+    Task<DateTimeOffset?> ReachedAsync(string machineCode, DateTimeOffset from, decimal hours, DateTimeOffset asOf, CancellationToken ct);
 }
 
 public interface IMaintenanceLookup
