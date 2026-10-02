@@ -4,7 +4,8 @@
 //
 // Usage: node tools/seed-sample-plant.mjs [http://localhost:5080] [admin-subject]
 // Sign in afterwards as: planner (Michael Carter, planner), planner2, eng, approver, tech or dev-admin;
-// for materials: stores, ivy, bob, pat. Run it again on an older sample plant to add only the materials.
+// for materials: stores, ivy, bob, pat; for quality and shipping: insp, qe, qm, ship.
+// Run it again on an older sample plant to add only what it is missing.
 
 const base = (process.argv[2] ?? 'http://localhost:5080').replace(/\/+$/, '');
 const adminSubject = process.argv[3] ?? 'dev-admin';
@@ -38,9 +39,13 @@ async function main() {
   const existing = (await get(adminSubject, '/api/kernel/people')).map(p => p.idpSubject);
   if (existing.includes('eng')) {
     // An earlier sample plant: add only what is new (Phase 6 materials), once.
-    if (existing.includes('stores')) throw new Error('This database already has the sample plant, including materials. It is set up once per database.');
-    console.log('Sample plant found; adding sample materials (inventory, purchase orders, demand).');
-    await seedMaterials();
+    if (existing.includes('insp')) throw new Error('This database already has the sample plant, including materials and quality. It is set up once per database.');
+    if (!existing.includes('stores')) {
+      console.log('Sample plant found; adding sample materials (inventory, purchase orders, demand).');
+      await seedMaterials();
+    }
+    console.log('Adding sample quality and shipping.');
+    await seedQuality();
     return finish();
   }
 
@@ -178,6 +183,7 @@ async function main() {
   await post('kiosk', '/api/shopfloor/report', { badge: badges.luis, orderNumber: queue[0], sequence: 20, good: 12, scrap: 1, scrapReason: 'Setup', complete: false });
 
   await seedMaterials();
+  await seedQuality();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -185,7 +191,8 @@ async function main() {
 function finish() {
   console.log(`\nSample plant ready. Open ${base}/ and sign in as "planner" (Michael Carter).`);
   console.log('Other sample sign-ins: planner2, eng, approver, tech, dev-admin, "kiosk" for the Shop Floor terminal,');
-  console.log('and for materials: stores (material handler), ivy (inventory controller), bob (buyer), pat (purchasing manager).');
+  console.log('for materials: stores (material handler), ivy (inventory controller), bob (buyer), pat (purchasing manager);');
+  console.log('for quality and shipping: insp (inspector), qe (quality engineer), qm (quality manager), ship (shipper).');
   console.log('Everything shown is sample data.');
 }
 
@@ -229,6 +236,47 @@ async function seedMaterials() {
   step('Schedule: re-run with material availability, approved by a second planner');
   const s = await post('planner', '/api/planning/schedules', { horizonDays: 14 });
   await post('planner2', `/api/planning/schedules/${s.entityId}/approve`, { reason: 'Reviewed material shortages' });
+}
+
+// Phase 7a: gauges, inspection points, a failed inspection that raised an NCR (holding its order),
+// a corrective action, and a shipment packed by stores waiting for the shipper.
+async function seedQuality() {
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  step('Quality: people (inspector, quality engineer, quality manager, shipper)');
+  await person('insp', 'Ines Inspector', 'Inspector');
+  await person('qe', 'Quinn Quality', 'QualityEngineer');
+  await person('qm', 'Morgan Quality Manager', 'QualityManager');
+  await person('ship', 'Shay Shipper', 'Shipper');
+
+  step('Quality: gauges and inspection points on the PANEL-500 routing');
+  await post('qe', '/api/quality/gauges', { code: 'CAL-01', description: 'Digital caliper 0-600 mm', calibrationDue: day(120), certificate: 'CERT-2026-0412' });
+  await post('qe', '/api/quality/gauges', { code: 'TAPE-07', description: 'Steel tape 3 m', calibrationDue: day(-3), certificate: 'CERT-2025-1180' });
+  await post('qe', '/api/quality/plans', { partNumber: 'PANEL-500', sequence: 20, title: 'First-piece blank check', characteristics: [
+    { name: 'Blank length', kind: 'Variable', nominal: 500, lower: 499.5, upper: 500.5, unit: 'mm' },
+    { name: 'Edges free of dross', kind: 'Attribute' }] });
+  await post('qe', '/api/quality/plans', { partNumber: 'PANEL-500', sequence: 40, title: 'Paint coverage', characteristics: [{ name: 'Full coverage, no runs', kind: 'Attribute' }] });
+  await post('qe', '/api/quality/plans', { partNumber: 'PANEL-500', sequence: 60, title: 'Final inspection', characteristics: [
+    { name: 'Overall width', kind: 'Variable', nominal: 480, lower: 479, upper: 481, unit: 'mm' },
+    { name: 'Label and hardware', kind: 'Attribute' }] });
+
+  step('Quality: a blank out of tolerance raises an NCR on the first order');
+  const started = (await get('planner', '/api/orders/')).filter(o => o.status === 'Released').map(o => o.orderNumber).sort((a, b) => a - b);
+  if (started.length) {
+    const r = await post('insp', '/api/quality/inspections', { orderNumber: started[0], sequence: 20, quantity: 3, gaugeCode: 'CAL-01', rejectedQuantity: 1, notes: 'Third blank long',
+      findings: [{ number: 1, measured: 500.9 }, { number: 2, accepted: true }] });
+    const ncr = (await get('qe', '/api/quality/ncrs')).find(x => x.orderNumber === started[0]);
+    if (ncr) await post('qe', '/api/quality/capas', { ncrId: ncr.ncrId, title: 'Laser blank length drift', rootCause: 'Under investigation: suspect table squareness', action: 'Check and re-square LASER-1 table; add first-piece check', dueDate: day(14) });
+    console.log(`  ${r.message}`);
+  }
+
+  step('Shipping: finished panels in stock and a shipment packed for Acme, waiting for the shipper');
+  await post('ivy', '/api/inventory/locations', { code: 'FG', siteCode: 'PLANT1', name: 'Finished goods', kind: 'Stores' });
+  await post('ivy', '/api/inventory/locations', { code: 'DOCK', siteCode: 'PLANT1', name: 'Shipping dock', kind: 'Shipping' });
+  await post('stores', '/api/inventory/receipts', { partNumber: 'PANEL-500', quantity: 40, locationCode: 'FG', reason: 'Opening balance of finished panels' });
+  const acme = (await get('planner', '/api/planning/demand')).find(d => d.customer === 'Acme Fabrication');
+  const shipment = await post('stores', '/api/inventory/shipments', { demandId: acme?.demandId ?? null, customer: acme ? null : 'Acme Fabrication', reference: 'PO-77812 partial', shipTo: 'Acme Fabrication, Dock 2',
+    lines: [{ partNumber: 'PANEL-500', quantity: 25, locationCode: 'FG' }] });
+  await post('stores', `/api/inventory/shipments/${shipment.entityId}/pack`);
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

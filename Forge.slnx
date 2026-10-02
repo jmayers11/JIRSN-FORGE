@@ -11,6 +11,7 @@
     <Project Path="src/Forge.Maintenance/Forge.Maintenance.csproj" />
     <Project Path="src/Forge.Procurement/Forge.Procurement.csproj" />
     <Project Path="src/Forge.Inventory/Forge.Inventory.csproj" />
+    <Project Path="src/Forge.Quality/Forge.Quality.csproj" />
     <Project Path="src/Forge.Planning/Forge.Planning.csproj" />
     <Project Path="src/Forge.Host/Forge.Host.csproj" />
   </Folder>

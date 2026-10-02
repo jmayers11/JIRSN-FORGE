@@ -456,3 +456,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .table th.num, .table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .drawer h3 { font: 600 14px var(--font); color: var(--text); }
 @media (max-width: 900px) { .kpis.kpis-4 { grid-template-columns: 1fr 1fr; } }
+
+/* Quality and shipping: one record per row, actions on the right. */
+.card-row { display: flex; gap: 16px; align-items: flex-start; padding: 12px 4px; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); }
+.card-row:last-child { border-bottom: 0; }
+.card-row .grow { flex: 1; display: grid; gap: 4px; min-width: 0; }
+.card-row .nowrap { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 720px) { .card-row { flex-direction: column; } .card-row .nowrap { justify-content: flex-start; } }

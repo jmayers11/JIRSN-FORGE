@@ -15,6 +15,8 @@ import { plantSetupPage } from './pages/plantsetup.js';
 import { inventoryPage } from './pages/inventory.js';
 import { mrpPage } from './pages/mrp.js';
 import { procurementPage } from './pages/procurement.js';
+import { qualityPage } from './pages/quality.js';
+import { shippingPage } from './pages/shipping.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
@@ -29,9 +31,9 @@ const NAV = [
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
-  { route: 'quality', label: 'Quality', icon: 'quality', page: plannedPage('quality') },
+  { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
-  { route: 'shipping', label: 'Shipping', icon: 'suppliers', page: plannedPage('shipping') },
+  { route: 'shipping', label: 'Shipping', icon: 'suppliers', page: shippingPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: plannedPage('reports') },
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: plannedPage('analyst'), badge: '<span class="badge">AI</span>' },
 ];
@@ -42,7 +44,8 @@ const ROLE_TITLES = {
   Supervisor: 'Supervisor', SafetyEngineer: 'Safety Engineer', SafetyApprover: 'Safety Approver', Certifier: 'Certifier',
   TrainingCoordinator: 'Training Coordinator', EngineeringApprover: 'Engineering Approver', MaintenanceTechnician: 'Maintenance Technician',
   Auditor: 'Auditor', MaterialHandler: 'Material Handler', InventoryController: 'Inventory Controller', Buyer: 'Buyer',
-  PurchasingManager: 'Purchasing Manager', ShopFloorTerminal: 'Shop Floor Terminal',
+  PurchasingManager: 'Purchasing Manager', ShopFloorTerminal: 'Shop Floor Terminal', Inspector: 'Inspector',
+  QualityEngineer: 'Quality Engineer', QualityManager: 'Quality Manager', Shipper: 'Shipper',
 };
 export const roleTitle = r => ROLE_TITLES[r] ?? r;
 
@@ -147,7 +150,7 @@ async function refreshBell() {
 function showHelp() {
   drawer('Help', `
     <p>Forge shows what its engines worked out from your records. Every figure links back to the records and rules behind it — open a work center, order or constraint to see the evidence.</p>
-    <p><b>Nothing here is estimated.</b> Where Forge has no data yet (production output, material, quality, shipping) the page says so instead of showing a number.</p>
+    <p><b>Nothing here is estimated.</b> Where Forge has no data yet the page says so instead of showing a number.</p>
     <p><b>Changes need a reason.</b> Releasing orders, approving schedules and resolving constraints ask for a reason that is kept in the audit trail, and several of them need a second person.</p>
     <p class="muted">Signed in as ${esc(session.me.displayName)} (${esc(session.me.roles.map(roleTitle).join(', ') || 'no roles')}).</p>`);
 }

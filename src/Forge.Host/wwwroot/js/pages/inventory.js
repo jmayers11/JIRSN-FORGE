@@ -9,7 +9,7 @@ import { formModal, qty, can } from '../forms.js';
 
 const KIND_LABEL = {
   Receipt: 'Receipt', Issue: 'Issue to order', Return: 'Return from order', Transfer: 'Move', Adjustment: 'Adjustment',
-  ProductionReceipt: 'From production', Scrap: 'Scrap', CycleCount: 'Count variance', QualityHold: 'Hold', QualityRelease: 'Release',
+  ProductionReceipt: 'From production', Scrap: 'Scrap', CycleCount: 'Count variance', QualityHold: 'Hold', QualityRelease: 'Release', Shipment: 'Shipped',
 };
 const STATUS_TONE = { Available: 'ok', Inspection: 'info', Hold: 'warn' };
 

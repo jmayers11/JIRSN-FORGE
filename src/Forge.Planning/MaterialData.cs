@@ -134,8 +134,16 @@ internal static class MaterialData
             .ToList();
 
         var requirements = new List<MrpRequirement>();
-        foreach (var demand in await uow.Store<IDemandStore>().ListAsync(false, ct))
+        var shipped = (await uow.Store<IInventoryLookup>().ListShippedByDemandAsync(ct)).ToDictionary(d => (d.DemandId, d.PartNumber), d => d.Shipped);
+        foreach (var listed in await uow.Store<IDemandStore>().ListAsync(false, ct))
         {
+            // Only what has not shipped yet is still demand.
+            var demand = listed with { Quantity = listed.Quantity - shipped.GetValueOrDefault((listed.DemandId, listed.PartNumber)) };
+            if (demand.Quantity <= 0)
+            {
+                continue;
+            }
+
             var label = Visible(principal, demand.ProgramId)
                 ? $"Demand {demand.DemandId} ({Spaced(demand.Kind.ToString())}{(demand.Customer is null ? string.Empty : ", " + demand.Customer)})"
                 : Restricted;

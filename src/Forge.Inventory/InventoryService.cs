@@ -8,6 +8,7 @@ using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
 using Forge.Procurement.Contracts;
+using Forge.Quality.Contracts;
 using Forge.Resources.Contracts;
 
 namespace Forge.Inventory;
@@ -110,10 +111,15 @@ public sealed record NewTransaction(
     int? PoLine = null,
     string? Reason = null,
     long? RequestId = null,
-    string? ApprovedBy = null);
+    string? ApprovedBy = null,
+    long? ShipmentId = null);
 
 public interface IInventoryStore
 {
+    Task<long> InsertShipmentAsync(ShipmentInfo shipment, CancellationToken ct);
+
+    Task UpdateShipmentAsync(ShipmentInfo shipment, CancellationToken ct);
+
     /// <summary>Serializes stock changes of one part for the rest of the transaction.</summary>
     Task LockPartAsync(string partNumber, CancellationToken ct);
 
@@ -142,7 +148,7 @@ public interface IInventoryStore
 /// why and what it relates to. Stock never goes below zero. Adjustments and count variances need a
 /// second person; so does releasing stock from hold or inspection.
 /// </summary>
-public sealed class InventoryService(CommandPipeline pipeline)
+public sealed partial class InventoryService(CommandPipeline pipeline)
 {
     public const string SourceContext = "Inventory";
     private const string StockEntity = "Stock";
@@ -407,6 +413,20 @@ public sealed class InventoryService(CommandPipeline pipeline)
                 if (received + quantity > good)
                 {
                     throw new CommandRejectedException("over_receipt", $"Order {order.OrderNumber} has {good} good from its last operation; {received} already received, so at most {good - received} more.");
+                }
+
+                // Quality (spec §45): finished goods go into stock only after every inspection point has
+                // passed, and never while a nonconformance on the order is undecided.
+                var quality = await uow.Store<IQualityLookup>().GetOrderQualityAsync(order.OrderNumber, order.PartNumber, ct);
+                var uninspected = quality.PlannedSequences.Where(s => !quality.PassedSequences.Contains(s)).ToList();
+                if (uninspected.Count > 0)
+                {
+                    throw new CommandRejectedException("inspection_required", $"Order {order.OrderNumber} has not passed inspection after operation {string.Join(", ", uninspected)}.");
+                }
+
+                if (quality.OpenNcrs.Count > 0)
+                {
+                    throw new CommandRejectedException("ncr_open", $"Order {order.OrderNumber} has NCR {string.Join(", ", quality.OpenNcrs.Select(n => n.NcrId))} waiting for a disposition.");
                 }
 
                 var location = await ActiveLocationAsync(uow, c.LocationCode, ct);

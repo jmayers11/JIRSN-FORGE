@@ -85,6 +85,19 @@ See `docs/adr/0005-phase-5-shop-floor.md`.
 Two people are needed to approve a purchase order, post an adjustment or count variance, or release
 stock from hold or inspection. See `docs/adr/0007-phase-6-materials-and-mrp.md`.
 
+## What Phase 7a contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Quality | `src/Forge.Quality` | Gauges and calibration, inspection points on routing operations, independent inspections, NCRs with disposition, corrective actions |
+| Readiness | `src/Forge.Planning/Engines/OrderReadinessEngine.cs` | Quality dimension: an earlier inspection not passed, or an undecided NCR, blocks the next operation |
+| Shipping | `src/Forge.Inventory/InventoryService.Shipping.cs` | Shipments created and packed by one person, shipped by another; stock leaves through `Shipment` ledger entries; shipped quantity reduces demand |
+| Screens | `src/Forge.Host/wwwroot` | Quality and Shipping pages; quality panel on each order |
+
+Use-as-is dispositions, corrective-action verification and shipping each need a second person.
+Finished goods enter stock only after every inspection point of the order has passed.
+See `docs/adr/0008-phase-7a-quality-and-shipping.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.

@@ -1,14 +1,15 @@
 using Forge.Engineering.Contracts;
 using Forge.Execution.Contracts;
 using Forge.Kernel.Engines;
+using Forge.Quality.Contracts;
 
 namespace Forge.Planning.Engines;
 
 /// <summary>
 /// The order to evaluate, its revision as engineering sees it now, and (for a released order) its
-/// material allocation. Without material status, material is listed as not evaluated.
+/// material allocation and quality state. Without them, material and quality are listed as not evaluated.
 /// </summary>
-public sealed record OrderReadinessRequest(OrderInfo Order, RevisionInfo? RevisionNow, OrderMaterialStatus? Material = null);
+public sealed record OrderReadinessRequest(OrderInfo Order, RevisionInfo? RevisionNow, OrderMaterialStatus? Material = null, OrderQuality? Quality = null);
 
 /// <summary>How one eligible machine (or the work center, for work without a machine) looks for an operation.</summary>
 public sealed record OperationCandidate(string? MachineCode, bool Executable, string? PrimaryConstraint, IReadOnlyList<ReadinessDimension> Dimensions);
@@ -37,13 +38,17 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
 
     public static readonly IReadOnlyList<string> NotYetEvaluatedWithMaterial = ["Tooling", "Quality"];
 
-    private static readonly string[] Precedence = ["Order", "Engineering", "Predecessor", "Material", "RequirementProfile", "Equipment", "Safety", "Workforce"];
+    public static readonly IReadOnlyList<string> NotYetEvaluatedWithQuality = ["Material", "Tooling"];
+
+    public static readonly IReadOnlyList<string> NotYetEvaluatedWithBoth = ["Tooling"];
+
+    private static readonly string[] Precedence = ["Order", "Engineering", "Predecessor", "Quality", "Material", "RequirementProfile", "Equipment", "Safety", "Workforce"];
 
     private readonly PersonnelCompositionEngine composition = new();
 
     public string Name => "order-readiness";
 
-    public string Version => "2";
+    public string Version => "3";
 
     public EngineEvaluation<OrderReadinessResult> Evaluate(SiteSnapshot snapshot, OrderReadinessRequest parameters, DateTimeOffset asOf)
     {
@@ -74,7 +79,13 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
             { } m when started => new ReadinessDimension("Material", EvidenceOutcome.Info, $"Work has started. Material still to issue: {m.Summary}"),
             { } m => new ReadinessDimension("Material", EvidenceOutcome.Fail, m.Summary),
         };
-        var notEvaluated = material is null ? NotYetEvaluated : NotYetEvaluatedWithMaterial;
+        var notEvaluated = (parameters.Material, parameters.Quality) switch
+        {
+            (null, null) => NotYetEvaluated,
+            (not null, null) => NotYetEvaluatedWithMaterial,
+            (null, not null) => NotYetEvaluatedWithQuality,
+            _ => NotYetEvaluatedWithBoth,
+        };
 
         var operations = new List<OperationReadiness>();
         var nodes = new List<EvidenceNode>();
@@ -94,6 +105,11 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
                 .First();
 
             var dimensions = new List<ReadinessDimension> { orderDimension, engineering, predecessor };
+            if (parameters.Quality is { } quality && op.Status != OperationStatus.Complete)
+            {
+                dimensions.Add(QualityCheck(quality, op.Sequence));
+            }
+
             if (material is not null && op.Status != OperationStatus.Complete)
             {
                 dimensions.Add(material);
@@ -130,6 +146,36 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
         var outcome = next is null ? EvidenceOutcome.Info : next.Executable ? EvidenceOutcome.Pass : EvidenceOutcome.Fail;
         var root = new EvidenceNode("OrderReadiness", outcome, summary) { Children = nodes };
         return new EngineEvaluation<OrderReadinessResult>(new OrderReadinessResult(order.OrderNumber, order.Status.ToString(), operations, summary), root);
+    }
+
+    /// <summary>
+    /// Quality holds an operation when an earlier inspection point has no passing inspection, or when
+    /// the order has a nonconformance nobody has dispositioned yet (spec §45).
+    /// </summary>
+    public static ReadinessDimension QualityCheck(OrderQuality quality, int sequence)
+    {
+        ArgumentNullException.ThrowIfNull(quality);
+        var problems = new List<string>();
+        var uninspected = quality.PlannedSequences.Where(s => s < sequence && !quality.PassedSequences.Contains(s)).Order().ToList();
+        if (uninspected.Count > 0)
+        {
+            problems.Add($"Inspection after operation {string.Join(", ", uninspected)} has not passed.");
+        }
+
+        if (quality.OpenNcrs.Count > 0)
+        {
+            problems.Add(string.Join(" ", quality.OpenNcrs.Select(n => $"NCR {n.NcrId} ({n.Defect}) is {(n.Status == NcrStatus.AwaitingApproval ? "waiting for use-as-is approval" : "not dispositioned")}.")));
+        }
+
+        if (problems.Count > 0)
+        {
+            return new ReadinessDimension("Quality", EvidenceOutcome.Fail, string.Join(" ", problems));
+        }
+
+        var passed = quality.PlannedSequences.Where(s => s < sequence).ToList();
+        return new ReadinessDimension("Quality", EvidenceOutcome.Pass, passed.Count == 0
+            ? "No inspection is due before this operation and no nonconformance is open."
+            : $"Inspection after operation {string.Join(", ", passed)} passed; no nonconformance is open.");
     }
 
     private IEnumerable<OperationCandidate> Candidates(SiteSnapshot snapshot, OrderOperationInfo op, DateTimeOffset asOf)

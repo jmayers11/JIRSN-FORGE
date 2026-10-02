@@ -2,6 +2,7 @@ using Forge.Engineering.Contracts;
 using Forge.Execution.Contracts;
 using Forge.Kernel.Engines;
 using Forge.Planning.Engines;
+using Forge.Quality.Contracts;
 using Forge.Workforce.Contracts;
 using static Forge.Planning.Tests.TestFactory;
 
@@ -113,5 +114,58 @@ public class OrderReadinessTests
         Assert.False(op.Executable);
         Assert.Equal("Workforce", op.PrimaryConstraint);
         Assert.Contains(op.Dimensions, d => d.Name == "Safety" && d.Outcome == EvidenceOutcome.Pass); // kitting has no rule
+    }
+
+    private static NcrInfo OpenNcr(long id) => new(
+        id, "ROLL-100", 10001, 10, null, 2, "Burr on edge", "Edge burr over limit", NcrStatus.Open, null, null, "insp", Now.AddMinutes(-10), null, null, null, null, null);
+
+    [Fact]
+    public void An_operation_waits_for_the_inspection_after_the_one_before_it()
+    {
+        var order = Order() with
+        {
+            Operations =
+            [
+                new OrderOperationInfo(10, "Slit", "SLIT-WC", RunSlitter, ["SLITTER-A"], [], 45, 1, OperationStatus.Complete),
+                new OrderOperationInfo(20, "Kit", "SLIT-WC", Kitting, [], [FirstAid], 20, 1, OperationStatus.Pending),
+            ],
+        };
+        var quality = new OrderQuality(10001, [10], [], []);
+
+        var op = engine.Evaluate(StaffedSlitting().Build(), new OrderReadinessRequest(order, RevisionA, null, quality), Now).Output.Operations[1];
+
+        Assert.False(op.Executable);
+        Assert.Equal("Quality", op.PrimaryConstraint);
+        Assert.Contains(op.Dimensions, d => d.Name == "Quality" && d.Detail.Contains("operation 10 has not passed", StringComparison.Ordinal));
+        Assert.Equal(OrderReadinessEngine.NotYetEvaluatedWithQuality, op.NotEvaluated);
+    }
+
+    [Fact]
+    public void A_passed_inspection_lets_the_next_operation_run()
+    {
+        var order = Order() with
+        {
+            Operations =
+            [
+                new OrderOperationInfo(10, "Slit", "SLIT-WC", RunSlitter, ["SLITTER-A"], [], 45, 1, OperationStatus.Complete),
+                new OrderOperationInfo(20, "Kit", "SLIT-WC", Kitting, [], [FirstAid], 20, 1, OperationStatus.Pending),
+            ],
+        };
+
+        var op = engine.Evaluate(StaffedSlitting().Build(), new OrderReadinessRequest(order, RevisionA, null, new OrderQuality(10001, [10], [10], [])), Now).Output.Operations[1];
+
+        Assert.True(op.Executable);
+        Assert.Contains(op.Dimensions, d => d.Name == "Quality" && d.Outcome == EvidenceOutcome.Pass);
+    }
+
+    [Fact]
+    public void An_undecided_nonconformance_holds_every_unfinished_operation()
+    {
+        var quality = new OrderQuality(10001, [], [], [OpenNcr(9001)]);
+        var result = engine.Evaluate(StaffedSlitting().Build(), new OrderReadinessRequest(Order(), RevisionA, null, quality), Now).Output;
+
+        Assert.All(result.Operations, o => Assert.Contains(o.Dimensions, d => d.Name == "Quality" && d.Outcome == EvidenceOutcome.Fail && d.Detail.Contains("NCR 9001", StringComparison.Ordinal)));
+        Assert.Equal("Quality", result.Operations[0].PrimaryConstraint);
+        Assert.Contains("blocked by Quality", result.Summary, StringComparison.Ordinal);
     }
 }

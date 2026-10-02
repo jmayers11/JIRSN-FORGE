@@ -124,6 +124,23 @@ async function orderDetail(page, ctx, number) {
       </div>
     </section>`;
 
+  const quality = await tryGet(`/api/quality/orders/${number}`);
+  if (quality.data && (quality.data.plans.length || quality.data.inspections.length || quality.data.quality.openNcrs.length)) {
+    const q = quality.data;
+    const passed = new Set(q.quality.passedSequences);
+    const section = document.createElement('section');
+    section.className = 'panel';
+    section.innerHTML = `<header><h2>Quality</h2><span class="spacer"></span><a class="btn small" href="#/quality">Open Quality</a></header>
+      ${q.quality.openNcrs.map(n => `<div class="notice bad">NCR ${n.ncrId} (${esc(n.defect)}) is ${n.status === 'AwaitingApproval' ? 'waiting for use-as-is approval' : 'not dispositioned'}: the order is held until it is decided.</div>`).join('')}
+      <table class="table"><thead><tr><th>After op</th><th>Inspection</th><th>Status</th><th>Inspections</th></tr></thead><tbody>
+      ${q.plans.map(p => {
+        const done = q.inspections.filter(i => i.sequence === p.sequence);
+        return `<tr><td>${p.sequence}</td><td>${esc(p.title)}</td><td>${passed.has(p.sequence) ? '<span class="pill ok">Passed</span>' : done.length ? '<span class="pill bad">Failed</span>' : '<span class="pill none">Not inspected</span>'}</td>
+          <td>${done.map(i => `${esc(i.result)} ${esc(fmtDateTime(i.at))} by ${esc(who(i.inspector))}`).join('<br>') || '—'}</td></tr>`;
+      }).join('')}</tbody></table>`;
+    page.append(section);
+  }
+
   const floor = await tryGet(`/api/orders/${number}/shopfloor`);
   if (floor.data && (floor.data.labor.length || floor.data.reports.length || floor.data.training.length)) {
     const f = floor.data;

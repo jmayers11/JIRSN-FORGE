@@ -34,6 +34,9 @@ public enum InventoryTransactionKind
     CycleCount,
     QualityHold,
     QualityRelease,
+
+    /// <summary>Stock leaving the plant on a customer shipment.</summary>
+    Shipment,
 }
 
 public sealed record LocationInfo(string Code, string SiteCode, string Name, LocationKind Kind, bool Active);
@@ -62,7 +65,8 @@ public sealed record InventoryTransaction(
     DateTimeOffset At,
     string Actor,
     string? ApprovedBy,
-    long? RequestId);
+    long? RequestId,
+    long? ShipmentId = null);
 
 public sealed record LotInfo(string PartNumber, string LotNumber, string? SupplierLot, DateTimeOffset FirstReceivedAt);
 
@@ -117,6 +121,41 @@ public sealed record AdjustmentRequest(
     public decimal Variance => Kind == AdjustmentKind.Count ? Quantity - SystemQuantity : Quantity;
 }
 
+public enum ShipmentStatus
+{
+    /// <summary>Being put together; lines can change.</summary>
+    Open,
+
+    /// <summary>Packed and checked against stock; waiting for a different person to ship it.</summary>
+    Packed,
+
+    Shipped,
+    Cancelled,
+}
+
+public sealed record ShipmentLineInfo(int LineNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber);
+
+public sealed record ShipmentInfo(
+    long ShipmentId,
+    string Customer,
+    string? Reference,
+    long? DemandId,
+    string? ShipTo,
+    ShipmentStatus Status,
+    string CreatedBy,
+    DateTimeOffset CreatedAt,
+    string? PackedBy,
+    DateTimeOffset? PackedAt,
+    string? ShippedBy,
+    DateTimeOffset? ShippedAt,
+    string? Carrier,
+    string? Tracking,
+    string? CancelReason,
+    IReadOnlyList<ShipmentLineInfo> Lines);
+
+/// <summary>What has shipped against a demand, by part.</summary>
+public sealed record DemandShipped(long DemandId, string PartNumber, decimal Shipped);
+
 /// <summary>What other contexts may ask Inventory.</summary>
 public interface IInventoryLookup
 {
@@ -137,4 +176,11 @@ public interface IInventoryLookup
     Task<IReadOnlyList<ProductionReceipt>> ListProductionReceiptsAsync(CancellationToken ct);
 
     Task<IReadOnlyList<AdjustmentRequest>> ListRequestsAsync(bool pendingOnly, CancellationToken ct);
+
+    /// <summary>Shipments, newest first; shipped and cancelled ones only when asked.</summary>
+    Task<IReadOnlyList<ShipmentInfo>> ListShipmentsAsync(bool includeClosed, CancellationToken ct);
+
+    Task<ShipmentInfo?> FindShipmentAsync(long shipmentId, CancellationToken ct);
+
+    Task<IReadOnlyList<DemandShipped>> ListShippedByDemandAsync(CancellationToken ct);
 }

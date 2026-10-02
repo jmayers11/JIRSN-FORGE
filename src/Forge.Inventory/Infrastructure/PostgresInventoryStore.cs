@@ -8,7 +8,10 @@ namespace Forge.Inventory.Infrastructure;
 internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventoryStore, IInventoryLookup
 {
     private const string TransactionSql =
-        "SELECT transaction_id, kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number, order_number, po_number, po_line, reason, at, actor, approved_by, request_id FROM inventory.transaction";
+        "SELECT transaction_id, kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number, order_number, po_number, po_line, reason, at, actor, approved_by, request_id, shipment_id FROM inventory.transaction";
+
+    private const string ShipmentSql =
+        "SELECT shipment_id, customer, reference, demand_id, ship_to, status, created_by, created_at, packed_by, packed_at, shipped_by, shipped_at, carrier, tracking, cancel_reason FROM inventory.shipment";
 
     private const string RequestSql =
         "SELECT request_id, kind, part_number, location_code, lot_number, status, quantity, system_quantity, reason, requested_by, requested_at, state, decided_by, decided_at, transaction_id FROM inventory.adjustment_request";
@@ -33,8 +36,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
         await using var cmd = uow.Command(
             """
             INSERT INTO inventory.transaction (kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number,
-                order_number, po_number, po_line, reason, request_id, at, actor, approved_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                order_number, po_number, po_line, reason, request_id, at, actor, approved_by, shipment_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             RETURNING transaction_id
             """,
             transaction.Kind.ToString(),
@@ -52,7 +55,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
             Long(transaction.RequestId),
             at,
             actor,
-            Text(transaction.ApprovedBy));
+            Text(transaction.ApprovedBy),
+            Long(transaction.ShipmentId));
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -167,6 +171,81 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
     public Task<IReadOnlyList<AdjustmentRequest>> ListRequestsAsync(bool pendingOnly, CancellationToken ct) =>
         ReadAsync(RequestSql + (pendingOnly ? " WHERE state = 'Pending'" : string.Empty) + " ORDER BY request_id DESC LIMIT 500", ReadRequest, ct);
 
+    public async Task<long> InsertShipmentAsync(ShipmentInfo shipment, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(shipment);
+        long id;
+        await using (var cmd = uow.Command(
+            "INSERT INTO inventory.shipment (customer, reference, demand_id, ship_to, status, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING shipment_id",
+            shipment.Customer, Text(shipment.Reference), Long(shipment.DemandId), Text(shipment.ShipTo), shipment.Status.ToString(), shipment.CreatedBy, shipment.CreatedAt))
+        {
+            id = (long)(await cmd.ExecuteScalarAsync(ct))!;
+        }
+
+        foreach (var line in shipment.Lines)
+        {
+            await using var cmd = uow.Command(
+                "INSERT INTO inventory.shipment_line (shipment_id, line_number, part_number, quantity, location_code, lot_number) VALUES ($1, $2, $3, $4, $5, $6)",
+                id, line.LineNumber, line.PartNumber, line.Quantity, line.LocationCode, Text(line.LotNumber));
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        return id;
+    }
+
+    public async Task UpdateShipmentAsync(ShipmentInfo shipment, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(shipment);
+        await using var cmd = uow.Command(
+            "UPDATE inventory.shipment SET status = $2, packed_by = $3, packed_at = $4, shipped_by = $5, shipped_at = $6, carrier = $7, tracking = $8, cancel_reason = $9 WHERE shipment_id = $1",
+            shipment.ShipmentId, shipment.Status.ToString(), Text(shipment.PackedBy), Time(shipment.PackedAt), Text(shipment.ShippedBy), Time(shipment.ShippedAt),
+            Text(shipment.Carrier), Text(shipment.Tracking), Text(shipment.CancelReason));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<ShipmentInfo?> FindShipmentAsync(long shipmentId, CancellationToken ct) =>
+        (await ShipmentsAsync(ShipmentSql + " WHERE shipment_id = $1", ct, shipmentId)).SingleOrDefault();
+
+    public Task<IReadOnlyList<ShipmentInfo>> ListShipmentsAsync(bool includeClosed, CancellationToken ct) =>
+        ShipmentsAsync(ShipmentSql + (includeClosed ? string.Empty : " WHERE status IN ('Open', 'Packed')") + " ORDER BY shipment_id DESC LIMIT 500", ct);
+
+    public Task<IReadOnlyList<DemandShipped>> ListShippedByDemandAsync(CancellationToken ct) =>
+        ReadAsync(
+            """
+            SELECT s.demand_id, t.part_number, sum(t.quantity)
+            FROM inventory.transaction t JOIN inventory.shipment s ON s.shipment_id = t.shipment_id
+            WHERE t.kind = 'Shipment' AND s.demand_id IS NOT NULL
+            GROUP BY s.demand_id, t.part_number ORDER BY s.demand_id, t.part_number
+            """,
+            r => new DemandShipped(r.GetInt64(0), r.GetString(1), Dec(r, 2)),
+            ct);
+
+    private async Task<IReadOnlyList<ShipmentInfo>> ShipmentsAsync(string sql, CancellationToken ct, params object?[] args)
+    {
+        var heads = await ReadAsync(
+            sql,
+            r => new ShipmentInfo(
+                r.GetInt64(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.IsDBNull(3) ? null : r.GetInt64(3), r.IsDBNull(4) ? null : r.GetString(4),
+                Enum.Parse<ShipmentStatus>(r.GetString(5)), r.GetString(6), r.GetFieldValue<DateTimeOffset>(7),
+                r.IsDBNull(8) ? null : r.GetString(8), r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9),
+                r.IsDBNull(10) ? null : r.GetString(10), r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11),
+                r.IsDBNull(12) ? null : r.GetString(12), r.IsDBNull(13) ? null : r.GetString(13), r.IsDBNull(14) ? null : r.GetString(14), []),
+            ct,
+            args);
+        if (heads.Count == 0)
+        {
+            return heads;
+        }
+
+        var lines = await ReadAsync(
+            "SELECT shipment_id, line_number, part_number, quantity, location_code, lot_number FROM inventory.shipment_line WHERE shipment_id = ANY($1) ORDER BY shipment_id, line_number",
+            r => (Id: r.GetInt64(0), Line: new ShipmentLineInfo(r.GetInt32(1), r.GetString(2), Dec(r, 3), r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5))),
+            ct,
+            heads.Select(h => h.ShipmentId).ToArray());
+        var byId = lines.ToLookup(l => l.Id, l => l.Line);
+        return heads.Select(h => h with { Lines = byId[h.ShipmentId].ToList() }).ToList();
+    }
+
     private static InventoryTransaction ReadTransaction(NpgsqlDataReader r) => new(
         r.GetInt64(0),
         Enum.Parse<InventoryTransactionKind>(r.GetString(1)),
@@ -184,7 +263,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
         r.GetFieldValue<DateTimeOffset>(13),
         r.GetString(14),
         r.IsDBNull(15) ? null : r.GetString(15),
-        r.IsDBNull(16) ? null : r.GetInt64(16));
+        r.IsDBNull(16) ? null : r.GetInt64(16),
+        r.IsDBNull(17) ? null : r.GetInt64(17));
 
     private static AdjustmentRequest ReadRequest(NpgsqlDataReader r) => new(
         r.GetInt64(0),
@@ -208,6 +288,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
     private static decimal Dec(NpgsqlDataReader r, int ordinal) => Normal(r.GetDecimal(ordinal));
 
     private static NpgsqlParameter Text(string? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text };
+
+    private static NpgsqlParameter Time(DateTimeOffset? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.TimestampTz };
 
     private static NpgsqlParameter Long(long? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint };
 

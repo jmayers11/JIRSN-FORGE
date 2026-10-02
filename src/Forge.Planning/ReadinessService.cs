@@ -7,6 +7,7 @@ using Forge.Kernel.Engines;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Planning.Engines;
+using Forge.Quality.Contracts;
 using Forge.Resources.Contracts;
 using Forge.SafetyRules.Contracts;
 using Forge.Workforce;
@@ -42,8 +43,11 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         var material = order.Status == OrderStatus.Released
             ? (await MaterialPlanningService.RunMaterialAsync(uow, time, ct)).Output.FirstOrDefault(m => m.OrderNumber == order.OrderNumber)
             : null;
+        var quality = order.Status is OrderStatus.Released or OrderStatus.Held
+            ? await uow.Store<IQualityLookup>().GetOrderQualityAsync(order.OrderNumber, order.PartNumber, ct)
+            : null;
         var snapshot = await LoadSnapshotAsync(uow, ct);
-        return EngineRunner.Run(orders, snapshot, new OrderReadinessRequest(order, revision, material), snapshot.AsOf);
+        return EngineRunner.Run(orders, snapshot, new OrderReadinessRequest(order, revision, material, quality), snapshot.AsOf);
     }
 
     public async Task<EngineRun<ReadinessResult>> EvaluateMachineAsync(ForgePrincipal principal, string machineCode, string activityCode, CancellationToken ct)
