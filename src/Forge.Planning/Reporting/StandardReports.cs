@@ -1,0 +1,622 @@
+using System.Globalization;
+using Forge.Execution.Contracts;
+using Forge.Inventory.Contracts;
+using Forge.Kernel.Engines;
+using Forge.Kernel.Security;
+using Forge.Maintenance.Contracts;
+using Forge.Planning.Engines;
+using Forge.Programs.Contracts;
+using Forge.Quality.Contracts;
+
+namespace Forge.Planning.Reporting;
+
+/// <summary>
+/// The standard report catalog (spec §54). Each report reads one snapshot through other contexts'
+/// contracts, applies the reader's program access to every row and records where each row came from.
+/// </summary>
+internal static class StandardReports
+{
+    private static readonly ReportFilter FromFilter = new("from", "From", "date");
+    private static readonly ReportFilter ToFilter = new("to", "To", "date");
+    private static readonly ReportFilter ProgramFilter = new("programId", "Program", "program");
+    private static readonly ReportFilter WorkCenterFilter = new("workCenter", "Work center", "text");
+    private static readonly ReportFilter MachineFilter = new("machine", "Machine", "text");
+    private static readonly ReportFilter PartFilter = new("partNumber", "Part", "text");
+    private static readonly ReportFilter SearchFilter = new("search", "Contains", "text");
+
+    private static ReportFilter StatusFilter(params string[] values) => new("status", "Status", "choice:" + string.Join('|', values));
+
+    public static IReadOnlyList<ReportSpec> All { get; } =
+    [
+        new(
+            new("production-output", "Plan vs actual output", "Production",
+                "Per order operation: the quantity the approved schedule planned to finish in the period against good and scrap quantities the shop floor reported in it.",
+                [FromFilter, ToFilter, ProgramFilter, WorkCenterFilter, PartFilter, StatusFilter("On plan", "Short", "Not reported", "Unplanned", "Cancelled"), SearchFilter],
+                [C("date", "Date", ReportColumnKind.Date), C("order", "Order", ReportColumnKind.Text), C("op", "Op", ReportColumnKind.Text), C("workCenter", "Work center", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text),
+                 C("planned", "Planned qty", ReportColumnKind.Number), C("achieved", "Achieved", ReportColumnKind.Number), C("good", "Good", ReportColumnKind.Number), C("scrap", "Scrap", ReportColumnKind.Number), C("variance", "Variance", ReportColumnKind.Number), C("status", "Status", ReportColumnKind.Text)],
+                ["date", "workCenter", "part", "status"], "workCenter", 62,
+                "Plan: the schedule approved and in force at the start of the period; an operation counts when its planned end falls in the period, at the order quantity. Actual: production reports recorded in the period. Achieved is good output up to the planned quantity."),
+            Permissions.ScheduleRead, new("Output vs plan", "achieved", "planned"), ProductionOutputAsync),
+
+        new(
+            new("schedule-attainment", "Schedule attainment", "Production",
+                "Operations the approved schedule planned to finish in the period, and whether the shop floor completed them by the period's end, weighted by planned minutes.",
+                [FromFilter, ToFilter, ProgramFilter, WorkCenterFilter, StatusFilter("Completed", "CompletedLate", "Open", "Cancelled"), SearchFilter],
+                [C("plannedEnd", "Planned end", ReportColumnKind.DateTime), C("order", "Order", ReportColumnKind.Text), C("op", "Op", ReportColumnKind.Text), C("workCenter", "Work center", ReportColumnKind.Text),
+                 C("plannedMinutes", "Planned min", ReportColumnKind.Number), C("completedMinutes", "Completed min", ReportColumnKind.Number), C("completedAt", "Completed", ReportColumnKind.DateTime), C("status", "Status", ReportColumnKind.Text)],
+                ["plannedEnd", "workCenter", "status"], "workCenter", 62,
+                "The schedule-attainment engine: the schedule in force at the period's start, operation completion records, cancelled orders listed but not counted."),
+            Permissions.ScheduleRead, new("Attainment", "completedMinutes", "plannedMinutes"), AttainmentAsync),
+
+        new(
+            new("constraint-history", "Constraint history", "Planning",
+                "Constraints found by schedule runs that were open at any time in the period: when first seen, when resolved, and how long they took.",
+                [FromFilter, ToFilter, ProgramFilter, StatusFilter("Open", "Investigating", "Resolved", "Verified"), SearchFilter],
+                [C("firstSeen", "First seen", ReportColumnKind.DateTime), C("constraint", "Constraint", ReportColumnKind.Text), C("category", "Category", ReportColumnKind.Text), C("subject", "Subject", ReportColumnKind.Text), C("status", "Status", ReportColumnKind.Text),
+                 C("resolvedAt", "Resolved", ReportColumnKind.DateTime), C("hoursToResolve", "Hours to resolve", ReportColumnKind.Hours), C("hoursOpen", "Hours open", ReportColumnKind.Hours), C("reopened", "Reopened", ReportColumnKind.Number),
+                 C("orders", "Orders", ReportColumnKind.Number), C("owner", "Owner", ReportColumnKind.Text), C("finding", "Finding", ReportColumnKind.Text)],
+                ["category", "status", "subject", "firstSeen"], "category", 366,
+                "Constraint findings and their lifecycle as recorded. Time to resolve runs from first seen to resolved (by a person or by a later run that no longer found it)."),
+            Permissions.ScheduleRead, null, ConstraintsAsync),
+
+        new(
+            new("downtime", "Machine downtime", "Maintenance",
+                "Unplanned outages, planned maintenance windows and overdue-PM lockouts in the period, with the hours each took out of it.",
+                [FromFilter, ToFilter, MachineFilter, StatusFilter("Unplanned", "Planned", "MaintenanceOverdue"), SearchFilter],
+                [C("startsAt", "Starts", ReportColumnKind.DateTime), C("machine", "Machine", ReportColumnKind.Text), C("kind", "Kind", ReportColumnKind.Text), C("endsAt", "Ends", ReportColumnKind.DateTime), C("hours", "Hours in period", ReportColumnKind.Hours), C("reason", "Reason", ReportColumnKind.Text)],
+                ["machine", "kind", "startsAt"], "machine", 366,
+                "Downtime windows recorded by maintenance and lockouts derived from overdue PM work. Open outages run to now. Hours are clipped to the period."),
+            Permissions.MaintenanceRead, null, DowntimeAsync),
+
+        new(
+            new("delivery-performance", "Delivery performance", "Delivery",
+                "Demand due in the period: how much shipped by the need date, how much shipped at all, and how late the rest is.",
+                [FromFilter, ToFilter, ProgramFilter, PartFilter, StatusFilter("On time", "Late", "Overdue", "Open", "Closed", "Cancelled"), SearchFilter],
+                [C("needDate", "Need date", ReportColumnKind.Date), C("demand", "Demand", ReportColumnKind.Text), C("kind", "Kind", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("customer", "Customer", ReportColumnKind.Text), C("reference", "Reference", ReportColumnKind.Text),
+                 C("quantity", "Quantity", ReportColumnKind.Number), C("onTime", "On time qty", ReportColumnKind.Number), C("shipped", "Shipped", ReportColumnKind.Number), C("lastShipped", "Last shipped", ReportColumnKind.Date), C("status", "Status", ReportColumnKind.Text), C("daysLate", "Days late", ReportColumnKind.Number)],
+                ["kind", "part", "customer", "status", "needDate"], "status", 366,
+                "Independent demand and the shipments made against it; a shipment counts on time when it shipped on or before the need date (site time). Cancelled demand is left out unless asked for."),
+            Permissions.MaterialPlanRead, new("On-time quantity", "onTime", "quantity"), DeliveryAsync),
+
+        new(
+            new("program-deliveries", "Contract deliveries", "Delivery",
+                "Contract deliveries due in the period for the programs you can see: quantity, shipped against them, and value at CLIN prices.",
+                [FromFilter, ToFilter, ProgramFilter, PartFilter, StatusFilter("Delivered", "Partly delivered", "Planned", "Overdue", "Not planned", "Cancelled"), SearchFilter],
+                [C("dueDate", "Due", ReportColumnKind.Date), C("program", "Program", ReportColumnKind.Text), C("contract", "Contract", ReportColumnKind.Text), C("clin", "CLIN", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text),
+                 C("quantity", "Quantity", ReportColumnKind.Number), C("shipped", "Shipped", ReportColumnKind.Number), C("state", "State", ReportColumnKind.Text), C("value", "Value", ReportColumnKind.Number), C("deliveredValue", "Delivered value", ReportColumnKind.Number)],
+                ["program", "contract", "state", "part", "dueDate"], "contract", 1100,
+                "Contract deliveries, the demand planned from them and shipments against that demand. Value is quantity times the CLIN unit price; unpriced CLINs count as zero."),
+            Permissions.ProgramsRead, new("Delivered value", "deliveredValue", "value"), ProgramDeliveriesAsync),
+
+        new(
+            new("ncr-summary", "Nonconformances", "Quality",
+                "NCRs raised in the period: what was found, how it was dispositioned and how long each stayed open.",
+                [FromFilter, ToFilter, ProgramFilter, PartFilter, StatusFilter("Open", "Dispositioned", "Approved", "Closed"), SearchFilter],
+                [C("raisedAt", "Raised", ReportColumnKind.DateTime), C("ncr", "NCR", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("order", "Order", ReportColumnKind.Text), C("op", "Op", ReportColumnKind.Text), C("defect", "Defect", ReportColumnKind.Text),
+                 C("quantity", "Quantity", ReportColumnKind.Number), C("status", "Status", ReportColumnKind.Text), C("disposition", "Disposition", ReportColumnKind.Text), C("closedAt", "Closed", ReportColumnKind.DateTime), C("daysOpen", "Days open", ReportColumnKind.Number)],
+                ["part", "defect", "status", "disposition"], "defect", 366,
+                "NCR records. Days open runs from raised to closed, or to now for NCRs not yet closed."),
+            Permissions.QualityRead, null, NcrsAsync),
+
+        new(
+            new("inspection-results", "Inspection results", "Quality",
+                "Inspections recorded in the period and the share of inspected quantity accepted first time.",
+                [FromFilter, ToFilter, ProgramFilter, PartFilter, StatusFilter("Pass", "Fail"), SearchFilter],
+                [C("at", "Inspected", ReportColumnKind.DateTime), C("inspection", "Inspection", ReportColumnKind.Text), C("order", "Order", ReportColumnKind.Text), C("op", "Op", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text),
+                 C("inspected", "Inspected qty", ReportColumnKind.Number), C("accepted", "Accepted qty", ReportColumnKind.Number), C("result", "Result", ReportColumnKind.Text), C("inspector", "Inspector", ReportColumnKind.Text), C("ncr", "NCR", ReportColumnKind.Text)],
+                ["part", "result", "inspector", "at"], "part", 366,
+                "Inspection records. Accepted quantity is the inspected quantity of passing inspections."),
+            Permissions.QualityRead, new("First-pass acceptance", "accepted", "inspected"), InspectionsAsync),
+
+        new(
+            new("pm-compliance", "Maintenance work and PM compliance", "Maintenance",
+                "Preventive work due in the period and whether it was done by its due date, with corrective work raised or completed in the period.",
+                [FromFilter, ToFilter, MachineFilter, StatusFilter("Open", "Scheduled", "InProgress", "Completed", "Closed", "Cancelled"), SearchFilter],
+                [C("dueDate", "Due", ReportColumnKind.Date), C("workOrder", "Work order", ReportColumnKind.Text), C("machine", "Machine", ReportColumnKind.Text), C("kind", "Kind", ReportColumnKind.Text), C("title", "Title", ReportColumnKind.Text), C("status", "Status", ReportColumnKind.Text),
+                 C("completedAt", "Completed", ReportColumnKind.DateTime), C("due", "Due in period", ReportColumnKind.Number), C("onTime", "Done on time", ReportColumnKind.Number), C("daysLate", "Days late", ReportColumnKind.Number), C("repairHours", "Repair hours", ReportColumnKind.Hours)],
+                ["machine", "kind", "status", "dueDate"], "machine", 366,
+                "Maintenance work orders. A preventive order counts as due when its due date falls in the period (run-hour-only orders have no date and are not counted); it is on time when completed on or before that date (site time)."),
+            Permissions.MaintenanceRead, new("PM compliance", "onTime", "due"), MaintenanceAsync),
+
+        new(
+            new("inventory-transactions", "Inventory transactions", "Inventory",
+                "Every stock movement recorded in the period, with who made it and what it was for.",
+                [FromFilter, ToFilter, ProgramFilter, PartFilter, StatusFilter(Enum.GetNames<InventoryTransactionKind>()), SearchFilter],
+                [C("at", "At", ReportColumnKind.DateTime), C("transaction", "Transaction", ReportColumnKind.Text), C("kind", "Kind", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("quantity", "Quantity", ReportColumnKind.Number),
+                 C("from", "From", ReportColumnKind.Text), C("to", "To", ReportColumnKind.Text), C("lot", "Lot", ReportColumnKind.Text), C("reference", "For", ReportColumnKind.Text), C("actor", "By", ReportColumnKind.Text), C("approvedBy", "Approved by", ReportColumnKind.Text), C("reason", "Reason", ReportColumnKind.Text)],
+                ["kind", "part", "actor", "at"], "kind", 366,
+                "The inventory transaction ledger. Transactions for production orders of programs you cannot see are left out."),
+            Permissions.InventoryRead, null, TransactionsAsync),
+    ];
+
+    public static ReportSpec? Find(string id) => All.FirstOrDefault(s => string.Equals(s.Entry.Id, id, StringComparison.Ordinal));
+
+    private static ReportColumn C(string key, string title, ReportColumnKind kind) => new(key, title, kind);
+
+    private static string Id(long id) => ReportRun.Id(id);
+
+    private static string Seq(int sequence) => sequence.ToString(CultureInfo.InvariantCulture);
+
+    private static string Fmt(decimal d) => d.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static async Task<Dictionary<long, OrderInfo>> OrdersAsync(ReportRun run, CancellationToken ct) =>
+        (await run.Uow.Store<IExecutionLookup>().ListOrdersAsync(ct)).ToDictionary(o => o.OrderNumber);
+
+    // ------------------------------------------------------------------ production
+
+    private static async Task<ReportBody> ProductionOutputAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var version = await run.Uow.Store<IPlanningStore>().ApprovedAsOfAsync(run.From, ct);
+        var orders = await OrdersAsync(run, ct);
+        var reports = await run.Uow.Store<IExecutionLookup>().ListReportsAsync(run.From, run.To, null, ct);
+        var planned = (version?.Result?.Operations ?? [])
+            .Where(o => o.Scheduled && o.End is { } end && run.InPeriod(end))
+            .ToDictionary(o => (o.OrderNumber, o.Sequence));
+        var reported = reports.ToLookup(r => (r.OrderNumber, r.Sequence));
+
+        var rows = new List<ReportRow>();
+        foreach (var key in planned.Keys.Concat(reported.Select(g => g.Key)).Distinct().OrderBy(k => k.OrderNumber).ThenBy(k => k.Sequence))
+        {
+            planned.TryGetValue(key, out var op);
+            orders.TryGetValue(key.OrderNumber, out var order);
+            var mine = reported[key].ToList();
+            if (!run.Visible(order?.ProgramId ?? op?.ProgramId))
+            {
+                continue;
+            }
+
+            var workCenter = op?.WorkCenterCode ?? mine[0].WorkCenterCode;
+            if (!ReportRun.Is(workCenter, p.WorkCenter) || !ReportRun.Is(order?.PartNumber, p.PartNumber))
+            {
+                continue;
+            }
+
+            var cancelled = order?.Status == OrderStatus.Cancelled;
+            var plannedQty = op is null || cancelled ? 0 : order?.Quantity ?? 0;
+            var good = mine.Sum(r => r.GoodQuantity);
+            var scrap = mine.Sum(r => r.ScrapQuantity);
+            var status = op is null ? "Unplanned" : cancelled ? "Cancelled" : good >= plannedQty ? "On plan" : good > 0 ? "Short" : "Not reported";
+            if (!ReportRun.Is(status, p.Status) || !run.Matches(Id(key.OrderNumber), order?.PartNumber, workCenter, status))
+            {
+                continue;
+            }
+
+            var date = op?.End is { } end ? run.Local(end) : run.Local(mine.Min(r => r.ReportedAt));
+            var trace = new List<string> { "order:" + Id(key.OrderNumber) };
+            if (op is not null)
+            {
+                trace.Add("schedule:" + Id(version!.VersionId));
+            }
+
+            trace.AddRange(mine.Select(r => "report:" + Id(r.ReportId)));
+            rows.Add(new ReportRow(
+                [date, Id(key.OrderNumber), Seq(key.Sequence), workCenter, order?.PartNumber, plannedQty, Math.Min(good, plannedQty), good, scrap, good - plannedQty, status],
+                trace));
+        }
+
+        rows = rows.OrderBy(r => (DateOnly)r.Cells[0]!).ThenBy(r => (string)r.Cells[1]!, StringComparer.Ordinal).ToList();
+        var summary = new List<string>
+        {
+            version is null
+                ? "No schedule was approved before this period, so all reported output shows as unplanned."
+                : $"Plan: schedule {Id(version.VersionId)}, approved {version.ApprovedAt:yyyy-MM-dd HH:mm} UTC and in force at the start of the period.",
+        };
+        var plannedTotal = rows.Sum(r => (decimal)r.Cells[5]!);
+        var achieved = rows.Sum(r => (decimal)r.Cells[6]!);
+        if (plannedTotal > 0)
+        {
+            summary.Add($"Output vs plan: {Fmt(decimal.Round(achieved / plannedTotal * 100m, 1))}% ({Fmt(achieved)} of {Fmt(plannedTotal)} planned units).");
+        }
+
+        var unplanned = rows.Where(r => (string)r.Cells[10]! == "Unplanned").Sum(r => (decimal)r.Cells[7]!);
+        if (unplanned > 0)
+        {
+            summary.Add($"{Fmt(unplanned)} good units were reported on operations the plan did not have finishing in this period.");
+        }
+
+        return new ReportBody(rows, summary, version is null ? ["Production reports"] : [$"Schedule version {Id(version.VersionId)}", "Production reports", "Production orders"]);
+    }
+
+    private static async Task<ReportBody> AttainmentAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var version = await run.Uow.Store<IPlanningStore>().ApprovedAsOfAsync(run.From, ct);
+        var lookup = run.Uow.Store<IExecutionLookup>();
+        var executed = new List<OrderInfo>();
+        foreach (var number in (version?.Result?.Operations ?? []).Where(o => o.End is { } e && run.InPeriod(e)).Select(o => o.OrderNumber).Distinct().Order())
+        {
+            if (await lookup.FindOrderAsync(number, ct) is { } order)
+            {
+                executed.Add(order);
+            }
+        }
+
+        var snapshot = new AttainmentSnapshot(version?.VersionId, version?.ApprovedAt, version?.Result, executed);
+        var result = EngineRunner.Run(new AttainmentEngine(), snapshot, new AttainmentRequest(run.From, run.To), run.Now).Output;
+        var rows = result.Lines
+            .Where(l => run.Visible(l.ProgramId) && ReportRun.Is(l.WorkCenterCode, p.WorkCenter) && ReportRun.Is(l.Status.ToString(), p.Status)
+                && run.Matches(Id(l.OrderNumber), l.WorkCenterCode, l.Status.ToString()))
+            .Select(l =>
+            {
+                var counted = l.Status == AttainmentLineStatus.Cancelled ? 0 : l.PlannedMinutes;
+                var done = l.Status == AttainmentLineStatus.Completed ? l.PlannedMinutes : 0;
+                return new ReportRow(
+                    [l.PlannedEnd, Id(l.OrderNumber), Seq(l.Sequence), l.WorkCenterCode, counted, done, l.CompletedAt, l.Status.ToString()],
+                    ["order:" + Id(l.OrderNumber), "schedule:" + Id(result.ScheduleVersionId!.Value)]);
+            })
+            .ToList();
+        var planned = rows.Sum(r => (decimal)r.Cells[4]!);
+        var completed = rows.Sum(r => (decimal)r.Cells[5]!);
+        var summary = new List<string> { result.Explanation };
+        if (planned > 0)
+        {
+            summary.Add($"Attainment for the rows shown: {Fmt(decimal.Round(completed / planned * 100m, 1))}% ({Fmt(completed)} of {Fmt(planned)} planned minutes).");
+        }
+
+        return new ReportBody(rows, summary, version is null ? [] : [$"Schedule version {Id(version.VersionId)}", "Operation completion records"]);
+    }
+
+    // ------------------------------------------------------------------ planning
+
+    private static async Task<ReportBody> ConstraintsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var orders = await OrdersAsync(run, ct);
+        bool OrderVisible(long n) => run.Visible(orders.TryGetValue(n, out var o) ? o.ProgramId : null);
+        var all = await run.Uow.Store<IPlanningStore>().ListConstraintsAsync(true, ct);
+        var rows = new List<ReportRow>();
+        foreach (var c in all.Where(c => c.FirstSeen < run.To && (c.ResolvedAt ?? run.Now) >= run.From).OrderBy(c => c.FirstSeen).ThenBy(c => c.ConstraintId))
+        {
+            var visibleOrders = c.AffectedOrders.Where(OrderVisible).ToList();
+            var keep = p.ProgramId is null
+                ? c.AffectedOrders.Count == 0 || visibleOrders.Count > 0
+                : visibleOrders.Count > 0;
+            if (!keep || !ReportRun.Is(c.Status.ToString(), p.Status) || !run.Matches(c.Category, c.Subject, c.Finding, c.Key))
+            {
+                continue;
+            }
+
+            decimal? toResolve = c.ResolvedAt is { } r ? ReportRun.Hours(r - c.FirstSeen) : null;
+            var open = ReportRun.Hours((c.ResolvedAt ?? run.Now) - c.FirstSeen);
+            rows.Add(new ReportRow(
+                [c.FirstSeen, Id(c.ConstraintId), c.Category, c.Subject, c.Status.ToString(), c.ResolvedAt, toResolve, open, (decimal)c.ReopenedCount, (decimal)visibleOrders.Count, c.Owner, c.Finding],
+                ["constraint:" + Id(c.ConstraintId), .. visibleOrders.Select(o => "order:" + Id(o))]));
+        }
+
+        var resolved = rows.Where(r => r.Cells[6] is decimal).Select(r => (decimal)r.Cells[6]!).Order().ToList();
+        var stillOpen = rows.Where(r => r.Cells[6] is null).ToList();
+        var summary = new List<string> { $"{rows.Count} constraints open at some time in the period; {resolved.Count} resolved, {stillOpen.Count} still open." };
+        if (resolved.Count > 0)
+        {
+            var median = resolved.Count % 2 == 1 ? resolved[resolved.Count / 2] : (resolved[(resolved.Count / 2) - 1] + resolved[resolved.Count / 2]) / 2;
+            summary.Add($"Time to resolve: average {Fmt(decimal.Round(resolved.Average(), 1))} h, median {Fmt(decimal.Round(median, 1))} h, longest {Fmt(resolved[^1])} h.");
+        }
+
+        if (stillOpen.Count > 0)
+        {
+            summary.Add($"Oldest still open: constraint {stillOpen.MaxBy(r => (decimal)r.Cells[7]!)!.Cells[1]}, open {Fmt(stillOpen.Max(r => (decimal)r.Cells[7]!))} h.");
+        }
+
+        return new ReportBody(rows, summary, ["Constraint findings"]);
+    }
+
+    // ------------------------------------------------------------------ maintenance
+
+    private static async Task<ReportBody> DowntimeAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var windows = await run.Uow.Store<IMaintenanceLookup>().ListDowntimeAsync(run.From, run.To, ct);
+        var end = run.To < run.Now ? run.To : run.Now;
+        var rows = windows
+            .Where(w => ReportRun.Is(w.MachineCode, p.Machine) && ReportRun.Is(w.Kind.ToString(), p.Status) && run.Matches(w.MachineCode, w.Reason, w.Kind.ToString()))
+            .OrderBy(w => w.StartsAt).ThenBy(w => w.MachineCode, StringComparer.Ordinal)
+            .Select(w =>
+            {
+                var from = w.StartsAt > run.From ? w.StartsAt : run.From;
+                var until = w.EndsAt is { } e && e < end ? e : end;
+                var hours = until > from ? ReportRun.Hours(until - from) : 0m;
+                List<string> trace = ["machine:" + w.MachineCode];
+                if (w.Kind != DowntimeKind.MaintenanceOverdue && w.Id > 0)
+                {
+                    trace.Add("downtime:" + Id(w.Id));
+                }
+
+                return new ReportRow([w.StartsAt, w.MachineCode, w.Kind.ToString(), w.EndsAt, hours, w.Reason], trace);
+            })
+            .ToList();
+        var summary = rows.GroupBy(r => (string)r.Cells[2]!, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => $"{g.Key}: {g.Count()} windows, {Fmt(g.Sum(r => (decimal)r.Cells[4]!))} h in the period.")
+            .ToList();
+        if (rows.Count == 0)
+        {
+            summary.Add("No downtime in the period.");
+        }
+
+        return new ReportBody(rows, summary, ["Downtime records", "PM work orders (overdue lockouts)"]);
+    }
+
+    private static async Task<ReportBody> MaintenanceAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var orders = await run.Uow.Store<IMaintenanceLookup>().ListWorkOrdersAsync(true, ct);
+        var rows = new List<ReportRow>();
+        foreach (var w in orders)
+        {
+            var preventive = w.Kind == WorkOrderKind.Preventive;
+            var dueHere = preventive && w.DueDate is { } d && run.InPeriod(d) && w.Status != WorkOrderStatus.Cancelled;
+            var relevant = dueHere
+                || (w.CompletedAt is { } c && run.InPeriod(c))
+                || (!preventive && run.InPeriod(w.CreatedAt));
+            if (!relevant || !ReportRun.Is(w.MachineCode, p.Machine) || !ReportRun.Is(w.Status.ToString(), p.Status) || !run.Matches(w.MachineCode, w.Title, w.Kind.ToString()))
+            {
+                continue;
+            }
+
+            var completedDate = w.CompletedAt is { } at ? run.Local(at) : (DateOnly?)null;
+            var onTime = dueHere && completedDate is { } cd && cd <= w.DueDate!.Value;
+            decimal? daysLate = !dueHere ? null
+                : completedDate is { } done ? Math.Max(0, done.DayNumber - w.DueDate!.Value.DayNumber)
+                : w.DueDate!.Value < run.Today ? run.Today.DayNumber - w.DueDate.Value.DayNumber
+                : null;
+            decimal? repair = !preventive && w.CompletedAt is { } finished ? ReportRun.Hours(finished - w.CreatedAt) : null;
+            rows.Add(new ReportRow(
+                [w.DueDate, Id(w.WorkOrderId), w.MachineCode, w.Kind.ToString(), w.Title, w.Status.ToString(), w.CompletedAt, dueHere ? 1m : 0m, onTime ? 1m : 0m, daysLate, repair],
+                ["work-order:" + Id(w.WorkOrderId), "machine:" + w.MachineCode]));
+        }
+
+        rows = rows.OrderBy(r => r.Cells[0] is DateOnly d ? d : DateOnly.MaxValue).ThenBy(r => (string)r.Cells[1]!, StringComparer.Ordinal).ToList();
+        var due = rows.Sum(r => (decimal)r.Cells[7]!);
+        var onTimeCount = rows.Sum(r => (decimal)r.Cells[8]!);
+        List<string> summary = due == 0
+            ? ["No preventive work was due in the period."]
+            : [$"PM compliance: {Fmt(decimal.Round(onTimeCount / due * 100m, 1))}% ({Fmt(onTimeCount)} of {Fmt(due)} due PM work orders done by their due date)."];
+        var corrective = rows.Where(r => (string)r.Cells[3]! == nameof(WorkOrderKind.Corrective)).ToList();
+        if (corrective.Count > 0)
+        {
+            var repaired = corrective.Where(r => r.Cells[10] is decimal).Select(r => (decimal)r.Cells[10]!).ToList();
+            summary.Add($"{corrective.Count} corrective work orders" + (repaired.Count > 0 ? $"; average {Fmt(decimal.Round(repaired.Average(), 1))} h from raised to repaired." : "."));
+        }
+
+        return new ReportBody(rows, summary, ["Maintenance work orders"]);
+    }
+
+    // ------------------------------------------------------------------ delivery
+
+    private static async Task<ReportBody> DeliveryAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var demand = (await run.Uow.Store<IDemandStore>().ListAsync(true, ct))
+            .Where(d => run.InPeriod(d.NeedDate) && run.Visible(d.ProgramId) && ReportRun.Is(d.PartNumber, p.PartNumber))
+            .Where(d => d.Status != DemandStatus.Cancelled || string.Equals(p.Status, "Cancelled", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var shipments = demand.Count == 0 ? [] : await run.Uow.Store<IInventoryLookup>().ListShippedForDemandsAsync(demand.Select(d => d.DemandId).ToList(), ct);
+        var byDemand = shipments.ToLookup(s => s.DemandId!.Value);
+        var rows = new List<ReportRow>();
+        foreach (var d in demand)
+        {
+            var sent = byDemand[d.DemandId]
+                .Select(s => (s.ShipmentId, Date: run.Local(s.ShippedAt!.Value), Quantity: s.Lines.Where(l => l.PartNumber == d.PartNumber).Sum(l => l.Quantity)))
+                .Where(s => s.Quantity > 0)
+                .ToList();
+            var shipped = sent.Sum(s => s.Quantity);
+            var onTime = Math.Min(d.Quantity, sent.Where(s => s.Date <= d.NeedDate).Sum(s => s.Quantity));
+            DateOnly? last = sent.Count > 0 ? sent.Max(s => s.Date) : null;
+            DateOnly? completeOn = null;
+            var running = 0m;
+            foreach (var s in sent.OrderBy(s => s.Date))
+            {
+                running += s.Quantity;
+                if (running >= d.Quantity)
+                {
+                    completeOn = s.Date;
+                    break;
+                }
+            }
+
+            var status = d.Status == DemandStatus.Cancelled ? "Cancelled"
+                : onTime >= d.Quantity ? "On time"
+                : completeOn is not null ? "Late"
+                : d.Status == DemandStatus.Closed ? "Closed"
+                : d.NeedDate < run.Today ? "Overdue"
+                : "Open";
+            decimal? daysLate = status switch
+            {
+                "Late" => completeOn!.Value.DayNumber - d.NeedDate.DayNumber,
+                "Overdue" => run.Today.DayNumber - d.NeedDate.DayNumber,
+                _ => null,
+            };
+            if (!ReportRun.Is(status, p.Status) || !run.Matches(Id(d.DemandId), d.PartNumber, d.Customer, d.Reference, d.Kind.ToString()))
+            {
+                continue;
+            }
+
+            List<string> trace = ["demand:" + Id(d.DemandId), .. sent.Select(s => "shipment:" + Id(s.ShipmentId))];
+            if (d.SourceKey is { } key)
+            {
+                trace.Add(key);
+            }
+
+            rows.Add(new ReportRow(
+                [d.NeedDate, Id(d.DemandId), d.Kind.ToString(), d.PartNumber, d.Customer, d.Reference, d.Status == DemandStatus.Cancelled ? 0m : d.Quantity, onTime, shipped, last, status, daysLate],
+                trace));
+        }
+
+        var qty = rows.Sum(r => (decimal)r.Cells[6]!);
+        var ontime = rows.Sum(r => (decimal)r.Cells[7]!);
+        var lines = new List<string>
+        {
+            qty == 0 ? "No demand was due in the period." : $"On-time quantity: {Fmt(decimal.Round(ontime / qty * 100m, 1))}% ({Fmt(ontime)} of {Fmt(qty)} units shipped by the need date).",
+        };
+        var counts = rows.GroupBy(r => (string)r.Cells[10]!, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Count()} {g.Key.ToLowerInvariant()}");
+        if (rows.Count > 0)
+        {
+            lines.Add(string.Join(", ", counts) + ".");
+        }
+
+        return new ReportBody(rows, lines, ["Demand", "Shipments"]);
+    }
+
+    private static async Task<ReportBody> ProgramDeliveriesAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var lookup = run.Uow.Store<IProgramsLookup>();
+        var programs = (await lookup.ListProgramsAsync(ct)).Where(x => run.Visible(x.ProgramId)).ToList();
+        var demand = (await run.Uow.Store<IDemandStore>().ListAsync(true, ct)).Where(d => d.SourceKey is not null).ToDictionary(d => d.SourceKey!, StringComparer.Ordinal);
+        var shipped = (await run.Uow.Store<IInventoryLookup>().ListShippedByDemandAsync(ct)).GroupBy(s => s.DemandId).ToDictionary(g => g.Key, g => g.Sum(s => s.Shipped));
+        var rows = new List<ReportRow>();
+        foreach (var program in programs)
+        {
+            foreach (var contract in await lookup.ListContractsAsync(program.ProgramId, ct))
+            {
+                foreach (var d in contract.Deliveries.Where(d => run.InPeriod(d.DueDate)))
+                {
+                    var clin = contract.Clins.FirstOrDefault(c => c.Clin == d.Clin);
+                    demand.TryGetValue(DeliveryReference.SourceKeyFor(d.DeliveryId), out var planned);
+                    var sent = planned is null ? 0 : shipped.GetValueOrDefault(planned.DemandId);
+                    var state = d.Cancelled ? "Cancelled"
+                        : sent >= d.Quantity ? "Delivered"
+                        : d.DueDate < run.Today ? "Overdue"
+                        : planned is null ? "Not planned"
+                        : sent > 0 ? "Partly delivered"
+                        : "Planned";
+                    if (!ReportRun.Is(clin?.PartNumber, p.PartNumber) || !ReportRun.Is(state, p.Status) || !run.Matches(contract.Number, d.Clin, clin?.PartNumber, program.Code, state))
+                    {
+                        continue;
+                    }
+
+                    var price = clin?.UnitPrice ?? 0;
+                    var quantity = d.Cancelled ? 0 : d.Quantity;
+                    List<string> trace = ["program:" + program.ProgramId.ToString("D", CultureInfo.InvariantCulture), "contract:" + Id(contract.ContractId), "delivery:" + Id(d.DeliveryId)];
+                    if (planned is not null)
+                    {
+                        trace.Add("demand:" + Id(planned.DemandId));
+                    }
+
+                    rows.Add(new ReportRow(
+                        [d.DueDate, program.Code, contract.Number, d.Clin, clin?.PartNumber, quantity, Math.Min(sent, quantity), state, quantity * price, Math.Min(sent, quantity) * price],
+                        trace));
+                }
+            }
+        }
+
+        rows = rows.OrderBy(r => (DateOnly)r.Cells[0]!).ThenBy(r => (string)r.Cells[2]!, StringComparer.Ordinal).ToList();
+        var value = rows.Sum(r => (decimal)r.Cells[8]!);
+        var delivered = rows.Sum(r => (decimal)r.Cells[9]!);
+        var units = rows.Sum(r => (decimal)r.Cells[5]!);
+        var sentUnits = rows.Sum(r => (decimal)r.Cells[6]!);
+        return new ReportBody(
+            rows,
+            [$"{rows.Count} deliveries due across {programs.Count} program(s): {Fmt(sentUnits)} of {Fmt(units)} units shipped, {delivered.ToString("C0", CultureInfo.GetCultureInfo("en-US"))} of {value.ToString("C0", CultureInfo.GetCultureInfo("en-US"))} by value."],
+            ["Contracts and deliveries", "Contract demand", "Shipments"]);
+    }
+
+    // ------------------------------------------------------------------ quality
+
+    private static async Task<ReportBody> NcrsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var orders = await OrdersAsync(run, ct);
+        var ncrs = await run.Uow.Store<IQualityLookup>().ListNcrsRaisedBetweenAsync(run.From, run.To, ct);
+        var rows = new List<ReportRow>();
+        foreach (var n in ncrs)
+        {
+            var program = n.OrderNumber is { } o && orders.TryGetValue(o, out var order) ? order.ProgramId : null;
+            if (!run.Visible(program) || !ReportRun.Is(n.PartNumber, p.PartNumber) || !ReportRun.Is(n.Status.ToString(), p.Status)
+                || !run.Matches(Id(n.NcrId), n.PartNumber, n.Defect, n.Description, n.LotNumber))
+            {
+                continue;
+            }
+
+            var days = decimal.Round((decimal)((n.ClosedAt ?? run.Now) - n.RaisedAt).TotalDays, 1, MidpointRounding.AwayFromZero);
+            List<string> trace = ["ncr:" + Id(n.NcrId)];
+            if (n.OrderNumber is { } on)
+            {
+                trace.Add("order:" + Id(on));
+            }
+
+            rows.Add(new ReportRow(
+                [n.RaisedAt, Id(n.NcrId), n.PartNumber, n.OrderNumber is { } x ? Id(x) : null, n.Sequence is { } s ? Seq(s) : null, n.Defect, n.Quantity, n.Status.ToString(), n.Disposition?.ToString(), n.ClosedAt, days],
+                trace));
+        }
+
+        var summary = new List<string> { $"{rows.Count} NCRs raised, {Fmt(rows.Sum(r => (decimal)r.Cells[6]!))} units affected." };
+        var top = rows.GroupBy(r => (string)r.Cells[5]!, StringComparer.OrdinalIgnoreCase).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal).Take(3).ToList();
+        if (top.Count > 0)
+        {
+            summary.Add("Most frequent defects: " + string.Join("; ", top.Select(g => $"{g.Key} ({g.Count()})")) + ".");
+        }
+
+        return new ReportBody(rows, summary, ["Nonconformance reports"]);
+    }
+
+    private static async Task<ReportBody> InspectionsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var orders = await OrdersAsync(run, ct);
+        var inspections = await run.Uow.Store<IQualityLookup>().ListInspectionsBetweenAsync(run.From, run.To, ct);
+        var rows = inspections
+            .Where(i => run.Visible(orders.TryGetValue(i.OrderNumber, out var o) ? o.ProgramId : null)
+                && ReportRun.Is(i.PartNumber, p.PartNumber) && ReportRun.Is(i.Result.ToString(), p.Status) && run.Matches(Id(i.InspectionId), i.PartNumber, i.Notes, i.GaugeCode))
+            .Select(i =>
+            {
+                List<string> trace = ["inspection:" + Id(i.InspectionId), "order:" + Id(i.OrderNumber)];
+                if (i.NcrId is { } ncr)
+                {
+                    trace.Add("ncr:" + Id(ncr));
+                }
+
+                return new ReportRow(
+                    [i.At, Id(i.InspectionId), Id(i.OrderNumber), Seq(i.Sequence), i.PartNumber, i.QuantityInspected, i.Result == InspectionResult.Pass ? i.QuantityInspected : 0m, i.Result.ToString(), i.Inspector, i.NcrId is { } n ? Id(n) : null],
+                    trace);
+            })
+            .ToList();
+        var inspected = rows.Sum(r => (decimal)r.Cells[5]!);
+        var accepted = rows.Sum(r => (decimal)r.Cells[6]!);
+        List<string> summary = inspected == 0
+            ? ["No inspections in the period."]
+            : [$"First-pass acceptance: {Fmt(decimal.Round(accepted / inspected * 100m, 1))}% ({Fmt(accepted)} of {Fmt(inspected)} inspected units); {rows.Count(r => (string)r.Cells[7]! == "Fail")} failed inspections."];
+        return new ReportBody(rows, summary, ["Inspection records"]);
+    }
+
+    // ------------------------------------------------------------------ inventory
+
+    private static async Task<ReportBody> TransactionsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var orders = await OrdersAsync(run, ct);
+        var all = await run.Uow.Store<IInventoryLookup>().ListTransactionsBetweenAsync(run.From, run.To, ct);
+        var rows = new List<ReportRow>();
+        foreach (var t in all)
+        {
+            var program = t.OrderNumber is { } o && orders.TryGetValue(o, out var order) ? order.ProgramId : null;
+            if (!run.Visible(program) || !ReportRun.Is(t.PartNumber, p.PartNumber) || !ReportRun.Is(t.Kind.ToString(), p.Status))
+            {
+                continue;
+            }
+
+            var (reference, trace) = t switch
+            {
+                { OrderNumber: { } n } => ("Order " + Id(n), "order:" + Id(n)),
+                { PoNumber: { } po } => ($"PO {Id(po)}" + (t.PoLine is { } l ? "/" + Seq(l) : string.Empty), "po:" + Id(po)),
+                { ShipmentId: { } s } => ("Shipment " + Id(s), "shipment:" + Id(s)),
+                { WorkOrderId: { } w } => ("Work order " + Id(w), "work-order:" + Id(w)),
+                { RequestId: { } r } => ("Request " + Id(r), "request:" + Id(r)),
+                _ => ((string?)null, (string?)null),
+            };
+            string? Place(string? location, StockStatus? status) => location is null ? null : status is { } s && s != StockStatus.Available ? $"{location} ({s})" : location;
+            if (!run.Matches(t.PartNumber, t.LotNumber, t.Reason, reference, t.FromLocation, t.ToLocation))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [t.At, Id(t.TransactionId), t.Kind.ToString(), t.PartNumber, t.Quantity, Place(t.FromLocation, t.FromStatus), Place(t.ToLocation, t.ToStatus), t.LotNumber, reference, t.Actor, t.ApprovedBy, t.Reason],
+                trace is null ? ["transaction:" + Id(t.TransactionId)] : ["transaction:" + Id(t.TransactionId), trace]));
+        }
+
+        var summary = rows.GroupBy(r => (string)r.Cells[2]!, StringComparer.Ordinal).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => $"{g.Key}: {g.Count()}").ToList();
+        return new ReportBody(rows, summary.Count == 0 ? ["No transactions in the period."] : [$"{rows.Count} transactions — " + string.Join(", ", summary) + "."], ["Inventory transaction ledger"]);
+    }
+}

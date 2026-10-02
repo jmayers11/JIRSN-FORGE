@@ -18,6 +18,7 @@ import { procurementPage } from './pages/procurement.js';
 import { qualityPage } from './pages/quality.js';
 import { shippingPage } from './pages/shipping.js';
 import { programsPage } from './pages/programs.js';
+import { reportsPage } from './pages/reports.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
@@ -36,7 +37,7 @@ const NAV = [
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
   { route: 'shipping', label: 'Shipping', icon: 'suppliers', page: shippingPage },
-  { route: 'reports', label: 'Reports', icon: 'reports', page: plannedPage('reports') },
+  { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: plannedPage('analyst'), badge: '<span class="badge">AI</span>' },
 ];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };

@@ -120,6 +120,12 @@ public interface IQualityLookup
     /// <summary>NCRs, newest first; only those not closed unless asked.</summary>
     Task<IReadOnlyList<NcrInfo>> ListNcrsAsync(bool includeClosed, CancellationToken ct);
 
+    /// <summary>Inspections recorded in [from, to), oldest first, without characteristic results (for reports).</summary>
+    Task<IReadOnlyList<InspectionInfo>> ListInspectionsBetweenAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct);
+
+    /// <summary>NCRs raised in [from, to), oldest first (for reports).</summary>
+    Task<IReadOnlyList<NcrInfo>> ListNcrsRaisedBetweenAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct);
+
     Task<NcrInfo?> FindNcrAsync(long ncrId, CancellationToken ct);
 
     Task<IReadOnlyList<CapaInfo>> ListCapasAsync(bool includeVerified, CancellationToken ct);

@@ -72,6 +72,30 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
         return await ReadAudit(cmd, ct);
     }
 
+    /// <summary>Successful changes to the given entity types recorded in (after, upTo], oldest first. Program-tied entries only for the given programs.</summary>
+    public async Task<IReadOnlyList<ChainedAuditEntry>> QueryAuditBetweenAsync(DateTimeOffset after, DateTimeOffset upTo, IReadOnlyCollection<string> entityTypes, IReadOnlySet<ProgramId> visiblePrograms, int take, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(entityTypes);
+        ArgumentNullException.ThrowIfNull(visiblePrograms);
+        await using var cmd = dataSource.CreateCommand(
+            """
+            SELECT sequence, audit_id, recorded_at, actor, on_behalf_of, action, outcome, entity_type, entity_id,
+                   old_value, new_value, reason, source, correlation_id, program_id, markings, previous_hash, hash
+            FROM kernel.audit_log
+            WHERE recorded_at > $1 AND recorded_at <= $2 AND outcome = 'Succeeded'
+              AND entity_type = ANY($3)
+              AND (program_id IS NULL OR program_id = ANY($4))
+            ORDER BY sequence
+            LIMIT $5
+            """);
+        cmd.Parameters.AddWithValue(after);
+        cmd.Parameters.AddWithValue(upTo);
+        cmd.Parameters.AddWithValue(entityTypes.ToArray());
+        cmd.Parameters.AddWithValue(visiblePrograms.Select(p => p.Value).ToArray());
+        cmd.Parameters.AddWithValue(Math.Clamp(take, 1, 5000));
+        return await ReadAudit(cmd, ct);
+    }
+
     /// <summary>Recomputes the whole hash chain from the first entry. Any edit, deletion or reordering is detected.</summary>
     public async Task<AuditChainStatus> VerifyAuditChainAsync(CancellationToken ct)
     {

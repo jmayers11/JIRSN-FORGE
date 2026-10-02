@@ -4,7 +4,7 @@ A manufacturing operations platform that answers whether work can actually happe
 equipment, materials, qualifications and safety conditions available, at the time it is needed.
 
 Architecture: **JIRSN Forge Software Architecture v0.1** (approved 2026-09-30). The phase plan is
-in section 31. Implemented so far: **Phase 1 — Kernel**, **Phase 2 — Readiness slice**, **Phase 3 — Engineering and orders** and **Phase 4 — Capacity and scheduling**.
+in section 31. Implemented so far: Phases 1–8 — kernel, readiness, engineering and orders, capacity and scheduling, shop floor, materials and MRP, quality and shipping, programs and maintenance, and reporting with Horizon history.
 
 ## What Phase 1 contains
 
@@ -110,7 +110,25 @@ See `docs/adr/0008-phase-7a-quality-and-shipping.md`.
 | Screens | `src/Forge.Host/wwwroot` | Programs and Program Horizon, Maintenance work orders and PM plans, program access in Settings |
 
 Maintenance work is completed by a technician and signed off by someone else; program access is granted
-by a security administrator. See `docs/adr/0009-phase-7b-programs-and-maintenance.md`.
+by a security administrator. Later follow-ups add contract funding, WBS with order charging, schedule-based
+earned value, spare parts issued to work orders and run-hour PM.
+See `docs/adr/0009-phase-7b-programs-and-maintenance.md`.
+
+## What Phase 8 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Reporting engine | `src/Forge.Planning/Reporting` | Ten standard reports with filters, grouping, totals and a headline ratio; every row lists its source records |
+| Saved definitions | `src/Forge.Planning/Reporting/ReportDefinitionService.cs` | Named filters and grouping, private or shared; fixed periods or "last N days" |
+| Exports | `src/Forge.Host/Api/ReportExport.cs` | CSV and Excel (data sheet plus summary sheet), print/PDF from the browser |
+| What changed? | `src/Forge.Planning/Reporting/HorizonHistory.cs` | Compares the approved schedules in force at two moments, order by order, with the evidence recorded in between |
+| Screens | `src/Forge.Host/wwwroot/js/pages/reports.js` | Reports page: catalog, saved reports, results with source links, What changed? |
+
+Reports: plan vs actual output, schedule attainment, constraint history and time to resolve, machine
+downtime, delivery performance, contract deliveries, nonconformances, inspection results, maintenance
+work and PM compliance, inventory transactions. Each report needs read access to what it reports on,
+and program-segregated rows appear only for people with access to the program.
+See `docs/adr/0010-phase-8-insight-and-horizon-history.md`.
 
 ## Plant setup
 
@@ -277,3 +295,15 @@ body identifies the person. Badge numbers and PINs are never stored or logged.
 | GET | `/api/planning/constraints?includeClosed=` | `planning.schedule.read` (program-filtered) |
 | POST | `/api/planning/constraints/{id}/investigate`, `/resolve`, `/verify` | `planning.constraints.manage` |
 | GET | `/api/orders/{number}/drop-dead-dates?shipDays=` | `planning.readiness.read` + program access |
+
+## Phase 8 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/reports/catalog` | `planning.reports.save` (lists only reports you may run) |
+| GET | `/api/reports/{reportId}?from=&to=&lastDays=&programId=&workCenter=&machine=&partNumber=&status=&search=&groupBy=` | the report's read permission (program-filtered) |
+| GET | `/api/reports/{reportId}/export?format=csv\|xlsx&…` | as above |
+| GET | `/api/reports/definitions` | `planning.reports.save` |
+| POST | `/api/reports/definitions` `{definitionId?, name, reportId, parameters, shared}` | the report's read permission; owner only for changes |
+| POST | `/api/reports/definitions/{id}/delete` | `planning.reports.save`; owner only |
+| GET | `/api/planning/history/compare?at1=&at2=&includeUnchanged=` | `planning.schedule.read` (program-filtered; audit evidence with `kernel.audit.read`) |

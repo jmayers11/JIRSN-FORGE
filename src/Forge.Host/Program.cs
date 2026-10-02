@@ -135,6 +135,7 @@ app.MapShopFloorEndpoints();
 app.MapMaterialsEndpoints();
 app.MapQualityEndpoints();
 app.MapProgramsEndpoints();
+app.MapReportsEndpoints();
 
 await app.RunAsync();
 

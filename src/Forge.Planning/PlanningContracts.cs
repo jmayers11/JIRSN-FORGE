@@ -59,7 +59,8 @@ public sealed record ConstraintRecord(
     string? Resolution,
     string? ResolvedBy,
     string? VerifiedBy,
-    int ReopenedCount);
+    int ReopenedCount,
+    DateTimeOffset? ResolvedAt = null);
 
 public interface IPlanningStore
 {
@@ -69,6 +70,9 @@ public interface IPlanningStore
 
     /// <summary>The schedule that was approved and in force at an instant (approved at or before it, latest first).</summary>
     Task<ScheduleVersion?> ApprovedAsOfAsync(DateTimeOffset at, CancellationToken ct);
+
+    /// <summary>Schedules approved after <paramref name="after"/> and at or before <paramref name="upTo"/>, oldest first, without results.</summary>
+    Task<IReadOnlyList<ScheduleVersion>> ListApprovedBetweenAsync(DateTimeOffset after, DateTimeOffset upTo, CancellationToken ct);
 
     Task<long> InsertProposalAsync(ScheduleVersion version, string resultJson, CancellationToken ct);
 

@@ -202,6 +202,22 @@ internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualitySto
     public Task<IReadOnlyList<NcrInfo>> ListNcrsAsync(bool includeClosed, CancellationToken ct) =>
         ReadAsync(NcrSql + (includeClosed ? string.Empty : " WHERE status <> 'Closed'") + " ORDER BY ncr_id DESC LIMIT 500", ReadNcr, ct);
 
+    public Task<IReadOnlyList<InspectionInfo>> ListInspectionsBetweenAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct) =>
+        ReadAsync(
+            """
+            SELECT inspection_id, order_number, sequence, part_number, quantity_inspected, result, gauge_code, notes, inspector, at, ncr_id
+            FROM quality.inspection WHERE at >= $1 AND at < $2 ORDER BY at, inspection_id
+            """,
+            r => new InspectionInfo(
+                r.GetInt64(0), r.GetInt64(1), r.GetInt32(2), r.GetString(3), Dec(r, 4), Enum.Parse<InspectionResult>(r.GetString(5)),
+                r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7), r.GetString(8), r.GetFieldValue<DateTimeOffset>(9), [], r.IsDBNull(10) ? null : r.GetInt64(10)),
+            ct,
+            from,
+            to);
+
+    public Task<IReadOnlyList<NcrInfo>> ListNcrsRaisedBetweenAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct) =>
+        ReadAsync(NcrSql + " WHERE raised_at >= $1 AND raised_at < $2 ORDER BY raised_at, ncr_id", ReadNcr, ct, from, to);
+
     public async Task<NcrInfo?> FindNcrAsync(long ncrId, CancellationToken ct) =>
         (await ReadAsync(NcrSql + " WHERE ncr_id = $1", ReadNcr, ct, ncrId)).SingleOrDefault();
 

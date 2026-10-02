@@ -14,7 +14,7 @@ internal sealed class PostgresPlanningStore(PostgresUnitOfWork uow) : IPlanningS
     private const string ConstraintColumns =
         """
         constraint_id, finding_key, category, subject, status, finding, evidence, affected_orders, affected_operations, alternatives,
-        window_from, window_until, first_seen, last_seen, owner, resolution, resolved_by, verified_by, reopened_count
+        window_from, window_until, first_seen, last_seen, owner, resolution, resolved_by, verified_by, reopened_count, resolved_at
         """;
 
     public async Task<ScheduleVersion?> FindVersionAsync(long versionId, bool includeResult, CancellationToken ct) =>
@@ -25,6 +25,9 @@ internal sealed class PostgresPlanningStore(PostgresUnitOfWork uow) : IPlanningS
 
     public async Task<ScheduleVersion?> ApprovedAsOfAsync(DateTimeOffset at, CancellationToken ct) =>
         (await ReadVersions($"SELECT {VersionColumns}, result FROM planning.schedule_version WHERE approved_at IS NOT NULL AND approved_at <= $1 ORDER BY approved_at DESC, version_id DESC LIMIT 1", ct, at)).SingleOrDefault();
+
+    public async Task<IReadOnlyList<ScheduleVersion>> ListApprovedBetweenAsync(DateTimeOffset after, DateTimeOffset upTo, CancellationToken ct) =>
+        await ReadVersions($"SELECT {VersionColumns}, NULL FROM planning.schedule_version WHERE approved_at IS NOT NULL AND approved_at > $1 AND approved_at <= $2 ORDER BY approved_at, version_id", ct, after, upTo);
 
     public async Task<long> InsertProposalAsync(ScheduleVersion version, string resultJson, CancellationToken ct)
     {
@@ -152,7 +155,8 @@ internal sealed class PostgresPlanningStore(PostgresUnitOfWork uow) : IPlanningS
                 r.IsDBNull(15) ? null : r.GetString(15),
                 r.IsDBNull(16) ? null : r.GetString(16),
                 r.IsDBNull(17) ? null : r.GetString(17),
-                r.GetInt32(18)));
+                r.GetInt32(18),
+                r.IsDBNull(19) ? null : r.GetFieldValue<DateTimeOffset>(19)));
         }
 
         return list;

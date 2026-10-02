@@ -39,7 +39,14 @@ async function main() {
   const existing = (await get(adminSubject, '/api/kernel/people')).map(p => p.idpSubject);
   if (existing.includes('eng')) {
     // An earlier sample plant: add only what is new (Phase 6 materials), once.
-    if (existing.includes('pm')) throw new Error('This database already has the full sample plant. It is set up once per database.');
+    if (existing.includes('pm')) {
+      // The full sample plant: add only the newest sample data (funding, WBS, run-hour PM, saved reports), once.
+      const saved = await get('planner', '/api/reports/definitions').catch(() => null);
+      if (saved === null || saved.some(d => d.name === 'Weekly downtime')) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
+      await seedInsight();
+      return finish();
+    }
     if (!existing.includes('stores')) {
       console.log('Sample plant found; adding sample materials (inventory, purchase orders, demand).');
       await seedMaterials();
@@ -50,6 +57,7 @@ async function main() {
     }
     console.log('Adding sample programs and preventive maintenance.');
     await seedPrograms();
+    await seedInsight();
     return finish();
   }
 
@@ -189,6 +197,7 @@ async function main() {
   await seedMaterials();
   await seedQuality();
   await seedPrograms();
+  await seedInsight();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -322,6 +331,37 @@ async function seedPrograms() {
   await post('mp', '/api/maintenance/plans', { machineCode: 'LASER-1', title: 'Lens and nozzle clean', intervalDays: 7, firstDue: day(1), durationMinutes: 30,
     tasks: ['Clean focus lens', 'Replace nozzle if worn', 'Test cut'], lockOutWhenOverdue: false, graceDays: 0 });
   await post('tech', '/api/maintenance/machines/CMM-1/down', { description: 'Probe crash on fixture; stylus bent' });
+}
+
+// ADR 0009 follow-ups and Phase 8: contract funding, WBS with an order charged to it, a run-hour PM
+// plan, spare parts on the open repair, and saved report definitions.
+async function seedInsight() {
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  step('Programs: funding and WBS for Program Falcon');
+  const horizon = (await get('pm', '/api/programs/'))[0];
+  const falcon = horizon.program.programId;
+  const contract = horizon.contracts[0].contractId;
+  await post('pm', `/api/programs/contracts/${contract}/funding`, { clin: '0001', modification: 'P00001', amount: 60000, obligatedOn: day(-25), reason: 'Initial obligation, Lot 1' });
+  await post('pm', `/api/programs/${falcon}/wbs`, { code: '1', title: 'Falcon Lot 1 production' });
+  await post('pm', `/api/programs/${falcon}/wbs`, { code: '1.1', parentCode: '1', title: 'Panel fabrication' });
+  await post('pm', `/api/programs/${falcon}/wbs`, { code: '1.2', parentCode: '1', title: 'Paint and finish' });
+  await post('pm', `/api/programs/${falcon}/wbs`, { code: '2', title: 'Program management and data' });
+  const order = horizon.orders[0]?.orderNumber;
+  if (order) await post('pm', `/api/orders/${order}/wbs`, { wbsCode: '1.1', reason: 'Lot 1 panels' });
+
+  step('Maintenance: a run-hour PM plan and spare parts on the open repair');
+  await post('mp', '/api/maintenance/plans', { machineCode: 'LASER-1', title: 'Resonator service', intervalRunHours: 500, durationMinutes: 120,
+    tasks: ['Lock out laser', 'Replace resonator gas filter', 'Check beam alignment'], lockOutWhenOverdue: true, graceDays: 0, graceRunHours: 50 });
+  const repair = (await get('mp', '/api/maintenance/work-orders')).map(v => v.order).find(o => o.kind === 'Corrective' && o.machineCode === 'CMM-1');
+  const stock = await get('stores', '/api/inventory/stock').catch(() => []);
+  const spare = stock.find(s => s.status === 'Available' && s.quantity >= 1);
+  if (repair && spare) await post('stores', `/api/maintenance/work-orders/${repair.workOrderId}/parts`, { partNumber: spare.partNumber, quantity: 1, locationCode: spare.locationCode, lotNumber: spare.lotNumber });
+
+  step('Reports: saved report definitions');
+  await post('planner', '/api/reports/definitions', { name: 'Weekly downtime', reportId: 'downtime', parameters: { lastDays: 7, groupBy: 'machine' }, shared: true });
+  await post('planner', '/api/reports/definitions', { name: 'Output vs plan, last 14 days', reportId: 'production-output', parameters: { lastDays: 14, groupBy: 'workCenter' }, shared: true });
+  await post('planner', '/api/reports/definitions', { name: 'Open constraints', reportId: 'constraint-history', parameters: { lastDays: 30, status: 'Open', groupBy: 'category' }, shared: false });
+  await post('mp', '/api/reports/definitions', { name: 'PM compliance, 30 days', reportId: 'pm-compliance', parameters: { lastDays: 30, groupBy: 'machine' }, shared: true });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });
