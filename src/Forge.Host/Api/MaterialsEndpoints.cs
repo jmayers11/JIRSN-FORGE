@@ -50,7 +50,15 @@ public sealed record DemandView(long DemandId, string PartNumber, decimal Quanti
 /// <summary>A purchase order line with what Inventory has received against it.</summary>
 public sealed record PurchaseLineView(int LineNumber, string PartNumber, decimal Quantity, string UnitOfMeasure, DateOnly PromisedDate, PurchaseLineStatus Status, decimal Received, decimal Open);
 
-public sealed record PurchaseOrderView(long PoNumber, string Supplier, PurchaseOrderStatus Status, string CreatedBy, DateTimeOffset CreatedAt, string? ApprovedBy, DateTimeOffset? ApprovedAt, IReadOnlyList<PurchaseLineView> Lines);
+public sealed record PurchaseOrderView(long PoNumber, string Supplier, PurchaseOrderStatus Status, string CreatedBy, DateTimeOffset CreatedAt, string? ApprovedBy, DateTimeOffset? ApprovedAt, IReadOnlyList<PurchaseLineView> Lines, string? SupplierCode = null);
+
+public sealed record SupplierRequest(string Code, string Name, string? Notes, string? Reason);
+
+public sealed record SupplierChangeRequest(string Name, string? Notes, string? Reason);
+
+public sealed record SupplierStatusRequest(SupplierStatus Status, string? Reason);
+
+public sealed record SourceRequest(string SupplierCode, string? Note, string? Reason);
 
 /// <summary>Phase 6 endpoints: inventory, purchase orders, demand, item planning and MRP.</summary>
 public static class MaterialsEndpoints
@@ -180,9 +188,24 @@ public static class MaterialsEndpoints
                         var got = received.GetValueOrDefault((po.PoNumber, l.LineNumber));
                         var open = po.Status == PurchaseOrderStatus.Approved && l.Status == PurchaseLineStatus.Open ? Math.Max(0, l.Quantity - got) : 0;
                         return new PurchaseLineView(l.LineNumber, l.PartNumber, l.Quantity, l.UnitOfMeasure, l.PromisedDate, l.Status, got, open);
-                    }).ToList()))
+                    }).ToList(), po.SupplierCode))
                     .ToList();
             }));
+
+        api.MapGet("/suppliers", (HttpContext http, CancellationToken _) =>
+            ReadStore<IProcurementLookup>(http, Permissions.PurchasingRead, async (l, ct) => await l.ListSuppliersAsync(ct)));
+        api.MapPost("/suppliers", (HttpContext http, SupplierRequest b, SupplierService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CreateAsync(new CreateSupplier(b.Code, b.Name, b.Notes), c, ct)));
+        api.MapPost("/suppliers/{code}", (HttpContext http, string code, SupplierChangeRequest b, SupplierService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ChangeAsync(new ChangeSupplier(code, b.Name, b.Notes), c, ct)));
+        api.MapPost("/suppliers/{code}/status", (HttpContext http, string code, SupplierStatusRequest b, SupplierService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SetStatusAsync(new SetSupplierStatus(code, b.Status), c, ct)));
+        api.MapGet("/approved-sources", (HttpContext http, string? part, CancellationToken _) =>
+            ReadStore<IProcurementLookup>(http, Permissions.PurchasingRead, async (l, ct) => await l.ListApprovedSourcesAsync(Part(part), ct)));
+        api.MapPost("/items/{part}/approved-sources", (HttpContext http, string part, SourceRequest b, SupplierService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ApproveSourceAsync(new ApproveSource(part, b.SupplierCode, b.Note), c, ct)));
+        api.MapPost("/items/{part}/approved-sources/{code}/remove", (HttpContext http, string part, string code, ReasonRequest b, SupplierService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RemoveSourceAsync(new RemoveSource(part, code), c, ct)));
 
         api.MapPost("/purchase-orders", (HttpContext http, PurchaseOrderRequest b, PurchasingService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CreateAsync(new CreatePurchaseOrder(b.Supplier, (b.Lines ?? []).Select(l => new NewPurchaseLine(l.PartNumber, l.Quantity, l.PromisedDate)).ToList()), c, ct)));

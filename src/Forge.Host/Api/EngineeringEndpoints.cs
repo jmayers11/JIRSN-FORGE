@@ -10,7 +10,15 @@ using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
 
-public sealed record ItemRequest(string PartNumber, string Description, string UnitOfMeasure, MakeBuy MakeBuy, int LeadTimeDays, bool LotTracked, bool Serialized, string? Reason);
+public sealed record ItemRequest(string PartNumber, string Description, string UnitOfMeasure, MakeBuy MakeBuy, int LeadTimeDays, bool LotTracked, bool Serialized, string? Reason, ItemClass? Class = null);
+
+public sealed record ClassifyRequest(ItemClass Class, string? Reason);
+
+public sealed record ManufacturerPartRequest(string Manufacturer, string Mpn, string? ManufacturerRevision, ManufacturerLifecycle? Lifecycle, string? Datasheet, string? Note, string? Reason);
+
+public sealed record ManufacturerPartRef(string Manufacturer, string Mpn, string? Reason);
+
+public sealed record LifecycleRequest(string Manufacturer, string Mpn, ManufacturerLifecycle Lifecycle, string? Reason);
 
 public sealed record RevisionRequest(string Revision, string? Reason);
 
@@ -47,7 +55,19 @@ public static class EngineeringEndpoints
             ReadStore<IEngineeringLookup>(http, Permissions.EngineeringRead, async (l, ct) => await l.GetRevisionDetailAsync(part.ToUpperInvariant(), rev.ToUpperInvariant(), ct)));
 
         eng.MapPost("/items", (HttpContext http, ItemRequest b, EngineeringService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.CreateItemAsync(new CreateItem(b.PartNumber, b.Description, b.UnitOfMeasure, b.MakeBuy, b.LeadTimeDays, b.LotTracked, b.Serialized), c, ct)));
+            Command(http, b.Reason, c => s.CreateItemAsync(new CreateItem(b.PartNumber, b.Description, b.UnitOfMeasure, b.MakeBuy, b.LeadTimeDays, b.LotTracked, b.Serialized, b.Class), c, ct)));
+        eng.MapPost("/items/{part}/classification", (HttpContext http, string part, ClassifyRequest b, EngineeringService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ClassifyItemAsync(new ClassifyItem(part, b.Class), c, ct)));
+        eng.MapGet("/manufacturer-parts", (HttpContext http, string? part, CancellationToken _) =>
+            ReadStore<IEngineeringLookup>(http, Permissions.EngineeringRead, async (l, ct) => await l.ListManufacturerPartsAsync(string.IsNullOrWhiteSpace(part) ? null : part.Trim().ToUpperInvariant(), ct)));
+        eng.MapPost("/items/{part}/manufacturer-parts", (HttpContext http, string part, ManufacturerPartRequest b, EngineeringService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ProposeManufacturerPartAsync(new ProposeManufacturerPart(part, b.Manufacturer, b.Mpn, b.ManufacturerRevision, b.Lifecycle ?? ManufacturerLifecycle.Unknown, b.Datasheet, b.Note), c, ct)));
+        eng.MapPost("/items/{part}/manufacturer-parts/approve", (HttpContext http, string part, ManufacturerPartRef b, EngineeringService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ApproveManufacturerPartAsync(new ApproveManufacturerPart(part, b.Manufacturer, b.Mpn), c, ct)));
+        eng.MapPost("/items/{part}/manufacturer-parts/withdraw", (HttpContext http, string part, ManufacturerPartRef b, EngineeringService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.WithdrawManufacturerPartAsync(new WithdrawManufacturerPart(part, b.Manufacturer, b.Mpn), c, ct)));
+        eng.MapPost("/items/{part}/manufacturer-parts/lifecycle", (HttpContext http, string part, LifecycleRequest b, EngineeringService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SetManufacturerLifecycleAsync(new SetManufacturerLifecycle(part, b.Manufacturer, b.Mpn, b.Lifecycle), c, ct)));
         eng.MapPost("/items/{part}/revisions", (HttpContext http, string part, RevisionRequest b, EngineeringService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CreateRevisionAsync(new CreateRevision(part, b.Revision), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/bom", (HttpContext http, string part, string rev, BomLineRequest b, EngineeringService s, CancellationToken ct) =>

@@ -146,6 +146,19 @@ Forge Analyst answers with the asker's own access: an answer that needs data the
 `Forge:Analyst:ApiKey` (and optionally `Forge:Analyst:Model`) in configuration; Forge works fully without it.
 See `docs/adr/0011-phase-9-forge-analyst.md`.
 
+## What V2.1 contains
+
+V2 extends Forge without replacing it (see the V2 architecture impact review and `docs/adr/0012-v2-1-classification-and-suppliers.md`).
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Item classes | `src/Forge.Engineering/EngineeringService.Classification.cs` | Make, BuildToPrint, Cots, RawMaterial, StandardHardware, Consumable, Mro, Tooling, Service, OtherControlled; existing bought items start Unclassified |
+| Manufacturer parts | same | Proposed by one person, approved by a different person with COTS authority; lifecycle recorded with a reason |
+| Supplier master | `src/Forge.Procurement/SupplierService.cs` | Supplier codes, holds, approved sources; existing purchase order text migrated to supplier records |
+| Purchasing rules | `src/Forge.Procurement/PurchasingService.cs` | COTS lines need an approved manufacturer part; items with approved sources are bought only from them; held suppliers take no new orders or approvals |
+| Report | `item-classification` | Unclassified items, COTS items that cannot be bought, lifecycle review |
+| Screens | `engineering.js`, `procurement.js` | Engineering item list and detail; Suppliers tab |
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -222,9 +235,10 @@ packages), in the JIRSN Forge identity: Forge Orange `#F97316`, Red Tail `#C2410
   primary constraint; KPI tiles; work center status; planned output; top issues. Window: -24h,
   Now (8 h), +24h, +3d, +1w. Click any card or row for the evidence behind it.
 - **Horizon**: the schedule as a timeline per machine, with downtime and why each operation starts when it does.
+- **Engineering**: items by class, classification and manufacturer parts.
 - **Programs**, **Production Orders**, **Scheduling** (propose, approve, work constraints), **Material Plan**,
   **Work Centers** (shifts, executable capacity), **Shop Floor**, **Plant Setup**, **Workforce**
-  (qualified labor hours), **Inventory**, **Procurement**, **Quality**, **Maintenance**, **Shipping**,
+  (qualified labor hours), **Inventory**, **Procurement** (purchase orders, suppliers and approved sources), **Quality**, **Maintenance**, **Shipping**,
   **Settings**.
 - **Reports**: standard reports, saved reports, exports and What changed?
 - **Forge Analyst**: plain-language questions and Brief me, answered from Forge's records.
@@ -335,3 +349,20 @@ body identifies the person. Badge numbers and PINs are never stored or logged.
 | POST | `/api/analyst/interpret` `{question}` | `planning.analyst.use` |
 | POST | `/api/analyst/ask` `{question, narrate?}` | `planning.analyst.use`, plus the read permission each answer needs |
 | GET | `/api/analyst/brief?shift=` | `planning.analyst.use`; sections by read permission |
+
+## V2.1 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/engineering/items/{part}/classification` `{class, reason}` | `engineering.manage` |
+| GET | `/api/engineering/manufacturer-parts?part=` | `engineering.read` |
+| POST | `/api/engineering/items/{part}/manufacturer-parts` `{manufacturer, mpn, manufacturerRevision?, lifecycle?, datasheet?, note?}` | `engineering.cots.propose` |
+| POST | `/api/engineering/items/{part}/manufacturer-parts/approve` `{manufacturer, mpn}` | `engineering.cots.manage`, not the proposer |
+| POST | `/api/engineering/items/{part}/manufacturer-parts/withdraw` `{manufacturer, mpn, reason}` | `engineering.cots.manage` |
+| POST | `/api/engineering/items/{part}/manufacturer-parts/lifecycle` `{manufacturer, mpn, lifecycle, reason}` | `engineering.cots.propose` |
+| GET / POST | `/api/procurement/suppliers` `{code, name, notes?}` | `procurement.read` / `procurement.manage` |
+| POST | `/api/procurement/suppliers/{code}` `{name, notes?}` | `procurement.manage` |
+| POST | `/api/procurement/suppliers/{code}/status` `{status, reason}` | `procurement.approve` |
+| GET | `/api/procurement/approved-sources?part=` | `procurement.read` |
+| POST | `/api/procurement/items/{part}/approved-sources` `{supplierCode, note?, reason}` | `procurement.approve` |
+| POST | `/api/procurement/items/{part}/approved-sources/{code}/remove` `{reason}` | `procurement.approve` |

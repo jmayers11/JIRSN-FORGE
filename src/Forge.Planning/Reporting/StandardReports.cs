@@ -1,5 +1,6 @@
 using System.Globalization;
 using Forge.Competency.Contracts;
+using Forge.Engineering.Contracts;
 using Forge.Execution.Contracts;
 using Forge.Inventory.Contracts;
 using Forge.Kernel.Engines;
@@ -141,7 +142,52 @@ internal static class StandardReports
                 "Qualification records with status Qualified and an expiry date in the period; people who are not active workers are left out. Days left counts from today (site time).",
                 Forward: true),
             Permissions.CompetencyRead, null, QualificationsAsync),
+
+        new(
+            new("item-classification", "Item classification", "Engineering",
+                "Every item with its class, make or buy, and approved manufacturer parts, so unclassified items and COTS items that cannot be bought yet are visible.",
+                [PartFilter, StatusFilter(["Unclassified", "Cots", "BuildToPrint", "RawMaterial", "StandardHardware", "Consumable", "Mro", "Tooling", "Service", "OtherControlled", "Make"]), SearchFilter],
+                [C("part", "Part", ReportColumnKind.Text), C("description", "Description", ReportColumnKind.Text), C("makeBuy", "Make / buy", ReportColumnKind.Text), C("class", "Class", ReportColumnKind.Text),
+                 C("approvedMpns", "Approved MPNs", ReportColumnKind.Number), C("manufacturers", "Approved manufacturer parts", ReportColumnKind.Text), C("lifecycle", "Worst lifecycle", ReportColumnKind.Text), C("attention", "Needs", ReportColumnKind.Text)],
+                ["class", "makeBuy", "attention"], "class", 3660,
+                "The item master and manufacturer parts as they stand now; the period does not apply. A COTS item with no approved manufacturer part cannot be bought."),
+            Permissions.EngineeringRead, null, ItemClassificationAsync),
     ];
+
+    private static async Task<ReportBody> ItemClassificationAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var lookup = run.Uow.Store<IEngineeringLookup>();
+        var mpns = (await lookup.ListManufacturerPartsAsync(null, ct)).Where(m => m.Status == ManufacturerPartStatus.Approved).ToLookup(m => m.PartNumber);
+        var order = new[] { ManufacturerLifecycle.EndOfLife, ManufacturerLifecycle.LastTimeBuy, ManufacturerLifecycle.NotRecommended, ManufacturerLifecycle.Unknown, ManufacturerLifecycle.Active };
+        var rows = new List<ReportRow>();
+        foreach (var item in await lookup.ListItemsAsync(ct))
+        {
+            var approved = mpns[item.PartNumber].ToList();
+            var worst = approved.Count == 0 ? null : order.First(l => approved.Any(m => m.Lifecycle == l)).ToString();
+            var needs = item.Class == ItemClass.Unclassified ? "Classification"
+                : item.Class == ItemClass.Cots && approved.Count == 0 ? "Approved manufacturer part"
+                : approved.Count > 0 && approved.All(m => m.Lifecycle is ManufacturerLifecycle.EndOfLife or ManufacturerLifecycle.LastTimeBuy) ? "Lifecycle review"
+                : null;
+            if (!ReportRun.Is(item.PartNumber, p.PartNumber) || !ReportRun.Is(item.Class.ToString(), p.Status)
+                || !run.Matches(item.PartNumber, item.Description, item.Class.ToString(), string.Join(' ', approved.Select(m => $"{m.Manufacturer} {m.Mpn}"))))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [item.PartNumber, item.Description, item.MakeBuy.ToString(), item.Class.ToString(), (decimal)approved.Count,
+                 approved.Count == 0 ? null : string.Join("; ", approved.Select(m => $"{m.Manufacturer} {m.Mpn}")), worst, needs],
+                ["item:" + item.PartNumber]));
+        }
+
+        var unclassified = rows.Count(r => (string)r.Cells[3]! == nameof(ItemClass.Unclassified));
+        var cotsBlocked = rows.Count(r => (string?)r.Cells[7] == "Approved manufacturer part");
+        return new ReportBody(
+            rows,
+            [$"{rows.Count} item(s); {unclassified} unclassified; {cotsBlocked} COTS item(s) with no approved manufacturer part, which cannot be bought."],
+            ["Item master", "Manufacturer parts"]);
+    }
 
     public static ReportSpec? Find(string id) => All.FirstOrDefault(s => string.Equals(s.Entry.Id, id, StringComparison.Ordinal));
 

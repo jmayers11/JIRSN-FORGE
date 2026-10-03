@@ -18,6 +18,7 @@ import { qualityPage } from './pages/quality.js';
 import { shippingPage } from './pages/shipping.js';
 import { programsPage } from './pages/programs.js';
 import { reportsPage } from './pages/reports.js';
+import { engineeringPage } from './pages/engineering.js';
 import { analystPage } from './pages/analyst.js';
 import { loadDirectory } from './people.js';
 
@@ -26,6 +27,7 @@ const NAV = [
   { route: 'horizon', label: 'Horizon', icon: 'analytics', page: timelinePage },
   { route: 'programs', label: 'Programs', icon: 'trend', page: programsPage },
   { route: 'orders', label: 'Production Orders', icon: 'orders', page: ordersPage },
+  { route: 'engineering', label: 'Engineering', icon: 'blade', page: engineeringPage },
   { route: 'scheduling', label: 'Scheduling', icon: 'planning', page: schedulingPage },
   { route: 'material-plan', label: 'Material Plan', icon: 'material', page: mrpPage },
   { route: 'work-centers', label: 'Work Centers', icon: 'production', page: workCentersPage },

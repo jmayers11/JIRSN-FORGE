@@ -46,6 +46,10 @@ public sealed class Phase6Tests(PostgresFixture postgres)
         var (mike, ivy, stores, bob, pat) = (plant.As("mike"), plant.As("ivy"), plant.As("stores"), plant.As("bob"), plant.As("pat"));
         await plant.Ok(ivy, "/api/inventory/locations", new { code = "RECV", siteCode = "PLANT1", name = "Receiving dock", kind = "Receiving" });
 
+        // Purchase orders name a supplier from the supplier master (V2.1).
+        Assert.Contains("unknown_supplier", (await Try(plant, bob, "/api/procurement/purchase-orders", new { supplier = "Alcoa", lines = new[] { new { partNumber = "COIL-AL", quantity = 1m, promisedDate = Day(7) } } })).Body, StringComparison.Ordinal);
+        await plant.Ok(bob, "/api/procurement/suppliers", new { code = "ALCOA", name = "Alcoa" });
+
         // A purchase order counts only once someone other than the buyer approves it.
         var po = Id(await plant.Ok(bob, "/api/procurement/purchase-orders", new { supplier = "Alcoa", lines = new[] { new { partNumber = "COIL-AL", quantity = 500m, promisedDate = Day(7) } } }));
         Assert.Equal(HttpStatusCode.Forbidden, (await Try(plant, bob, $"/api/procurement/purchase-orders/{po}/approve", new { reason = "x" })).Status);
@@ -56,7 +60,7 @@ public sealed class Phase6Tests(PostgresFixture postgres)
         var early = await Try(plant, mike, "/api/inventory/receipts", new { partNumber = "COIL-AL", quantity = 10m, locationCode = "RECV", poNumber = po, inspect = true });
         Assert.Contains("purchase_order_not_open", early.Body, StringComparison.Ordinal);
         await plant.Ok(pat, $"/api/procurement/purchase-orders/{po}/approve", new { reason = "Budget approved" });
-        var buyOnly = await Try(plant, bob, "/api/procurement/purchase-orders", new { supplier = "X", lines = new[] { new { partNumber = "ROLL-100", quantity = 1m, promisedDate = Day(7) } } });
+        var buyOnly = await Try(plant, bob, "/api/procurement/purchase-orders", new { supplier = "ALCOA", lines = new[] { new { partNumber = "ROLL-100", quantity = 1m, promisedDate = Day(7) } } });
         Assert.Contains("not_purchased", buyOnly.Body, StringComparison.Ordinal);
 
         // Receive into inspection; never more than ordered.
@@ -161,6 +165,7 @@ public sealed class Phase6Tests(PostgresFixture postgres)
         Assert.Contains("20 more is needed", planned.GetProperty("explanation").GetString(), StringComparison.Ordinal);
 
         // An approved purchase order makes it expected; the schedule waits for its date.
+        await plant.Ok(bob, "/api/procurement/suppliers", new { code = "SOUTHWIRE", name = "Southwire" });
         var po = Id(await plant.Ok(bob, "/api/procurement/purchase-orders", new { supplier = "Southwire", lines = new[] { new { partNumber = "WIRE", quantity = 20m, promisedDate = Day(3) } } }));
         await plant.Ok(pat, $"/api/procurement/purchase-orders/{po}/approve", new { reason = "Approved" });
         material = (await Get(planner, "/api/planning/material")).GetProperty("output");

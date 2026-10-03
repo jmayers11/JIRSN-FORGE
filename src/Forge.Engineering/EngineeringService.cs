@@ -10,7 +10,8 @@ using Forge.Resources.Contracts;
 
 namespace Forge.Engineering;
 
-public sealed record CreateItem(string PartNumber, string Description, string UnitOfMeasure, MakeBuy MakeBuy, int LeadTimeDays, bool LotTracked, bool Serialized);
+/// <param name="Class">Null takes the default: Make for made items, Unclassified for bought ones.</param>
+public sealed record CreateItem(string PartNumber, string Description, string UnitOfMeasure, MakeBuy MakeBuy, int LeadTimeDays, bool LotTracked, bool Serialized, ItemClass? Class = null);
 
 public sealed record CreateRevision(string PartNumber, string Revision);
 
@@ -100,6 +101,12 @@ public interface IEngineeringStore
     Task SetEffectivityAsync(string partNumber, string revision, RevisionStatus status, DateTimeOffset? from, DateTimeOffset? to, string actor, CancellationToken ct);
 
     Task UpdatePlanningAsync(ItemInfo item, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task SetClassAsync(string partNumber, ItemClass itemClass, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task<bool> InsertManufacturerPartAsync(ManufacturerPartInfo part, CancellationToken ct);
+
+    Task UpdateManufacturerPartAsync(ManufacturerPartInfo part, DateTimeOffset at, string actor, CancellationToken ct);
 }
 
 /// <summary>
@@ -128,7 +135,9 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
                 throw new CommandRejectedException("invalid_lead_time", "Lead time must be between 0 and 730 days.");
             }
 
-            var item = new ItemInfo(part, description, uom, c.MakeBuy, c.LeadTimeDays, c.LotTracked, c.Serialized);
+            var itemClass = c.Class ?? ItemClasses.DefaultFor(c.MakeBuy);
+            RequireClassFits(itemClass, c.MakeBuy, part);
+            var item = new ItemInfo(part, description, uom, c.MakeBuy, c.LeadTimeDays, c.LotTracked, c.Serialized, Class: itemClass);
             if (!await uow.Store<IEngineeringStore>().InsertItemAsync(item, now, context.Actor, ct))
             {
                 throw new CommandRejectedException("part_exists", $"Part {part} already exists.");

@@ -7,22 +7,29 @@ import { formModal, qty, can, plusDays } from '../forms.js';
 // count as supply for MRP and material readiness. Supplier date changes carry a reason.
 
 const STATUS_TONE = { Draft: 'none', Approved: 'ok', Closed: 'info', Cancelled: 'bad' };
+const SUPPLIER_TONE = { Active: 'ok', OnHold: 'warn', Inactive: 'none' };
+const SUPPLIER_LABEL = { Active: 'Active', OnHold: 'On hold', Inactive: 'Inactive' };
 
 export async function procurementPage(page, ctx) {
   const me = ctx.me;
   const buyer = can(me, 'Buyer');
   const approver = can(me, 'PurchasingManager');
   let showClosed = false;
+  let tab = ctx.query.get('tab') ?? 'orders';
   let data = {};
 
   async function load() {
-    const [orders, items] = await Promise.all([tryGet('/api/procurement/purchase-orders'), tryGet('/api/engineering/items')]);
-    data = { orders, items };
+    const [orders, items, suppliers, sources] = await Promise.all([
+      tryGet('/api/procurement/purchase-orders'), tryGet('/api/engineering/items'),
+      tryGet('/api/procurement/suppliers'), tryGet('/api/procurement/approved-sources')]);
+    data = { orders, items, suppliers, sources };
   }
+  const supplierOptions = () => (data.suppliers.data ?? []).filter(x => x.status === 'Active').map(x => [x.code, `${x.name} (${x.code})`]);
   const reload = async () => { await load(); render(); };
   const buyParts = () => (data.items.data ?? []).filter(i => i.makeBuy === 'Buy').map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]);
 
   function render() {
+    if (tab === 'suppliers') return renderSuppliers();
     const all = data.orders.data ?? [];
     const list = all.filter(o => showClosed || ['Draft', 'Approved'].includes(o.status));
     const late = all.filter(o => o.status === 'Approved').flatMap(o => o.lines.filter(l => l.open > 0 && new Date(`${l.promisedDate}T23:59:59`) < new Date()));
@@ -33,9 +40,11 @@ export async function procurementPage(page, ctx) {
         <label class="opt"><input type="checkbox" id="closed" ${showClosed ? 'checked' : ''}> Show closed and cancelled</label>
         ${buyer ? '<button class="btn primary" id="new-po">New purchase order</button>' : ''}
       </div>
+      ${tabs()}
       ${late.length ? `<div class="notice bad">${late.length} line(s) are past their promised date and not fully received. Receive them or record the supplier's new date so MRP and the schedule stay honest.</div>` : ''}
       ${data.orders.error ? errorBlock(data.orders.error, 'purchase orders') : !list.length ? emptyBlock('No purchase orders', buyer ? 'Draft one here, or from a Buy recommendation on the Material Plan.' : 'A buyer drafts purchase orders.') : list.map(card).join('')}`;
 
+    bindTabs();
     $('#closed', page).onchange = e => { showClosed = e.target.checked; render(); };
     $('#new-po', page)?.addEventListener('click', newPo);
     $$('[data-approve]', page).forEach(b => b.addEventListener('click', () => act(b.dataset.approve, 'approve', 'Approve', 'Its open lines become supply for MRP and material readiness.')));
@@ -79,7 +88,7 @@ export async function procurementPage(page, ctx) {
       { name: `date${n}`, label: `Line ${n} promised date`, type: 'date', value: plusDays(14) },
     ]);
     return formModal({ title: 'New purchase order', detail: 'Saved as a draft. A purchasing manager other than you approves it.', confirmLabel: 'Draft purchase order',
-      fields: [{ name: 'supplier', label: 'Supplier', required: true }, ...lineFields] },
+      fields: [{ name: 'supplier', label: 'Supplier', type: 'select', options: supplierOptions(), required: true, hint: 'Only active suppliers in the supplier master. Add a supplier on the Suppliers tab.' }, ...lineFields] },
     (v, reason) => {
       const lines = [1, 2, 3].filter(n => v[`part${n}`]).map(n => {
         if (!v[`qty${n}`]) throw new Error(`Line ${n}: give a quantity.`);
@@ -102,6 +111,73 @@ export async function procurementPage(page, ctx) {
     return formModal({ title: `New promised date — PO ${po} line ${line}`, detail: 'MRP, material readiness and the next schedule use the new date.', reasonRequired: true, confirmLabel: 'Record date',
       fields: [{ name: 'promisedDate', label: 'Supplier now promises', type: 'date', required: true }] },
     (v, reason) => command(`/api/procurement/purchase-orders/${po}/lines/${line}/date`, v, reason), reload);
+  }
+
+  function tabs() {
+    return `<div class="seg" style="margin-bottom:12px">${[['orders', 'Purchase orders'], ['suppliers', `Suppliers${data.suppliers.data ? ` (${data.suppliers.data.length})` : ''}`]]
+      .map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>`;
+  }
+
+  function bindTabs() {
+    $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
+  }
+
+  // Supplier master (V2.1): new orders name a supplier record; on hold or inactive suppliers take no new orders.
+  function renderSuppliers() {
+    const list = data.suppliers.data ?? [];
+    const sources = data.sources.data ?? [];
+    const items = new Map((data.items.data ?? []).map(i => [i.partNumber, i]));
+    page.innerHTML = `
+      <div class="page-head">
+        <div><h1>Procurement</h1><div class="sub">The supplier master. New purchase orders name a supplier from this list; an item with approved sources is bought only from them.</div></div>
+        <div class="spacer"></div>
+        ${approver ? '<button class="btn" id="new-source">Approve a source</button>' : ''}
+        ${buyer ? '<button class="btn primary" id="new-supplier">New supplier</button>' : ''}
+      </div>
+      ${tabs()}
+      ${data.suppliers.error ? errorBlock(data.suppliers.error, 'suppliers') : !list.length ? emptyBlock('No suppliers yet', buyer ? 'Add the suppliers you buy from; purchase orders choose from this list.' : 'A buyer adds suppliers.') : `
+      <section class="panel"><div class="table-wrap"><table class="table">
+        <thead><tr><th>Code</th><th>Name</th><th>Status</th><th>Approved source for</th><th>Notes</th><th></th></tr></thead><tbody>
+        ${list.map(x => {
+          const mine = sources.filter(s => s.supplierCode === x.code);
+          return `<tr><td><b>${esc(x.code)}</b></td><td>${esc(x.name)}</td><td><span class="pill ${SUPPLIER_TONE[x.status]}">${esc(SUPPLIER_LABEL[x.status])}</span></td>
+            <td>${mine.length ? mine.map(s => `<span class="chip" title="${esc(items.get(s.partNumber)?.description ?? '')}">${esc(s.partNumber)}${approver ? ` <a href="#" data-unsource="${esc(s.partNumber)}/${esc(x.code)}" title="Remove">×</a>` : ''}</span>`).join(' ') : '<span class="faint">—</span>'}</td>
+            <td class="faint">${esc(x.notes ?? '')}</td>
+            <td class="nowrap">${buyer ? `<button class="btn small" data-edit-supplier="${esc(x.code)}">Edit</button>` : ''}
+              ${approver ? `<button class="btn small ghost" data-status="${esc(x.code)}">Status</button>` : ''}</td></tr>`;
+        }).join('')}
+      </tbody></table></div></section>`}`;
+    bindTabs();
+    $('#new-supplier', page)?.addEventListener('click', () => formModal({ title: 'New supplier', confirmLabel: 'Add supplier',
+      fields: [
+        { name: 'code', label: 'Supplier code', code: true, required: true, placeholder: 'ALCOA' },
+        { name: 'name', label: 'Name', required: true },
+        { name: 'notes', label: 'Notes', type: 'textarea' },
+      ] }, (v, reason) => command('/api/procurement/suppliers', v, reason), reload));
+    $$('[data-edit-supplier]', page).forEach(b => b.addEventListener('click', () => {
+      const x = list.find(y => y.code === b.dataset.editSupplier);
+      formModal({ title: `Edit ${x.code}`, confirmLabel: 'Save',
+        fields: [{ name: 'name', label: 'Name', required: true, value: x.name }, { name: 'notes', label: 'Notes', type: 'textarea', value: x.notes ?? '' }] },
+      (v, reason) => command(`/api/procurement/suppliers/${encodeURIComponent(x.code)}`, v, reason), reload);
+    }));
+    $$('[data-status]', page).forEach(b => b.addEventListener('click', () => {
+      const x = list.find(y => y.code === b.dataset.status);
+      formModal({ title: `Status of ${x.name}`, detail: 'A supplier on hold or inactive takes no new purchase orders; open orders stay open.', reasonRequired: true, confirmLabel: 'Set status',
+        fields: [{ name: 'status', label: 'Status', type: 'select', value: x.status, options: Object.entries(SUPPLIER_LABEL) }] },
+      (v, reason) => command(`/api/procurement/suppliers/${encodeURIComponent(x.code)}/status`, v, reason), reload);
+    }));
+    $('#new-source', page)?.addEventListener('click', () => formModal({ title: 'Approve a source', detail: 'Once an item has any approved source, purchase orders for it must go to one of them.', reasonRequired: true, confirmLabel: 'Approve source',
+      fields: [
+        { name: 'part', label: 'Part', type: 'select', options: buyParts(), required: true },
+        { name: 'supplierCode', label: 'Supplier', type: 'select', options: supplierOptions(), required: true },
+        { name: 'note', label: 'Note' },
+      ] }, (v, reason) => command(`/api/procurement/items/${encodeURIComponent(v.part)}/approved-sources`, { supplierCode: v.supplierCode, note: v.note }, reason), reload));
+    $$('[data-unsource]', page).forEach(a => a.addEventListener('click', async e => {
+      e.preventDefault();
+      const [part, code] = a.dataset.unsource.split('/');
+      const done = await confirmWithReason({ title: `Remove ${code} as a source of ${part}`, confirmLabel: 'Remove' }, reason => command(`/api/procurement/items/${encodeURIComponent(part)}/approved-sources/${encodeURIComponent(code)}/remove`, {}, reason));
+      if (done) { toast(done.message); await reload(); }
+    }));
   }
 
   async function act(po, verb, label, detail) {

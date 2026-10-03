@@ -7,15 +7,15 @@ namespace Forge.Engineering.Infrastructure;
 
 internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngineeringStore, IEngineeringLookup
 {
-    private const string ItemSql = "SELECT part_number, description, unit_of_measure, make_buy, lead_time_days, lot_tracked, serialized, safety_stock, lot_policy, order_quantity, order_multiple FROM engineering.item";
+    private const string ItemSql = "SELECT part_number, description, unit_of_measure, make_buy, lead_time_days, lot_tracked, serialized, safety_stock, lot_policy, order_quantity, order_multiple, item_class FROM engineering.item";
     private const string RevisionSql = "SELECT part_number, revision, status, effective_from, effective_to FROM engineering.revision";
 
     public async Task<bool> InsertItemAsync(ItemInfo item, DateTimeOffset at, string actor, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(item);
         await using var cmd = uow.Command(
-            "INSERT INTO engineering.item (part_number, description, unit_of_measure, make_buy, lead_time_days, lot_tracked, serialized, created_at, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT DO NOTHING",
-            item.PartNumber, item.Description, item.UnitOfMeasure, item.MakeBuy.ToString(), item.LeadTimeDays, item.LotTracked, item.Serialized, at, actor);
+            "INSERT INTO engineering.item (part_number, description, unit_of_measure, make_buy, lead_time_days, lot_tracked, serialized, created_at, created_by, item_class, classified_at, classified_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $8, $9) ON CONFLICT DO NOTHING",
+            item.PartNumber, item.Description, item.UnitOfMeasure, item.MakeBuy.ToString(), item.LeadTimeDays, item.LotTracked, item.Serialized, at, actor, item.Class.ToString());
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
@@ -128,7 +128,61 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
     }
 
     private static ItemInfo ReadItem(NpgsqlDataReader r) =>
-        new(r.GetString(0), r.GetString(1), r.GetString(2), Enum.Parse<MakeBuy>(r.GetString(3)), r.GetInt32(4), r.GetBoolean(5), r.GetBoolean(6), r.GetDecimal(7), Enum.Parse<LotPolicy>(r.GetString(8)), r.GetDecimal(9), r.GetDecimal(10));
+        new(r.GetString(0), r.GetString(1), r.GetString(2), Enum.Parse<MakeBuy>(r.GetString(3)), r.GetInt32(4), r.GetBoolean(5), r.GetBoolean(6), r.GetDecimal(7), Enum.Parse<LotPolicy>(r.GetString(8)), r.GetDecimal(9), r.GetDecimal(10), Enum.Parse<ItemClass>(r.GetString(11)));
+
+    public async Task SetClassAsync(string partNumber, ItemClass itemClass, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE engineering.item SET item_class = $2, classified_at = $3, classified_by = $4 WHERE part_number = $1",
+            partNumber, itemClass.ToString(), at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private const string ManufacturerPartSql =
+        "SELECT part_number, manufacturer, mpn, manufacturer_revision, lifecycle, status, datasheet, note, proposed_by, proposed_at, approved_by, approved_at FROM engineering.manufacturer_part";
+
+    public Task<IReadOnlyList<ManufacturerPartInfo>> ListManufacturerPartsAsync(string? partNumber, CancellationToken ct) =>
+        Read(
+            ManufacturerPartSql + " WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, lower(manufacturer), mpn",
+            r => new ManufacturerPartInfo(
+                r.GetString(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3),
+                Enum.Parse<ManufacturerLifecycle>(r.GetString(4)), Enum.Parse<ManufacturerPartStatus>(r.GetString(5)),
+                r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7),
+                r.GetString(8), r.GetFieldValue<DateTimeOffset>(9), r.IsDBNull(10) ? null : r.GetString(10), r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11)),
+            ct,
+            new NpgsqlParameter { Value = (object?)partNumber ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text });
+
+    public async Task<bool> InsertManufacturerPartAsync(ManufacturerPartInfo part, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(part);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO engineering.manufacturer_part (part_number, manufacturer, mpn, manufacturer_revision, lifecycle, status, datasheet, note, proposed_by, proposed_at)
+            VALUES ($1, $2, $3, $4, $5, 'Proposed', $6, $7, $8, $9) ON CONFLICT DO NOTHING
+            """,
+            part.PartNumber, part.Manufacturer, part.Mpn, Text(part.ManufacturerRevision), part.Lifecycle.ToString(), Text(part.Datasheet), Text(part.Note), part.ProposedBy, part.ProposedAt);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task UpdateManufacturerPartAsync(ManufacturerPartInfo part, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(part);
+        await using var cmd = uow.Command(
+            """
+            UPDATE engineering.manufacturer_part SET
+                lifecycle = $4, status = $5, manufacturer_revision = $6, datasheet = $7, note = $8,
+                approved_by = $9, approved_at = $10,
+                withdrawn_by = CASE WHEN $5 = 'Withdrawn' THEN $12 ELSE withdrawn_by END,
+                withdrawn_at = CASE WHEN $5 = 'Withdrawn' THEN $11 ELSE withdrawn_at END,
+                lifecycle_changed_at = CASE WHEN lifecycle <> $4 THEN $11 ELSE lifecycle_changed_at END
+            WHERE part_number = $1 AND manufacturer = $2 AND mpn = $3
+            """,
+            part.PartNumber, part.Manufacturer, part.Mpn, part.Lifecycle.ToString(), part.Status.ToString(), Text(part.ManufacturerRevision), Text(part.Datasheet), Text(part.Note),
+            Text(part.ApprovedBy), new NpgsqlParameter { Value = (object?)part.ApprovedAt ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.TimestampTz }, at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static NpgsqlParameter Text(string? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text };
 
     public async Task UpdatePlanningAsync(ItemInfo item, DateTimeOffset at, string actor, CancellationToken ct)
     {

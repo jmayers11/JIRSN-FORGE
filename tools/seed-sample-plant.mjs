@@ -42,9 +42,18 @@ async function main() {
     if (existing.includes('pm')) {
       // The full sample plant: add only the newest sample data (funding, WBS, run-hour PM, saved reports), once.
       const saved = await get('planner', '/api/reports/definitions').catch(() => null);
-      if (saved === null || saved.some(d => d.name === 'Weekly downtime')) throw new Error('This database already has the full sample plant. It is set up once per database.');
-      console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
-      await seedInsight();
+      const items = (await get('eng', '/api/engineering/items')).map(i => i.partNumber);
+      const insight = saved !== null && !saved.some(d => d.name === 'Weekly downtime');
+      const classification = !items.includes('BRG-6205-001');
+      if (!insight && !classification) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      if (insight) {
+        console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
+        await seedInsight();
+      }
+      if (classification) {
+        console.log('Adding sample item classes, manufacturer parts and suppliers.');
+        await seedClassification();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -58,6 +67,7 @@ async function main() {
     console.log('Adding sample programs and preventive maintenance.');
     await seedPrograms();
     await seedInsight();
+    await seedClassification();
     return finish();
   }
 
@@ -198,6 +208,7 @@ async function main() {
   await seedQuality();
   await seedPrograms();
   await seedInsight();
+  await seedClassification();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -227,6 +238,11 @@ async function seedMaterials() {
   }
   await post('stores', '/api/inventory/receipts', { partNumber: 'COIL-AL', quantity: 2000, locationCode: 'STORES', reason: 'Opening balance from the physical count' });
   await post('planner', '/api/engineering/items/COIL-AL/planning', { leadTimeDays: 14, safetyStock: 500, lotPolicy: 'FixedQuantity', orderQuantity: 1000, orderMultiple: 0 });
+
+  step('Materials: the suppliers Bob buys from');
+  for (const [code, name] of [['ALCOA', 'Alcoa'], ['NOVELIS', 'Novelis']]) {
+    await post('bob', '/api/procurement/suppliers', { code, name });
+  }
 
   step('Materials: a purchase order raised by Bob, approved by Pat, partly received into inspection');
   const po = await post('bob', '/api/procurement/purchase-orders', { supplier: 'Alcoa', lines: [{ partNumber: 'COIL-AL', quantity: 1000, promisedDate: day(5) }] });
@@ -362,6 +378,30 @@ async function seedInsight() {
   await post('planner', '/api/reports/definitions', { name: 'Output vs plan, last 14 days', reportId: 'production-output', parameters: { lastDays: 14, groupBy: 'workCenter' }, shared: true });
   await post('planner', '/api/reports/definitions', { name: 'Open constraints', reportId: 'constraint-history', parameters: { lastDays: 30, status: 'Open', groupBy: 'category' }, shared: false });
   await post('mp', '/api/reports/definitions', { name: 'PM compliance, 30 days', reportId: 'pm-compliance', parameters: { lastDays: 30, groupBy: 'machine' }, shared: true });
+}
+
+// V2.1: item classes, a COTS bearing bought as an approved manufacturer part, suppliers and an approved source.
+async function seedClassification() {
+  step('Engineering: classify the bought items (made items are already Make)');
+  const items = await get('eng', '/api/engineering/items');
+  const want = { 'COIL-AL': 'RawMaterial' };
+  for (const i of items) {
+    if (want[i.partNumber] && i.class === 'Unclassified') {
+      await post('eng', `/api/engineering/items/${i.partNumber}/classification`, { class: want[i.partNumber], reason: 'Aluminum coil stock is raw material' });
+    }
+  }
+
+  step('Engineering: a COTS bearing, proposed by the buyer and approved by engineering');
+  await post('eng', '/api/engineering/items', { partNumber: 'BRG-6205-001', description: 'Deep groove ball bearing 25 x 52 x 15', unitOfMeasure: 'EA', makeBuy: 'Buy', leadTimeDays: 10, class: 'Cots' });
+  await post('bob', '/api/engineering/items/BRG-6205-001/manufacturer-parts', { manufacturer: 'SKF', mpn: '6205-2RSH', lifecycle: 'Active', datasheet: 'SKF 6205-2RSH product page' });
+  await post('bob', '/api/engineering/items/BRG-6205-001/manufacturer-parts', { manufacturer: 'NSK', mpn: '6205DDU', lifecycle: 'Unknown', note: 'Distributor offered it as a cross-reference; not yet reviewed' });
+  await post('approver', '/api/engineering/items/BRG-6205-001/manufacturer-parts/approve', { manufacturer: 'SKF', mpn: '6205-2RSH' });
+  await post('eng', '/api/engineering/items', { partNumber: 'FLT-4417', description: 'Hydraulic return filter element', unitOfMeasure: 'EA', makeBuy: 'Buy', leadTimeDays: 7 });
+
+  step('Procurement: a bearing distributor, approved as the only source of the bearing');
+  const suppliers = (await get('bob', '/api/procurement/suppliers')).map(x => x.code);
+  if (!suppliers.includes('MOTION')) await post('bob', '/api/procurement/suppliers', { code: 'MOTION', name: 'Motion Industries', notes: 'Bearings and power transmission' });
+  await post('pat', '/api/procurement/items/BRG-6205-001/approved-sources', { supplierCode: 'MOTION', reason: 'Authorized SKF distributor' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

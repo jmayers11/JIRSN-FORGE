@@ -10,6 +10,7 @@ namespace Forge.Procurement;
 
 public sealed record NewPurchaseLine(string PartNumber, decimal Quantity, DateOnly PromisedDate);
 
+/// <param name="Supplier">The supplier's code (or its exact name) in the supplier master.</param>
 public sealed record CreatePurchaseOrder(string Supplier, IReadOnlyList<NewPurchaseLine> Lines);
 
 public sealed record AddPurchaseLine(long PoNumber, string PartNumber, decimal Quantity, DateOnly PromisedDate);
@@ -41,7 +42,17 @@ public sealed record SupplierDateChanged(long PoNumber, int LineNumber, string P
 
 public interface IProcurementStore
 {
-    Task<long> InsertOrderAsync(string supplier, DateTimeOffset at, string actor, CancellationToken ct);
+    Task<long> InsertOrderAsync(SupplierInfo supplier, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task<bool> InsertSupplierAsync(SupplierInfo supplier, CancellationToken ct);
+
+    Task<bool> NameTakenAsync(string name, string exceptCode, CancellationToken ct);
+
+    Task UpdateSupplierAsync(SupplierInfo supplier, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task<bool> InsertApprovedSourceAsync(ApprovedSourceInfo source, CancellationToken ct);
+
+    Task<bool> DeleteApprovedSourceAsync(string partNumber, string supplierCode, CancellationToken ct);
 
     Task<bool> InsertLineAsync(long poNumber, PurchaseLineInfo line, CancellationToken ct);
 
@@ -66,7 +77,7 @@ public sealed class PurchasingService(CommandPipeline pipeline)
         var spec = new CommandSpec(SourceContext, nameof(CreatePurchaseOrder), Permissions.PurchasingManage, ResourceRef.Of(Entity));
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
-            var supplier = BusinessCode.RequireName(c.Supplier, "Supplier");
+            var supplier = await SupplierService.RequireOrderableAsync(uow, c.Supplier, ct);
             if (c.Lines is null || c.Lines.Count is 0 or > 999)
             {
                 throw new CommandRejectedException("lines_required", "A purchase order needs 1 to 999 lines.");
@@ -75,7 +86,7 @@ public sealed class PurchasingService(CommandPipeline pipeline)
             var lines = new List<PurchaseLineInfo>();
             foreach (var (line, index) in c.Lines.Select((l, i) => (l, i)))
             {
-                lines.Add(await ValidLineAsync(uow, index + 1, line.PartNumber, line.Quantity, line.PromisedDate, now, ct));
+                lines.Add(await ValidLineAsync(uow, index + 1, line.PartNumber, line.Quantity, line.PromisedDate, now, supplier.Code, ct));
             }
 
             var store = uow.Store<IProcurementStore>();
@@ -87,9 +98,9 @@ public sealed class PurchasingService(CommandPipeline pipeline)
 
             var id = Id(number);
             return new CommandOutcome(
-                CommandResult.Ok(id, $"Purchase order {id} drafted for {supplier}: {lines.Count} line(s). A different person must approve it."),
+                CommandResult.Ok(id, $"Purchase order {id} drafted for {supplier.Name} ({supplier.Code}): {lines.Count} line(s). A different person must approve it."),
                 [pipeline.Event(new PurchaseOrderChanged(number, "Drafted"), context, SourceContext, Entity, id)],
-                new AuditChange(Entity, id, null, CanonicalJson.Serialize(new { supplier, lines })));
+                new AuditChange(Entity, id, null, CanonicalJson.Serialize(new { supplier = supplier.Name, supplierCode = supplier.Code, lines })));
         }, ct);
     }
 
@@ -103,7 +114,7 @@ public sealed class PurchasingService(CommandPipeline pipeline)
                 throw new CommandRejectedException("not_draft", $"Purchase order {po.PoNumber} is {po.Status}; lines are added only to drafts.");
             }
 
-            var line = await ValidLineAsync(uow, po.Lines.Count == 0 ? 1 : po.Lines.Max(l => l.LineNumber) + 1, c.PartNumber, c.Quantity, c.PromisedDate, now, ct);
+            var line = await ValidLineAsync(uow, po.Lines.Count == 0 ? 1 : po.Lines.Max(l => l.LineNumber) + 1, c.PartNumber, c.Quantity, c.PromisedDate, now, po.SupplierCode, ct);
             await uow.Store<IProcurementStore>().InsertLineAsync(po.PoNumber, line, ct);
             return ($"line {line.LineNumber} added: {line.Quantity} {line.UnitOfMeasure} {line.PartNumber} by {line.PromisedDate:yyyy-MM-dd}", "LineAdded", null, CanonicalJson.Serialize(line), null);
         }, ct);
@@ -122,6 +133,11 @@ public sealed class PurchasingService(CommandPipeline pipeline)
             if (po.CreatedBy == context.Actor)
             {
                 throw new CommandRejectedException("separation_of_duties", "You raised this purchase order; a different person must approve it.");
+            }
+
+            if (po.SupplierCode is { } code && await uow.Store<IProcurementLookup>().FindSupplierAsync(code, ct) is { Status: not SupplierStatus.Active } held)
+            {
+                throw new CommandRejectedException("supplier_not_active", $"{held.Name} is {held.Status}; lift the hold before approving orders to it.");
             }
 
             if (po.Lines.All(l => l.Status != PurchaseLineStatus.Open))
@@ -208,7 +224,7 @@ public sealed class PurchasingService(CommandPipeline pipeline)
             : throw new CommandRejectedException("line_cancelled", $"Line {lineNumber} is cancelled.");
     }
 
-    private static async Task<PurchaseLineInfo> ValidLineAsync(Kernel.Access.IKernelUnitOfWork uow, int lineNumber, string rawPart, decimal quantity, DateOnly promised, DateTimeOffset now, CancellationToken ct)
+    private static async Task<PurchaseLineInfo> ValidLineAsync(Kernel.Access.IKernelUnitOfWork uow, int lineNumber, string rawPart, decimal quantity, DateOnly promised, DateTimeOffset now, string? supplierCode, CancellationToken ct)
     {
         var part = BusinessCode.Require(rawPart, "Part");
         if (quantity <= 0 || quantity > 100_000_000)
@@ -226,6 +242,19 @@ public sealed class PurchasingService(CommandPipeline pipeline)
         if (item.MakeBuy != MakeBuy.Buy)
         {
             throw new CommandRejectedException("not_purchased", $"Line {lineNumber}: {part} is made, not bought.");
+        }
+
+        // A COTS item is bought as one of its approved manufacturer parts (V2 §12); without one, there is nothing approved to buy.
+        if (item.Class == ItemClass.Cots
+            && !(await uow.Store<IEngineeringLookup>().ListManufacturerPartsAsync(part, ct)).Any(m => m.Status == ManufacturerPartStatus.Approved))
+        {
+            throw new CommandRejectedException("no_approved_manufacturer_part", $"Line {lineNumber}: {part} is COTS and has no approved manufacturer part yet.");
+        }
+
+        var sources = await uow.Store<IProcurementLookup>().ListApprovedSourcesAsync(part, ct);
+        if (sources.Count > 0 && !sources.Any(x => x.SupplierCode == supplierCode))
+        {
+            throw new CommandRejectedException("not_approved_source", $"Line {lineNumber}: {part} is bought only from its approved sources ({string.Join(", ", sources.Select(x => x.SupplierCode))}).");
         }
 
         return new PurchaseLineInfo(lineNumber, part, quantity, item.UnitOfMeasure, promised, PurchaseLineStatus.Open);
