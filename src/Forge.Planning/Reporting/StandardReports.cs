@@ -1,4 +1,5 @@
 using System.Globalization;
+using Forge.Competency.Contracts;
 using Forge.Execution.Contracts;
 using Forge.Inventory.Contracts;
 using Forge.Kernel.Engines;
@@ -7,6 +8,7 @@ using Forge.Maintenance.Contracts;
 using Forge.Planning.Engines;
 using Forge.Programs.Contracts;
 using Forge.Quality.Contracts;
+using Forge.Workforce.Contracts;
 
 namespace Forge.Planning.Reporting;
 
@@ -23,6 +25,7 @@ internal static class StandardReports
     private static readonly ReportFilter MachineFilter = new("machine", "Machine", "text");
     private static readonly ReportFilter PartFilter = new("partNumber", "Part", "text");
     private static readonly ReportFilter SearchFilter = new("search", "Contains", "text");
+    private static readonly ReportFilter ShiftFilter = new("shift", "Shift", "shift");
 
     private static ReportFilter StatusFilter(params string[] values) => new("status", "Status", "choice:" + string.Join('|', values));
 
@@ -31,11 +34,11 @@ internal static class StandardReports
         new(
             new("production-output", "Plan vs actual output", "Production",
                 "Per order operation: the quantity the approved schedule planned to finish in the period against good and scrap quantities the shop floor reported in it.",
-                [FromFilter, ToFilter, ProgramFilter, WorkCenterFilter, PartFilter, StatusFilter("On plan", "Short", "Not reported", "Unplanned", "Cancelled"), SearchFilter],
+                [FromFilter, ToFilter, ProgramFilter, WorkCenterFilter, PartFilter, ShiftFilter, StatusFilter("On plan", "Short", "Not reported", "Unplanned", "Cancelled"), SearchFilter],
                 [C("date", "Date", ReportColumnKind.Date), C("order", "Order", ReportColumnKind.Text), C("op", "Op", ReportColumnKind.Text), C("workCenter", "Work center", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text),
-                 C("planned", "Planned qty", ReportColumnKind.Number), C("achieved", "Achieved", ReportColumnKind.Number), C("good", "Good", ReportColumnKind.Number), C("scrap", "Scrap", ReportColumnKind.Number), C("variance", "Variance", ReportColumnKind.Number), C("status", "Status", ReportColumnKind.Text)],
-                ["date", "workCenter", "part", "status"], "workCenter", 62,
-                "Plan: the schedule approved and in force at the start of the period; an operation counts when its planned end falls in the period, at the order quantity. Actual: production reports recorded in the period. Achieved is good output up to the planned quantity."),
+                 C("planned", "Planned qty", ReportColumnKind.Number), C("achieved", "Achieved", ReportColumnKind.Number), C("good", "Good", ReportColumnKind.Number), C("scrap", "Scrap", ReportColumnKind.Number), C("variance", "Variance", ReportColumnKind.Number), C("status", "Status", ReportColumnKind.Text), C("shift", "Shift", ReportColumnKind.Text)],
+                ["date", "workCenter", "part", "shift", "status"], "workCenter", 186,
+                "Plan: the schedule approved and in force at the start of the period; an operation counts when its planned end falls in the period, at the order quantity, in the shift it was planned to end. Actual: production reports recorded in the period, in the shift they were reported. Achieved is good output up to the planned quantity."),
             Permissions.ScheduleRead, new("Output vs plan", "achieved", "planned"), ProductionOutputAsync),
 
         new(
@@ -127,6 +130,17 @@ internal static class StandardReports
                 ["kind", "part", "actor", "at"], "kind", 366,
                 "The inventory transaction ledger. Transactions for production orders of programs you cannot see are left out."),
             Permissions.InventoryRead, null, TransactionsAsync),
+
+        new(
+            new("qualifications-expiring", "Qualifications expiring", "Workforce",
+                "Certified qualifications that expire in the period (by default the next 90 days), with each person's home work center and shift, so renewals can be planned before capacity is lost.",
+                [FromFilter, ToFilter, WorkCenterFilter, ShiftFilter, SearchFilter],
+                [C("expires", "Expires", ReportColumnKind.DateTime), C("person", "Person", ReportColumnKind.Text), C("qualification", "Qualification", ReportColumnKind.Text), C("name", "Name", ReportColumnKind.Text),
+                 C("daysLeft", "Days left", ReportColumnKind.Number), C("workCenter", "Work center", ReportColumnKind.Text), C("shift", "Shift", ReportColumnKind.Text)],
+                ["qualification", "workCenter", "shift", "expires"], "qualification", 366,
+                "Qualification records with status Qualified and an expiry date in the period; people who are not active workers are left out. Days left counts from today (site time).",
+                Forward: true),
+            Permissions.CompetencyRead, null, QualificationsAsync),
     ];
 
     public static ReportSpec? Find(string id) => All.FirstOrDefault(s => string.Equals(s.Entry.Id, id, StringComparison.Ordinal));
@@ -150,18 +164,21 @@ internal static class StandardReports
         var version = await run.Uow.Store<IPlanningStore>().ApprovedAsOfAsync(run.From, ct);
         var orders = await OrdersAsync(run, ct);
         var reports = await run.Uow.Store<IExecutionLookup>().ListReportsAsync(run.From, run.To, null, ct);
+
+        // Rows are per order operation and shift: planned output in the shift it was planned to end, actual in the shift it was reported.
         var planned = (version?.Result?.Operations ?? [])
             .Where(o => o.Scheduled && o.End is { } end && run.InPeriod(end))
-            .ToDictionary(o => (o.OrderNumber, o.Sequence));
-        var reported = reports.ToLookup(r => (r.OrderNumber, r.Sequence));
+            .ToDictionary(o => (o.OrderNumber, o.Sequence, Shift: run.ShiftOf(o.End!.Value) ?? string.Empty));
+        var reported = reports.ToLookup(r => (r.OrderNumber, r.Sequence, Shift: run.ShiftOf(r.ReportedAt) ?? string.Empty));
 
         var rows = new List<ReportRow>();
-        foreach (var key in planned.Keys.Concat(reported.Select(g => g.Key)).Distinct().OrderBy(k => k.OrderNumber).ThenBy(k => k.Sequence))
+        foreach (var key in planned.Keys.Concat(reported.Select(g => g.Key)).Distinct().OrderBy(k => k.OrderNumber).ThenBy(k => k.Sequence).ThenBy(k => k.Shift, StringComparer.Ordinal))
         {
             planned.TryGetValue(key, out var op);
             orders.TryGetValue(key.OrderNumber, out var order);
             var mine = reported[key].ToList();
-            if (!run.Visible(order?.ProgramId ?? op?.ProgramId))
+            var shift = key.Shift.Length == 0 ? null : key.Shift;
+            if (!run.Visible(order?.ProgramId ?? op?.ProgramId) || (p.Shift is { } wanted && !string.Equals(shift, wanted, StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
             }
@@ -177,7 +194,7 @@ internal static class StandardReports
             var good = mine.Sum(r => r.GoodQuantity);
             var scrap = mine.Sum(r => r.ScrapQuantity);
             var status = op is null ? "Unplanned" : cancelled ? "Cancelled" : good >= plannedQty ? "On plan" : good > 0 ? "Short" : "Not reported";
-            if (!ReportRun.Is(status, p.Status) || !run.Matches(Id(key.OrderNumber), order?.PartNumber, workCenter, status))
+            if (!ReportRun.Is(status, p.Status) || !run.Matches(Id(key.OrderNumber), order?.PartNumber, workCenter, status, shift))
             {
                 continue;
             }
@@ -191,7 +208,7 @@ internal static class StandardReports
 
             trace.AddRange(mine.Select(r => "report:" + Id(r.ReportId)));
             rows.Add(new ReportRow(
-                [date, Id(key.OrderNumber), Seq(key.Sequence), workCenter, order?.PartNumber, plannedQty, Math.Min(good, plannedQty), good, scrap, good - plannedQty, status],
+                [date, Id(key.OrderNumber), Seq(key.Sequence), workCenter, order?.PartNumber, plannedQty, Math.Min(good, plannedQty), good, scrap, good - plannedQty, status, shift],
                 trace));
         }
 
@@ -577,6 +594,39 @@ internal static class StandardReports
             ? ["No inspections in the period."]
             : [$"First-pass acceptance: {Fmt(decimal.Round(accepted / inspected * 100m, 1))}% ({Fmt(accepted)} of {Fmt(inspected)} inspected units); {rows.Count(r => (string)r.Cells[7]! == "Fail")} failed inspections."];
         return new ReportBody(rows, summary, ["Inspection records"]);
+    }
+
+    // ------------------------------------------------------------------ workforce
+
+    private static async Task<ReportBody> QualificationsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var workers = (await run.Uow.Store<IWorkforceLookup>().GetWorkerStatesAsync(run.Now, ct)).Where(w => w.IsActive).ToDictionary(w => w.PersonId);
+        var competency = run.Uow.Store<ICompetencyLookup>();
+        var names = (await competency.ListTypesAsync(ct)).ToDictionary(t => t.Code, t => t.Name, StringComparer.Ordinal);
+        var records = await competency.GetQualificationsAsync(workers.Keys.Select(id => new Kernel.Identity.PersonId(id)).ToList(), ct);
+        var rows = new List<ReportRow>();
+        foreach (var q in records.Where(q => q.Status == QualificationStatus.Qualified && q.ExpiresAt is { } e && run.InPeriod(e)).OrderBy(q => q.ExpiresAt).ThenBy(q => q.Code, StringComparer.Ordinal))
+        {
+            var w = workers[q.PersonId];
+            var name = names.GetValueOrDefault(q.Code, q.Code);
+            if (!ReportRun.Is(w.HomeWorkCenterCode, p.WorkCenter) || !ReportRun.Is(w.ShiftCode, p.Shift) || !run.Matches(w.DisplayName, q.Code, name))
+            {
+                continue;
+            }
+
+            var days = (decimal)(run.Local(q.ExpiresAt!.Value).DayNumber - run.Today.DayNumber);
+            rows.Add(new ReportRow(
+                [q.ExpiresAt, w.DisplayName, q.Code, name, days, w.HomeWorkCenterCode, w.ShiftCode],
+                ["person:" + q.PersonId.ToString("D", CultureInfo.InvariantCulture), "qualification:" + q.Code]));
+        }
+
+        var soon = rows.Count(r => (decimal)r.Cells[4]! <= 30);
+        List<string> summary = rows.Count == 0
+            ? ["No qualifications expire in the period."]
+            : [$"{rows.Count} qualification(s) expire in the period, {soon} within 30 days.",
+               "Most affected: " + string.Join("; ", rows.GroupBy(r => (string)r.Cells[2]!, StringComparer.Ordinal).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal).Take(3).Select(g => $"{g.Key} ({g.Count()})")) + "."];
+        return new ReportBody(rows, summary, ["Qualification records", "Workers"]);
     }
 
     // ------------------------------------------------------------------ inventory

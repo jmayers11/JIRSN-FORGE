@@ -95,6 +95,9 @@ public static class ReportsEndpoints
             Text("partNumber"),
             Text("status"),
             Text("search"),
-            Text("groupBy"));
+            Text("groupBy"))
+        {
+            Shift = Text("shift"),
+        };
     }
 }

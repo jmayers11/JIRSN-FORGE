@@ -21,6 +21,20 @@ public static class ReportExport
         ArgumentNullException.ThrowIfNull(report);
         var zone = Zone(report);
         var sb = new StringBuilder();
+
+        // The report's context first (spec §65: exports keep the period, filters and generation time), then a blank line and the table.
+        foreach (var (label, value) in new[]
+        {
+            ("Report", report.Title),
+            ("Period", $"{report.From:yyyy-MM-dd} to {report.To:yyyy-MM-dd} ({report.TimeZone})"),
+            ("Filters", Filters(report.Parameters)),
+            ("Generated", $"{Text(report.GeneratedAt, zone)} by {report.GeneratedBy}"),
+        })
+        {
+            sb.Append(Quote(label)).Append(',').Append(Quote(value)).Append("\r\n");
+        }
+
+        sb.Append("\r\n");
         sb.AppendJoin(',', report.Columns.Select(c => Quote(c.Title)).Append(Quote(SourceTitle))).Append("\r\n");
         foreach (var row in report.Rows)
         {
@@ -175,6 +189,7 @@ public static class ReportExport
         Add("work center", p.WorkCenter);
         Add("machine", p.Machine);
         Add("part", p.PartNumber);
+        Add("shift", p.Shift);
         Add("status", p.Status);
         Add("contains", p.Search);
         Add("grouped by", p.GroupBy);

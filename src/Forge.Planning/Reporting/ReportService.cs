@@ -38,6 +38,31 @@ internal sealed class ReportRun
 
     public required DateTimeZone Zone { get; init; }
 
+    public IReadOnlyList<ShiftInfo> Shifts { get; init; } = [];
+
+    public DateTimeOffset AtSite(DateOnly date, TimeOnly time) =>
+        Zone.AtLeniently(new LocalDateTime(date.Year, date.Month, date.Day, time.Hour, time.Minute)).ToDateTimeOffset().ToUniversalTime();
+
+    /// <summary>The shift whose occurrence covers an instant (a shift may run past midnight), or null.</summary>
+    public string? ShiftOf(DateTimeOffset at)
+    {
+        var day = Local(at);
+        foreach (var date in new[] { day, day.AddDays(-1) })
+        {
+            var iso = ((int)date.DayOfWeek + 6) % 7 + 1;
+            foreach (var s in Shifts.Where(s => s.Days.Contains(iso)).OrderBy(s => s.Start).ThenBy(s => s.Code, StringComparer.Ordinal))
+            {
+                var start = AtSite(date, s.Start);
+                if (at >= start && at < start.AddMinutes(s.DurationMinutes))
+                {
+                    return s.Code;
+                }
+            }
+        }
+
+        return null;
+    }
+
     public DateOnly Local(DateTimeOffset at)
     {
         var d = Instant.FromDateTimeOffset(at).InZone(Zone).Date;
@@ -119,7 +144,7 @@ public sealed class ReportService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
         var todayLocal = Instant.FromDateTimeOffset(now).InZone(zone).Date;
         var today = new DateOnly(todayLocal.Year, todayLocal.Month, todayLocal.Day);
 
-        var (fromDate, toDate) = Period(parameters, today, spec.Entry.MaxDays);
+        var (fromDate, toDate) = Period(parameters, today, spec.Entry.MaxDays, spec.Entry.Forward);
         DateTimeOffset StartOf(DateOnly d) => zone.AtStartOfDay(new LocalDate(d.Year, d.Month, d.Day)).ToDateTimeOffset().ToUniversalTime();
         var run = new ReportRun
         {
@@ -133,6 +158,7 @@ public sealed class ReportService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
             Now = now,
             Today = today,
             Zone = zone,
+            Shifts = await uow.Store<IResourcesLookup>().ListShiftsAsync(ct),
         };
 
         var body = await spec.Build(run, ct);
@@ -155,7 +181,7 @@ public sealed class ReportService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
             columns, rows, groupBy, groups, total, spec.Ratio, summary, spec.Entry.Basis, body.Sources);
     }
 
-    internal static (DateOnly From, DateOnly To) Period(ReportParameters p, DateOnly today, int maxDays)
+    internal static (DateOnly From, DateOnly To) Period(ReportParameters p, DateOnly today, int maxDays, bool forward = false)
     {
         DateOnly from, to;
         if (p.LastDays is { } days)
@@ -165,7 +191,12 @@ public sealed class ReportService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
                 throw new CommandRejectedException("invalid_period", $"The last-days window must be 1 to {maxDays} days.");
             }
 
-            (from, to) = (today.AddDays(1 - days), today);
+            (from, to) = forward ? (today, today.AddDays(days - 1)) : (today.AddDays(1 - days), today);
+        }
+        else if (forward)
+        {
+            from = p.From ?? today;
+            to = p.To ?? from.AddDays(89);
         }
         else
         {

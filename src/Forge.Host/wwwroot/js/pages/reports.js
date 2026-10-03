@@ -6,7 +6,7 @@ import { formModal } from '../forms.js';
 // Reports (spec §54) and Horizon history (§63–65). Every report row keeps the records it came from;
 // they show as links. Exports are made by the server from the same result, so CSV/XLSX match the screen.
 
-const FILTER_KEYS = ['from', 'to', 'lastDays', 'programId', 'workCenter', 'machine', 'partNumber', 'status', 'search', 'groupBy'];
+const FILTER_KEYS = ['from', 'to', 'lastDays', 'programId', 'workCenter', 'machine', 'partNumber', 'shift', 'status', 'search', 'groupBy'];
 const TONE = {
   'On plan': 'ok', Completed: 'ok', 'On time': 'ok', Delivered: 'ok', Pass: 'ok', Closed: 'none', Verified: 'ok', Resolved: 'ok',
   Short: 'warn', CompletedLate: 'warn', Late: 'warn', 'Partly delivered': 'warn', AtRisk: 'warn', Investigating: 'warn', Open: 'info',
@@ -15,7 +15,7 @@ const TONE = {
 const STATUS_COLUMNS = new Set(['status', 'state', 'result']);
 
 /** Where a source record opens in Forge. */
-function traceLink(t) {
+export function traceLink(t) {
   const [kind, ...rest] = t.split(':');
   const id = rest.join(':');
   const route = {
@@ -23,13 +23,13 @@ function traceLink(t) {
     machine: '#/maintenance', downtime: '#/maintenance?tab=log', 'work-order': '#/maintenance?tab=orders',
     demand: '#/material-plan?tab=demand', delivery: '#/programs', contract: '#/programs', program: `#/programs/${id}`,
     shipment: '#/shipping', ncr: '#/quality?tab=ncr', inspection: '#/quality', transaction: '#/inventory?tab=ledger',
-    po: '#/procurement', request: '#/inventory', audit: '#/settings',
+    po: '#/procurement', request: '#/inventory', audit: '#/settings', person: '#/workforce', qualification: '#/workforce',
   }[kind];
-  const label = kind === 'program' ? 'program' : `${kind.replace('-', ' ')} ${id}`;
+  const label = kind === 'program' ? 'program' : kind === 'person' ? 'person' : `${kind.replace('-', ' ')} ${id}`;
   return route ? `<a href="${route}" title="${esc(t)}">${esc(label)}</a>` : esc(t);
 }
 
-function cellHtml(col, v) {
+export function cellHtml(col, v) {
   if (v === null || v === undefined || v === '') return '<span class="muted">—</span>';
   switch (col.kind) {
     case 'Date': return esc(fmtDate(v));
@@ -52,8 +52,8 @@ function queryOf(params) {
 
 export async function reportsPage(page, ctx) {
   const view = ctx.query.get('view') ?? (ctx.query.get('report') || ctx.query.get('definition') ? 'run' : 'catalog');
-  const [catalog, definitions, programs] = await Promise.all([tryGet('/api/reports/catalog'), tryGet('/api/reports/definitions'), tryGet('/api/programs/')]);
-  const state = { catalog: catalog.data ?? [], definitions: definitions.data ?? [], programs: programs.data?.map(p => p.program ?? p) ?? [] };
+  const [catalog, definitions, programs, resources] = await Promise.all([tryGet('/api/reports/catalog'), tryGet('/api/reports/definitions'), tryGet('/api/programs/'), tryGet('/api/resources/')]);
+  const state = { catalog: catalog.data ?? [], definitions: definitions.data ?? [], programs: programs.data?.map(p => p.program ?? p) ?? [], shifts: resources.data?.shifts ?? [] };
   const canHistory = ctx.me.roles.some(r => ['Planner', 'Supervisor', 'ManufacturingEngineer', 'ProgramManager', 'MaintenancePlanner'].includes(r));
 
   const tabs = [['catalog', 'Standard reports'], ['saved', `Saved${state.definitions.length ? ` (${state.definitions.length})` : ''}`]];
@@ -122,7 +122,7 @@ function savedView(page, ctx, state, head) {
 function describe(p, state) {
   const parts = [];
   if (p.programId) parts.push(`program ${state.programs.find(x => x.programId === p.programId)?.code ?? '…'}`);
-  for (const [k, l] of [['workCenter', 'work center'], ['machine', 'machine'], ['partNumber', 'part'], ['status', 'status'], ['search', 'contains']]) if (p[k]) parts.push(`${l} ${p[k]}`);
+  for (const [k, l] of [['workCenter', 'work center'], ['machine', 'machine'], ['partNumber', 'part'], ['shift', 'shift'], ['status', 'status'], ['search', 'contains']]) if (p[k]) parts.push(`${l} ${p[k]}`);
   if (p.groupBy) parts.push(`by ${p.groupBy}`);
   return parts.join(' · ');
 }
@@ -149,11 +149,12 @@ async function runView(page, ctx, state, head, entry, params, definition) {
       <p class="muted" style="margin:0 0 10px">${esc(entry.description)}</p>
       <form id="filters" class="report-filters">
         ${input('from', 'From', 'type="date"')}${input('to', 'To', 'type="date"')}
-        ${input('lastDays', 'Or last N days', `type="number" min="1" max="${entry.maxDays}" placeholder="—"`)}
+        ${input('lastDays', entry.forward ? 'Or next N days' : 'Or last N days', `type="number" min="1" max="${entry.maxDays}" placeholder="—"`)}
         ${has('programId') ? `<div class="field"><label>Program</label><select class="input" name="programId"><option value="">All you can see</option>${state.programs.map(p => `<option value="${p.programId}" ${params.programId === p.programId ? 'selected' : ''}>${esc(p.code)}</option>`).join('')}</select></div>` : ''}
         ${has('workCenter') ? input('workCenter', 'Work center') : ''}
         ${has('machine') ? input('machine', 'Machine') : ''}
         ${has('partNumber') ? input('partNumber', 'Part') : ''}
+        ${has('shift') ? `<div class="field"><label>Shift</label><select class="input" name="shift"><option value="">Any</option>${state.shifts.map(x => `<option value="${esc(x.code)}" ${params.shift === x.code ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>` : ''}
         ${statuses.length ? `<div class="field"><label>Status</label><select class="input" name="status"><option value="">Any</option>${statuses.map(s => `<option ${params.status === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>` : ''}
         ${input('search', 'Contains')}
         <div class="field"><label>Group by</label><select class="input" name="groupBy"><option value="">No grouping</option>${entry.groupBy.map(g => `<option value="${g}" ${params.groupBy === g ? 'selected' : ''}>${esc(col(g)?.title ?? g)}</option>`).join('')}</select></div>
@@ -199,7 +200,7 @@ async function runView(page, ctx, state, head, entry, params, definition) {
   });
 }
 
-function authHeaders() {
+export function authHeaders() {
   const h = {};
   if (session.config?.authMode === 'Development' && session.subject) h['X-Forge-Dev-Subject'] = session.subject;
   if (session.token) h.Authorization = `Bearer ${session.token}`;

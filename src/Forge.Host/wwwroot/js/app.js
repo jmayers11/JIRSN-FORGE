@@ -9,7 +9,6 @@ import { maintenancePage } from './pages/maintenance.js';
 import { timelinePage } from './pages/timeline.js';
 import { workforcePage } from './pages/workforce.js';
 import { settingsPage } from './pages/settings.js';
-import { plannedPage } from './pages/planned.js';
 import { shopFloorPage } from './pages/shopfloor.js';
 import { plantSetupPage } from './pages/plantsetup.js';
 import { inventoryPage } from './pages/inventory.js';
@@ -19,6 +18,7 @@ import { qualityPage } from './pages/quality.js';
 import { shippingPage } from './pages/shipping.js';
 import { programsPage } from './pages/programs.js';
 import { reportsPage } from './pages/reports.js';
+import { analystPage } from './pages/analyst.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
@@ -38,7 +38,7 @@ const NAV = [
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
   { route: 'shipping', label: 'Shipping', icon: 'suppliers', page: shippingPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
-  { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: plannedPage('analyst'), badge: '<span class="badge">AI</span>' },
+  { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: analystPage },
 ];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
 

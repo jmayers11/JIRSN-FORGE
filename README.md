@@ -4,7 +4,7 @@ A manufacturing operations platform that answers whether work can actually happe
 equipment, materials, qualifications and safety conditions available, at the time it is needed.
 
 Architecture: **JIRSN Forge Software Architecture v0.1** (approved 2026-09-30). The phase plan is
-in section 31. Implemented so far: Phases 1–8 — kernel, readiness, engineering and orders, capacity and scheduling, shop floor, materials and MRP, quality and shipping, programs and maintenance, and reporting with Horizon history.
+in section 31. Implemented so far: Phases 1–9 — kernel, readiness, engineering and orders, capacity and scheduling, shop floor, materials and MRP, quality and shipping, programs and maintenance, reporting with Horizon history, and Forge Analyst.
 
 ## What Phase 1 contains
 
@@ -130,6 +130,22 @@ work and PM compliance, inventory transactions. Each report needs read access to
 and program-segregated rows appear only for people with access to the program.
 See `docs/adr/0010-phase-8-insight-and-horizon-history.md`.
 
+## What Phase 9 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Native language parser | `src/Forge.Planning/Analyst/QueryParser.cs` | Deterministic intents, entities, periods, shifts, grouping and output; says what it understood |
+| Forge Analyst | `src/Forge.Planning/Analyst/AnalystService.cs` | Order status, late orders, machine blockers, unavailable machines, qualified people, what changed, affected orders, reports |
+| Scenarios | same | What-if machine or person unavailable: two scheduler runs compared, nothing saved |
+| Brief me | `src/Forge.Planning/Analyst/BriefService.cs` | Shift brief from records the reader may see |
+| Optional AI | `src/Forge.Host/Api/AnthropicNarrator.cs` | Off by default; restates finished answers only |
+| Screens | `src/Forge.Host/wwwroot/js/pages/analyst.js` | Ask box, suggestions, understood line, report confirmation, briefs |
+
+Forge Analyst answers with the asker's own access: an answer that needs data they cannot read is
+"Not authorized". To enable an AI summary, set `Forge:Analyst:Provider` to `anthropic` and
+`Forge:Analyst:ApiKey` (and optionally `Forge:Analyst:Model`) in configuration; Forge works fully without it.
+See `docs/adr/0011-phase-9-forge-analyst.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -206,12 +222,15 @@ packages), in the JIRSN Forge identity: Forge Orange `#F97316`, Red Tail `#C2410
   primary constraint; KPI tiles; work center status; planned output; top issues. Window: -24h,
   Now (8 h), +24h, +3d, +1w. Click any card or row for the evidence behind it.
 - **Horizon**: the schedule as a timeline per machine, with downtime and why each operation starts when it does.
-- **Production Orders**, **Scheduling** (propose, approve, work constraints), **Work Centers**
-  (shifts, executable capacity), **Workforce** (qualified labor hours), **Maintenance**, **Settings**.
-- Inventory, Procurement, Quality, Shipping, Reports and Forge Analyst say which phase brings them.
+- **Programs**, **Production Orders**, **Scheduling** (propose, approve, work constraints), **Material Plan**,
+  **Work Centers** (shifts, executable capacity), **Shop Floor**, **Plant Setup**, **Workforce**
+  (qualified labor hours), **Inventory**, **Procurement**, **Quality**, **Maintenance**, **Shipping**,
+  **Settings**.
+- **Reports**: standard reports, saved reports, exports and What changed?
+- **Forge Analyst**: plain-language questions and Brief me, answered from Forge's records.
 
-Every figure comes from the API. Metrics Forge cannot measure yet (production attainment, actual
-output, material constraint) are shown as *Not yet measured* with the reason, never as numbers.
+Every figure comes from the API. A metric Forge cannot measure is shown as *Not yet measured* with
+the reason, never as a number.
 Phones get the same pages with a collapsible menu and a Today's Focus / My Assignments panel.
 
 Sign-in: in Development the sign-in page takes an Employee ID (no password). With
@@ -307,3 +326,12 @@ body identifies the person. Badge numbers and PINs are never stored or logged.
 | POST | `/api/reports/definitions` `{definitionId?, name, reportId, parameters, shared}` | the report's read permission; owner only for changes |
 | POST | `/api/reports/definitions/{id}/delete` | `planning.reports.save`; owner only |
 | GET | `/api/planning/history/compare?at1=&at2=&includeUnchanged=` | `planning.schedule.read` (program-filtered; audit evidence with `kernel.audit.read`) |
+
+## Phase 9 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/analyst/status` | `planning.analyst.use` |
+| POST | `/api/analyst/interpret` `{question}` | `planning.analyst.use` |
+| POST | `/api/analyst/ask` `{question, narrate?}` | `planning.analyst.use`, plus the read permission each answer needs |
+| GET | `/api/analyst/brief?shift=` | `planning.analyst.use`; sections by read permission |

@@ -17,7 +17,10 @@ public sealed class Phase8Tests(PostgresFixture postgres)
 {
     private const string Sarah = "B-SARAH-0001";
 
-    private static string Day(int fromToday) => DateTime.UtcNow.AddDays(fromToday).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    /// <summary>A date at the plant (the sample site is in New York): report periods are site dates.</summary>
+    private static string Day(int fromToday) =>
+        NodaTime.Instant.FromDateTimeOffset(DateTimeOffset.UtcNow).InZone(NodaTime.DateTimeZoneProviders.Tzdb["America/New_York"]).Date.PlusDays(fromToday)
+            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     private static async Task<JsonElement> Get(HttpClient client, string url)
     {
@@ -130,7 +133,7 @@ public sealed class Phase8Tests(PostgresFixture postgres)
 
         // Grouping is limited to what the report offers; the period to what it allows.
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await GetStatus(planner, "/api/reports/production-output?groupBy=reason")).Status);
-        Assert.Contains("invalid_period", (await GetStatus(planner, $"/api/reports/production-output?from={Day(-100)}&to={Day(0)}")).Body, StringComparison.Ordinal);
+        Assert.Contains("invalid_period", (await GetStatus(planner, $"/api/reports/production-output?from={Day(-200)}&to={Day(0)}")).Body, StringComparison.Ordinal);
         Assert.Contains("invalid_period", (await GetStatus(planner, $"/api/reports/downtime?from={Day(1)}&to={Day(0)}")).Body, StringComparison.Ordinal);
 
         // Downtime: the open outage counts up to now; filters narrow by machine.
@@ -167,7 +170,10 @@ public sealed class Phase8Tests(PostgresFixture postgres)
         Assert.Equal(HttpStatusCode.OK, csv.StatusCode);
         Assert.Equal("text/csv", csv.Content.Headers.ContentType?.MediaType);
         var text = Encoding.UTF8.GetString(await csv.Content.ReadAsByteArrayAsync()).TrimStart('﻿');
-        var lines = text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        var all = text.Split("\r\n");
+        Assert.StartsWith("Report,Plan vs actual output", all[0], StringComparison.Ordinal);
+        Assert.Contains(all, l => l.StartsWith("Generated,", StringComparison.Ordinal));
+        var lines = all.SkipWhile(l => l.Length > 0).Skip(1).Where(l => l.Length > 0).ToArray();
         Assert.StartsWith("Date,Order,Op,Work center,Part,Planned qty", lines[0], StringComparison.Ordinal);
         Assert.EndsWith("Source records", lines[0], StringComparison.Ordinal);
         Assert.Contains(lines, l => l.Contains($"order:{plain}", StringComparison.Ordinal) && l.Contains(",9,1,", StringComparison.Ordinal));

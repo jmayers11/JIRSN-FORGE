@@ -38,6 +38,15 @@ builder.Services.AddForgeQuality();
 builder.Services.AddForgeProcurement();
 builder.Services.AddForgeInventory();
 builder.Services.AddForgePlanning();
+
+// Optional generative AI for Forge Analyst (off by default; Forge works fully without it).
+var narratorOptions = builder.Configuration.GetSection("Forge:Analyst").Get<Forge.Host.Api.AnalystNarratorOptions>() ?? new();
+if (string.Equals(narratorOptions.Provider, "anthropic", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(narratorOptions.ApiKey))
+{
+    builder.Services.AddHttpClient("forge-analyst");
+    builder.Services.AddSingleton<Forge.Planning.Analyst.IAnalystNarrator>(sp => new Forge.Host.Api.AnthropicNarrator(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("forge-analyst"), narratorOptions, sp.GetRequiredService<ILogger<Forge.Host.Api.AnthropicNarrator>>()));
+}
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
 {
@@ -136,6 +145,7 @@ app.MapMaterialsEndpoints();
 app.MapQualityEndpoints();
 app.MapProgramsEndpoints();
 app.MapReportsEndpoints();
+app.MapAnalystEndpoints();
 
 await app.RunAsync();
 

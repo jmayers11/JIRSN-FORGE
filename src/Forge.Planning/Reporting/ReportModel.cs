@@ -35,11 +35,13 @@ public sealed record ReportCatalogEntry(
     IReadOnlyList<string> GroupBy,
     string? DefaultGroupBy,
     int MaxDays,
-    string Basis);
+    string Basis,
+    bool Forward = false);
 
 /// <summary>
 /// What to run. The period is site-local dates, both inclusive. <see cref="LastDays"/> (used by saved
-/// definitions) means "the last N days up to today" and overrides From and To.
+/// definitions) means "the last N days up to today" (for a forward-looking report, "the next N days from
+/// today") and overrides From and To.
 /// </summary>
 public sealed record ReportParameters(
     DateOnly? From = null,
@@ -51,7 +53,11 @@ public sealed record ReportParameters(
     string? PartNumber = null,
     string? Status = null,
     string? Search = null,
-    string? GroupBy = null);
+    string? GroupBy = null)
+{
+    /// <summary>A shift code, for reports that can be limited to one shift.</summary>
+    public string? Shift { get; init; }
+}
 
 public sealed record ReportResult(
     string ReportId,

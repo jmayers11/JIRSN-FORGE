@@ -178,7 +178,7 @@ public sealed class HorizonHistoryService(IKernelUnitOfWorkFactory unitOfWork, I
         return comparison with { Orders = orders, AuditIncluded = true };
     }
 
-    private static List<OperationChange> CompareOperations(List<ScheduledOperation> before, List<ScheduledOperation> after)
+    internal static List<OperationChange> CompareOperations(List<ScheduledOperation> before, List<ScheduledOperation> after)
     {
         var changes = new List<OperationChange>();
         var a = before.ToDictionary(o => o.Sequence);
@@ -243,7 +243,7 @@ public sealed class HorizonHistoryService(IKernelUnitOfWorkFactory unitOfWork, I
         return changes;
     }
 
-    private static OrderChange Describe(long number, ScheduledOrder? a, ScheduledOrder? b, List<OperationChange> ops, List<HistoryEvidence> evidence)
+    internal static OrderChange Describe(long number, ScheduledOrder? a, ScheduledOrder? b, List<OperationChange> ops, List<HistoryEvidence> evidence)
     {
         var part = (b ?? a)!.PartNumber;
         decimal? shift = a?.ProjectedCompletion is { } p1 && b?.ProjectedCompletion is { } p2 ? ReportRun.Hours(p2 - p1) : null;
