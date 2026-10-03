@@ -293,6 +293,11 @@ public sealed class HorizonHistoryService(IKernelUnitOfWorkFactory unitOfWork, I
         {
             lines.Add("Largest move: " + driver.Explanation);
         }
+        else if (ops.Count > 0)
+        {
+            // Nothing moved in time, but machines or binding constraints did: say which.
+            lines.AddRange(ops.Take(2).Select(o => o.Explanation));
+        }
 
         if (evidence.Count > 0)
         {
@@ -408,13 +413,14 @@ public sealed class HorizonHistoryService(IKernelUnitOfWorkFactory unitOfWork, I
     };
 
     private static string Binding(ScheduledOperation op) =>
-        string.IsNullOrWhiteSpace(op.BindingDetail) ? op.BindingConstraint : $"{op.BindingConstraint}: {op.BindingDetail}";
+        string.IsNullOrWhiteSpace(op.BindingDetail) ? op.BindingConstraint : $"{op.BindingConstraint}: {op.BindingDetail.TrimEnd('.', ' ')}";
 
     private static string Status(ScheduledOrder o) => o.Status switch
     {
         DeliveryStatus.OnTime => "on time",
         DeliveryStatus.AtRisk => "at risk",
         DeliveryStatus.Late => "projected late",
+        DeliveryStatus.Unschedulable => "cannot be scheduled",
         _ => o.Status.ToString(),
     };
 
