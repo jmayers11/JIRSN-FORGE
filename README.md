@@ -173,6 +173,20 @@ V2 extends Forge without replacing it (see the V2 architecture impact review and
 
 See `docs/adr/0013-v2-2-controlled-documents.md`.
 
+## What V2.3 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Built to | `DocumentService.Applicability.cs` | Item revisions list their documents (whole item or one operation, optionally a pinned revision) |
+| Applicability rules | same | Program, customer, due-date range, or one order under a deviation; withdrawn, never deleted |
+| Applicability engine | `src/Forge.Planning/Engines/ApplicabilityEngine.cs` | Pure; date effectivity by default; disagreeing rules → requires review |
+| Order documentation | `src/Forge.Planning/DocumentationService.cs` | Released orders compared with what applied at release; reissue after the floor has the new revision |
+| Readiness | `OrderReadinessEngine` | Documentation dimension where the item class is enforced; otherwise "not evaluated" |
+| Stock and quality | Inventory, Quality | Revision on receipts, production receipts and lots; inspection plans per revision |
+| Reports | `documentation-status`, `stock-by-revision` | Mismatches, missing and unreleased documents; stock with no recorded revision |
+
+See `docs/adr/0014-v2-3-applicability.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -400,3 +414,17 @@ body identifies the person. Badge numbers and PINs are never stored or logged.
 | POST | `/api/engineering/attachment-links/{linkId}/detach` `{reason}` | `engineering.documents.attach` |
 
 Record types: `ProductionOrder`, `PurchaseOrder`, `WorkOrder`, `Ncr`, `Supplier`, `Item`, `ItemRevision` (`PART:REV`), `Program`, `WorkCenter`.
+
+## V2.3 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET / POST | `/api/engineering/items/{part}/revisions/{rev}/documents` `{documentNumber, documentRevision?, operationSequence?, note?, reason?}` | `engineering.read` / `engineering.documents.manage` (reason on released revisions) |
+| POST | `/api/engineering/document-requirements/{id}/remove` `{reason}` | `engineering.documents.manage` |
+| GET / POST | `/api/engineering/documents/{number}/rules` `{revision, condition, programId?, customer?, dueFrom?, dueTo?, orderNumber?, reference?, reason}` | `engineering.read` / `engineering.documents.release` |
+| POST | `/api/engineering/applicability-rules/{id}/withdraw` `{reason}` | `engineering.documents.release` |
+| GET / POST | `/api/engineering/documentation-policy`, `/api/engineering/documentation-policy/{itemClass}` `{enforced, reason}` | `engineering.read` / `engineering.documents.release` |
+| POST | `/api/engineering/orders/{n}/reissue-documentation` `{reason}` | `execution.orders.release` |
+| GET | `/api/planning/applicability?order=` or `?po=` | `execution.orders.read` or `procurement.read`, and `engineering.read` |
+
+Receipts take an optional `revision`; inspection plans take an optional `revision` (and `?revision=` to remove one).

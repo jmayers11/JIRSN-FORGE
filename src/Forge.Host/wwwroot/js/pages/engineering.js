@@ -103,6 +103,7 @@ async function itemDetail(page, ctx, partNumber) {
         </tbody></table></div>`}
     </section>`;
 
+  appendRequirements(page, ctx, item);
   appendAttachments(page, { type: 'Item', id: item.partNumber, me, title: 'Documents', note: 'Drawings, specifications and datasheets for this item. Released revisions apply; reference files never do.' });
 
   $('#classify', page)?.addEventListener('click', () => formModal({
@@ -190,6 +191,7 @@ async function documentList(page, ctx) {
       </tbody></table></div>`}
     </section>`;
   wireTabs(page);
+  appendEnforcement(page, ctx);
   $('#authority-filter', page).onchange = e => { location.hash = e.target.value ? `#/engineering/documents?authority=${e.target.value}` : '#/engineering/documents'; };
   $$('[data-doc]', page).forEach(r => r.addEventListener('click', () => { location.hash = `#/engineering/documents/${encodeURIComponent(r.dataset.doc)}`; }));
   $('#new-doc', page)?.addEventListener('click', async () => {
@@ -267,6 +269,7 @@ async function documentDetail(page, ctx, number) {
       </tbody></table></div>`}
     </section>`;
 
+  appendRules(page, ctx, d);
   $$('[data-file]', page).forEach(b => b.addEventListener('click', () => {
     const [rev, name] = b.dataset.file.split('|');
     download(fileUrl(d.number, rev), name).catch(e => toast(e.message, true));
@@ -330,4 +333,148 @@ async function documentDetail(page, ctx, number) {
     formModal({ title: `${text[0]}: ${d.number} ${r.revision}`, detail: text[1], reasonRequired: text[2], confirmLabel: text[0], fields: [] },
       (_, reason) => command(`${url}/${act}`, {}, reason), reload);
   }));
+}
+
+// ── What each item revision is built to (V2.3) ───────────────────────────────────────────────────
+async function appendRequirements(page, ctx, item) {
+  const section = document.createElement('section');
+  section.className = 'panel';
+  page.append(section);
+  const revs = await tryGet(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions`);
+  if (revs.error) { section.innerHTML = `<header><h2>Built to</h2></header>${errorBlock(revs.error, 'revisions')}`; return; }
+  const list = revs.data;
+  if (!list.length) { section.innerHTML = `<header><h2>Built to</h2></header>${emptyBlock('No revisions', 'Create a revision to list the documents it is built to.')}`; return; }
+  const now = new Date();
+  const inForce = list.find(r => r.status === 'Released' && new Date(r.effectiveFrom) <= now && (!r.effectiveTo || new Date(r.effectiveTo) > now));
+  let selected = inForce?.revision ?? list[list.length - 1].revision;
+  const manager = can(ctx.me, ...MANAGERS);
+
+  async function render() {
+    const rev = list.find(r => r.revision === selected);
+    const [reqs, detail] = await Promise.all([
+      tryGet(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions/${encodeURIComponent(selected)}/documents?history=true`),
+      tryGet(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions/${encodeURIComponent(selected)}`),
+    ]);
+    const rows = reqs.data ?? [];
+    section.innerHTML = `
+      <header><h2>Built to</h2><span class="spacer"></span>
+        <select class="select" id="req-rev">${list.map(r => `<option value="${esc(r.revision)}" ${r.revision === selected ? 'selected' : ''}>Rev ${esc(r.revision)} (${esc(r.status)}${r === inForce ? ', in force' : ''})</option>`).join('')}</select>
+        ${manager ? '<button class="btn small primary" id="add-req">Add a document</button>' : ''}</header>
+      <div class="muted" style="margin-bottom:8px">The documents rev ${esc(selected)} is built to. With no revision named, the revision that applies is used (date effectivity, then applicability rules).${rev?.status === 'Released' ? ' This revision is released: changes need a reason.' : ''}</div>
+      ${reqs.error ? errorBlock(reqs.error, 'requirements') : !rows.length ? emptyBlock('No documents listed', 'Add the drawings, specifications and work instructions this revision is built to.') : `
+      <div class="table-wrap"><table class="table"><thead><tr><th>Document</th><th>Revision</th><th>Scope</th><th>Added</th><th>Removed</th><th></th></tr></thead><tbody>
+      ${rows.map(q => `<tr class="${q.removedAt ? 'retired' : ''}"><td><a href="#/engineering/documents/${encodeURIComponent(q.documentNumber)}"><b>${esc(q.documentNumber)}</b></a>${q.note ? `<div class="faint">${esc(q.note)}</div>` : ''}</td>
+        <td>${esc(q.documentRevision ?? 'The revision that applies')}</td><td>${q.operationSequence ? `Operation ${q.operationSequence}` : 'Whole item'}</td>
+        <td>${esc(who(q.addedBy))} <span class="faint">${esc(fmtDateTime(q.addedAt))}</span></td>
+        <td>${q.removedAt ? `${esc(who(q.removedBy))} <span class="faint">${esc(fmtDateTime(q.removedAt))}: ${esc(q.removedReason)}</span>` : '—'}</td>
+        <td>${!q.removedAt && manager ? `<button class="btn small ghost" data-remove-req="${q.requirementId}">Remove</button>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>`}`;
+    $('#req-rev', section).onchange = e => { selected = e.target.value; render(); };
+    $$('[data-remove-req]', section).forEach(b => b.addEventListener('click', () => formModal({
+      title: 'Remove document requirement', detail: 'The revision is no longer built to this document. The requirement stays in its history.', reasonRequired: true, confirmLabel: 'Remove', fields: [],
+    }, (_, reason) => command(`/api/engineering/document-requirements/${b.dataset.removeReq}/remove`, {}, reason), render)));
+    $('#add-req', section)?.addEventListener('click', async () => {
+      const docs = (await tryGet('/api/engineering/documents')).data ?? [];
+      const controlled = docs.filter(d => d.authority !== 'Reference');
+      if (!controlled.length) { toast('Create the document first in Engineering → Documents.', true); return; }
+      const ops = (detail.data?.routing ?? []).map(o => [o.sequence, `Op ${o.sequence} — ${o.description}`]);
+      formModal({
+        title: `Add a document to ${item.partNumber} rev ${selected}`,
+        detail: 'Name a revision only when this item revision needs exactly that one; otherwise the revision that applies is used.',
+        reasonRequired: rev?.status === 'Released', confirmLabel: 'Add',
+        fields: [
+          { name: 'documentNumber', label: 'Document', type: 'select', blank: 'Choose…', required: true, options: controlled.map(d => [d.number, `${d.number} — ${d.title}`]) },
+          { name: 'documentRevision', label: 'Document revision (optional)', code: true },
+          { name: 'operationSequence', label: 'Scope', type: 'select', blank: 'Whole item', options: ops },
+          { name: 'note', label: 'Note', type: 'textarea' },
+        ],
+      }, (v, reason) => command(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions/${encodeURIComponent(selected)}/documents`,
+        { ...v, operationSequence: v.operationSequence ? Number(v.operationSequence) : null }, reason), render);
+    });
+  }
+
+  await render();
+}
+
+// ── Applicability rules and enforcement (V2.3) ───────────────────────────────────────────────────
+const CONDITION_LABEL = { Program: 'Program', Customer: 'Customer', DueDate: 'Due date range', Order: 'One order (deviation)' };
+
+async function appendRules(page, ctx, d) {
+  const section = document.createElement('section');
+  section.className = 'panel';
+  page.append(section);
+  const approver = can(ctx.me, ...APPROVERS);
+  let history = false;
+
+  async function render() {
+    const res = await tryGet(`/api/engineering/documents/${encodeURIComponent(d.number)}/rules${history ? '?history=true' : ''}`);
+    const rules = res.data ?? [];
+    section.innerHTML = `
+      <header><h2>Applicability rules</h2><span class="spacer"></span>
+        <label class="opt faint"><input type="checkbox" data-history ${history ? 'checked' : ''}> Show withdrawn</label>
+        ${approver && d.authority !== 'Reference' ? '<button class="btn small primary" id="add-rule">Add a rule</button>' : ''}</header>
+      <div class="muted" style="margin-bottom:8px">Without a rule, the revision in force on the date applies. A rule sets a revision for some orders; a deviation for one order wins. Rules that disagree are never guessed: the order shows "requires review".</div>
+      ${res.error ? errorBlock(res.error, 'rules') : !rules.length ? emptyBlock('No rules', 'Date effectivity decides which revision applies.') : `
+      <div class="table-wrap"><table class="table"><thead><tr><th>Rule</th><th>Revision</th><th>When</th><th>Added</th><th>Withdrawn</th><th></th></tr></thead><tbody>
+      ${rules.map(r => `<tr class="${r.withdrawnAt ? 'retired' : ''}"><td>${r.ruleId}</td><td><b>${esc(r.revision)}</b></td>
+        <td>${esc(CONDITION_LABEL[r.condition])}: ${esc(r.condition === 'Customer' ? r.customer : r.condition === 'DueDate' ? `${r.dueFrom ? fmtDate(r.dueFrom) : '…'} – ${r.dueTo ? fmtDate(r.dueTo) : '…'}` : r.condition === 'Order' ? `order ${r.orderNumber} under ${r.reference}` : 'program')}${r.note ? `<div class="faint">${esc(r.note)}</div>` : ''}</td>
+        <td>${esc(who(r.createdBy))} <span class="faint">${esc(fmtDateTime(r.createdAt))}</span></td>
+        <td>${r.withdrawnAt ? `${esc(who(r.withdrawnBy))} <span class="faint">${esc(fmtDateTime(r.withdrawnAt))}: ${esc(r.withdrawnReason)}</span>` : '—'}</td>
+        <td>${!r.withdrawnAt && approver ? `<button class="btn small ghost" data-withdraw-rule="${r.ruleId}">Withdraw</button>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>`}`;
+    $('[data-history]', section).onchange = e => { history = e.target.checked; render(); };
+    $$('[data-withdraw-rule]', section).forEach(b => b.addEventListener('click', () => formModal({
+      title: `Withdraw rule ${b.dataset.withdrawRule}`, detail: 'Orders it selected go back to date effectivity (or another rule). It stays in the history.', reasonRequired: true, confirmLabel: 'Withdraw', fields: [],
+    }, (_, reason) => command(`/api/engineering/applicability-rules/${b.dataset.withdrawRule}/withdraw`, {}, reason), render)));
+    $('#add-rule', section)?.addEventListener('click', async () => {
+      const programs = (await tryGet('/api/programs/')).data ?? [];
+      const revisions = d.revisions.filter(r => ['Released', 'Applicable', 'Superseded'].includes(r.status)).map(r => [r.revision, `Rev ${r.revision} (${r.status})`]);
+      if (!revisions.length) { toast('Release a revision first; a rule only selects a released revision.', true); return; }
+      formModal({
+        title: `Add an applicability rule to ${d.number}`, detail: 'Fill in only the field for the condition you choose.', reasonRequired: true, confirmLabel: 'Add rule',
+        fields: [
+          { name: 'revision', label: 'Revision that applies', type: 'select', options: revisions, required: true },
+          { name: 'condition', label: 'When', type: 'select', value: 'Program', options: Object.entries(CONDITION_LABEL) },
+          { name: 'programId', label: 'Program', type: 'select', blank: '—', options: programs.map(p => [p.programId, `${p.code} — ${p.name}`]) },
+          { name: 'customer', label: 'Customer' },
+          { name: 'dueFrom', label: 'Due from', type: 'date' },
+          { name: 'dueTo', label: 'Due to', type: 'date' },
+          { name: 'orderNumber', label: 'Order', type: 'number' },
+          { name: 'reference', label: 'Deviation or concession number (order rules)' },
+          { name: 'note', label: 'Note', type: 'textarea' },
+        ],
+      }, (v, reason) => command(`/api/engineering/documents/${encodeURIComponent(d.number)}/rules`, v, reason), render);
+    });
+  }
+
+  await render();
+}
+
+async function appendEnforcement(page, ctx) {
+  const section = document.createElement('section');
+  section.className = 'panel';
+  page.append(section);
+  const approver = can(ctx.me, ...APPROVERS);
+  const render = async () => {
+    const res = await tryGet('/api/engineering/documentation-policy');
+    const enforced = new Map((res.data ?? []).map(p => [p.itemClass, p]));
+    section.innerHTML = `
+      <header><h2>Documentation in readiness</h2></header>
+      <div class="muted" style="margin-bottom:8px">Per item class: when enforced, a mismatched, missing or unreleased document stops the operation, and rules that disagree hold it for review. When not enforced, documentation is shown on orders and listed as not evaluated — never as passed.</div>
+      ${res.error ? errorBlock(res.error, 'policy') : `
+      <div class="table-wrap"><table class="table"><thead><tr><th>Item class</th><th>Documentation</th><th>Changed</th><th></th></tr></thead><tbody>
+      ${Object.entries(CLASS_LABEL).map(([k, l]) => {
+        const p = enforced.get(k);
+        return `<tr><td>${esc(l)}</td><td>${p?.enforced ? '<span class="pill info">Blocks readiness</span>' : '<span class="pill none">Not enforced</span>'}</td>
+          <td>${p ? `${esc(who(p.changedBy))} <span class="faint">${esc(fmtDateTime(p.changedAt))}</span>` : '—'}</td>
+          <td>${approver ? `<button class="btn small" data-enforce="${k}" data-on="${p?.enforced ? '0' : '1'}">${p?.enforced ? 'Stop enforcing' : 'Enforce'}</button>` : ''}</td></tr>`;
+      }).join('')}
+      </tbody></table></div>`}`;
+    $$('[data-enforce]', section).forEach(b => b.addEventListener('click', () => formModal({
+      title: `${b.dataset.on === '1' ? 'Enforce' : 'Stop enforcing'} documentation for ${CLASS_LABEL[b.dataset.enforce]} items`,
+      detail: b.dataset.on === '1' ? 'Operations of these items will stop when a document does not apply or match.' : 'Documentation will be shown but will not block these items.',
+      reasonRequired: true, confirmLabel: 'Save', fields: [],
+    }, (_, reason) => command(`/api/engineering/documentation-policy/${b.dataset.enforce}`, { enforced: b.dataset.on === '1' }, reason), render)));
+  };
+  await render();
 }

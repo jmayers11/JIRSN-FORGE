@@ -73,9 +73,11 @@ public sealed record InventoryTransaction(
     string? ApprovedBy,
     long? RequestId,
     long? ShipmentId = null,
-    long? WorkOrderId = null);
+    long? WorkOrderId = null,
+    string? PartRevision = null);
 
-public sealed record LotInfo(string PartNumber, string LotNumber, string? SupplierLot, DateTimeOffset FirstReceivedAt);
+/// <param name="PartRevision">The part revision received into the lot; null when it was not recorded (stock received before V2.3).</param>
+public sealed record LotInfo(string PartNumber, string LotNumber, string? SupplierLot, DateTimeOffset FirstReceivedAt, string? PartRevision = null);
 
 /// <summary>Net quantity of a part issued to a production order (issues less returns).</summary>
 public sealed record OrderIssue(long OrderNumber, string PartNumber, decimal NetIssued);

@@ -8,7 +8,7 @@ namespace Forge.Inventory.Infrastructure;
 internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventoryStore, IInventoryLookup
 {
     private const string TransactionSql =
-        "SELECT transaction_id, kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number, order_number, po_number, po_line, reason, at, actor, approved_by, request_id, shipment_id, work_order_id FROM inventory.transaction";
+        "SELECT transaction_id, kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number, order_number, po_number, po_line, reason, at, actor, approved_by, request_id, shipment_id, work_order_id, part_revision FROM inventory.transaction";
 
     private const string ShipmentSql =
         "SELECT shipment_id, customer, reference, demand_id, ship_to, status, created_by, created_at, packed_by, packed_at, shipped_by, shipped_at, carrier, tracking, cancel_reason FROM inventory.shipment";
@@ -36,8 +36,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
         await using var cmd = uow.Command(
             """
             INSERT INTO inventory.transaction (kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number,
-                order_number, po_number, po_line, reason, request_id, at, actor, approved_by, shipment_id, work_order_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                order_number, po_number, po_line, reason, request_id, at, actor, approved_by, shipment_id, work_order_id, part_revision)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             RETURNING transaction_id
             """,
             transaction.Kind.ToString(),
@@ -57,7 +57,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
             actor,
             Text(transaction.ApprovedBy),
             Long(transaction.ShipmentId),
-            Long(transaction.WorkOrderId));
+            Long(transaction.WorkOrderId),
+            Text(transaction.PartRevision));
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -66,6 +67,14 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
         await using var cmd = uow.Command(
             "INSERT INTO inventory.lot (part_number, lot_number, supplier_lot, first_received_at, created_by) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
             partNumber, lotNumber, Text(supplierLot), at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task SetLotRevisionAsync(string partNumber, string lotNumber, string revision, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE inventory.lot SET part_revision = $3 WHERE part_number = $1 AND lot_number = $2 AND part_revision IS NULL",
+            partNumber, lotNumber, revision);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -148,8 +157,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
 
     public Task<IReadOnlyList<LotInfo>> ListLotsAsync(string? partNumber, CancellationToken ct) =>
         ReadAsync(
-            "SELECT part_number, lot_number, supplier_lot, first_received_at FROM inventory.lot WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, first_received_at, lot_number",
-            r => new LotInfo(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetFieldValue<DateTimeOffset>(3)),
+            "SELECT part_number, lot_number, supplier_lot, first_received_at, part_revision FROM inventory.lot WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, first_received_at, lot_number",
+            r => new LotInfo(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4)),
             ct,
             Text(partNumber));
 
@@ -279,7 +288,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
         r.IsDBNull(15) ? null : r.GetString(15),
         r.IsDBNull(16) ? null : r.GetInt64(16),
         r.IsDBNull(17) ? null : r.GetInt64(17),
-        r.IsDBNull(18) ? null : r.GetInt64(18));
+        r.IsDBNull(18) ? null : r.GetInt64(18),
+        r.IsDBNull(19) ? null : r.GetString(19));
 
     private static AdjustmentRequest ReadRequest(NpgsqlDataReader r) => new(
         r.GetInt64(0),

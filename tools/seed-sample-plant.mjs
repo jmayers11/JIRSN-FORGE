@@ -57,7 +57,8 @@ async function main() {
       const insight = saved !== null && !saved.some(d => d.name === 'Weekly downtime');
       const classification = !items.includes('BRG-6205-001');
       const documents = !(await get('eng', '/api/engineering/documents')).some(d => d.number === 'DWG-PANEL-500');
-      if (!insight && !classification && !documents) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const applicability = !documents && !(await panelRequirements()).length;
+      if (!insight && !classification && !documents && !applicability) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -69,6 +70,10 @@ async function main() {
       if (documents) {
         console.log('Adding sample controlled documents and attachments.');
         await seedDocuments();
+      }
+      if (documents || applicability) {
+        console.log('Adding sample document requirements.');
+        await seedApplicability();
       }
       return finish();
     }
@@ -85,6 +90,7 @@ async function main() {
     await seedInsight();
     await seedClassification();
     await seedDocuments();
+    await seedApplicability();
     return finish();
   }
 
@@ -227,6 +233,7 @@ async function main() {
   await seedInsight();
   await seedClassification();
   await seedDocuments();
+  await seedApplicability();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -457,6 +464,23 @@ async function seedDocuments() {
     const cert = await upload('bob', 'Alcoa-ISO9001.txt', 'SAMPLE ISO 9001 certificate for Alcoa, valid to 2027.\n');
     await post('bob', '/api/engineering/attachments/Supplier/ALCOA/file', { fileSha256: cert, fileName: 'Alcoa-ISO9001.txt', title: 'ISO 9001 certificate', type: 'Certificate' });
   }
+}
+
+async function panelRevision() {
+  const revisions = await get('eng', '/api/engineering/items/PANEL-500/revisions');
+  return revisions.filter(r => r.status === 'Released').map(r => r.revision).pop();
+}
+
+async function panelRequirements() {
+  const revision = await panelRevision();
+  return revision ? get('eng', `/api/engineering/items/PANEL-500/revisions/${revision}/documents`) : [];
+}
+
+async function seedApplicability() {
+  const revision = await panelRevision();
+  if (!revision) return;
+  step(`Engineering: PANEL-500 rev ${revision} is built to DWG-PANEL-500 (documentation shown on orders, not yet enforced)`);
+  await post('eng', `/api/engineering/items/PANEL-500/revisions/${revision}/documents`, { documentNumber: 'DWG-PANEL-500', reason: 'Sample drawing baseline' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

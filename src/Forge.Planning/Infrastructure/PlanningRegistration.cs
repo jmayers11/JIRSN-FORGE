@@ -17,6 +17,7 @@ public static class PlanningRegistration
         services.AddSingleton<DemandService>();
         services.AddSingleton<MaterialPlanningService>();
         services.AddSingleton<ReadinessService>();
+        services.AddSingleton<DocumentationService>();
         services.AddSingleton<ScheduleService>();
         services.AddSingleton<ProgramHorizonService>();
         services.AddSingleton<Reporting.ReportService>();

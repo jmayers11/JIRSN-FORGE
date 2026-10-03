@@ -133,6 +133,110 @@ internal sealed class PostgresDocumentStore(PostgresUnitOfWork uow) : IDocumentS
     public async Task<DocumentLinkInfo?> FindLinkAsync(long linkId, CancellationToken ct) =>
         (await Read(LinkSql + " WHERE link_id = $1", ReadLink, ct, linkId)).SingleOrDefault();
 
+    public Task<IReadOnlyList<DocumentRequirementInfo>> ListRequirementsAsync(string? partNumber, string? revision, bool includeRemoved, CancellationToken ct) =>
+        Read(
+            """
+            SELECT requirement_id, part_number, revision, document_number, document_revision, operation_sequence, note, added_by, added_at, removed_by, removed_at, removed_reason
+            FROM engineering.revision_document
+            WHERE ($1::text IS NULL OR part_number = $1) AND ($2::text IS NULL OR revision = $2) AND ($3 OR removed_at IS NULL)
+            ORDER BY part_number, revision, COALESCE(operation_sequence, 0), document_number, requirement_id
+            """,
+            r => new DocumentRequirementInfo(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), Opt(r, 4), r.IsDBNull(5) ? null : r.GetInt32(5), Opt(r, 6),
+                r.GetString(7), r.GetFieldValue<DateTimeOffset>(8), Opt(r, 9), OptTime(r, 10), Opt(r, 11)),
+            ct,
+            Text(partNumber),
+            Text(revision),
+            includeRemoved);
+
+    public Task<IReadOnlyList<ApplicabilityRuleInfo>> ListRulesAsync(string? documentNumber, bool includeWithdrawn, CancellationToken ct) =>
+        Read(
+            """
+            SELECT rule_id, document_number, revision, condition_kind, program_id, customer, due_from, due_to, order_number, reference, note,
+                   created_by, created_at, withdrawn_by, withdrawn_at, withdrawn_reason
+            FROM engineering.applicability_rule
+            WHERE ($1::text IS NULL OR document_number = $1) AND ($2 OR withdrawn_at IS NULL)
+            ORDER BY document_number, rule_id
+            """,
+            r => new ApplicabilityRuleInfo(r.GetInt64(0), r.GetString(1), r.GetString(2), Enum.Parse<ApplicabilityCondition>(r.GetString(3)), r.IsDBNull(4) ? null : r.GetGuid(4), Opt(r, 5),
+                r.IsDBNull(6) ? null : r.GetFieldValue<DateOnly>(6), r.IsDBNull(7) ? null : r.GetFieldValue<DateOnly>(7), r.IsDBNull(8) ? null : r.GetInt64(8), Opt(r, 9), Opt(r, 10),
+                r.GetString(11), r.GetFieldValue<DateTimeOffset>(12), Opt(r, 13), OptTime(r, 14), Opt(r, 15)),
+            ct,
+            Text(documentNumber),
+            includeWithdrawn);
+
+    public Task<IReadOnlyList<DocumentationPolicyInfo>> ListPoliciesAsync(CancellationToken ct) =>
+        Read(
+            "SELECT item_class, enforced, changed_by, changed_at FROM engineering.documentation_policy ORDER BY item_class",
+            r => new DocumentationPolicyInfo(Enum.Parse<ItemClass>(r.GetString(0)), r.GetBoolean(1), r.GetString(2), r.GetFieldValue<DateTimeOffset>(3)),
+            ct);
+
+    public Task<IReadOnlyList<OrderDocumentationIssue>> ListIssuesAsync(long orderNumber, CancellationToken ct) =>
+        Read(
+            "SELECT issue_id, order_number, issued_at, issued_by, reason FROM engineering.order_documentation_issue WHERE order_number = $1 ORDER BY issued_at, issue_id",
+            r => new OrderDocumentationIssue(r.GetInt64(0), r.GetInt64(1), r.GetFieldValue<DateTimeOffset>(2), r.GetString(3), r.GetString(4)),
+            ct,
+            orderNumber);
+
+    public async Task<long> InsertIssueAsync(long orderNumber, DateTimeOffset at, string actor, string reason, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "INSERT INTO engineering.order_documentation_issue (order_number, issued_at, issued_by, reason) VALUES ($1, $2, $3, $4) RETURNING issue_id",
+            orderNumber, at, actor, reason);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<long> InsertRequirementAsync(DocumentRequirementInfo q, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(q);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO engineering.revision_document (part_number, revision, document_number, document_revision, operation_sequence, note, added_by, added_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING RETURNING requirement_id
+            """,
+            q.PartNumber, q.Revision, q.DocumentNumber, Text(q.DocumentRevision), Int(q.OperationSequence), Text(q.Note), q.AddedBy, q.AddedAt);
+        return await cmd.ExecuteScalarAsync(ct) is long id ? id : 0;
+    }
+
+    public async Task RemoveRequirementAsync(long requirementId, DateTimeOffset at, string actor, string reason, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE engineering.revision_document SET removed_at = $2, removed_by = $3, removed_reason = $4 WHERE requirement_id = $1 AND removed_at IS NULL",
+            requirementId, at, actor, reason);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<long> InsertRuleAsync(ApplicabilityRuleInfo rule, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(rule);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO engineering.applicability_rule (document_number, revision, condition_kind, program_id, customer, due_from, due_to, order_number, reference, note, created_by, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING rule_id
+            """,
+            rule.DocumentNumber, rule.Revision, rule.Condition.ToString(), Uuid(rule.ProgramId), Text(rule.Customer), Date(rule.DueFrom), Date(rule.DueTo),
+            new NpgsqlParameter { Value = (object?)rule.OrderNumber ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Bigint }, Text(rule.Reference), Text(rule.Note), rule.CreatedBy, rule.CreatedAt);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task WithdrawRuleAsync(long ruleId, DateTimeOffset at, string actor, string reason, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE engineering.applicability_rule SET withdrawn_at = $2, withdrawn_by = $3, withdrawn_reason = $4 WHERE rule_id = $1 AND withdrawn_at IS NULL",
+            ruleId, at, actor, reason);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task SetPolicyAsync(ItemClass itemClass, bool enforced, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO engineering.documentation_policy (item_class, enforced, changed_by, changed_at) VALUES ($1, $2, $3, $4)
+            ON CONFLICT (item_class) DO UPDATE SET enforced = EXCLUDED.enforced, changed_by = EXCLUDED.changed_by, changed_at = EXCLUDED.changed_at
+            """,
+            itemClass.ToString(), enforced, actor, at);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task<DocumentFileInfo?> FindFileAsync(string sha256, CancellationToken ct) =>
         (await Read(
             "SELECT sha256, size_bytes, stored_by, stored_at FROM engineering.document_file WHERE sha256 = $1",
@@ -202,6 +306,8 @@ internal sealed class PostgresDocumentStore(PostgresUnitOfWork uow) : IDocumentS
     private static DateTimeOffset? OptTime(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetFieldValue<DateTimeOffset>(i);
 
     private static NpgsqlParameter Text(string? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Text };
+
+    private static NpgsqlParameter Int(int? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Integer };
 
     private static NpgsqlParameter Uuid(Guid? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Uuid };
 

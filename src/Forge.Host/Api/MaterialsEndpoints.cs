@@ -18,7 +18,7 @@ public sealed record ItemPlanningRequest(int LeadTimeDays, decimal SafetyStock, 
 
 public sealed record LocationRequest(string Code, string SiteCode, string Name, LocationKind Kind, string? Reason);
 
-public sealed record ReceiptRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Reason);
+public sealed record ReceiptRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Reason, string? Revision = null);
 
 public sealed record OrderMaterialRequest(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason);
 
@@ -150,7 +150,7 @@ public static class MaterialsEndpoints
         api.MapPost("/locations/{code}/retire", (HttpContext http, string code, ReasonRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RetireLocationAsync(new RetireLocation(code), c, ct)));
         api.MapPost("/receipts", (HttpContext http, ReceiptRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ReceiveAsync(new ReceiveStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.SupplierLot, b.PoNumber, b.PoLine, b.Inspect), c, ct)));
+            Command(http, b.Reason, c => s.ReceiveAsync(new ReceiveStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.SupplierLot, b.PoNumber, b.PoLine, b.Inspect, b.Revision), c, ct)));
         api.MapPost("/issues", (HttpContext http, OrderMaterialRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.IssueToOrderAsync(new IssueToOrder(b.OrderNumber, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber), c, ct)));
         api.MapPost("/returns", (HttpContext http, OrderMaterialRequest b, InventoryService s, CancellationToken ct) =>

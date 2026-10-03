@@ -47,6 +47,7 @@ export async function inventoryPage(page, ctx) {
         { name: 'poLine', label: 'PO line (if the order has several lines for this part)', type: 'number' },
         lotField,
         { name: 'supplierLot', label: 'Supplier lot (optional)' },
+        { name: 'revision', label: 'Part revision received (optional)', code: true, hint: 'The released revision on the paperwork. Without it the stock shows as revision not recorded. One lot holds one revision.' },
         { name: 'inspect', type: 'check', label: 'Incoming inspection', text: 'Hold in Inspection until released' },
       ],
     }, (v, reason) => command('/api/inventory/receipts', v, reason), reload),
@@ -183,7 +184,7 @@ export async function inventoryPage(page, ctx) {
   }
 
   const ledgerRow = t => `<tr>
-    <td class="nowrap">${esc(fmtDateTime(t.at))}</td><td>${esc(KIND_LABEL[t.kind] ?? t.kind)}</td><td>${esc(t.partNumber)}${t.lotNumber ? ` <span class="faint">lot ${esc(t.lotNumber)}</span>` : ''}</td>
+    <td class="nowrap">${esc(fmtDateTime(t.at))}</td><td>${esc(KIND_LABEL[t.kind] ?? t.kind)}</td><td>${esc(t.partNumber)}${t.partRevision ? ` <span class="faint">rev ${esc(t.partRevision)}</span>` : ''}${t.lotNumber ? ` <span class="faint">lot ${esc(t.lotNumber)}</span>` : ''}</td>
     <td class="num">${qty(t.quantity)}</td>
     <td>${t.fromLocation ? `${esc(t.fromLocation)} <span class="faint">${esc(t.fromStatus)}</span>` : '<span class="faint">—</span>'} → ${t.toLocation ? `${esc(t.toLocation)} <span class="faint">${esc(t.toStatus)}</span>` : '<span class="faint">out</span>'}</td>
     <td>${t.orderNumber ? `<a href="#/orders/${t.orderNumber}">#${t.orderNumber}</a>` : ''}${t.poNumber ? `PO ${t.poNumber}/${t.poLine}` : ''}</td>

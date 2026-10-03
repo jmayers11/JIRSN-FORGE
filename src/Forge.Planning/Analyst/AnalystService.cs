@@ -31,6 +31,7 @@ public sealed class AnalystService(
     ReportService reports,
     HorizonHistoryService history,
     ReadinessService readiness,
+    DocumentationService documentation,
     BriefService briefs,
     IAnalystNarrator narrator)
 {
@@ -137,6 +138,7 @@ public sealed class AnalystService(
             AnalystIntent.PersonImpact or AnalystIntent.Simulate => await ScenarioAsync(principal, i, vocabulary, clock, zone, ct),
             AnalystIntent.Report => await ReportAsync(principal, i, ct),
             AnalystIntent.Brief => await BriefAsync(principal, i, ct),
+            AnalystIntent.OrderDocumentation => await DocumentationAsync(principal, i, ct),
             _ => new AnalystAnswer(
                 i,
                 "I can answer questions about your Forge manufacturing operation.",
@@ -147,7 +149,7 @@ public sealed class AnalystService(
 
     private static bool NeedsEntity(Interpretation i) => i.Intent switch
     {
-        AnalystIntent.OrderStatus => i.OrderNumber is null,
+        AnalystIntent.OrderStatus or AnalystIntent.OrderDocumentation => i.OrderNumber is null,
         AnalystIntent.MachineBlockers => i.Machine is null,
         AnalystIntent.Simulate => i.Machine is null && i.PersonId is null,
         AnalystIntent.PersonImpact => i.PersonId is null,
@@ -233,6 +235,23 @@ public sealed class AnalystService(
         }
 
         return new AnalystAnswer(i, headline, facts, null, null, [], false, sources);
+    }
+
+    private async Task<AnalystAnswer> DocumentationAsync(ForgePrincipal principal, Interpretation i, CancellationToken ct)
+    {
+        var number = i.OrderNumber!.Value;
+        var docs = await documentation.OrderAsync(principal, number, ct);
+        var columns = Columns(("document", "Document", ReportColumnKind.Text), ("source", "Required by", ReportColumnKind.Text), ("atRelease", "Released with", ReportColumnKind.Text), ("applies", "Applies now", ReportColumnKind.Text), ("state", "State", ReportColumnKind.Text), ("why", "Why", ReportColumnKind.Text));
+        var rows = docs.Documents.Select(d => new ReportRow(
+            [d.DocumentNumber, d.Source, d.AtRelease, d.Applicable, DocumentationService.Describe(d.State), d.Explanation],
+            d.DocumentNumber == DocumentationService.Restricted ? ["order:" + Id(number)] : ["order:" + Id(number), "document:" + d.DocumentNumber])).ToList();
+        var notes = new List<string>();
+        if (!docs.Enforced)
+        {
+            notes.Add($"Documentation is not enforced for {docs.ItemClass} items, so it does not block readiness; it is shown here for information.");
+        }
+
+        return new AnalystAnswer(i, $"Order {number} ({docs.PartNumber} rev {docs.Revision}): {docs.Summary}", [], columns, rows, notes, false, ["Applicability", "Controlled documents"]);
     }
 
     private async Task<AnalystAnswer> LateAsync(ForgePrincipal principal, Interpretation i, DateTimeZone zone, CancellationToken ct)

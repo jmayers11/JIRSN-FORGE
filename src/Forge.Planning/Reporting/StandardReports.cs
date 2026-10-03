@@ -162,7 +162,81 @@ internal static class StandardReports
                 ["authority", "type", "attention"], "authority", 3660,
                 "Documents as they stand now; the period does not apply. Documents in programs you do not hold, or with markings you do not hold, are not shown. Reference documents are never production authority."),
             Permissions.EngineeringRead, null, DocumentRegisterAsync),
+        new(
+            new("documentation-status", "Order documentation", "Engineering",
+                "Open orders and the documents they must follow: the revision each was released with, the revision that applies now, and mismatches, missing or unreleased documents.",
+                [PartFilter, StatusFilter(["Current", "Pinned", "LegitimatelySuperseded", "Mismatch", "Missing", "NotReleased", "Obsolete", "RequiresReview"]), SearchFilter],
+                [C("order", "Order", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("revision", "Rev", ReportColumnKind.Text), C("class", "Class", ReportColumnKind.Text), C("enforced", "Blocks readiness", ReportColumnKind.Text),
+                 C("document", "Document", ReportColumnKind.Text), C("source", "Required by", ReportColumnKind.Text), C("atRelease", "Released with", ReportColumnKind.Text), C("applies", "Applies now", ReportColumnKind.Text),
+                 C("state", "State", ReportColumnKind.Text), C("why", "Why", ReportColumnKind.Text)],
+                ["state", "document", "part", "order"], "state", 3660,
+                "Open orders as they stand now; the period does not apply. Released orders are compared with the revision that applied when they were released. Documents you may not see are shown as restricted."),
+            Permissions.OrdersRead, null, DocumentationStatusAsync),
+        new(
+            new("stock-by-revision", "Stock by revision", "Inventory",
+                "Stock on hand by part revision, through the lot it was received into. Stock received before revisions were recorded, or not lot-tracked, shows as revision not recorded: never assumed current.",
+                [PartFilter, SearchFilter],
+                [C("part", "Part", ReportColumnKind.Text), C("revision", "Revision", ReportColumnKind.Text), C("lot", "Lot", ReportColumnKind.Text), C("location", "Location", ReportColumnKind.Text),
+                 C("status", "Status", ReportColumnKind.Text), C("quantity", "Quantity", ReportColumnKind.Number)],
+                ["revision", "part", "location", "status"], "revision", 3660,
+                "Stock as it stands now; the period does not apply."),
+            Permissions.InventoryRead, null, StockByRevisionAsync),
     ];
+
+    private static async Task<ReportBody> StockByRevisionAsync(ReportRun run, CancellationToken ct)
+    {
+        const string NotRecorded = "Revision not recorded";
+        var p = run.Parameters;
+        var inventory = run.Uow.Store<IInventoryLookup>();
+        var lots = (await inventory.ListLotsAsync(null, ct)).ToDictionary(l => (l.PartNumber, l.LotNumber));
+        var rows = new List<ReportRow>();
+        foreach (var b in await inventory.ListBalancesAsync(null, ct))
+        {
+            var revision = b.LotNumber is { } lot && lots.TryGetValue((b.PartNumber, lot), out var info) ? info.PartRevision ?? NotRecorded : NotRecorded;
+            if (!ReportRun.Is(b.PartNumber, p.PartNumber) || !run.Matches(b.PartNumber, revision, b.LotNumber, b.LocationCode))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow([b.PartNumber, revision, b.LotNumber, b.LocationCode, b.Status.ToString(), b.Quantity], ["item:" + b.PartNumber]));
+        }
+
+        var unknown = rows.Where(r => (string?)r.Cells[1] == NotRecorded).Sum(r => (decimal)r.Cells[5]!);
+        return new ReportBody(
+            rows,
+            [$"{rows.Count} balance(s); {Fmt(unknown)} on hand with no recorded revision."],
+            ["Inventory ledger", "Lots"]);
+    }
+
+    private static async Task<ReportBody> DocumentationStatusAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        var orders = (await run.Uow.Store<IExecutionLookup>().ListOrdersAsync(ct))
+            .Where(o => o.Status is OrderStatus.Planned or OrderStatus.FirmPlanned or OrderStatus.Released or OrderStatus.Held && run.Visible(o.ProgramId) && ReportRun.Is(o.PartNumber, p.PartNumber))
+            .OrderBy(o => o.OrderNumber);
+        foreach (var order in orders)
+        {
+            var docs = await DocumentationService.ForOrderAsync(run.Uow, order, run.Now, run.Principal, ct);
+            foreach (var d in docs.Documents)
+            {
+                if (!ReportRun.Is(d.State.ToString(), p.Status) || !run.Matches(Id(order.OrderNumber), order.PartNumber, d.DocumentNumber, d.Explanation))
+                {
+                    continue;
+                }
+
+                rows.Add(new ReportRow(
+                    [Id(order.OrderNumber), order.PartNumber, order.Revision, docs.ItemClass.ToString(), docs.Enforced ? "Yes" : "No", d.DocumentNumber, d.Source, d.AtRelease, d.Applicable, DocumentationService.Describe(d.State), d.Explanation],
+                    d.DocumentNumber == DocumentationService.Restricted ? ["order:" + Id(order.OrderNumber)] : ["order:" + Id(order.OrderNumber), "document:" + d.DocumentNumber]));
+            }
+        }
+
+        var problems = rows.Count(r => r.Cells[9] is string state && state is not ("current" or "pinned to its revision" or "superseded after release (work in progress continues)"));
+        return new ReportBody(
+            rows,
+            [$"{rows.Count} order document(s); {problems} need attention (mismatch, missing, not released, obsolete or waiting for review)."],
+            ["Production orders", "Controlled documents", "Applicability rules"]);
+    }
 
     private static async Task<ReportBody> DocumentRegisterAsync(ReportRun run, CancellationToken ct)
     {

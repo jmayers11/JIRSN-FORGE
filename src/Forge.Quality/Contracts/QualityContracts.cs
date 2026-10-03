@@ -13,7 +13,22 @@ public enum CharacteristicKind
 public sealed record CharacteristicInfo(int Number, string Name, CharacteristicKind Kind, decimal? Nominal, decimal? Lower, decimal? Upper, string? Unit);
 
 /// <summary>An inspection point: after operation <see cref="Sequence"/> of a part, check these characteristics.</summary>
-public sealed record InspectionPlanInfo(string PartNumber, int Sequence, string Title, IReadOnlyList<CharacteristicInfo> Characteristics);
+/// <param name="Revision">The item revision the plan is for; null for every revision (V2.3).</param>
+public sealed record InspectionPlanInfo(string PartNumber, int Sequence, string Title, IReadOnlyList<CharacteristicInfo> Characteristics, string? Revision = null);
+
+/// <summary>Which plans apply to work at a revision: a plan for that revision, otherwise the plan for every revision.</summary>
+public static class InspectionPlans
+{
+    public static IReadOnlyList<InspectionPlanInfo> For(IEnumerable<InspectionPlanInfo> plans, string partNumber, string? revision)
+    {
+        ArgumentNullException.ThrowIfNull(plans);
+        return plans.Where(p => p.PartNumber == partNumber && (p.Revision is null || p.Revision == revision))
+            .GroupBy(p => p.Sequence)
+            .Select(g => g.FirstOrDefault(p => p.Revision is not null) ?? g.First())
+            .OrderBy(p => p.Sequence)
+            .ToList();
+    }
+}
 
 public enum InspectionResult
 {

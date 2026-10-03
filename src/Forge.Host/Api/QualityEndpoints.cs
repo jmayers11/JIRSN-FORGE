@@ -16,7 +16,7 @@ public sealed record GaugeRequest(string Code, string Description, DateOnly Cali
 
 public sealed record CalibrationRequest(DateOnly CalibratedOn, DateOnly DueDate, string? Certificate, string? Reason);
 
-public sealed record InspectionPlanRequest(string PartNumber, int Sequence, string Title, NewCharacteristic[] Characteristics, string? Reason);
+public sealed record InspectionPlanRequest(string PartNumber, int Sequence, string Title, NewCharacteristic[] Characteristics, string? Reason, string? Revision = null);
 
 public sealed record InspectionRequest(long OrderNumber, int Sequence, decimal Quantity, string? GaugeCode, string? Notes, Finding[] Findings, decimal? RejectedQuantity, string? Reason);
 
@@ -86,7 +86,7 @@ public static class QualityEndpoints
                     }
 
                     var order = await execution.FindOrderAsync(summary.OrderNumber, ct);
-                    foreach (var plan in plans[summary.PartNumber])
+                    foreach (var plan in InspectionPlans.For(plans[summary.PartNumber], summary.PartNumber, summary.Revision))
                     {
                         var op = order?.Operations.FirstOrDefault(o => o.Sequence == plan.Sequence);
                         var result = latest.TryGetValue((summary.OrderNumber, plan.Sequence), out var r) ? r : (InspectionResult?)null;
@@ -113,7 +113,7 @@ public static class QualityEndpoints
                 var quality = uow.Store<IQualityLookup>();
                 return new OrderQualityView(
                     await quality.GetOrderQualityAsync(number, order.PartNumber, ct),
-                    await quality.ListPlansAsync(order.PartNumber, ct),
+                    InspectionPlans.For(await quality.ListPlansAsync(order.PartNumber, ct), order.PartNumber, order.Revision),
                     await quality.ListInspectionsAsync(number, 200, ct));
             }));
 
@@ -122,9 +122,9 @@ public static class QualityEndpoints
         api.MapPost("/gauges/{code}/calibrations", (HttpContext http, string code, CalibrationRequest b, QualityService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordCalibrationAsync(new RecordCalibration(code, b.CalibratedOn, b.DueDate, b.Certificate), c, ct)));
         api.MapPost("/plans", (HttpContext http, InspectionPlanRequest b, QualityService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.SetInspectionPlanAsync(new SetInspectionPlan(b.PartNumber, b.Sequence, b.Title, b.Characteristics ?? []), c, ct)));
-        api.MapPost("/plans/{part}/{sequence:int}/remove", (HttpContext http, string part, int sequence, ReasonRequest b, QualityService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.RemoveInspectionPlanAsync(new RemoveInspectionPlan(part, sequence), c, ct)));
+            Command(http, b.Reason, c => s.SetInspectionPlanAsync(new SetInspectionPlan(b.PartNumber, b.Sequence, b.Title, b.Characteristics ?? [], b.Revision), c, ct)));
+        api.MapPost("/plans/{part}/{sequence:int}/remove", (HttpContext http, string part, int sequence, string? revision, ReasonRequest b, QualityService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RemoveInspectionPlanAsync(new RemoveInspectionPlan(part, sequence, revision), c, ct)));
         api.MapPost("/inspections", (HttpContext http, InspectionRequest b, QualityService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordInspectionAsync(new RecordInspection(b.OrderNumber, b.Sequence, b.Quantity, b.GaugeCode, b.Notes, b.Findings ?? [], b.RejectedQuantity), c, ct)));
         api.MapPost("/ncrs", (HttpContext http, NcrRequest b, QualityService s, CancellationToken ct) =>

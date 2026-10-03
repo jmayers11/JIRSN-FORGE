@@ -144,6 +144,67 @@ public interface IDocumentTargetResolver
     Task<DocumentTarget?> ResolveAsync(IKernelUnitOfWork uow, DocumentTargetType type, string id, CancellationToken ct);
 }
 
+/// <summary>A document an item revision is built to. No revision pinned = the revision that applies; no operation = the whole item.</summary>
+public sealed record DocumentRequirementInfo(
+    long RequirementId,
+    string PartNumber,
+    string Revision,
+    string DocumentNumber,
+    string? DocumentRevision,
+    int? OperationSequence,
+    string? Note,
+    string AddedBy,
+    DateTimeOffset AddedAt,
+    string? RemovedBy,
+    DateTimeOffset? RemovedAt,
+    string? RemovedReason)
+{
+    public bool IsActiveAt(DateTimeOffset at) => AddedAt <= at && (RemovedAt is null || at < RemovedAt);
+}
+
+/// <summary>What an applicability rule tests (V2 §7). Serial and lot conditions arrive with genealogy.</summary>
+public enum ApplicabilityCondition
+{
+    /// <summary>Orders for one program.</summary>
+    Program,
+
+    /// <summary>Orders for one customer (the program's customer).</summary>
+    Customer,
+
+    /// <summary>Orders due within a date range.</summary>
+    DueDate,
+
+    /// <summary>One order, under a deviation or concession: the most specific rule.</summary>
+    Order,
+}
+
+public sealed record ApplicabilityRuleInfo(
+    long RuleId,
+    string DocumentNumber,
+    string Revision,
+    ApplicabilityCondition Condition,
+    Guid? ProgramId,
+    string? Customer,
+    DateOnly? DueFrom,
+    DateOnly? DueTo,
+    long? OrderNumber,
+    string? Reference,
+    string? Note,
+    string CreatedBy,
+    DateTimeOffset CreatedAt,
+    string? WithdrawnBy,
+    DateTimeOffset? WithdrawnAt,
+    string? WithdrawnReason)
+{
+    public bool IsActiveAt(DateTimeOffset at) => CreatedAt <= at && (WithdrawnAt is null || at < WithdrawnAt);
+}
+
+/// <summary>An order's documentation reissued after release: it then references what applied at <see cref="IssuedAt"/>.</summary>
+public sealed record OrderDocumentationIssue(long IssueId, long OrderNumber, DateTimeOffset IssuedAt, string IssuedBy, string Reason);
+
+/// <summary>Whether documentation blocks readiness for an item class. A class with no policy is not enforced.</summary>
+public sealed record DocumentationPolicyInfo(ItemClass ItemClass, bool Enforced, string ChangedBy, DateTimeOffset ChangedAt);
+
 /// <summary>Who may see a document: its program and its markings. The same rule in screens, reports, exports and Analyst.</summary>
 public static class DocumentAccess
 {
@@ -166,6 +227,16 @@ public interface IDocumentLookup
     Task<IReadOnlyList<DocumentLinkInfo>> ListLinksAsync(DocumentTargetType? targetType, string? targetId, string? documentNumber, bool includeDetached, CancellationToken ct);
 
     Task<DocumentLinkInfo?> FindLinkAsync(long linkId, CancellationToken ct);
+
+    /// <summary>Document requirements of item revisions (removed ones only when asked: history).</summary>
+    Task<IReadOnlyList<DocumentRequirementInfo>> ListRequirementsAsync(string? partNumber, string? revision, bool includeRemoved, CancellationToken ct);
+
+    /// <summary>Applicability rules of one document or all (withdrawn ones only when asked: history).</summary>
+    Task<IReadOnlyList<ApplicabilityRuleInfo>> ListRulesAsync(string? documentNumber, bool includeWithdrawn, CancellationToken ct);
+
+    Task<IReadOnlyList<DocumentationPolicyInfo>> ListPoliciesAsync(CancellationToken ct);
+
+    Task<IReadOnlyList<OrderDocumentationIssue>> ListIssuesAsync(long orderNumber, CancellationToken ct);
 
     Task<DocumentFileInfo?> FindFileAsync(string sha256, CancellationToken ct);
 

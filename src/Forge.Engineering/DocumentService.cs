@@ -100,6 +100,18 @@ public interface IDocumentStore
     Task<long?> InsertLinkAsync(DocumentLinkInfo link, CancellationToken ct);
 
     Task DetachLinkAsync(long linkId, DateTimeOffset at, string actor, string reason, CancellationToken ct);
+
+    Task<long> InsertRequirementAsync(DocumentRequirementInfo requirement, CancellationToken ct);
+
+    Task RemoveRequirementAsync(long requirementId, DateTimeOffset at, string actor, string reason, CancellationToken ct);
+
+    Task<long> InsertRuleAsync(ApplicabilityRuleInfo rule, CancellationToken ct);
+
+    Task WithdrawRuleAsync(long ruleId, DateTimeOffset at, string actor, string reason, CancellationToken ct);
+
+    Task SetPolicyAsync(ItemClass itemClass, bool enforced, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task<long> InsertIssueAsync(long orderNumber, DateTimeOffset at, string actor, string reason, CancellationToken ct);
 }
 
 /// <summary>

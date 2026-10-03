@@ -41,13 +41,15 @@ internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualitySto
         await update.ExecuteNonQueryAsync(ct);
     }
 
+    private const string AllRevisions = "*";
+
     public async Task SavePlanAsync(InspectionPlanInfo plan, DateTimeOffset at, string actor, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        await DeletePlanAsync(plan.PartNumber, plan.Sequence, ct);
+        await DeletePlanAsync(plan.PartNumber, plan.Sequence, plan.Revision, ct);
         await using (var cmd = uow.Command(
-            "INSERT INTO quality.inspection_plan (part_number, sequence, title, updated_at, updated_by) VALUES ($1, $2, $3, $4, $5)",
-            plan.PartNumber, plan.Sequence, plan.Title, at, actor))
+            "INSERT INTO quality.inspection_plan (part_number, sequence, title, updated_at, updated_by, revision) VALUES ($1, $2, $3, $4, $5, $6)",
+            plan.PartNumber, plan.Sequence, plan.Title, at, actor, plan.Revision ?? AllRevisions))
         {
             await cmd.ExecuteNonQueryAsync(ct);
         }
@@ -55,15 +57,15 @@ internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualitySto
         foreach (var c in plan.Characteristics)
         {
             await using var cmd = uow.Command(
-                "INSERT INTO quality.characteristic (part_number, sequence, number, name, kind, nominal, lower_limit, upper_limit, unit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-                plan.PartNumber, plan.Sequence, c.Number, c.Name, c.Kind.ToString(), Num(c.Nominal), Num(c.Lower), Num(c.Upper), Text(c.Unit));
+                "INSERT INTO quality.characteristic (part_number, sequence, number, name, kind, nominal, lower_limit, upper_limit, unit, revision) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                plan.PartNumber, plan.Sequence, c.Number, c.Name, c.Kind.ToString(), Num(c.Nominal), Num(c.Lower), Num(c.Upper), Text(c.Unit), plan.Revision ?? AllRevisions);
             await cmd.ExecuteNonQueryAsync(ct);
         }
     }
 
-    public async Task<bool> DeletePlanAsync(string partNumber, int sequence, CancellationToken ct)
+    public async Task<bool> DeletePlanAsync(string partNumber, int sequence, string? revision, CancellationToken ct)
     {
-        await using var cmd = uow.Command("DELETE FROM quality.inspection_plan WHERE part_number = $1 AND sequence = $2", partNumber, sequence);
+        await using var cmd = uow.Command("DELETE FROM quality.inspection_plan WHERE part_number = $1 AND sequence = $2 AND revision = $3", partNumber, sequence, revision ?? AllRevisions);
         return await cmd.ExecuteNonQueryAsync(ct) > 0;
     }
 
@@ -156,18 +158,18 @@ internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualitySto
     public async Task<IReadOnlyList<InspectionPlanInfo>> ListPlansAsync(string? partNumber, CancellationToken ct)
     {
         var plans = await ReadAsync(
-            "SELECT part_number, sequence, title FROM quality.inspection_plan WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, sequence",
-            r => (Part: r.GetString(0), Sequence: r.GetInt32(1), Title: r.GetString(2)),
+            "SELECT part_number, sequence, title, revision FROM quality.inspection_plan WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, sequence, revision",
+            r => (Part: r.GetString(0), Sequence: r.GetInt32(1), Title: r.GetString(2), Revision: r.GetString(3)),
             ct,
             Text(partNumber));
         var characteristics = await ReadAsync(
-            "SELECT part_number, sequence, number, name, kind, nominal, lower_limit, upper_limit, unit FROM quality.characteristic WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, sequence, number",
-            r => (Part: r.GetString(0), Sequence: r.GetInt32(1), Info: new CharacteristicInfo(
+            "SELECT part_number, sequence, number, name, kind, nominal, lower_limit, upper_limit, unit, revision FROM quality.characteristic WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, sequence, number",
+            r => (Part: r.GetString(0), Sequence: r.GetInt32(1), Revision: r.GetString(9), Info: new CharacteristicInfo(
                 r.GetInt32(2), r.GetString(3), Enum.Parse<CharacteristicKind>(r.GetString(4)), NDec(r, 5), NDec(r, 6), NDec(r, 7), r.IsDBNull(8) ? null : r.GetString(8))),
             ct,
             Text(partNumber));
-        var byPlan = characteristics.ToLookup(c => (c.Part, c.Sequence), c => c.Info);
-        return plans.Select(p => new InspectionPlanInfo(p.Part, p.Sequence, p.Title, byPlan[(p.Part, p.Sequence)].ToList())).ToList();
+        var byPlan = characteristics.ToLookup(c => (c.Part, c.Sequence, c.Revision), c => c.Info);
+        return plans.Select(p => new InspectionPlanInfo(p.Part, p.Sequence, p.Title, byPlan[(p.Part, p.Sequence, p.Revision)].ToList(), p.Revision == AllRevisions ? null : p.Revision)).ToList();
     }
 
     public async Task<IReadOnlyList<InspectionInfo>> ListInspectionsAsync(long? orderNumber, int take, CancellationToken ct)
@@ -232,7 +234,14 @@ internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualitySto
 
     public async Task<OrderQuality> GetOrderQualityAsync(long orderNumber, string partNumber, CancellationToken ct)
     {
-        var planned = await ReadAsync("SELECT sequence FROM quality.inspection_plan WHERE part_number = $1 ORDER BY sequence", r => r.GetInt32(0), ct, partNumber);
+        // The plans for the revision the order builds (V2.3): that revision's, else the plan for every revision.
+        var revision = (await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct))?.Revision;
+        var planned = await ReadAsync(
+            "SELECT DISTINCT sequence FROM quality.inspection_plan WHERE part_number = $1 AND (revision = '*' OR revision = $2) ORDER BY sequence",
+            r => r.GetInt32(0),
+            ct,
+            partNumber,
+            Text(revision));
 
         // An operation counts as passed when its latest inspection passed.
         var passed = await ReadAsync(

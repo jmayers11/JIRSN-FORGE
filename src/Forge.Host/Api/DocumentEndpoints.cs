@@ -5,6 +5,7 @@ using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
+using Forge.Planning;
 using Microsoft.AspNetCore.Http.Features;
 using static Forge.Host.Api.ApiSupport;
 
@@ -42,6 +43,12 @@ public sealed record AttachmentView(
     string? DetachedBy,
     DateTimeOffset? DetachedAt,
     string? DetachReason);
+
+public sealed record DocumentRequirementRequest(string DocumentNumber, string? DocumentRevision, int? OperationSequence, string? Note, string? Reason);
+
+public sealed record RuleRequest(string Revision, ApplicabilityCondition Condition, Guid? ProgramId, string? Customer, DateOnly? DueFrom, DateOnly? DueTo, long? OrderNumber, string? Reference, string? Note, string? Reason);
+
+public sealed record EnforcementRequest(bool Enforced, string? Reason);
 
 public sealed record DocumentDetailView(DocumentInfo Document, IReadOnlyList<DocumentLinkInfo> Links);
 
@@ -168,6 +175,61 @@ public static class DocumentEndpoints
             Command(http, b.Reason, c => s.AttachAsync(new AttachDocument(TargetType(type), id, b.DocumentNumber, b.Revision, b.Purpose ?? DocumentPurpose.Information, b.Note), c, ct)));
         eng.MapPost("/attachments/{type}/{id}/file", (HttpContext http, string type, string id, AttachFileRequest b, DocumentService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AttachFileAsync(new AttachFile(TargetType(type), id, b.FileSha256, b.FileName, b.Title, b.Type ?? DocumentType.Other, b.Markings ?? DataMarking.None, b.Note), c, ct)));
+        // V2.3: what item revisions are built to, applicability rules and the enforcement policy.
+        eng.MapGet("/items/{part}/revisions/{rev}/documents", (HttpContext http, string part, string rev, bool? history, CancellationToken _) =>
+            Read(http, Permissions.EngineeringRead, async principal =>
+            {
+                await using var uow = await Snapshot(http);
+                var ct = http.RequestAborted;
+                var lookup = uow.Store<IDocumentLookup>();
+                var visible = new List<DocumentRequirementInfo>();
+                foreach (var r in await lookup.ListRequirementsAsync(part.Trim().ToUpperInvariant(), rev.Trim().ToUpperInvariant(), history == true, ct))
+                {
+                    if (await lookup.FindDocumentAsync(r.DocumentNumber, ct) is { } d && DocumentService.CanSee(principal, d))
+                    {
+                        visible.Add(r);
+                    }
+                }
+
+                return visible;
+            }));
+        eng.MapPost("/items/{part}/revisions/{rev}/documents", (HttpContext http, string part, string rev, DocumentRequirementRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AddRequirementAsync(new AddDocumentRequirement(part, rev, b.DocumentNumber, b.DocumentRevision, b.OperationSequence, b.Note), c, ct)));
+        eng.MapPost("/document-requirements/{id:long}/remove", (HttpContext http, long id, ReasonRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RemoveRequirementAsync(new RemoveDocumentRequirement(id), c, ct)));
+        eng.MapGet("/documents/{number}/rules", (HttpContext http, string number, bool? history, CancellationToken _) =>
+            Read(http, Permissions.EngineeringRead, async principal =>
+            {
+                await using var uow = await Snapshot(http);
+                var ct = http.RequestAborted;
+                var document = await VisibleDocumentAsync(uow, principal, number, ct);
+                return (await uow.Store<IDocumentLookup>().ListRulesAsync(document.Number, history == true, ct))
+                    .Where(r => r.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))).ToList();
+            }));
+        eng.MapPost("/documents/{number}/rules", (HttpContext http, string number, RuleRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AddRuleAsync(new AddApplicabilityRule(number, b.Revision, b.Condition, b.ProgramId, b.Customer, b.DueFrom, b.DueTo, b.OrderNumber, b.Reference, b.Note), c, ct)));
+        eng.MapPost("/applicability-rules/{id:long}/withdraw", (HttpContext http, long id, ReasonRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.WithdrawRuleAsync(new WithdrawApplicabilityRule(id), c, ct)));
+        eng.MapPost("/orders/{orderNumber:long}/reissue-documentation", (HttpContext http, long orderNumber, ReasonRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReissueAsync(new ReissueOrderDocumentation(orderNumber), c, ct)));
+        eng.MapGet("/documentation-policy", (HttpContext http, CancellationToken _) =>
+            ReadStore<IDocumentLookup>(http, Permissions.EngineeringRead, async (l, ct) => await l.ListPoliciesAsync(ct)));
+        eng.MapPost("/documentation-policy/{itemClass}", (HttpContext http, ItemClass itemClass, EnforcementRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SetEnforcementAsync(new SetDocumentationEnforcement(itemClass, b.Enforced), c, ct)));
+
+        app.MapGet("/api/planning/applicability", async (HttpContext http, long? order, long? po, DocumentationService s, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null)
+            {
+                return NotRegistered();
+            }
+
+            return order is { } o ? Results.Ok(await s.OrderAsync(principal, o, ct))
+                : po is { } p ? Results.Ok(await s.PurchaseOrderAsync(principal, p, ct))
+                : Results.Problem(title: "Order or purchase order required", detail: "Give ?order= or ?po=.", statusCode: StatusCodes.Status400BadRequest);
+        }).RequireAuthorization();
+
         eng.MapPost("/attachment-links/{linkId:long}/detach", (HttpContext http, long linkId, ReasonRequest b, DocumentService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DetachAsync(new DetachDocument(linkId), c, ct)));
     }

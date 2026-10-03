@@ -21,7 +21,8 @@ public sealed record RetireLocation(string Code);
 /// Material arriving. Against a purchase order line, or (with a reason) without one, for example
 /// opening balances or customer-supplied material. <paramref name="Inspect"/> puts it into Inspection.
 /// </summary>
-public sealed record ReceiveStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect);
+/// <param name="Revision">The part revision received, when the item has released revisions (V2.3). Optional; stock without one is reported as revision not recorded.</param>
+public sealed record ReceiveStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Revision = null);
 
 public sealed record IssueToOrder(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber);
 
@@ -113,7 +114,8 @@ public sealed record NewTransaction(
     long? RequestId = null,
     string? ApprovedBy = null,
     long? ShipmentId = null,
-    long? WorkOrderId = null);
+    long? WorkOrderId = null,
+    string? PartRevision = null);
 
 public interface IInventoryStore
 {
@@ -129,6 +131,8 @@ public interface IInventoryStore
     Task<long> InsertTransactionAsync(NewTransaction transaction, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task EnsureLotAsync(string partNumber, string lotNumber, string? supplierLot, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task SetLotRevisionAsync(string partNumber, string lotNumber, string revision, CancellationToken ct);
 
     Task<bool> InsertLocationAsync(LocationInfo location, DateTimeOffset at, string actor, CancellationToken ct);
 
@@ -210,6 +214,51 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         }, ct);
     }
 
+    /// <summary>The stated part revision, checked against engineering: it must be a released revision of the part.</summary>
+    private static async Task<string?> ReceivedRevisionAsync(IKernelUnitOfWork uow, string partNumber, string? raw, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var revision = raw.Trim().ToUpperInvariant();
+        var known = (await uow.Store<IEngineeringLookup>().ListRevisionsAsync(partNumber, ct)).FirstOrDefault(r => r.Revision == revision)
+            ?? throw new CommandRejectedException("revision_not_found", $"{partNumber} has no revision {revision}.");
+        return known.Status == RevisionStatus.Released
+            ? revision
+            : throw new CommandRejectedException("revision_not_released", $"{partNumber} rev {revision} is a draft; stock is only received at a released revision.");
+    }
+
+    /// <summary>
+    /// Creates the lot with its revision, or checks an existing lot: one lot holds one revision, and a lot
+    /// received before revisions were recorded is never given one after the fact.
+    /// </summary>
+    private static async Task LotAsync(IKernelUnitOfWork uow, string partNumber, string lot, string? supplierLot, string? revision, DateTimeOffset now, string actor, CancellationToken ct)
+    {
+        var existing = (await uow.Store<IInventoryLookup>().ListLotsAsync(partNumber, ct)).FirstOrDefault(l => l.LotNumber == lot);
+        var store = uow.Store<IInventoryStore>();
+        if (existing is null)
+        {
+            await store.EnsureLotAsync(partNumber, lot, supplierLot, now, actor, ct);
+            if (revision is not null)
+            {
+                await store.SetLotRevisionAsync(partNumber, lot, revision, ct);
+            }
+
+            return;
+        }
+
+        if (revision is null || existing.PartRevision == revision)
+        {
+            return;
+        }
+
+        throw existing.PartRevision is null
+            ? new CommandRejectedException("lot_revision_not_recorded", $"Lot {lot} was received without a revision; receive rev {revision} into a new lot.")
+            : new CommandRejectedException("lot_revision_conflict", $"Lot {lot} holds rev {existing.PartRevision}; rev {revision} goes into a different lot.");
+    }
+
     public Task<CommandResult> ReceiveAsync(ReceiveStock c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
@@ -246,14 +295,15 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 line = poLine.LineNumber;
             }
 
+            var revision = await ReceivedRevisionAsync(uow, item.PartNumber, c.Revision, ct);
             if (lot is not null)
             {
-                await uow.Store<IInventoryStore>().EnsureLotAsync(item.PartNumber, lot, Optional(c.SupplierLot), now, context.Actor, ct);
+                await LotAsync(uow, item.PartNumber, lot, Optional(c.SupplierLot), revision, now, context.Actor, ct);
             }
 
             var status = c.Inspect ? StockStatus.Inspection : StockStatus.Available;
-            var txn = new NewTransaction(InventoryTransactionKind.Receipt, item.PartNumber, quantity, null, null, location.Code, status, lot, PoNumber: c.PoNumber, PoLine: line, Reason: context.Reason);
-            return (txn, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber} into {location.Code} ({status})" + (c.PoNumber is null ? "." : $" against PO {c.PoNumber} line {line}."),
+            var txn = new NewTransaction(InventoryTransactionKind.Receipt, item.PartNumber, quantity, null, null, location.Code, status, lot, PoNumber: c.PoNumber, PoLine: line, Reason: context.Reason, PartRevision: revision);
+            return (txn, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber}{(revision is null ? string.Empty : " rev " + revision)} into {location.Code} ({status})" + (c.PoNumber is null ? "." : $" against PO {c.PoNumber} line {line}."),
                 id => pipeline.Event(new InventoryReceived(id, item.PartNumber, quantity, location.Code, status.ToString(), c.PoNumber, null), context, SourceContext, StockEntity, item.PartNumber));
         }, ct);
     }
@@ -433,16 +483,17 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
                 // A made, lot-tracked part takes the order number as its lot unless one is given.
                 var lot = RequireLot(item, item.LotTracked ? Optional(c.LotNumber) ?? $"WO{order.OrderNumber}" : c.LotNumber);
+                // The order's revision is what was built (V2.3).
                 if (lot is not null)
                 {
-                    await store.EnsureLotAsync(item.PartNumber, lot, null, now, context.Actor, ct);
+                    await LotAsync(uow, item.PartNumber, lot, null, order.Revision, now, context.Actor, ct);
                 }
 
-                var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, quantity, null, null, location.Code, StockStatus.Available, lot, OrderNumber: order.OrderNumber, Reason: context.Reason);
+                var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, quantity, null, null, location.Code, StockStatus.Available, lot, OrderNumber: order.OrderNumber, Reason: context.Reason, PartRevision: order.Revision);
                 var txnId = await store.InsertTransactionAsync(txn, now, context.Actor, ct);
                 var id = txnId.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 return new CommandOutcome(
-                    CommandResult.Ok(id, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber} from order {order.OrderNumber} into {location.Code}" + (lot is null ? "." : $", lot {lot}.")),
+                    CommandResult.Ok(id, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber} rev {order.Revision} from order {order.OrderNumber} into {location.Code}" + (lot is null ? "." : $", lot {lot}.")),
                     [pipeline.Event(new InventoryReceived(txnId, item.PartNumber, quantity, location.Code, nameof(StockStatus.Available), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber)],
                     new AuditChange("InventoryTransaction", id, null, CanonicalJson.Serialize(txn)));
             },

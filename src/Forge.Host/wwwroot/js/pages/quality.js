@@ -69,8 +69,8 @@ export async function qualityPage(page, ctx) {
     $$('[data-implement]', page).forEach(b => b.addEventListener('click', () => implement(Number(b.dataset.implement))));
     $$('[data-verify]', page).forEach(b => b.addEventListener('click', () => verify(Number(b.dataset.verify))));
     $('#new-plan', page)?.addEventListener('click', () => editPlan(null));
-    $$('[data-plan]', page).forEach(b => b.addEventListener('click', () => editPlan((data.plans.data ?? []).find(p => `${p.partNumber}/${p.sequence}` === b.dataset.plan))));
-    $$('[data-remove-plan]', page).forEach(b => b.addEventListener('click', () => removePlan(...b.dataset.removePlan.split('/'))));
+    $$('[data-plan]', page).forEach(b => b.addEventListener('click', () => editPlan((data.plans.data ?? []).find(p => `${p.partNumber}/${p.sequence}/${p.revision ?? ''}` === b.dataset.plan))));
+    $$('[data-remove-plan]', page).forEach(b => b.addEventListener('click', () => (([part, seq, rev]) => removePlan(part, seq, rev || null))(b.dataset.removePlan.split('/'))));
     $('#new-gauge', page)?.addEventListener('click', newGauge);
     $$('[data-calibrate]', page).forEach(b => b.addEventListener('click', () => calibrate(b.dataset.calibrate)));
   }
@@ -146,10 +146,10 @@ export async function qualityPage(page, ctx) {
     const rows = data.plans.data;
     const add = engineer ? '<div style="margin-bottom:8px"><button class="btn small" id="new-plan">New inspection point</button></div>' : '';
     if (!rows.length) return add + emptyBlock('No inspection points', 'Add one after a routing operation: what to check, and the limits.');
-    return add + `<table class="table"><thead><tr><th>Part</th><th>After op</th><th>Inspection</th><th>Characteristics</th><th></th></tr></thead><tbody>
-      ${rows.map(p => `<tr><td><b>${esc(p.partNumber)}</b></td><td>${p.sequence}</td><td>${esc(p.title)}</td>
+    return add + `<table class="table"><thead><tr><th>Part</th><th>Revision</th><th>After op</th><th>Inspection</th><th>Characteristics</th><th></th></tr></thead><tbody>
+      ${rows.map(p => `<tr><td><b>${esc(p.partNumber)}</b></td><td>${p.revision ? `rev ${esc(p.revision)}` : '<span class="faint">Every revision</span>'}</td><td>${p.sequence}</td><td>${esc(p.title)}</td>
         <td>${p.characteristics.map(c => `${esc(c.name)} <span class="faint">${esc(limits(c))}</span>`).join('<br>')}</td>
-        <td class="nowrap">${engineer ? `<button class="btn small" data-plan="${esc(p.partNumber)}/${p.sequence}">Edit</button> <button class="btn small ghost" data-remove-plan="${esc(p.partNumber)}/${p.sequence}">Remove</button>` : ''}</td></tr>`).join('')}
+        <td class="nowrap">${engineer ? `<button class="btn small" data-plan="${esc(p.partNumber)}/${p.sequence}/${esc(p.revision ?? '')}">Edit</button> <button class="btn small ghost" data-remove-plan="${esc(p.partNumber)}/${p.sequence}/${esc(p.revision ?? '')}">Remove</button>` : ''}</td></tr>`).join('')}
       </tbody></table>`;
   }
 
@@ -251,7 +251,8 @@ export async function qualityPage(page, ctx) {
     const rows = [1, 2, 3, 4, 5];
     const fields = [
       { name: 'partNumber', label: 'Part', type: plan ? 'text' : 'select', options: parts, value: plan?.partNumber, readonly: !!plan, required: true },
-      { name: 'sequence', label: 'After operation', type: 'number', value: plan?.sequence, readonly: !!plan, required: true, hint: 'The operation number in the released routing.' },
+      { name: 'sequence', label: 'After operation', type: 'number', value: plan?.sequence, readonly: !!plan, required: true, hint: 'The operation number in the routing.' },
+      { name: 'revision', label: 'For item revision (optional)', code: true, value: plan?.revision ?? '', readonly: !!plan, hint: 'Leave empty for every revision. A plan for one revision replaces the general plan for that revision.' },
       { name: 'title', label: 'Inspection title', value: plan?.title, required: true },
       ...rows.flatMap(n => {
         const c = plan?.characteristics[n - 1];
@@ -266,14 +267,14 @@ export async function qualityPage(page, ctx) {
     ];
     return formModal({ title: plan ? `Inspection after ${plan.partNumber} op ${plan.sequence}` : 'New inspection point', detail: 'Measured checks need at least one limit. Past inspections keep the limits they were made against.', confirmLabel: 'Save inspection point', fields },
       (v, reason) => command('/api/quality/plans', {
-        partNumber: v.partNumber, sequence: v.sequence, title: v.title,
+        partNumber: v.partNumber, sequence: v.sequence, title: v.title, revision: v.revision,
         characteristics: rows.filter(n => v[`name${n}`]).map(n => ({ name: v[`name${n}`], kind: v[`kind${n}`], lower: v[`lower${n}`], upper: v[`upper${n}`], unit: v[`unit${n}`] })),
       }, reason), reload);
   }
 
-  async function removePlan(part, sequence) {
-    const done = await confirmWithReason({ title: `Remove the inspection after ${part} op ${sequence}`, detail: 'Orders no longer wait for it. Inspections already recorded are kept.', confirmLabel: 'Remove' },
-      reason => command(`/api/quality/plans/${encodeURIComponent(part)}/${sequence}/remove`, {}, reason));
+  async function removePlan(part, sequence, revision) {
+    const done = await confirmWithReason({ title: `Remove the inspection after ${part}${revision ? ` rev ${revision}` : ''} op ${sequence}`, detail: 'Orders no longer wait for it. Inspections already recorded are kept.', confirmLabel: 'Remove' },
+      reason => command(`/api/quality/plans/${encodeURIComponent(part)}/${sequence}/remove${revision ? `?revision=${encodeURIComponent(revision)}` : ''}`, {}, reason));
     if (done) { toast(done.message); await reload(); }
   }
 

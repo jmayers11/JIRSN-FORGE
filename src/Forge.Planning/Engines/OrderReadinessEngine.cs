@@ -9,7 +9,8 @@ namespace Forge.Planning.Engines;
 /// The order to evaluate, its revision as engineering sees it now, and (for a released order) its
 /// material allocation and quality state. Without them, material and quality are listed as not evaluated.
 /// </summary>
-public sealed record OrderReadinessRequest(OrderInfo Order, RevisionInfo? RevisionNow, OrderMaterialStatus? Material = null, OrderQuality? Quality = null);
+/// <param name="Documentation">The order's documentation (V2.3). When the item class is not enforced, Documentation is listed as not evaluated.</param>
+public sealed record OrderReadinessRequest(OrderInfo Order, RevisionInfo? RevisionNow, OrderMaterialStatus? Material = null, OrderQuality? Quality = null, OrderDocumentation? Documentation = null);
 
 /// <summary>How one eligible machine (or the work center, for work without a machine) looks for an operation.</summary>
 public sealed record OperationCandidate(string? MachineCode, bool Executable, string? PrimaryConstraint, IReadOnlyList<ReadinessDimension> Dimensions);
@@ -42,13 +43,13 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
 
     public static readonly IReadOnlyList<string> NotYetEvaluatedWithBoth = ["Tooling"];
 
-    private static readonly string[] Precedence = ["Order", "Engineering", "Predecessor", "Quality", "Material", "RequirementProfile", "Equipment", "Safety", "Workforce"];
+    private static readonly string[] Precedence = ["Order", "Engineering", "Documentation", "Predecessor", "Quality", "Material", "RequirementProfile", "Equipment", "Safety", "Workforce"];
 
     private readonly PersonnelCompositionEngine composition = new();
 
     public string Name => "order-readiness";
 
-    public string Version => "3";
+    public string Version => "4";
 
     public EngineEvaluation<OrderReadinessResult> Evaluate(SiteSnapshot snapshot, OrderReadinessRequest parameters, DateTimeOffset asOf)
     {
@@ -86,6 +87,10 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
             (null, not null) => NotYetEvaluatedWithQuality,
             _ => NotYetEvaluatedWithBoth,
         };
+        if (parameters.Documentation is { Enforced: false })
+        {
+            notEvaluated = [.. notEvaluated, "Documentation"];
+        }
 
         var operations = new List<OperationReadiness>();
         var nodes = new List<EvidenceNode>();
@@ -105,6 +110,11 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
                 .First();
 
             var dimensions = new List<ReadinessDimension> { orderDimension, engineering, predecessor };
+            if (parameters.Documentation is { Enforced: true } documentation && op.Status != OperationStatus.Complete)
+            {
+                dimensions.Add(documentation.DimensionFor(op.Sequence));
+            }
+
             if (parameters.Quality is { } quality && op.Status != OperationStatus.Complete)
             {
                 dimensions.Add(QualityCheck(quality, op.Sequence));

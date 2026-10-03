@@ -17,9 +17,10 @@ public sealed record RecordCalibration(string Code, DateOnly CalibratedOn, DateO
 public sealed record NewCharacteristic(string Name, CharacteristicKind Kind, decimal? Nominal, decimal? Lower, decimal? Upper, string? Unit);
 
 /// <summary>Replaces the inspection point after an operation of a part.</summary>
-public sealed record SetInspectionPlan(string PartNumber, int Sequence, string Title, IReadOnlyList<NewCharacteristic> Characteristics);
+/// <param name="Revision">The item revision this plan is for; null for every revision.</param>
+public sealed record SetInspectionPlan(string PartNumber, int Sequence, string Title, IReadOnlyList<NewCharacteristic> Characteristics, string? Revision = null);
 
-public sealed record RemoveInspectionPlan(string PartNumber, int Sequence);
+public sealed record RemoveInspectionPlan(string PartNumber, int Sequence, string? Revision = null);
 
 /// <summary>What the inspector found for one characteristic: a measurement, or accepted/rejected.</summary>
 public sealed record Finding(int Number, decimal? Measured, bool? Accepted);
@@ -69,7 +70,7 @@ public interface IQualityStore
 
     Task SavePlanAsync(InspectionPlanInfo plan, DateTimeOffset at, string actor, CancellationToken ct);
 
-    Task<bool> DeletePlanAsync(string partNumber, int sequence, CancellationToken ct);
+    Task<bool> DeletePlanAsync(string partNumber, int sequence, string? revision, CancellationToken ct);
 
     Task<long> InsertInspectionAsync(InspectionInfo inspection, CancellationToken ct);
 
@@ -134,7 +135,8 @@ public sealed class QualityService(CommandPipeline pipeline)
     {
         ArgumentNullException.ThrowIfNull(c);
         var part = BusinessCode.Require(c.PartNumber, "Part");
-        var id = $"{part}:{c.Sequence}";
+        var planRevision = string.IsNullOrWhiteSpace(c.Revision) ? null : BusinessCode.Require(c.Revision, "Revision");
+        var id = planRevision is null ? $"{part}:{c.Sequence}" : $"{part}:{c.Sequence}:{planRevision}";
         var spec = new CommandSpec(SourceContext, nameof(SetInspectionPlan), Permissions.QualityPlan, ResourceRef.Of("InspectionPlan", id));
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
@@ -145,11 +147,17 @@ public sealed class QualityService(CommandPipeline pipeline)
                 throw new CommandRejectedException("unknown_part", $"Part {part} does not exist.");
             }
 
-            var revision = await engineering.GetEffectiveRevisionAsync(part, now, ct);
+            // A plan for one revision checks that revision's routing; a plan for every revision, the routing in force.
+            var revision = planRevision is null
+                ? await engineering.GetEffectiveRevisionAsync(part, now, ct)
+                : (await engineering.ListRevisionsAsync(part, ct)).FirstOrDefault(r => r.Revision == planRevision)
+                    ?? throw new CommandRejectedException("revision_not_found", $"{part} has no revision {planRevision}.");
             var detail = revision is null ? null : await engineering.GetRevisionDetailAsync(part, revision.Revision, ct);
             if (detail is null || detail.Routing.All(o => o.Sequence != c.Sequence))
             {
-                throw new CommandRejectedException("unknown_operation", $"{part} has no operation {c.Sequence} in its released routing.");
+                throw new CommandRejectedException("unknown_operation", planRevision is null
+                    ? $"{part} has no operation {c.Sequence} in its released routing."
+                    : $"{part} rev {planRevision} has no operation {c.Sequence}.");
             }
 
             if (c.Characteristics is null || c.Characteristics.Count is 0 or > 99)
@@ -175,10 +183,10 @@ public sealed class QualityService(CommandPipeline pipeline)
                     : new CharacteristicInfo(i + 1, name, x.Kind, x.Nominal, x.Lower, x.Upper, Trim(x.Unit, 20));
             }).ToList();
 
-            var previous = (await uow.Store<IQualityLookup>().ListPlansAsync(part, ct)).FirstOrDefault(p => p.Sequence == c.Sequence);
-            var plan = new InspectionPlanInfo(part, c.Sequence, title, characteristics);
+            var previous = (await uow.Store<IQualityLookup>().ListPlansAsync(part, ct)).FirstOrDefault(p => p.Sequence == c.Sequence && p.Revision == planRevision);
+            var plan = new InspectionPlanInfo(part, c.Sequence, title, characteristics, planRevision);
             await uow.Store<IQualityStore>().SavePlanAsync(plan, now, context.Actor, ct);
-            return Outcome(context, "InspectionPlan", id, previous is null ? "Defined" : "Changed", $"Inspection after {part} operation {c.Sequence}: {characteristics.Count} characteristic(s).", previous, plan);
+            return Outcome(context, "InspectionPlan", id, previous is null ? "Defined" : "Changed", $"Inspection after {part}{(planRevision is null ? string.Empty : " rev " + planRevision)} operation {c.Sequence}: {characteristics.Count} characteristic(s).", previous, plan);
         }, ct);
     }
 
@@ -186,13 +194,14 @@ public sealed class QualityService(CommandPipeline pipeline)
     {
         ArgumentNullException.ThrowIfNull(c);
         var part = BusinessCode.Require(c.PartNumber, "Part");
-        var id = $"{part}:{c.Sequence}";
+        var planRevision = string.IsNullOrWhiteSpace(c.Revision) ? null : BusinessCode.Require(c.Revision, "Revision");
+        var id = planRevision is null ? $"{part}:{c.Sequence}" : $"{part}:{c.Sequence}:{planRevision}";
         var spec = new CommandSpec(SourceContext, nameof(RemoveInspectionPlan), Permissions.QualityPlan, ResourceRef.Of("InspectionPlan", id), ReasonRequired: true);
         return pipeline.ExecuteAsync(spec, c, context, async (uow, _) =>
         {
-            var previous = (await uow.Store<IQualityLookup>().ListPlansAsync(part, ct)).FirstOrDefault(p => p.Sequence == c.Sequence)
-                ?? throw new CommandRejectedException("plan_not_found", $"No inspection after {part} operation {c.Sequence}.");
-            await uow.Store<IQualityStore>().DeletePlanAsync(part, c.Sequence, ct);
+            var previous = (await uow.Store<IQualityLookup>().ListPlansAsync(part, ct)).FirstOrDefault(p => p.Sequence == c.Sequence && p.Revision == planRevision)
+                ?? throw new CommandRejectedException("plan_not_found", $"No inspection after {part}{(planRevision is null ? string.Empty : " rev " + planRevision)} operation {c.Sequence}.");
+            await uow.Store<IQualityStore>().DeletePlanAsync(part, c.Sequence, planRevision, ct);
             return Outcome(context, "InspectionPlan", id, "Removed", $"Inspection after {part} operation {c.Sequence} removed.", previous, null);
         }, ct);
     }
@@ -222,8 +231,9 @@ public sealed class QualityService(CommandPipeline pipeline)
                 throw new CommandRejectedException("invalid_quantity", $"Inspect between 1 and {order.Quantity}; the rejected quantity cannot exceed what was inspected.");
             }
 
-            var plan = (await uow.Store<IQualityLookup>().ListPlansAsync(order.PartNumber, ct)).FirstOrDefault(x => x.Sequence == c.Sequence)
-                ?? throw new CommandRejectedException("no_inspection_plan", $"{order.PartNumber} has no inspection after operation {c.Sequence}.");
+            // The plan for the revision the order builds (V2.3).
+            var plan = InspectionPlans.For(await uow.Store<IQualityLookup>().ListPlansAsync(order.PartNumber, ct), order.PartNumber, order.Revision).FirstOrDefault(x => x.Sequence == c.Sequence)
+                ?? throw new CommandRejectedException("no_inspection_plan", $"{order.PartNumber} rev {order.Revision} has no inspection after operation {c.Sequence}.");
 
             // Independence (spec §45): the inspector did not work this operation.
             var labor = await uow.Store<IExecutionLookup>().ListLaborAsync(now, now, order.OrderNumber, ct);

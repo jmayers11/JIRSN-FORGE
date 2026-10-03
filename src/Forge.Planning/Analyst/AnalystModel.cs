@@ -40,6 +40,9 @@ public enum AnalystIntent
 
     /// <summary>"Brief me", "Brief me — second shift".</summary>
     Brief,
+
+    /// <summary>"What documentation applies to order 48172?" (V2.3).</summary>
+    OrderDocumentation,
 }
 
 public enum AnalystConfidence

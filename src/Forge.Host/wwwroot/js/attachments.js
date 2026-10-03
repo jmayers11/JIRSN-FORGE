@@ -116,3 +116,39 @@ export function attachmentsDrawer(title, options) {
   const { element } = drawer(title, '<section class="panel"></section>');
   return attachmentsPanel(element.querySelector('section'), { ...options, title: 'Documents' });
 }
+
+const STATE_LABEL = {
+  Current: 'Current', Pinned: 'Pinned', LegitimatelySuperseded: 'Superseded after release', Mismatch: 'Mismatch', Missing: 'Missing',
+  NotReleased: 'Not released', Obsolete: 'Obsolete', RequiresReview: 'Requires review',
+};
+const STATE_PILL = { Current: 'ok', Pinned: 'ok', LegitimatelySuperseded: 'info', Mismatch: 'bad', Missing: 'bad', NotReleased: 'bad', Obsolete: 'bad', RequiresReview: 'warn' };
+
+/** Which revision of each document applies to an order and whether the order matches it (V2.3). */
+export async function appendApplicability(page, orderNumber, me) {
+  const section = document.createElement('section');
+  section.className = 'panel';
+  page.append(section);
+  await renderApplicability(section, orderNumber, me);
+}
+
+async function renderApplicability(section, orderNumber, me) {
+  const res = await tryGet(`/api/planning/applicability?order=${orderNumber}`);
+  if (res.error) { section.innerHTML = `<header><h2>Applicable documentation</h2></header>${errorBlock(res.error, 'applicability')}`; return; }
+  const d = res.data;
+  section.innerHTML = `
+    <header><h2>Applicable documentation</h2><span class="spacer"></span>
+      <span class="pill ${d.enforced ? 'info' : 'none'}">${d.enforced ? 'Blocks readiness' : `Not enforced for ${esc(d.itemClass)} items`}</span>
+      ${d.documents.some(x => x.state === 'Mismatch') && can(me, 'Planner') ? '<button class="btn small primary" data-reissue>Reissue documentation</button>' : ''}</header>
+    <div class="muted" style="margin-bottom:8px">${esc(d.summary)} Released orders are compared with the revision that applied when they were released.</div>
+    ${!d.documents.length ? emptyBlock('No documents required', `${d.partNumber} rev ${d.revision} lists no documents and nothing is attached to follow.`) : `
+    <div class="table-wrap"><table class="table"><thead><tr><th>Document</th><th>Required by</th><th>Released with</th><th>Applies now</th><th>State</th><th>Why</th></tr></thead><tbody>
+    ${d.documents.map(x => `<tr><td>${x.title ? `<a href="#/engineering/documents/${encodeURIComponent(x.documentNumber)}"><b>${esc(x.documentNumber)}</b></a> ${esc(x.title)}` : `<i>${esc(x.documentNumber)}</i>`}</td>
+      <td>${esc(x.source)}</td><td>${esc(x.atRelease ?? '—')}</td><td>${esc(x.applicable ?? '—')}${x.pinnedRevision ? ' <span class="faint">(pinned)</span>' : ''}</td>
+      <td><span class="pill ${STATE_PILL[x.state] ?? 'none'}">${esc(STATE_LABEL[x.state] ?? x.state)}</span></td><td class="muted">${esc(x.explanation)}</td></tr>`).join('')}
+    </tbody></table></div>`}`;
+  section.querySelector('[data-reissue]')?.addEventListener('click', () => formModal({
+    title: `Reissue documentation for order ${orderNumber}`,
+    detail: 'Do this when the floor has the revisions that apply now (traveler reprinted, old copies withdrawn). The order then references them.',
+    reasonRequired: true, confirmLabel: 'Reissue', fields: [],
+  }, (_, reason) => command(`/api/engineering/orders/${orderNumber}/reissue-documentation`, {}, reason), () => renderApplicability(section, orderNumber, me)));
+}

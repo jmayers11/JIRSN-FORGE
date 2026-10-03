@@ -140,7 +140,7 @@ public static partial class QueryParser
         var confidence = intent switch
         {
             AnalystIntent.Unsupported => AnalystConfidence.Low,
-            AnalystIntent.OrderStatus when order is null => AnalystConfidence.Low,
+            AnalystIntent.OrderStatus or AnalystIntent.OrderDocumentation when order is null => AnalystConfidence.Low,
             AnalystIntent.MachineBlockers or AnalystIntent.Simulate when machine is null && person is null => AnalystConfidence.Low,
             AnalystIntent.QualifiedPeople when machine is null && workCenter is null => AnalystConfidence.Low,
             _ when ambiguities.Count > 0 => AnalystConfidence.Medium,
@@ -219,6 +219,11 @@ public static partial class QueryParser
             return AnalystIntent.Report;
         }
 
+        if (order is not null && Has("document", "drawing", "spec", "procedure", "work instruction"))
+        {
+            return AnalystIntent.OrderDocumentation;
+        }
+
         if (order is not null)
         {
             return AnalystIntent.OrderStatus;
@@ -263,7 +268,8 @@ public static partial class QueryParser
     internal static string? ReportOf(string t)
     {
         bool Has(params string[] words) => words.Any(w => t.Contains(" " + w, StringComparison.Ordinal));
-        return Has("unclassified", "classification", "classified", "item class", "cots", "manufacturer part", "mpn") ? "item-classification"
+        return Has("mismatch", "documentation status", "out of date drawing", "wrong revision") ? "documentation-status"
+            : Has("unclassified", "classification", "classified", "item class", "cots", "manufacturer part", "mpn") ? "item-classification"
             : Has("document", "drawing", "procedure", "specification", "work instruction") ? "document-register"
             : Has("expir") && Has("cert", "qualif", "training") ? "qualifications-expiring"
             : Has("attainment") ? "schedule-attainment"
@@ -582,6 +588,7 @@ public static partial class QueryParser
             AnalystIntent.Simulate => $"Scenario: {i.Machine ?? Person() ?? "…"} unavailable" + (i.Hours is { } h ? $" for {h:0.#} h" : string.Empty),
             AnalystIntent.Report => $"Report: {i.Report!.Title}",
             AnalystIntent.Brief => "Operational brief",
+            AnalystIntent.OrderDocumentation => i.OrderNumber is { } od ? $"Documentation that applies to order {od}" : "Documentation that applies to an order",
             _ => "Not a question about your Forge operation",
         });
 
