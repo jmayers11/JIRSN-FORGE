@@ -268,7 +268,8 @@ public static partial class QueryParser
     internal static string? ReportOf(string t)
     {
         bool Has(params string[] words) => words.Any(w => t.Contains(" " + w, StringComparison.Ordinal));
-        return Has("mismatch", "documentation status", "out of date drawing", "wrong revision") ? "documentation-status"
+        return Has("engineering change", "ecn", "change board", "open change", "change request") ? "engineering-changes"
+            : Has("mismatch", "documentation status", "out of date drawing", "wrong revision") ? "documentation-status"
             : Has("unclassified", "classification", "classified", "item class", "cots", "manufacturer part", "mpn") ? "item-classification"
             : Has("document", "drawing", "procedure", "specification", "work instruction") ? "document-register"
             : Has("expir") && Has("cert", "qualif", "training") ? "qualifications-expiring"

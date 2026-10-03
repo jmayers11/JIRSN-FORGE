@@ -280,16 +280,18 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
         }, ct);
 
     public Task<CommandResult> ApproveAsync(ApproveDocumentRevision c, CommandContext context, CancellationToken ct) =>
-        ChangeRevisionAsync(nameof(ApproveDocumentRevision), c.Number, c.Revision, c, context, Permissions.DocumentsApprove, false, (_, document, current, now) =>
+        ChangeRevisionAsync(nameof(ApproveDocumentRevision), c.Number, c.Revision, c, context, Permissions.DocumentsApprove, false, async (uow, document, current, now) =>
         {
+            await RequireNotUnderChangeAsync(uow, document, current, ct);
             RequireStatus(current, DocumentRevisionStatus.InReview, "approved");
             RequireNotAuthor(current, context, "approve");
-            return Changed(current with { Status = DocumentRevisionStatus.Approved, ApprovedBy = context.Actor, ApprovedAt = now }, "Approved", "approved; release it to make it the revision in force");
+            return (current with { Status = DocumentRevisionStatus.Approved, ApprovedBy = context.Actor, ApprovedAt = now }, "Approved", "approved; release it to make it the revision in force");
         }, ct);
 
     public Task<CommandResult> ReleaseAsync(ReleaseDocumentRevision c, CommandContext context, CancellationToken ct) =>
         ChangeRevisionAsync(nameof(ReleaseDocumentRevision), c.Number, c.Revision, c, context, Permissions.DocumentsRelease, true, async (uow, document, current, now) =>
         {
+            await RequireNotUnderChangeAsync(uow, document, current, ct);
             if (document.Authority == DocumentAuthority.Reference)
             {
                 throw new CommandRejectedException("reference_not_controlled", $"{document.Number} is a reference document; it is never released.");
@@ -537,6 +539,14 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
         var file = await uow.Store<IDocumentLookup>().FindFileAsync(sha, ct)
             ?? throw new CommandRejectedException("file_not_found", "That file has not been uploaded.");
         return (sha, FileName(rawName), file.SizeBytes);
+    }
+
+    private static async Task RequireNotUnderChangeAsync(IKernelUnitOfWork uow, DocumentInfo document, DocumentRevisionInfo revision, CancellationToken ct)
+    {
+        if (await ChangeService.OpenChangeForAsync(uow, ChangeLineKind.DocumentRevision, document.Number, revision.Revision, ct) is { } change)
+        {
+            throw new CommandRejectedException("under_change", $"{document.Number} rev {revision.Revision} is part of {change}; that change approves and releases it.");
+        }
     }
 
     private static void RequireSameProgram(DocumentInfo document, DocumentTarget target)

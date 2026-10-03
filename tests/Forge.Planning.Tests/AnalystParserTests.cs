@@ -65,6 +65,8 @@ public class AnalystParserTests
     [InlineData("Show the document register", "document-register")]
     [InlineData("Which drawings need review?", "document-register")]
     [InlineData("show unclassified items", "item-classification")]
+    [InlineData("Show open engineering changes", "engineering-changes")]
+    [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)
     {
         var parsed = Parse(question);

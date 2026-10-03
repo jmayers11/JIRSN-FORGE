@@ -58,7 +58,8 @@ async function main() {
       const classification = !items.includes('BRG-6205-001');
       const documents = !(await get('eng', '/api/engineering/documents')).some(d => d.number === 'DWG-PANEL-500');
       const applicability = !documents && !(await panelRequirements()).length;
-      if (!insight && !classification && !documents && !applicability) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const changes = !(await get('eng', '/api/engineering/changes')).length;
+      if (!insight && !classification && !documents && !applicability && !changes) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -74,6 +75,10 @@ async function main() {
       if (documents || applicability) {
         console.log('Adding sample document requirements.');
         await seedApplicability();
+      }
+      if (changes) {
+        console.log('Adding a sample engineering change and review policy.');
+        await seedChanges();
       }
       return finish();
     }
@@ -91,6 +96,7 @@ async function main() {
     await seedClassification();
     await seedDocuments();
     await seedApplicability();
+    await seedChanges();
     return finish();
   }
 
@@ -481,6 +487,18 @@ async function seedApplicability() {
   if (!revision) return;
   step(`Engineering: PANEL-500 rev ${revision} is built to DWG-PANEL-500 (documentation shown on orders, not yet enforced)`);
   await post('eng', `/api/engineering/items/PANEL-500/revisions/${revision}/documents`, { documentNumber: 'DWG-PANEL-500', reason: 'Sample drawing baseline' });
+}
+
+async function seedChanges() {
+  step('Engineering change: a review policy, and ECN for DWG-PANEL-500 rev B in review (technical done, quality open)');
+  await post('approver', '/api/engineering/review-policies', { name: 'Major changes', changeClass: 'Major', requiredReviews: ['Technical', 'Quality', 'Manufacturing'], combineApprovalRelease: false, reason: 'Sample change board charter' });
+  await post('approver', '/api/engineering/review-policies', { name: 'Documentation fixes', changeType: 'Documentation', requiredReviews: ['Technical'], combineApprovalRelease: true, reason: 'Small corrections: approver may release' });
+  const dwg = await upload('eng', 'DWG-PANEL-500_B.txt', 'SAMPLE drawing DWG-PANEL-500 rev B\nPainted panel assembly: 500 x 300 mm, RAL 7016, edge radius 3 mm.\n');
+  await post('eng', '/api/engineering/documents/DWG-PANEL-500/revisions', { revision: 'B', fileSha256: dwg, fileName: 'DWG-PANEL-500_B.txt', changeNote: 'Edge radius 2 → 3 mm' });
+  const ecn = (await post('eng', '/api/engineering/changes', { title: 'Panel edge radius 2 → 3 mm', class: 'Major', type: 'Design', priority: 'Routine', changeReason: 'Paint chips at sharp edges (sample)', description: 'Larger radius holds paint better; no change to the bill of materials.' })).entityId;
+  await post('eng', `/api/engineering/changes/${ecn}/lines`, { kind: 'DocumentRevision', subject: 'DWG-PANEL-500', toRevision: 'B', note: 'Edge radius' });
+  await post('eng', `/api/engineering/changes/${ecn}/submit`);
+  await post('approver', `/api/engineering/changes/${ecn}/reviews`, { kind: 'Technical', decision: 'Approve', notes: 'Radius within tooling capability' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

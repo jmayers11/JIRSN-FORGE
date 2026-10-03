@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Forge.Competency.Contracts;
 using Forge.Engineering.Contracts;
+using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
@@ -350,70 +351,86 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
         var spec = new CommandSpec(SourceContext, nameof(ReleaseRevision), Permissions.EngineeringRelease, ResourceRef.Of(RevisionEntity, $"{part}:{rev}"), ReasonRequired: true);
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
-            var lookup = uow.Store<IEngineeringLookup>();
-            var detail = await lookup.GetRevisionDetailAsync(part, rev, ct)
-                ?? throw new CommandRejectedException("unknown_revision", $"Revision {part} {rev} does not exist.");
-            if (detail.Revision.Status != RevisionStatus.Draft)
+            if (await ChangeService.OpenChangeForAsync(uow, ChangeLineKind.ItemRevision, part, rev, ct) is { } change)
             {
-                throw new CommandRejectedException("not_draft", $"Revision {part} {rev} is already released.");
+                throw new CommandRejectedException("under_change", $"{part} rev {rev} is part of {change}; it is released by that change.");
             }
 
-            if ((await uow.Store<IEngineeringStore>().GetContributorsAsync(part, rev, ct)).Contains(context.Actor, StringComparer.Ordinal))
-            {
-                throw new CommandRejectedException("separation_of_duties", "You created or edited this revision; a different person must release it.");
-            }
-
-            var effectiveFrom = c.EffectiveFrom?.ToUniversalTime() ?? now;
-            if (effectiveFrom < now.AddMinutes(-1))
-            {
-                throw new CommandRejectedException("backdated", "A release cannot take effect in the past.");
-            }
-
-            var problems = new List<string>();
-            if (detail.Item.MakeBuy == MakeBuy.Make && detail.Routing.Count == 0)
-            {
-                problems.Add("A made part needs at least one routing operation.");
-            }
-
-            foreach (var line in detail.Bom)
-            {
-                if (await lookup.GetEffectiveRevisionAsync(line.ComponentPartNumber, effectiveFrom, ct) is null)
-                {
-                    problems.Add($"Component {line.ComponentPartNumber} (line {line.LineNumber}) has no released revision in force at {effectiveFrom:u}.");
-                }
-            }
-
-            var edges = await uow.Store<IEngineeringStore>().ListBomEdgesAsync(ct);
-            if (Reaches(edges.Where(e => e.Parent != part).Concat(detail.Bom.Select(b => (part, b.ComponentPartNumber))).ToList(), part, part, skipStart: true))
-            {
-                problems.Add("The bill of materials contains a loop.");
-            }
-
-            if (problems.Count > 0)
-            {
-                throw new CommandRejectedException("release_blocked", string.Join(" ", problems));
-            }
-
-            var released = (await lookup.ListRevisionsAsync(part, ct)).Where(r => r.Status == RevisionStatus.Released).ToList();
-            if (released.Any(r => r.EffectiveFrom >= effectiveFrom))
-            {
-                throw new CommandRejectedException("effectivity_conflict", "Another released revision already takes effect at or after this date.");
-            }
-
-            var store = uow.Store<IEngineeringStore>();
-            var superseded = released.Where(r => r.EffectiveTo is null || r.EffectiveTo > effectiveFrom).OrderBy(r => r.EffectiveFrom).LastOrDefault();
-            if (superseded is not null)
-            {
-                await store.SetEffectivityAsync(part, superseded.Revision, RevisionStatus.Released, superseded.EffectiveFrom, effectiveFrom, context.Actor, ct);
-            }
-
-            await store.SetEffectivityAsync(part, rev, RevisionStatus.Released, effectiveFrom, null, context.Actor, ct);
+            var (effectiveFrom, superseded, detail) = await ReleaseRevisionCoreAsync(uow, part, rev, c.EffectiveFrom, now, context.Actor, ct);
             var id = $"{part}:{rev}";
             return new CommandOutcome(
                 CommandResult.Ok(id, $"{part} rev {rev} released, effective {effectiveFrom:u}" + (superseded is null ? "." : $"; supersedes rev {superseded.Revision}.")),
                 [pipeline.Event(new RevisionReleased(part, rev, effectiveFrom, superseded?.Revision), context, SourceContext, RevisionEntity, id)],
                 new AuditChange(RevisionEntity, id, "Draft", CanonicalJson.Serialize(new { status = "Released", effectiveFrom, supersedes = superseded?.Revision, bom = detail.Bom, routing = detail.Routing })));
         }, ct);
+    }
+
+    /// <summary>
+    /// Releases a draft item revision in the caller's transaction: checks contributors, effectivity, routing,
+    /// components and loops, then supersedes the revision in force. Used by release and by engineering changes.
+    /// </summary>
+    internal static async Task<(DateTimeOffset EffectiveFrom, RevisionInfo? Superseded, RevisionDetail Detail)> ReleaseRevisionCoreAsync(
+        IKernelUnitOfWork uow, string part, string rev, DateTimeOffset? requestedFrom, DateTimeOffset now, string actor, CancellationToken ct)
+    {
+        var lookup = uow.Store<IEngineeringLookup>();
+        var detail = await lookup.GetRevisionDetailAsync(part, rev, ct)
+            ?? throw new CommandRejectedException("unknown_revision", $"Revision {part} {rev} does not exist.");
+        if (detail.Revision.Status != RevisionStatus.Draft)
+        {
+            throw new CommandRejectedException("not_draft", $"Revision {part} {rev} is already released.");
+        }
+
+        if ((await uow.Store<IEngineeringStore>().GetContributorsAsync(part, rev, ct)).Contains(actor, StringComparer.Ordinal))
+        {
+            throw new CommandRejectedException("separation_of_duties", $"You created or edited {part} rev {rev}; a different person must release it.");
+        }
+
+        var effectiveFrom = requestedFrom?.ToUniversalTime() ?? now;
+        if (effectiveFrom < now.AddMinutes(-1))
+        {
+            throw new CommandRejectedException("backdated", "A release cannot take effect in the past.");
+        }
+
+        var problems = new List<string>();
+        if (detail.Item.MakeBuy == MakeBuy.Make && detail.Routing.Count == 0)
+        {
+            problems.Add($"{part}: a made part needs at least one routing operation.");
+        }
+
+        foreach (var line in detail.Bom)
+        {
+            if (await lookup.GetEffectiveRevisionAsync(line.ComponentPartNumber, effectiveFrom, ct) is null)
+            {
+                problems.Add($"Component {line.ComponentPartNumber} (line {line.LineNumber}) has no released revision in force at {effectiveFrom:u}.");
+            }
+        }
+
+        var edges = await uow.Store<IEngineeringStore>().ListBomEdgesAsync(ct);
+        if (Reaches(edges.Where(e => e.Parent != part).Concat(detail.Bom.Select(b => (part, b.ComponentPartNumber))).ToList(), part, part, skipStart: true))
+        {
+            problems.Add($"The bill of materials of {part} contains a loop.");
+        }
+
+        if (problems.Count > 0)
+        {
+            throw new CommandRejectedException("release_blocked", string.Join(" ", problems));
+        }
+
+        var released = (await lookup.ListRevisionsAsync(part, ct)).Where(r => r.Status == RevisionStatus.Released).ToList();
+        if (released.Any(r => r.EffectiveFrom >= effectiveFrom))
+        {
+            throw new CommandRejectedException("effectivity_conflict", $"Another released revision of {part} already takes effect at or after this date.");
+        }
+
+        var store = uow.Store<IEngineeringStore>();
+        var superseded = released.Where(r => r.EffectiveTo is null || r.EffectiveTo > effectiveFrom).OrderBy(r => r.EffectiveFrom).LastOrDefault();
+        if (superseded is not null)
+        {
+            await store.SetEffectivityAsync(part, superseded.Revision, RevisionStatus.Released, superseded.EffectiveFrom, effectiveFrom, actor, ct);
+        }
+
+        await store.SetEffectivityAsync(part, rev, RevisionStatus.Released, effectiveFrom, null, actor, ct);
+        return (effectiveFrom, superseded, detail);
     }
 
     public Task<CommandResult> WithdrawRevisionAsync(WithdrawRevision c, CommandContext context, CancellationToken ct)

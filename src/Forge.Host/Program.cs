@@ -141,6 +141,7 @@ app.MapKernelEndpoints();
 app.MapOperationsEndpoints();
 app.MapEngineeringEndpoints();
 app.MapDocumentEndpoints();
+app.MapChangeEndpoints();
 app.MapPlanningEndpoints();
 app.MapShopFloorEndpoints();
 app.MapMaterialsEndpoints();

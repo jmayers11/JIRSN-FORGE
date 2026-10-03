@@ -181,7 +181,41 @@ internal static class StandardReports
                 ["revision", "part", "location", "status"], "revision", 3660,
                 "Stock as it stands now; the period does not apply."),
             Permissions.InventoryRead, null, StockByRevisionAsync),
+        new(
+            new("engineering-changes", "Engineering changes", "Engineering",
+                "Every engineering change you may see: what it changes, which reviews it needs and has, who approved and released it, and when it takes effect.",
+                [StatusFilter(Enum.GetNames<ChangeStatus>()), SearchFilter],
+                [C("change", "Change", ReportColumnKind.Text), C("title", "Title", ReportColumnKind.Text), C("class", "Class", ReportColumnKind.Text), C("priority", "Priority", ReportColumnKind.Text),
+                 C("status", "Status", ReportColumnKind.Text), C("changes", "Changes", ReportColumnKind.Text), C("reviews", "Reviews", ReportColumnKind.Text), C("originator", "Originator", ReportColumnKind.Text),
+                 C("approvedBy", "Approved by", ReportColumnKind.Text), C("effective", "Effective", ReportColumnKind.Date), C("age", "Days open", ReportColumnKind.Number)],
+                ["status", "class", "priority", "originator"], "status", 3660,
+                "Changes as they stand now; the period does not apply. Changes for programs you cannot see are left out."),
+            Permissions.EngineeringRead, null, EngineeringChangesAsync),
     ];
+
+    private static async Task<ReportBody> EngineeringChangesAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var c in (await run.Uow.Store<IChangeLookup>().ListChangesAsync(ct)).Where(c => run.Visible(c.ProgramId)))
+        {
+            var lines = string.Join("; ", c.ActiveLines.Select(l => $"{l.Subject} {l.FromRevision ?? "new"}→{l.ToRevision}"));
+            var current = c.CurrentReviews.ToList();
+            var reviews = current.Count == 0 ? "Not submitted" : $"{current.Count(r => r.Decision is not null)}/{current.Count} decided ({string.Join(", ", current.Select(r => r.Kind + (r.Decision is null ? "" : ": " + r.Decision)))})";
+            if (!ReportRun.Is(c.Status.ToString(), p.Status) || !run.Matches(c.Number, c.Title, c.Reason, lines))
+            {
+                continue;
+            }
+
+            var age = c.IsOpen ? (decimal)Math.Max(0, (run.Now - c.CreatedAt).TotalDays) : (decimal?)null;
+            rows.Add(new ReportRow(
+                [c.Number, c.Title, c.Class.ToString(), c.Priority.ToString(), c.Status.ToString(), lines, reviews, c.Originator, c.ApprovedBy, c.EffectiveFrom, age is null ? null : Math.Round(age.Value, 1)],
+                ["change:" + c.Number]));
+        }
+
+        var open = rows.Count(r => r.Cells[4] is "Draft" or "InReview" or "Approved");
+        return new ReportBody(rows, [$"{rows.Count} change(s); {open} open."], ["Engineering changes", "Change reviews"]);
+    }
 
     private static async Task<ReportBody> StockByRevisionAsync(ReportRun run, CancellationToken ct)
     {

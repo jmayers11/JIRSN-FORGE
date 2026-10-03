@@ -19,7 +19,7 @@ export function traceLink(t) {
   const [kind, ...rest] = t.split(':');
   const id = rest.join(':');
   const route = {
-    order: `#/orders/${id}`, item: `#/engineering/${encodeURIComponent(id)}`, document: `#/engineering/documents/${encodeURIComponent(id)}`, supplier: '#/procurement?tab=suppliers', schedule: '#/scheduling', constraint: '#/scheduling?closed=1', report: `#/orders`,
+    order: `#/orders/${id}`, item: `#/engineering/${encodeURIComponent(id)}`, document: `#/engineering/documents/${encodeURIComponent(id)}`, change: `#/engineering/changes/${encodeURIComponent(id)}`, supplier: '#/procurement?tab=suppliers', schedule: '#/scheduling', constraint: '#/scheduling?closed=1', report: `#/orders`,
     machine: '#/maintenance', downtime: '#/maintenance?tab=log', 'work-order': '#/maintenance?tab=orders',
     demand: '#/material-plan?tab=demand', delivery: '#/programs', contract: '#/programs', program: `#/programs/${id}`,
     shipment: '#/shipping', ncr: '#/quality?tab=ncr', inspection: '#/quality', transaction: '#/inventory?tab=ledger',

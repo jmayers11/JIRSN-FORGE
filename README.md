@@ -187,6 +187,19 @@ See `docs/adr/0013-v2-2-controlled-documents.md`.
 
 See `docs/adr/0014-v2-3-applicability.md`.
 
+## What V2.4 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Change records | `src/Forge.Engineering/ChangeService.cs` | ECN numbers; lines list document and item revisions moved; one open change per revision |
+| Review policy | same, `ReviewPolicies` | Criteria → required reviews; no match → Technical; reviewers never the originator |
+| Change board | same | Approval needs all reviews; approver is not the originator or an author |
+| Release | same | Separate person unless a policy combines approval and release; every revision in force in one transaction |
+| Impact preview | `src/Forge.Planning/Engines/ChangeImpactEngine.cs` | Orders by state, open purchases, stock by revision, where-used, inspection plans, documents |
+| UI and report | Engineering → Changes, `engineering-changes` | Analyst: "show open engineering changes" |
+
+See `docs/adr/0015-v2-4-engineering-change-control.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -428,3 +441,17 @@ Record types: `ProductionOrder`, `PurchaseOrder`, `WorkOrder`, `Ncr`, `Supplier`
 | GET | `/api/planning/applicability?order=` or `?po=` | `execution.orders.read` or `procurement.read`, and `engineering.read` |
 
 Receipts take an optional `revision`; inspection plans take an optional `revision` (and `?revision=` to remove one).
+
+## V2.4 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/engineering/changes`, `/api/engineering/changes/{n}` (with required reviews and reviewer roles), `/api/engineering/changes/{n}/impact` | `engineering.read` |
+| POST | `/api/engineering/changes` `{title, class, type, priority?, changeReason, description?, programId?, customer?, requestedEffective?}`; `/api/engineering/changes/{n}` (edit draft) | `engineering.changes.manage` |
+| POST | `/api/engineering/changes/{n}/lines` `{kind: DocumentRevision\|ItemRevision, subject, toRevision, note?}`; `/lines/{line}/remove` `{reason}` | `engineering.changes.manage` |
+| POST | `/api/engineering/changes/{n}/submit`, `/cancel` `{reason}` | `engineering.changes.manage` |
+| POST | `/api/engineering/changes/{n}/reviews` `{kind, decision, notes?}` | `engineering.changes.review` and a reviewer role for the kind |
+| POST | `/api/engineering/changes/{n}/approve`, `/reject` `{reason}` | `engineering.changes.approve` |
+| POST | `/api/engineering/changes/{n}/release` `{effectiveFrom?, reason}` | `engineering.release` |
+| GET / POST | `/api/engineering/review-policies[?history=true]` `{name, changeClass?, changeType?, itemClass?, programId?, customer?, requiredReviews, combineApprovalRelease, reason}`; `/review-policies/{id}/withdraw` `{reason}` | `engineering.read` / `engineering.changes.approve` |
+

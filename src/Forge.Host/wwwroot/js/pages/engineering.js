@@ -25,10 +25,11 @@ const classesFor = makeBuy => Object.entries(CLASS_LABEL)
 export async function engineeringPage(page, ctx) {
   const [first, second] = ctx.params;
   if (first === 'documents') return second ? documentDetail(page, ctx, decodeURIComponent(second)) : documentList(page, ctx);
+  if (first === 'changes') return second ? changeDetail(page, ctx, decodeURIComponent(second)) : changeList(page, ctx);
   return first ? itemDetail(page, ctx, decodeURIComponent(first)) : itemList(page, ctx);
 }
 
-const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['documents', 'Documents', '#/engineering/documents']]
+const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['documents', 'Documents', '#/engineering/documents'], ['changes', 'Changes', '#/engineering/changes']]
   .map(([k, l, href]) => `<button class="${active === k ? 'on' : ''}" data-nav="${href}">${l}</button>`).join('')}</div>`;
 const wireTabs = page => $$('[data-nav]', page).forEach(b => b.addEventListener('click', () => { location.hash = b.dataset.nav; }));
 
@@ -477,4 +478,219 @@ async function appendEnforcement(page, ctx) {
     }, (_, reason) => command(`/api/engineering/documentation-policy/${b.dataset.enforce}`, { enforced: b.dataset.on === '1' }, reason), render)));
   };
   await render();
+}
+
+// ── Engineering changes (V2.4) ───────────────────────────────────────────────────────────────────
+// A change lists the revisions it moves; reviews required by policy are decided by people other than
+// the originator; the change board approves; release (by someone else again) puts every revision in force.
+
+const CHANGE_TONE = { Draft: 'none', InReview: 'info', Approved: 'info', Released: 'ok', Rejected: 'bad', Cancelled: 'none' };
+const CHANGE_LABEL = { InReview: 'In review' };
+const DECISION_LABEL = { Approve: 'Approved', ApproveWithComments: 'Approved with comments', Reject: 'Rejected' };
+const CHANGE_MANAGERS = ['ManufacturingEngineer', 'DocumentController'];
+const BOARD = ['EngineeringApprover', 'ChangeBoard'];
+const RELEASERS = ['EngineeringApprover', 'DocumentController'];
+const IMPACT_LABEL = {
+  FutureOrder: 'Future orders', ReleasedNotStarted: 'Released, not started', WorkInProgress: 'Work in progress', Completed: 'Completed (unchanged)',
+  OpenPurchase: 'Open purchase lines', Stock: 'Stock', WhereUsed: 'Used in', InspectionPlan: 'Inspection plans', Document: 'Documents built to',
+};
+const changePill = c => `<span class="pill ${CHANGE_TONE[c.status] ?? 'none'}">${esc(CHANGE_LABEL[c.status] ?? c.status)}</span>`;
+const changeFields = (c = {}) => [
+  { name: 'title', label: 'Title', value: c.title, required: true },
+  { name: 'class', label: 'Class', type: 'select', value: c.class ?? 'Minor', options: [['Major', 'Major'], ['Minor', 'Minor'], ['Administrative', 'Administrative']] },
+  { name: 'type', label: 'Type', type: 'select', value: c.type ?? 'Design', options: [['Design', 'Design'], ['Documentation', 'Documentation'], ['Process', 'Process'], ['Supplier', 'Supplier'], ['Correction', 'Correction']] },
+  { name: 'priority', label: 'Priority', type: 'select', value: c.priority ?? 'Routine', options: [['Routine', 'Routine'], ['Urgent', 'Urgent'], ['Emergency', 'Emergency']] },
+  { name: 'changeReason', label: 'Why the change is needed', type: 'textarea', value: c.reason, required: true },
+  { name: 'description', label: 'Description', type: 'textarea', value: c.description },
+  { name: 'customer', label: 'Customer (optional)', value: c.customer },
+  { name: 'requestedEffective', label: 'Requested effective date (optional)', type: 'date', value: c.requestedEffective ?? '' },
+];
+
+async function changeList(page, ctx) {
+  const filter = ctx.query.get('status') ?? 'open';
+  const res = await tryGet('/api/engineering/changes');
+  if (res.error) { page.innerHTML = errorBlock(res.error, 'engineering changes'); return; }
+  const all = res.data;
+  const isOpen = c => ['Draft', 'InReview', 'Approved'].includes(c.status);
+  const list = filter === 'open' ? all.filter(isOpen) : filter === 'all' ? all : all.filter(c => c.status === filter);
+  page.innerHTML = `
+    <div class="page-head"><div><h1>Engineering</h1><div class="sub">Engineering changes: what changes, who reviewed it, who approved and released it, and what it touches.</div></div>
+      <div class="spacer"></div>${can(ctx.me, ...CHANGE_MANAGERS) ? '<button class="btn primary" id="new-change">New change</button>' : ''}</div>
+    ${tabs('changes')}
+    <section class="panel"><header><h2>Changes</h2><span class="spacer"></span>
+      <select class="select" id="change-filter">${[['open', `Open (${all.filter(isOpen).length})`], ['all', `All (${all.length})`], ...['Released', 'Rejected', 'Cancelled'].map(s => [s, `${s} (${all.filter(c => c.status === s).length})`])]
+        .map(([v, l]) => `<option value="${v}" ${filter === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></header>
+      ${!list.length ? emptyBlock('No changes', 'Engineering changes are drafted by manufacturing engineering or document control.') : `
+      <div class="table-wrap"><table class="table"><thead><tr><th>Change</th><th>Title</th><th>Class</th><th>Status</th><th>Changes</th><th>Reviews</th><th>Originator</th></tr></thead><tbody>
+      ${list.map(c => {
+        const current = c.reviews.filter(r => r.round === c.reviewRound);
+        return `<tr class="click" data-change="${esc(c.number)}"><td><b>${esc(c.number)}</b>${c.priority !== 'Routine' ? ` <span class="pill warn">${esc(c.priority)}</span>` : ''}</td><td>${esc(c.title)}</td><td>${esc(c.class)}</td><td>${changePill(c)}</td>
+          <td>${c.lines.filter(l => !l.removedAt).map(l => `${esc(l.documentNumber ?? l.partNumber)} ${esc(l.fromRevision ?? 'new')}→${esc(l.toRevision)}`).join('<br>') || '<span class="faint">—</span>'}</td>
+          <td>${current.length ? `${current.filter(r => r.decision).length}/${current.length}` : '<span class="faint">—</span>'}</td><td>${esc(who(c.originator))}</td></tr>`;
+      }).join('')}
+      </tbody></table></div>`}
+    </section>`;
+  wireTabs(page);
+  appendPolicies(page, ctx);
+  $('#change-filter', page).onchange = e => { location.hash = `#/engineering/changes?status=${e.target.value}`; };
+  $$('[data-change]', page).forEach(r => r.addEventListener('click', () => { location.hash = `#/engineering/changes/${encodeURIComponent(r.dataset.change)}`; }));
+  $('#new-change', page)?.addEventListener('click', () => formModal({
+    title: 'New engineering change', detail: 'Starts as a draft. List the document and item revisions it moves, then submit it for the reviews its policy requires.', confirmLabel: 'Create',
+    fields: changeFields(),
+  }, (v, reason) => command('/api/engineering/changes', v, reason), r => { location.hash = `#/engineering/changes/${encodeURIComponent(r.entityId)}`; }));
+}
+
+async function appendPolicies(page, ctx) {
+  const section = document.createElement('section');
+  section.className = 'panel';
+  page.append(section);
+  const board = can(ctx.me, ...BOARD);
+  const render = async () => {
+    const res = await tryGet('/api/engineering/review-policies');
+    const list = res.data ?? [];
+    section.innerHTML = `
+      <header><h2>Review policies</h2><span class="spacer"></span>${board ? '<button class="btn small" id="add-policy">Add a policy</button>' : ''}</header>
+      <div class="muted" style="margin-bottom:8px">A change needs the reviews of every policy that matches it. With none, a technical review is required — never fewer than one review besides the originator. The change board always approves, and the releaser differs from the approver unless a policy combines them.</div>
+      ${res.error ? errorBlock(res.error, 'policies') : !list.length ? emptyBlock('No policies', 'Every change gets a technical review.') : `
+      <div class="table-wrap"><table class="table"><thead><tr><th>Policy</th><th>Applies to</th><th>Requires</th><th>Approver may release</th><th></th></tr></thead><tbody>
+      ${list.map(p => `<tr><td>${p.policyId} <b>${esc(p.name)}</b></td>
+        <td>${esc([p.changeClass && `${p.changeClass} changes`, p.changeType && `${p.changeType} changes`, p.itemClass && `${CLASS_LABEL[p.itemClass] ?? p.itemClass} items`, p.customer && `customer ${p.customer}`, p.programId && 'one program'].filter(Boolean).join(', ') || 'Every change')}</td>
+        <td>${esc(p.requiredReviews.join(', '))}</td><td>${p.combineApprovalRelease ? 'Yes' : 'No'}</td>
+        <td>${board ? `<button class="btn small ghost" data-withdraw-policy="${p.policyId}">Withdraw</button>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>`}`;
+    $$('[data-withdraw-policy]', section).forEach(b => b.addEventListener('click', () => formModal({
+      title: `Withdraw review policy ${b.dataset.withdrawPolicy}`, detail: 'Changes submitted from now on no longer need its reviews.', reasonRequired: true, confirmLabel: 'Withdraw', fields: [],
+    }, (_, reason) => command(`/api/engineering/review-policies/${b.dataset.withdrawPolicy}/withdraw`, {}, reason), render)));
+    $('#add-policy', section)?.addEventListener('click', () => formModal({
+      title: 'Add a review policy', detail: 'Leave a criterion empty to match every change for it.', reasonRequired: true, confirmLabel: 'Add',
+      fields: [
+        { name: 'name', label: 'Name', required: true },
+        { name: 'changeClass', label: 'Change class', type: 'select', blank: 'Any', options: [['Major', 'Major'], ['Minor', 'Minor'], ['Administrative', 'Administrative']] },
+        { name: 'changeType', label: 'Change type', type: 'select', blank: 'Any', options: [['Design', 'Design'], ['Documentation', 'Documentation'], ['Process', 'Process'], ['Supplier', 'Supplier'], ['Correction', 'Correction']] },
+        { name: 'itemClass', label: 'Item class affected', type: 'select', blank: 'Any', options: Object.entries(CLASS_LABEL) },
+        { name: 'customer', label: 'Customer' },
+        ...Object.keys(REVIEW_LABEL).map(k => ({ name: `r_${k}`, type: 'check', label: `${REVIEW_LABEL[k]} review`, text: 'Required' })),
+        { name: 'combineApprovalRelease', type: 'check', label: 'Approval and release', text: 'The approver may also release' },
+      ],
+    }, (v, reason) => command('/api/engineering/review-policies', {
+      name: v.name, changeClass: v.changeClass, changeType: v.changeType, itemClass: v.itemClass, customer: v.customer,
+      requiredReviews: Object.keys(REVIEW_LABEL).filter(k => v[`r_${k}`]), combineApprovalRelease: v.combineApprovalRelease,
+    }, reason), render));
+  };
+  await render();
+}
+
+const REVIEW_LABEL = { Technical: 'Technical', Quality: 'Quality', Manufacturing: 'Manufacturing', Procurement: 'Procurement', Program: 'Program', Maintenance: 'Maintenance' };
+
+async function changeDetail(page, ctx, number) {
+  const me = ctx.me;
+  const res = await tryGet(`/api/engineering/changes/${encodeURIComponent(number)}`);
+  if (res.error) { page.innerHTML = `<a href="#/engineering/changes" class="faint">← Changes</a>${errorBlock(res.error, `change ${number}`)}`; return; }
+  const { change: c, required, reviewers } = res.data;
+  const mine = c.originator === `person:${me.personId}`;
+  const manager = can(me, ...CHANGE_MANAGERS);
+  const base = `/api/engineering/changes/${encodeURIComponent(c.number)}`;
+  const reload = () => changeDetail(page, ctx, number);
+  const lines = c.lines.filter(l => !l.removedAt);
+  const current = c.reviews.filter(r => r.round === c.reviewRound);
+  const history = c.reviews.filter(r => r.round !== c.reviewRound);
+  const canReview = kind => (reviewers[kind] ?? []).some(r => me.roles.includes(r));
+
+  const actions = [];
+  if (c.status === 'Draft' && manager) actions.push(['edit', 'Edit', ''], ['submit', 'Submit for review', 'primary']);
+  if (c.status === 'InReview' && can(me, ...BOARD) && !mine && current.every(r => r.decision)) actions.push(['approve', 'Approve (change board)', 'primary']);
+  if (c.status === 'Approved' && can(me, ...RELEASERS) && !mine && (required.combineApprovalRelease || c.approvedBy !== `person:${me.personId}`)) actions.push(['release', 'Release', 'primary']);
+  if (['InReview', 'Approved'].includes(c.status) && can(me, ...BOARD)) actions.push(['reject', 'Reject', 'danger']);
+  if (['Draft', 'InReview', 'Approved'].includes(c.status) && manager) actions.push(['cancel', 'Cancel', 'ghost']);
+
+  page.innerHTML = `
+    <div class="page-head"><div><a href="#/engineering/changes" class="faint">← Changes</a><h1>${esc(c.number)} ${changePill(c)}</h1>
+      <div class="sub">${esc(c.title)} · ${esc(c.class)} ${esc(c.type)} change · ${esc(c.priority)} · originated by ${esc(who(c.originator))} ${esc(fmtDateTime(c.createdAt))}</div></div>
+      <div class="spacer"></div><div class="head-controls">${actions.map(([k, l, tone]) => `<button class="btn ${tone}" data-act="${k}">${esc(l)}</button>`).join('')}</div></div>
+    <section class="panel"><header><h2>Why</h2></header><p>${esc(c.reason)}</p>${c.description ? `<p class="muted">${esc(c.description)}</p>` : ''}
+      <dl class="kv"><dt>Requested effective</dt><dd>${c.requestedEffective ? esc(fmtDate(c.requestedEffective)) : '—'}</dd>
+        <dt>Approved</dt><dd>${c.approvedBy ? `${esc(who(c.approvedBy))} ${esc(fmtDateTime(c.approvedAt))}` : '—'}</dd>
+        <dt>Released</dt><dd>${c.releasedBy ? `${esc(who(c.releasedBy))} ${esc(fmtDateTime(c.releasedAt))}, effective ${esc(fmtDate(c.effectiveFrom))}` : '—'}</dd>
+        ${c.closedReason ? `<dt>${esc(c.status)}</dt><dd>${esc(who(c.closedBy))}: ${esc(c.closedReason)}</dd>` : ''}</dl>
+      ${mine && ['InReview', 'Approved'].includes(c.status) ? '<div class="faint">You originated this change: others review, approve and release it.</div>' : ''}</section>
+    <section class="panel"><header><h2>What it changes</h2><span class="spacer"></span>${c.status === 'Draft' && manager ? '<button class="btn small primary" id="add-line">Add a revision</button>' : ''}</header>
+      ${!c.lines.length ? emptyBlock('Nothing listed yet', 'Add the draft document or item revisions this change releases.') : `
+      <div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Kind</th><th>Subject</th><th>From</th><th>To</th><th>Added</th><th></th></tr></thead><tbody>
+      ${c.lines.map(l => `<tr class="${l.removedAt ? 'retired' : ''}"><td>${l.lineNumber}</td><td>${l.kind === 'DocumentRevision' ? 'Document' : 'Item'}</td>
+        <td>${l.documentNumber ? `<a href="#/engineering/documents/${encodeURIComponent(l.documentNumber)}"><b>${esc(l.documentNumber)}</b></a>` : `<a href="#/engineering/${encodeURIComponent(l.partNumber)}"><b>${esc(l.partNumber)}</b></a>`}${l.note ? `<div class="faint">${esc(l.note)}</div>` : ''}</td>
+        <td>${esc(l.fromRevision ?? '—')}</td><td><b>${esc(l.toRevision)}</b></td><td>${esc(who(l.addedBy))} <span class="faint">${esc(fmtDateTime(l.addedAt))}</span></td>
+        <td>${!l.removedAt && c.status === 'Draft' && manager ? `<button class="btn small ghost" data-remove-line="${l.lineNumber}">Remove</button>` : l.removedAt ? '<span class="faint">removed</span>' : ''}</td></tr>`).join('')}
+      </tbody></table></div>`}
+    </section>
+    <section class="panel"><header><h2>Reviews</h2></header>
+      <div class="muted" style="margin-bottom:8px">${c.status === 'Draft' ? `Submitting would require: ${esc(required.kinds.join(', '))} (${esc(required.basis.join('; '))}).` : `Round ${c.reviewRound}. ${esc(required.basis.join('; '))}.`}</div>
+      ${!current.length ? emptyBlock('Not submitted', 'Reviews are created when the change is submitted.') : `
+      <div class="table-wrap"><table class="table"><thead><tr><th>Review</th><th>Decision</th><th>By</th><th>Notes</th><th></th></tr></thead><tbody>
+      ${current.map(r => `<tr><td>${esc(REVIEW_LABEL[r.kind] ?? r.kind)}</td><td>${r.decision ? `<span class="pill ${r.decision === 'Reject' ? 'bad' : 'ok'}">${esc(DECISION_LABEL[r.decision])}</span>` : '<span class="pill none">Open</span>'}</td>
+        <td>${r.reviewer ? `${esc(who(r.reviewer))} <span class="faint">${esc(fmtDateTime(r.decidedAt))}</span>` : `<span class="faint">${esc((reviewers[r.kind] ?? []).join(' or '))}</span>`}</td><td>${esc(r.notes ?? '')}</td>
+        <td>${!r.decision && c.status === 'InReview' && !mine && canReview(r.kind) ? `<button class="btn small primary" data-review="${r.kind}">Review</button>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>`}
+      ${history.length ? `<details><summary class="faint">Earlier rounds (${history.length})</summary><ul>${history.map(r => `<li>Round ${r.round} ${esc(r.kind)}: ${r.decision ? `${esc(DECISION_LABEL[r.decision])} by ${esc(who(r.reviewer))}${r.notes ? ` — ${esc(r.notes)}` : ''}` : 'not decided'}</li>`).join('')}</ul></details>` : ''}
+    </section>`;
+
+  const impact = document.createElement('section');
+  impact.className = 'panel';
+  page.append(impact);
+  tryGet(`${base}/impact`).then(({ data, error }) => {
+    if (error) { impact.innerHTML = `<header><h2>Impact</h2></header>${errorBlock(error, 'impact')}`; return; }
+    const groups = Object.keys(IMPACT_LABEL).map(k => [k, data.records.filter(r => r.category === k)]).filter(([, rs]) => rs.length);
+    impact.innerHTML = `<header><h2>Impact${c.status === 'Released' ? ' (now)' : ' before release'}</h2></header>
+      <p>${esc(data.summary)}</p>
+      <div class="muted" style="margin-bottom:8px">Parts reached: ${data.parts.map(p => `<b>${esc(p.partNumber)}</b> (${esc(p.reason)})`).join('; ') || '—'}.</div>
+      ${!groups.length ? emptyBlock('Nothing found', 'No orders, purchases, stock, assemblies, plans or documents for these parts.') : groups.map(([k, rs]) => `
+        <h3 style="margin:12px 0 4px">${esc(IMPACT_LABEL[k])} (${rs.length})</h3>
+        <table class="table"><tbody>${rs.map(r => `<tr><td style="width:22%"><b>${esc(r.reference)}</b></td><td style="width:12%">${esc(r.partNumber)}</td><td class="muted">${esc(r.detail)}</td></tr>`).join('')}</tbody></table>`).join('')}`;
+  });
+
+  $('#add-line', page)?.addEventListener('click', async () => {
+    const docs = ((await tryGet('/api/engineering/documents')).data ?? []).filter(d => d.authority !== 'Reference' && d.revisions.some(r => ['Draft', 'InReview', 'Approved'].includes(r.status)));
+    const items = (await tryGet('/api/engineering/items')).data ?? [];
+    formModal({
+      title: `Add a revision to ${c.number}`, detail: 'The revision must already exist as a draft (create a document revision in Documents, an item revision in engineering setup). This change will approve and release it.', confirmLabel: 'Add',
+      fields: [
+        { name: 'kind', label: 'Kind', type: 'select', value: 'DocumentRevision', options: [['DocumentRevision', 'Document revision'], ['ItemRevision', 'Item revision']] },
+        { name: 'document', label: 'Document (for a document revision)', type: 'select', blank: '—', options: docs.map(d => [d.number, `${d.number} — draft ${d.revisions.filter(r => ['Draft', 'InReview', 'Approved'].includes(r.status)).map(r => r.revision).join(', ')}`]) },
+        { name: 'part', label: 'Part (for an item revision)', type: 'select', blank: '—', options: items.map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]) },
+        { name: 'toRevision', label: 'To revision', required: true, code: true },
+        { name: 'note', label: 'Note', type: 'textarea' },
+      ],
+    }, (v, reason) => command(`${base}/lines`, { kind: v.kind, subject: v.kind === 'DocumentRevision' ? v.document : v.part, toRevision: v.toRevision, note: v.note }, reason), reload);
+  });
+  $$('[data-remove-line]', page).forEach(b => b.addEventListener('click', () => formModal({
+    title: `Remove line ${b.dataset.removeLine}`, detail: 'The line stays in the change history.', reasonRequired: true, confirmLabel: 'Remove', fields: [],
+  }, (_, reason) => command(`${base}/lines/${b.dataset.removeLine}/remove`, {}, reason), reload)));
+  $$('[data-review]', page).forEach(b => b.addEventListener('click', () => formModal({
+    title: `${REVIEW_LABEL[b.dataset.review]} review of ${c.number}`, detail: 'A rejection returns the change to its originator as a draft; say what must change.', confirmLabel: 'Record review',
+    fields: [
+      { name: 'decision', label: 'Decision', type: 'select', value: 'Approve', options: Object.entries(DECISION_LABEL) },
+      { name: 'notes', label: 'Notes (required to reject)', type: 'textarea' },
+    ],
+  }, (v, reason) => command(`${base}/reviews`, { kind: b.dataset.review, decision: v.decision, notes: v.notes }, reason), reload)));
+  $$('[data-act]', page).forEach(b => b.addEventListener('click', () => {
+    const act = b.dataset.act;
+    if (act === 'edit') {
+      formModal({ title: `Edit ${c.number}`, confirmLabel: 'Save', fields: changeFields(c) }, (v, reason) => command(base, v, reason), reload);
+      return;
+    }
+
+    if (act === 'release') {
+      formModal({ title: `Release ${c.number}`, detail: `Releases ${lines.map(l => `${l.documentNumber ?? l.partNumber} rev ${l.toRevision}`).join(', ')} together and supersedes the revisions in force from the effective date.`,
+        reasonRequired: true, confirmLabel: 'Release', fields: [{ name: 'effectiveFrom', label: 'Effective from', type: 'date', value: c.requestedEffective ?? today() }] },
+      (v, reason) => command(`${base}/release`, v, reason), reload);
+      return;
+    }
+
+    const text = {
+      submit: ['Submit for review', `Required reviews: ${required.kinds.join(', ')}.`, false],
+      approve: ['Approve', 'Change board approval. Someone other than you then releases it (unless a policy combines them).', false],
+      reject: ['Reject', 'The change is closed; its draft revisions stay drafts.', true],
+      cancel: ['Cancel', 'The change is closed; its draft revisions stay drafts.', true],
+    }[act];
+    formModal({ title: `${text[0]}: ${c.number}`, detail: text[1], reasonRequired: text[2], confirmLabel: text[0], fields: [] }, (_, reason) => command(`${base}/${act}`, {}, reason), reload);
+  }));
 }
