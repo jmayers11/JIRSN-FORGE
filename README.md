@@ -159,6 +159,20 @@ V2 extends Forge without replacing it (see the V2 architecture impact review and
 | Report | `item-classification` | Unclassified items, COTS items that cannot be bought, lifecycle review |
 | Screens | `engineering.js`, `procurement.js` | Engineering item list and detail; Suppliers tab |
 
+## What V2.2 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Controlled documents | `src/Forge.Engineering/DocumentService.cs` | Internal (draft, review, approval, release by others), External (recorded as applicable), Reference (uncontrolled) |
+| Rules in the database | `src/Forge.Engineering/Infrastructure/Migrations/0005_documents.sql` | One revision in force; released revisions frozen; author ≠ approver ≠ releaser; files and links never deleted |
+| Files | `/api/engineering/document-files` | Stored once by SHA-256, at most 50 MB, always downloaded, never rendered |
+| Attachments | `src/Forge.Host/Documents/DocumentTargetResolver.cs` | Orders, purchase orders, work orders, NCRs, suppliers, items, programs, work centers; detaching keeps history |
+| Segregation | `DocumentAccess` | Program documents and marked documents are invisible without the program or marking |
+| Report | `document-register` | What needs a revision, approval, release or review |
+| Screens | `engineering.js`, `attachments.js` | Engineering → Documents; Documentation panel on orders; Documents on POs, suppliers, NCRs, work orders and items |
+
+See `docs/adr/0013-v2-2-controlled-documents.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -235,7 +249,7 @@ packages), in the JIRSN Forge identity: Forge Orange `#F97316`, Red Tail `#C2410
   primary constraint; KPI tiles; work center status; planned output; top issues. Window: -24h,
   Now (8 h), +24h, +3d, +1w. Click any card or row for the evidence behind it.
 - **Horizon**: the schedule as a timeline per machine, with downtime and why each operation starts when it does.
-- **Engineering**: items by class, classification and manufacturer parts.
+- **Engineering**: items by class, classification and manufacturer parts; controlled documents and their revisions.
 - **Programs**, **Production Orders**, **Scheduling** (propose, approve, work constraints), **Material Plan**,
   **Work Centers** (shifts, executable capacity), **Shop Floor**, **Plant Setup**, **Workforce**
   (qualified labor hours), **Inventory**, **Procurement** (purchase orders, suppliers and approved sources), **Quality**, **Maintenance**, **Shipping**,
@@ -366,3 +380,23 @@ body identifies the person. Badge numbers and PINs are never stored or logged.
 | GET | `/api/procurement/approved-sources?part=` | `procurement.read` |
 | POST | `/api/procurement/items/{part}/approved-sources` `{supplierCode, note?, reason}` | `procurement.approve` |
 | POST | `/api/procurement/items/{part}/approved-sources/{code}/remove` `{reason}` | `procurement.approve` |
+
+## V2.2 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/engineering/document-files` (raw body, `X-File-Name`) | `engineering.documents.attach` |
+| GET | `/api/engineering/documents`, `/api/engineering/documents/{number}` | `engineering.read`, program and markings |
+| GET | `/api/engineering/documents/{number}/revisions/{rev}/file` | `engineering.read`, program and markings |
+| POST | `/api/engineering/documents` `{number, title, type, authority, externalAuthority?, externalNumber?, programId?, markings?}` | `engineering.documents.manage` |
+| POST | `/api/engineering/documents/{number}` `{title, markings, reason}` | `engineering.documents.manage` |
+| POST | `/api/engineering/documents/{number}/revisions` `{revision, fileSha256?, fileName?, changeNote?, reviewBy?}` | `engineering.documents.manage` |
+| POST | `/api/engineering/documents/{number}/revisions/{rev}` (edit draft), `/submit` | `engineering.documents.manage` |
+| POST | `/api/engineering/documents/{number}/revisions/{rev}/approve`, `/return` `{reason}` | `engineering.documents.approve`, not the author |
+| POST | `/api/engineering/documents/{number}/revisions/{rev}/release` `{effectiveFrom?, reason}`, `/obsolete` `{reason}` | `engineering.documents.release`, not the author |
+| GET | `/api/engineering/attachments/{type}/{id}?history=` | `engineering.read` and the record's read permission |
+| POST | `/api/engineering/attachments/{type}/{id}` `{documentNumber, revision?, purpose, note?}` | `engineering.documents.attach` and the record's read permission |
+| POST | `/api/engineering/attachments/{type}/{id}/file` `{fileSha256, fileName, title?, type?, markings?, note?}` | `engineering.documents.attach` |
+| POST | `/api/engineering/attachment-links/{linkId}/detach` `{reason}` | `engineering.documents.attach` |
+
+Record types: `ProductionOrder`, `PurchaseOrder`, `WorkOrder`, `Ncr`, `Supplier`, `Item`, `ItemRevision` (`PART:REV`), `Program`, `WorkCenter`.

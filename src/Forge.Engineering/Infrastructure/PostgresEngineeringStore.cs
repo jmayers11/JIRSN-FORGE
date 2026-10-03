@@ -242,7 +242,10 @@ public static class EngineeringRegistration
         services.AddForgeMigrations(typeof(EngineeringRegistration).Assembly, "engineering");
         services.AddForgeStore<IEngineeringStore>(uow => new PostgresEngineeringStore(uow));
         services.AddForgeStore<IEngineeringLookup>(uow => new PostgresEngineeringStore(uow));
+        services.AddForgeStore<IDocumentStore>(uow => new PostgresDocumentStore(uow));
+        services.AddForgeStore<IDocumentLookup>(uow => new PostgresDocumentStore(uow));
         services.AddSingleton<EngineeringService>();
+        services.AddSingleton<DocumentService>();
         return services;
     }
 }

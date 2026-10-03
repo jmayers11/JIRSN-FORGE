@@ -26,6 +26,17 @@ const post = (who, path, body = {}) => call(who, 'POST', path, body);
 const get = (who, path) => call(who, 'GET', path);
 const step = s => console.log(`- ${s}`);
 
+async function upload(subject, name, text) {
+  const r = await fetch(base + '/api/engineering/document-files', {
+    method: 'POST',
+    headers: { 'X-Forge-Dev-Subject': subject, Accept: 'application/json', 'Content-Type': 'application/octet-stream', 'Idempotency-Key': `sample-${Date.now()}-${++n}`, 'X-File-Name': encodeURIComponent(name) },
+    body: new TextEncoder().encode(text),
+  });
+  const body = await r.text();
+  if (!r.ok) throw new Error(`upload ${name} as ${subject} -> ${r.status}: ${body}`);
+  return JSON.parse(body).entityId;
+}
+
 const people = {};
 async function person(subject, displayName, ...roles) {
   const r = await post(adminSubject, '/api/kernel/people', { idpSubject: subject, displayName });
@@ -45,7 +56,8 @@ async function main() {
       const items = (await get('eng', '/api/engineering/items')).map(i => i.partNumber);
       const insight = saved !== null && !saved.some(d => d.name === 'Weekly downtime');
       const classification = !items.includes('BRG-6205-001');
-      if (!insight && !classification) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const documents = !(await get('eng', '/api/engineering/documents')).some(d => d.number === 'DWG-PANEL-500');
+      if (!insight && !classification && !documents) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -53,6 +65,10 @@ async function main() {
       if (classification) {
         console.log('Adding sample item classes, manufacturer parts and suppliers.');
         await seedClassification();
+      }
+      if (documents) {
+        console.log('Adding sample controlled documents and attachments.');
+        await seedDocuments();
       }
       return finish();
     }
@@ -68,6 +84,7 @@ async function main() {
     await seedPrograms();
     await seedInsight();
     await seedClassification();
+    await seedDocuments();
     return finish();
   }
 
@@ -209,6 +226,7 @@ async function main() {
   await seedPrograms();
   await seedInsight();
   await seedClassification();
+  await seedDocuments();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -402,6 +420,43 @@ async function seedClassification() {
   const suppliers = (await get('bob', '/api/procurement/suppliers')).map(x => x.code);
   if (!suppliers.includes('MOTION')) await post('bob', '/api/procurement/suppliers', { code: 'MOTION', name: 'Motion Industries', notes: 'Bearings and power transmission' });
   await post('pat', '/api/procurement/items/BRG-6205-001/approved-sources', { supplierCode: 'MOTION', reason: 'Authorized SKF distributor' });
+}
+
+async function seedDocuments() {
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  step('Engineering: a released drawing (written by eng, approved and released by approver)');
+  const dwg = await upload('eng', 'DWG-PANEL-500_A.txt', 'SAMPLE drawing DWG-PANEL-500 rev A\nPainted panel assembly: 500 x 300 mm, RAL 7016, edge radius 2 mm.\n');
+  await post('eng', '/api/engineering/documents', { number: 'DWG-PANEL-500', title: 'Painted panel assembly', type: 'Drawing', authority: 'Internal' });
+  await post('eng', '/api/engineering/documents/DWG-PANEL-500/revisions', { revision: 'A', fileSha256: dwg, fileName: 'DWG-PANEL-500_A.txt', changeNote: 'First release', reviewBy: day(365) });
+  await post('eng', '/api/engineering/documents/DWG-PANEL-500/revisions/A/submit');
+  await post('approver', '/api/engineering/documents/DWG-PANEL-500/revisions/A/approve');
+  await post('approver', '/api/engineering/documents/DWG-PANEL-500/revisions/A/release', { reason: 'Sample ECN-100' });
+
+  step('Engineering: an external standard recorded as applicable, and a work instruction waiting for approval');
+  const astm = await upload('eng', 'ASTM-B209-21.txt', 'SAMPLE placeholder for the licensed ASTM B209-21 standard.\n');
+  await post('eng', '/api/engineering/documents', { number: 'ASTM-B209', title: 'Aluminum and aluminum-alloy sheet and plate', type: 'Standard', authority: 'External', externalAuthority: 'ASTM International', externalNumber: 'B209' });
+  await post('eng', '/api/engineering/documents/ASTM-B209/revisions', { revision: '21', fileSha256: astm, fileName: 'ASTM-B209-21.txt' });
+  await post('approver', '/api/engineering/documents/ASTM-B209/revisions/21/release', { reason: 'Coil purchase specification cites B209-21' });
+  const wi = await upload('eng', 'WI-SLIT-01_A.txt', 'SAMPLE work instruction: threading the slitter, lockout first, two people for coils over 2 t.\n');
+  await post('eng', '/api/engineering/documents', { number: 'WI-SLIT-01', title: 'Threading the slitter', type: 'WorkInstruction', authority: 'Internal' });
+  await post('eng', '/api/engineering/documents/WI-SLIT-01/revisions', { revision: 'A', fileSha256: wi, fileName: 'WI-SLIT-01_A.txt', changeNote: 'New instruction after the July near miss' });
+  await post('eng', '/api/engineering/documents/WI-SLIT-01/revisions/A/submit');
+
+  step('Attachments: the drawing and a customer PO on an order; the standard on the coil; a certificate on a supplier');
+  const orders = (await get('planner', '/api/orders/')).filter(o => o.partNumber === 'PANEL-500' && !['Cancelled', 'Completed'].includes(o.status));
+  if (orders.length) {
+    const order = orders[0].orderNumber;
+    await post('planner', `/api/engineering/attachments/ProductionOrder/${order}`, { documentNumber: 'DWG-PANEL-500', purpose: 'Follow' });
+    const po = await upload('planner', 'Customer-PO-4471.txt', 'SAMPLE customer purchase order 4471: painted panels, ship complete.\n');
+    await post('planner', `/api/engineering/attachments/ProductionOrder/${order}/file`, { fileSha256: po, fileName: 'Customer-PO-4471.txt', title: 'Customer PO 4471', type: 'PurchaseDocument' });
+  }
+  await post('eng', '/api/engineering/attachments/Item/COIL-AL', { documentNumber: 'ASTM-B209', purpose: 'Follow', note: 'Coil is bought to B209' });
+  await post('eng', '/api/engineering/attachments/Item/PANEL-500', { documentNumber: 'DWG-PANEL-500', purpose: 'Follow' });
+  const suppliers = (await get('bob', '/api/procurement/suppliers')).map(x => x.code);
+  if (suppliers.includes('ALCOA')) {
+    const cert = await upload('bob', 'Alcoa-ISO9001.txt', 'SAMPLE ISO 9001 certificate for Alcoa, valid to 2027.\n');
+    await post('bob', '/api/engineering/attachments/Supplier/ALCOA/file', { fileSha256: cert, fileName: 'Alcoa-ISO9001.txt', title: 'ISO 9001 certificate', type: 'Certificate' });
+  }
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

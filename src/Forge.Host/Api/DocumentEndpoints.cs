@@ -1,0 +1,238 @@
+using System.Globalization;
+using Forge.Engineering;
+using Forge.Engineering.Contracts;
+using Forge.Kernel.Access;
+using Forge.Kernel.Commands;
+using Forge.Kernel.Identity;
+using Forge.Kernel.Security;
+using Microsoft.AspNetCore.Http.Features;
+using static Forge.Host.Api.ApiSupport;
+
+namespace Forge.Host.Api;
+
+public sealed record DocumentRequest(string Number, string Title, DocumentType Type, DocumentAuthority Authority, string? ExternalAuthority, string? ExternalNumber, Guid? ProgramId, DataMarking? Markings, string? Reason);
+
+public sealed record DocumentChangeRequest(string Title, DataMarking? Markings, string? Reason);
+
+public sealed record DocumentRevisionRequest(string Revision, string? FileSha256, string? FileName, string? ChangeNote, DateOnly? ReviewBy, string? Reason);
+
+public sealed record DocumentDraftRequest(string? FileSha256, string? FileName, string? ChangeNote, DateOnly? ReviewBy, string? Reason);
+
+public sealed record DocumentReleaseRequest(DateOnly? EffectiveFrom, string? Reason);
+
+public sealed record AttachDocumentRequest(string DocumentNumber, string? Revision, DocumentPurpose? Purpose, string? Note, string? Reason);
+
+public sealed record AttachFileRequest(string FileSha256, string FileName, string? Title, DocumentType? Type, DataMarking? Markings, string? Note, string? Reason);
+
+/// <summary>The revision a link shows: the pinned one, or the document's current (or, for reference documents, latest) revision.</summary>
+public sealed record AttachmentView(
+    long LinkId,
+    string DocumentNumber,
+    string Title,
+    DocumentType Type,
+    DocumentAuthority Authority,
+    DataMarking Markings,
+    DocumentPurpose Purpose,
+    string? PinnedRevision,
+    DocumentRevisionInfo? Revision,
+    string State,
+    string? Note,
+    string LinkedBy,
+    DateTimeOffset LinkedAt,
+    string? DetachedBy,
+    DateTimeOffset? DetachedAt,
+    string? DetachReason);
+
+public sealed record DocumentDetailView(DocumentInfo Document, IReadOnlyList<DocumentLinkInfo> Links);
+
+/// <summary>V2.2 endpoints: controlled documents, their files, and documents attached to records.</summary>
+public static class DocumentEndpoints
+{
+    public const string FileNameHeader = "X-File-Name";
+
+    public static void MapDocumentEndpoints(this IEndpointRouteBuilder app)
+    {
+        var eng = app.MapGroup("/api/engineering").RequireAuthorization();
+
+        eng.MapGet("/documents", (HttpContext http, CancellationToken _) =>
+            Read(http, Permissions.EngineeringRead, async principal =>
+            {
+                await using var uow = await Snapshot(http);
+                return (await uow.Store<IDocumentLookup>().ListDocumentsAsync(http.RequestAborted)).Where(d => DocumentService.CanSee(principal, d)).ToList();
+            }));
+        eng.MapGet("/documents/{number}", (HttpContext http, string number, CancellationToken _) =>
+            Read(http, Permissions.EngineeringRead, async principal =>
+            {
+                await using var uow = await Snapshot(http);
+                var ct = http.RequestAborted;
+                var document = await VisibleDocumentAsync(uow, principal, number, ct);
+                var links = (await uow.Store<IDocumentLookup>().ListLinksAsync(null, null, document.Number, true, ct)).Where(l => CanSeeLink(principal, l)).ToList();
+                return new DocumentDetailView(document, links);
+            }));
+        eng.MapGet("/documents/{number}/revisions/{rev}/file", async (HttpContext http, string number, string rev, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null)
+            {
+                return NotRegistered();
+            }
+
+            var decision = http.RequestServices.GetRequiredService<IForgeAuthorizer>().Authorize(principal, Permissions.EngineeringRead, ResourceRef.Of("DocumentFile"));
+            if (!decision.IsPermitted)
+            {
+                throw new ForgeAuthorizationException(decision);
+            }
+
+            await using var uow = await Snapshot(http);
+            var document = await VisibleDocumentAsync(uow, principal, number, ct);
+            var revision = document.Revisions.FirstOrDefault(r => string.Equals(r.Revision, rev, StringComparison.OrdinalIgnoreCase) && r.FileSha256 is not null)
+                ?? throw new CommandRejectedException("file_not_found", $"{document.Number} revision {rev} has no file.");
+            var bytes = await uow.Store<IDocumentLookup>().ReadFileAsync(revision.FileSha256!, ct)
+                ?? throw new CommandRejectedException("file_not_found", "The file is missing.");
+            http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            http.Response.Headers["Content-Security-Policy"] = "sandbox";
+            return Results.File(bytes, "application/octet-stream", revision.FileName ?? "file");
+        });
+
+        eng.MapPost("/document-files", async (HttpContext http, DocumentService s, CancellationToken ct) =>
+        {
+            var size = http.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (size is { IsReadOnly: false })
+            {
+                size.MaxRequestBodySize = DocumentService.MaxFileBytes + 1024;
+            }
+
+            if (http.Request.ContentLength > DocumentService.MaxFileBytes)
+            {
+                throw new CommandRejectedException("file_too_large", $"Files are at most {DocumentService.MaxFileBytes / 1_048_576} MB.");
+            }
+
+            using var buffer = new MemoryStream();
+            var chunk = new byte[81920];
+            int read;
+            while ((read = await http.Request.Body.ReadAsync(chunk, ct)) > 0)
+            {
+                if (buffer.Length + read > DocumentService.MaxFileBytes)
+                {
+                    throw new CommandRejectedException("file_too_large", $"Files are at most {DocumentService.MaxFileBytes / 1_048_576} MB.");
+                }
+
+                await buffer.WriteAsync(chunk.AsMemory(0, read), ct);
+            }
+
+            var name = Uri.UnescapeDataString(http.Request.Headers[FileNameHeader].ToString());
+            return await Command(http, null, c => s.StoreFileAsync(new StoreDocumentFile(buffer.ToArray(), name), c, ct));
+        });
+
+        eng.MapPost("/documents", (HttpContext http, DocumentRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CreateDocumentAsync(new CreateDocument(b.Number, b.Title, b.Type, b.Authority, b.ExternalAuthority, b.ExternalNumber, b.ProgramId, b.Markings ?? DataMarking.None), c, ct)));
+        eng.MapPost("/documents/{number}", (HttpContext http, string number, DocumentChangeRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ChangeDocumentAsync(new ChangeDocument(number, b.Title, b.Markings ?? DataMarking.None), c, ct)));
+        eng.MapPost("/documents/{number}/revisions", (HttpContext http, string number, DocumentRevisionRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AddRevisionAsync(new AddDocumentRevision(number, b.Revision, b.FileSha256, b.FileName, b.ChangeNote, b.ReviewBy), c, ct)));
+        eng.MapPost("/documents/{number}/revisions/{rev}", (HttpContext http, string number, string rev, DocumentDraftRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateDraftAsync(new UpdateDocumentDraft(number, rev, b.FileSha256, b.FileName, b.ChangeNote, b.ReviewBy), c, ct)));
+        eng.MapPost("/documents/{number}/revisions/{rev}/submit", (HttpContext http, string number, string rev, ReasonRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SubmitAsync(new SubmitDocumentRevision(number, rev), c, ct)));
+        eng.MapPost("/documents/{number}/revisions/{rev}/return", (HttpContext http, string number, string rev, ReasonRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReturnAsync(new ReturnDocumentRevision(number, rev), c, ct)));
+        eng.MapPost("/documents/{number}/revisions/{rev}/approve", (HttpContext http, string number, string rev, ReasonRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ApproveAsync(new ApproveDocumentRevision(number, rev), c, ct)));
+        eng.MapPost("/documents/{number}/revisions/{rev}/release", (HttpContext http, string number, string rev, DocumentReleaseRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReleaseAsync(new ReleaseDocumentRevision(number, rev, b.EffectiveFrom), c, ct)));
+        eng.MapPost("/documents/{number}/revisions/{rev}/obsolete", (HttpContext http, string number, string rev, ReasonRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ObsoleteAsync(new ObsoleteDocumentRevision(number, rev), c, ct)));
+
+        eng.MapGet("/attachments/{type}/{id}", (HttpContext http, string type, string id, bool? history, DocumentService s, CancellationToken _) =>
+            Read(http, Permissions.EngineeringRead, async principal =>
+            {
+                await using var uow = await Snapshot(http);
+                var ct = http.RequestAborted;
+                var target = await s.VisibleTargetOrNullAsync(uow, principal, TargetType(type), id, ct)
+                    ?? throw new CommandRejectedException("target_not_found", $"{type} {id} does not exist.");
+                var lookup = uow.Store<IDocumentLookup>();
+                var links = await lookup.ListLinksAsync(target.Type, target.Id, null, history == true, ct);
+                var views = new List<AttachmentView>();
+                foreach (var link in links)
+                {
+                    var document = await lookup.FindDocumentAsync(link.DocumentNumber, ct);
+                    if (document is not null && DocumentService.CanSee(principal, document))
+                    {
+                        views.Add(View(link, document));
+                    }
+                }
+
+                return views;
+            }));
+        eng.MapPost("/attachments/{type}/{id}", (HttpContext http, string type, string id, AttachDocumentRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AttachAsync(new AttachDocument(TargetType(type), id, b.DocumentNumber, b.Revision, b.Purpose ?? DocumentPurpose.Information, b.Note), c, ct)));
+        eng.MapPost("/attachments/{type}/{id}/file", (HttpContext http, string type, string id, AttachFileRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AttachFileAsync(new AttachFile(TargetType(type), id, b.FileSha256, b.FileName, b.Title, b.Type ?? DocumentType.Other, b.Markings ?? DataMarking.None, b.Note), c, ct)));
+        eng.MapPost("/attachment-links/{linkId:long}/detach", (HttpContext http, long linkId, ReasonRequest b, DocumentService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.DetachAsync(new DetachDocument(linkId), c, ct)));
+    }
+
+    /// <summary>What a link shows and whether it can be relied on.</summary>
+    internal static AttachmentView View(DocumentLinkInfo link, DocumentInfo document)
+    {
+        DocumentRevisionInfo? revision;
+        string state;
+        if (link.Revision is { } pinned)
+        {
+            revision = document.Revisions.FirstOrDefault(r => r.Revision == pinned);
+            state = revision?.Status switch
+            {
+                DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable => "Current",
+                DocumentRevisionStatus.Superseded => "Superseded",
+                DocumentRevisionStatus.Obsolete => "Obsolete",
+                DocumentRevisionStatus.Uncontrolled => "Reference",
+                _ => "Not released",
+            };
+        }
+        else if (document.Authority == DocumentAuthority.Reference)
+        {
+            revision = document.Latest;
+            state = revision is null ? "Obsolete" : "Reference";
+        }
+        else
+        {
+            revision = document.Current;
+            state = revision is null ? "Not released" : "Current";
+        }
+
+        return new AttachmentView(
+            link.LinkId, document.Number, document.Title, document.Type, document.Authority, document.Markings, link.Purpose, link.Revision, revision, state,
+            link.Note, link.LinkedBy, link.LinkedAt, link.DetachedBy, link.DetachedAt, link.DetachReason);
+    }
+
+    /// <summary>A link is visible with its record's program and its record's read permission.</summary>
+    internal static bool CanSeeLink(ForgePrincipal principal, DocumentLinkInfo link) =>
+        (link.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))) && principal.HasPermission(ReadPermission(link.TargetType));
+
+    internal static string ReadPermission(DocumentTargetType type) => type switch
+    {
+        DocumentTargetType.Supplier or DocumentTargetType.PurchaseOrder => Permissions.PurchasingRead,
+        DocumentTargetType.Program => Permissions.ProgramsRead,
+        DocumentTargetType.ProductionOrder => Permissions.OrdersRead,
+        DocumentTargetType.WorkOrder => Permissions.MaintenanceRead,
+        DocumentTargetType.Ncr => Permissions.QualityRead,
+        DocumentTargetType.WorkCenter => Permissions.ResourcesRead,
+        _ => Permissions.EngineeringRead,
+    };
+
+    private static DocumentTargetType TargetType(string raw) =>
+        Enum.TryParse<DocumentTargetType>(raw, ignoreCase: true, out var type) && Enum.IsDefined(type) && !int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)
+            ? type
+            : throw new CommandRejectedException("target_not_found", $"Documents cannot be attached to '{raw}'.");
+
+    private static async Task<DocumentInfo> VisibleDocumentAsync(IKernelUnitOfWork uow, ForgePrincipal principal, string number, CancellationToken ct)
+    {
+        var document = await uow.Store<IDocumentLookup>().FindDocumentAsync((number ?? string.Empty).Trim().ToUpperInvariant(), ct);
+        return document is not null && DocumentService.CanSee(principal, document)
+            ? document
+            : throw new CommandRejectedException("document_not_found", $"Document {number} does not exist.");
+    }
+
+    private static Task<IKernelUnitOfWork> Snapshot(HttpContext http) =>
+        http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+}

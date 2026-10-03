@@ -1,5 +1,6 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
+import { attachmentsDrawer } from '../attachments.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 import { formModal, can, today, plusDays, qty } from '../forms.js';
 import { isDownAt } from '../model.js';
@@ -72,6 +73,7 @@ export async function maintenancePage(page, ctx) {
     $$('[data-window]', page).forEach(b => b.addEventListener('click', () => planWindow(b.dataset.window)));
     $$('[data-schedule]', page).forEach(b => b.addEventListener('click', () => scheduleOrder(Number(b.dataset.schedule))));
     $$('[data-start]', page).forEach(b => b.addEventListener('click', () => step(Number(b.dataset.start), 'start', 'Start', 'The machine is taken out of production now.', false)));
+    $$('[data-docs-wo]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`Work order ${b.dataset.docsWo}`, { type: 'WorkOrder', id: b.dataset.docsWo, me, note: 'Procedures to follow, manuals, photos and service reports for this work.' })));
     $$('[data-complete]', page).forEach(b => b.addEventListener('click', () => complete(Number(b.dataset.complete))));
     $$('[data-signoff]', page).forEach(b => b.addEventListener('click', () => step(Number(b.dataset.signoff), 'sign-off', 'Sign off', 'You confirm the work was done properly. A preventive order raises the next one; a repair returns the machine to service.', false)));
     $$('[data-sendback]', page).forEach(b => b.addEventListener('click', () => step(Number(b.dataset.sendback), 'send-back', 'Send back', 'The order goes back to the technician as in progress.', true)));
@@ -127,6 +129,7 @@ export async function maintenancePage(page, ctx) {
           ${isOpen(o) && spares ? `<button class="btn small" data-issue="${o.workOrderId}">Issue part</button>` : ''}
           ${o.parts?.some(p => p.netIssued > 0) && spares ? `<button class="btn small ghost" data-return="${o.workOrderId}">Return part</button>` : ''}
           ${['Open', 'Scheduled'].includes(o.status) && schedule ? `<button class="btn small ghost" data-cancel="${o.workOrderId}">Cancel</button>` : ''}
+          <button class="btn small ghost" data-docs-wo="${o.workOrderId}">Documents</button>
         </div></div>`;
     }).join('');
   }

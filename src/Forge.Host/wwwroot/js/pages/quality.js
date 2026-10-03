@@ -1,5 +1,6 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
+import { attachmentsDrawer } from '../attachments.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 import { formModal, qty, can, plusDays, today } from '../forms.js';
 
@@ -59,6 +60,7 @@ export async function qualityPage(page, ctx) {
     $('#raise', page)?.addEventListener('click', () => raiseNcr());
     $$('[data-inspect]', page).forEach(b => b.addEventListener('click', () => inspect(...b.dataset.inspect.split('/').map(Number))));
     $$('[data-dispose]', page).forEach(b => b.addEventListener('click', () => dispose(Number(b.dataset.dispose))));
+    $$('[data-docs-ncr]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`NCR ${b.dataset.docsNcr}`, { type: 'Ncr', id: b.dataset.docsNcr, me, note: 'Photos, measurements, supplier responses and evidence for this nonconformance.' })));
     $$('[data-approve]', page).forEach(b => b.addEventListener('click', () => decide(Number(b.dataset.approve), true)));
     $$('[data-reject]', page).forEach(b => b.addEventListener('click', () => decide(Number(b.dataset.reject), false)));
     $$('[data-close]', page).forEach(b => b.addEventListener('click', () => closeNcr(Number(b.dataset.close))));
@@ -104,6 +106,7 @@ export async function qualityPage(page, ctx) {
         ${n.status === 'AwaitingApproval' && manager && !mine(n.dispositionedBy) ? `<button class="btn primary small" data-approve="${n.ncrId}">Approve use as is</button> <button class="btn small" data-reject="${n.ncrId}">Reject</button>` : ''}
         ${n.status === 'AwaitingApproval' && mine(n.dispositionedBy) ? '<span class="faint">You proposed it — someone else approves</span>' : ''}
         ${n.status === 'Dispositioned' && engineer ? `<button class="btn small" data-close="${n.ncrId}">Close</button> <button class="btn small ghost" data-capa-for="${n.ncrId}">Corrective action</button>` : ''}
+        <button class="btn small ghost" data-docs-ncr="${n.ncrId}">Documents</button>
       </div></div>`).join('');
   }
 

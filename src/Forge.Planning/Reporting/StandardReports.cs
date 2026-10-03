@@ -152,7 +152,54 @@ internal static class StandardReports
                 ["class", "makeBuy", "attention"], "class", 3660,
                 "The item master and manufacturer parts as they stand now; the period does not apply. A COTS item with no approved manufacturer part cannot be bought."),
             Permissions.EngineeringRead, null, ItemClassificationAsync),
+        new(
+            new("document-register", "Document register", "Engineering",
+                "Every document you may see with its authority, the revision in force, open revisions, review dates and where it is attached.",
+                [StatusFilter(["Internal", "External", "Reference"]), SearchFilter],
+                [C("document", "Document", ReportColumnKind.Text), C("title", "Title", ReportColumnKind.Text), C("type", "Type", ReportColumnKind.Text), C("authority", "Authority", ReportColumnKind.Text),
+                 C("current", "In force", ReportColumnKind.Text), C("effectiveFrom", "Effective from", ReportColumnKind.Date), C("open", "Open revision", ReportColumnKind.Text),
+                 C("reviewBy", "Review by", ReportColumnKind.Date), C("attachments", "Attached to", ReportColumnKind.Number), C("attention", "Needs", ReportColumnKind.Text)],
+                ["authority", "type", "attention"], "authority", 3660,
+                "Documents as they stand now; the period does not apply. Documents in programs you do not hold, or with markings you do not hold, are not shown. Reference documents are never production authority."),
+            Permissions.EngineeringRead, null, DocumentRegisterAsync),
     ];
+
+    private static async Task<ReportBody> DocumentRegisterAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var lookup = run.Uow.Store<IDocumentLookup>();
+        var links = (await lookup.ListLinksAsync(null, null, null, false, ct)).ToLookup(l => l.DocumentNumber);
+        var rows = new List<ReportRow>();
+        foreach (var d in (await lookup.ListDocumentsAsync(ct)).Where(d => DocumentAccess.CanSee(run.Principal, d)))
+        {
+            var current = d.Authority == DocumentAuthority.Reference ? d.Latest : d.Current;
+            var open = d.Revisions.FirstOrDefault(r => r.Status is DocumentRevisionStatus.Draft or DocumentRevisionStatus.InReview or DocumentRevisionStatus.Approved);
+            var reviewBy = current?.ReviewBy;
+            var needs = d.Authority == DocumentAuthority.Reference ? null
+                : current is null && open is null ? "Revision"
+                : reviewBy is { } due && due < run.Today ? "Review overdue"
+                : open?.Status == DocumentRevisionStatus.InReview ? "Approval"
+                : open?.Status == DocumentRevisionStatus.Approved ? "Release"
+                : current is null ? "Released revision"
+                : null;
+            if (!ReportRun.Is(d.Authority.ToString(), p.Status) || !run.Matches(d.Number, d.Title, d.Type.ToString(), d.ExternalAuthority, d.ExternalNumber))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [d.Number, d.Title, d.Type.ToString(), d.Authority == DocumentAuthority.External ? $"External ({d.ExternalAuthority})" : d.Authority.ToString(),
+                 current is null ? null : $"{current.Revision} ({current.Status})", current?.EffectiveFrom, open is null ? null : $"{open.Revision} ({open.Status})",
+                 reviewBy, (decimal)links[d.Number].Count(), needs],
+                ["document:" + d.Number]));
+        }
+
+        var attention = rows.Count(r => r.Cells[9] is not null);
+        return new ReportBody(
+            rows,
+            [$"{rows.Count} document(s); {attention} need attention (a revision, approval, release or an overdue review)."],
+            ["Controlled documents", "Attachments"]);
+    }
 
     private static async Task<ReportBody> ItemClassificationAsync(ReportRun run, CancellationToken ct)
     {

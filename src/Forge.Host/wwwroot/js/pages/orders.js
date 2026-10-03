@@ -1,6 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { icon } from '../icons.js';
 import { who } from '../people.js';
+import { appendAttachments } from '../attachments.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 
 const STATUS_TONE = { Planned: 'none', FirmPlanned: 'info', Released: 'ok', Held: 'warn', Cancelled: 'bad', Completed: 'ok' };
@@ -159,6 +160,9 @@ async function orderDetail(page, ctx, number) {
       </div>`;
     page.append(section);
   }
+
+  appendAttachments(page, { type: 'ProductionOrder', id: o.orderNumber, me, title: 'Documentation',
+    note: 'Documents this order must also follow, and files kept with it (customer PO, certificates, photos). Attaching never changes which revision of the item applies.' });
 
   $$('[data-act]', page).forEach(b => b.addEventListener('click', async () => {
     const act = b.dataset.act;

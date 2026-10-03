@@ -72,6 +72,28 @@ export async function command(path, body = {}, reason) {
   return handle(await fetch(path, { method: 'POST', headers: { ...headers(true), 'Idempotency-Key': uuid() }, body: JSON.stringify(payload) }));
 }
 
+/** Stores a file (at most 50 MB) and returns its SHA-256 reference, which documents and attachments then name. */
+export async function upload(file) {
+  if (!file) throw new Error('Choose a file.');
+  if (file.size > 52428800) throw new Error('Files are at most 50 MB.');
+  const h = { ...headers(false), 'Idempotency-Key': uuid(), 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) };
+  const result = await handle(await fetch('/api/engineering/document-files', { method: 'POST', headers: h, body: file }));
+  return result.entityId;
+}
+
+/** Downloads a file the API serves (signed in), under the name the server gives it. */
+export async function download(path, fallbackName) {
+  const res = await fetch(path, { headers: headers(false) });
+  if (!res.ok) await handle(res);
+  const blob = await res.blob();
+  const cd = res.headers.get('Content-Disposition') ?? '';
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd)?.[1];
+  const name = star ? decodeURIComponent(star) : (/filename="?([^";]+)"?/.exec(cd)?.[1] ?? fallbackName);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
 /** Like get, but turns a failure into { error } so one panel's failure does not blank the page. */
 export async function tryGet(path) {
   try { return { data: await get(path) }; } catch (error) { return { error }; }

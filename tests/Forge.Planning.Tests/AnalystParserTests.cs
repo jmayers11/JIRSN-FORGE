@@ -61,6 +61,17 @@ public class AnalystParserTests
     public void Spec_58_questions_map_to_intents(string question, AnalystIntent intent) =>
         Assert.Equal(intent, Parse(question).Intent);
 
+    [Theory]
+    [InlineData("Show the document register", "document-register")]
+    [InlineData("Which drawings need review?", "document-register")]
+    [InlineData("show unclassified items", "item-classification")]
+    public void V2_questions_map_to_their_reports(string question, string report)
+    {
+        var parsed = Parse(question);
+        Assert.Equal(AnalystIntent.Report, parsed.Intent);
+        Assert.Equal(report, parsed.Report!.ReportId);
+    }
+
     [Fact]
     public void Machines_and_work_centers_are_recognized_by_code_name_and_word()
     {

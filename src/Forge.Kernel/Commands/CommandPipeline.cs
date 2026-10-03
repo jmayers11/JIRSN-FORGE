@@ -118,9 +118,9 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
     }
 
     /// <summary>Creates an event for this command's context.</summary>
-    public EventEnvelope Event<TEvent>(TEvent payload, CommandContext context, string sourceContext, string entityType, string entityId, ProgramId? program = null)
+    public EventEnvelope Event<TEvent>(TEvent payload, CommandContext context, string sourceContext, string entityType, string entityId, ProgramId? program = null, DataMarking markings = DataMarking.None)
         where TEvent : IDomainEvent =>
-        EventFactory.Create(payload, context, time, sourceContext, entityType, entityId, program);
+        EventFactory.Create(payload, context, time, sourceContext, entityType, entityId, program, markings);
 
     private async Task RecordFailureAsync(CommandSpec spec, CommandContext context, string outcome, string detail, AuthorizationDecision? denial, CancellationToken ct)
     {

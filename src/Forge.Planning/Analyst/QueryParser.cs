@@ -264,6 +264,7 @@ public static partial class QueryParser
     {
         bool Has(params string[] words) => words.Any(w => t.Contains(" " + w, StringComparison.Ordinal));
         return Has("unclassified", "classification", "classified", "item class", "cots", "manufacturer part", "mpn") ? "item-classification"
+            : Has("document", "drawing", "procedure", "specification", "work instruction") ? "document-register"
             : Has("expir") && Has("cert", "qualif", "training") ? "qualifications-expiring"
             : Has("attainment") ? "schedule-attainment"
             : Has("constraint", "bottleneck") ? "constraint-history"

@@ -1,5 +1,6 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
+import { attachmentsDrawer } from '../attachments.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 import { formModal, qty, can, plusDays } from '../forms.js';
 
@@ -51,6 +52,7 @@ export async function procurementPage(page, ctx) {
     $$('[data-close]', page).forEach(b => b.addEventListener('click', () => act(b.dataset.close, 'close', 'Close', 'Nothing more is expected against it, whatever was received.')));
     $$('[data-cancel]', page).forEach(b => b.addEventListener('click', () => act(b.dataset.cancel, 'cancel', 'Cancel', 'A draft is withdrawn.')));
     $$('[data-line]', page).forEach(b => b.addEventListener('click', () => addLine(Number(b.dataset.line))));
+    $$('[data-docs-po]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`PO ${b.dataset.docsPo}`, { type: 'PurchaseOrder', id: b.dataset.docsPo, me })));
     $$('[data-date]', page).forEach(b => b.addEventListener('click', () => changeDate(...b.dataset.date.split('/').map(Number))));
     $$('[data-cancel-line]', page).forEach(b => b.addEventListener('click', async () => {
       const [po, line] = b.dataset.cancelLine.split('/');
@@ -67,7 +69,8 @@ export async function procurementPage(page, ctx) {
         ${o.status === 'Draft' && approver && !mine ? `<button class="btn primary small" data-approve="${o.poNumber}">Approve</button>` : ''}
         ${o.status === 'Draft' && approver && mine ? '<span class="faint">You raised it — someone else approves</span>' : ''}
         ${o.status === 'Draft' && buyer ? `<button class="btn small" data-line="${o.poNumber}">+ Line</button> <button class="btn small ghost" data-cancel="${o.poNumber}">Cancel</button>` : ''}
-        ${o.status === 'Approved' && buyer ? `<button class="btn small" data-close="${o.poNumber}">Close</button>` : ''}</header>
+        ${o.status === 'Approved' && buyer ? `<button class="btn small" data-close="${o.poNumber}">Close</button>` : ''}
+        <button class="btn small ghost" data-docs-po="${o.poNumber}">Documents</button></header>
       <div class="faint" style="margin-bottom:6px">Raised by ${esc(who(o.createdBy))} ${esc(fmtDateTime(o.createdAt))}${o.approvedBy ? ` · approved by ${esc(who(o.approvedBy))} ${esc(fmtDateTime(o.approvedAt))}` : ''}</div>
       <table class="table"><thead><tr><th>Line</th><th>Part</th><th class="num">Ordered</th><th class="num">Received</th><th class="num">Open</th><th>Promised</th><th></th></tr></thead><tbody>
         ${o.lines.map(l => {
@@ -144,7 +147,8 @@ export async function procurementPage(page, ctx) {
             <td>${mine.length ? mine.map(s => `<span class="chip" title="${esc(items.get(s.partNumber)?.description ?? '')}">${esc(s.partNumber)}${approver ? ` <a href="#" data-unsource="${esc(s.partNumber)}/${esc(x.code)}" title="Remove">×</a>` : ''}</span>`).join(' ') : '<span class="faint">—</span>'}</td>
             <td class="faint">${esc(x.notes ?? '')}</td>
             <td class="nowrap">${buyer ? `<button class="btn small" data-edit-supplier="${esc(x.code)}">Edit</button>` : ''}
-              ${approver ? `<button class="btn small ghost" data-status="${esc(x.code)}">Status</button>` : ''}</td></tr>`;
+              ${approver ? `<button class="btn small ghost" data-status="${esc(x.code)}">Status</button>` : ''}
+              <button class="btn small ghost" data-docs-supplier="${esc(x.code)}">Documents</button></td></tr>`;
         }).join('')}
       </tbody></table></div></section>`}`;
     bindTabs();
@@ -154,6 +158,7 @@ export async function procurementPage(page, ctx) {
         { name: 'name', label: 'Name', required: true },
         { name: 'notes', label: 'Notes', type: 'textarea' },
       ] }, (v, reason) => command('/api/procurement/suppliers', v, reason), reload));
+    $$('[data-docs-supplier]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`Supplier ${b.dataset.docsSupplier}`, { type: 'Supplier', id: b.dataset.docsSupplier, me })));
     $$('[data-edit-supplier]', page).forEach(b => b.addEventListener('click', () => {
       const x = list.find(y => y.code === b.dataset.editSupplier);
       formModal({ title: `Edit ${x.code}`, confirmLabel: 'Save',

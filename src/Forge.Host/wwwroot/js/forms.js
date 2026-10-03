@@ -21,6 +21,8 @@ export function fieldHtml(f) {
       input = `<label class="opt"><input type="checkbox" id="${id}" ${f.value ? 'checked' : ''}> ${esc(f.text ?? '')}</label>`; break;
     case 'days':
       input = `<div class="checks" id="${id}">${[1, 2, 3, 4, 5, 6, 7].map(d => `<label class="opt"><input type="checkbox" value="${d}" ${(f.value ?? []).includes(d) ? 'checked' : ''}> ${DAY[d]}</label>`).join('')}</div>`; break;
+    case 'file':
+      input = `<input class="input" id="${id}" type="file">`; break;
     case 'html':
       return f.html;
     default:
@@ -36,10 +38,11 @@ export function readFields(m, fields) {
     const el = $(`#f-${f.name}`, m);
     if (f.type === 'days') out[f.name] = $$('input:checked', el).map(i => Number(i.value));
     else if (f.type === 'check') out[f.name] = el.checked;
+    else if (f.type === 'file') out[f.name] = el.files?.[0] ?? null;
     else if (f.type === 'number') out[f.name] = el.value === '' ? null : Number(el.value);
     else out[f.name] = el.value.trim();
     if (f.code && typeof out[f.name] === 'string') out[f.name] = out[f.name].toUpperCase();
-    if (f.type !== 'number' && f.type !== 'check' && out[f.name] === '') out[f.name] = null;
+    if (f.type !== 'number' && f.type !== 'check' && f.type !== 'file' && out[f.name] === '') out[f.name] = null;
     if (f.required && (out[f.name] == null || (Array.isArray(out[f.name]) && !out[f.name].length))) throw new Error(`${f.label} is required.`);
   }
   return out;
