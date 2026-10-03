@@ -352,8 +352,11 @@ public sealed class ChangeService(CommandPipeline pipeline)
                 }
             }
 
+            // Propagation (V2.5) starts from here: the record exists in the same transaction, the subscriber does the work.
+            await uow.Store<IPropagationStore>().StartAsync(change.Number, context.CorrelationId, now, ct);
+            await uow.Outbox.EnqueueAsync(pipeline.Event(new EngineeringChangeReleased(change.Number, from), context, SourceContext, ChangeEntity, change.Number, Program(change)), ct);
             var updated = change with { Status = ChangeStatus.Released, ReleasedBy = context.Actor, ReleasedAt = now, EffectiveFrom = from };
-            return ((ChangeInfo, string, string)?)(updated, "Released", $"{change.Number} released, effective {from:yyyy-MM-dd}: {string.Join(", ", released)}.");
+            return ((ChangeInfo, string, string)?)(updated, "Released", $"{change.Number} released, effective {from:yyyy-MM-dd}: {string.Join(", ", released)}. Propagation to orders, purchase orders and training follows.");
         }, ct);
 
     public Task<CommandResult> CreatePolicyAsync(CreateReviewPolicy c, CommandContext context, CancellationToken ct)

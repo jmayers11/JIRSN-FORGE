@@ -2,11 +2,12 @@ using System.Net.Http.Json;
 using Forge.Host.Security;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 
 namespace Forge.Integration.Tests;
 
 /// <summary>The real host against a real database. Background relays are off so tests drive them.</summary>
-public sealed class ForgeApp(string connectionString) : WebApplicationFactory<Program>
+public sealed class ForgeApp(string connectionString, Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? services = null) : WebApplicationFactory<Program>
 {
     public const string AdminSubject = "admin-sub";
 
@@ -21,6 +22,10 @@ public sealed class ForgeApp(string connectionString) : WebApplicationFactory<Pr
         builder.UseSetting("Forge:BackgroundServices:Enabled", "false");
         builder.UseSetting("Forge:Bootstrap:AdminSubject", AdminSubject);
         builder.UseSetting("Forge:Bootstrap:AdminDisplayName", "Test Administrator");
+        if (services is not null)
+        {
+            builder.ConfigureTestServices(services);
+        }
     }
 
     public HttpClient As(string subject)

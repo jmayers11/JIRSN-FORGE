@@ -183,7 +183,7 @@ public static class Roles
         [MaintenancePlanner] = [Permissions.MaintenanceProgram, Permissions.MaintenanceApprove, Permissions.MaintenancePlan, Permissions.MaintenanceRead, Permissions.DowntimeReport, Permissions.ResourcesRead, Permissions.ScheduleRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.CotsPropose, Permissions.EngineeringRead, Permissions.DocumentsAttach, Permissions.ChangesReview],
         [ProgramManager] = [Permissions.ProgramsManage, Permissions.ProgramsRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.MaterialPlanRead, Permissions.ScheduleRead, Permissions.InventoryRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach, Permissions.ChangesReview],
         [EngineeringApprover] = [Permissions.EngineeringRelease, Permissions.EngineeringRead, Permissions.ResourcesRead, Permissions.CotsManage, Permissions.DocumentsApprove, Permissions.DocumentsRelease, Permissions.OrdersRead, Permissions.ProgramsRead, Permissions.ChangesReview, Permissions.ChangesApprove],
-        [TrainingCoordinator] = [Permissions.CompetencyManage, Permissions.CompetencyRead, Permissions.WorkforceRead, Permissions.ResourcesRead],
+        [TrainingCoordinator] = [Permissions.CompetencyManage, Permissions.CompetencyRead, Permissions.WorkforceRead, Permissions.ResourcesRead, Permissions.EngineeringRead],
         [Certifier] = [Permissions.CompetencyCertify, Permissions.CompetencyRead],
         [SafetyEngineer] = [Permissions.SafetyRulesDraft, Permissions.SafetyRulesRead, Permissions.ResourcesRead, Permissions.CompetencyRead],
         [SafetyApprover] = [Permissions.SafetyRulesApprove, Permissions.SafetyRulesRead, Permissions.ResourcesRead, Permissions.CompetencyRead],
@@ -202,10 +202,21 @@ public static class Roles
         [ShopFloorTerminal] = [Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.ReadinessRead, Permissions.OrdersRead, Permissions.ResourcesRead, Permissions.ScheduleRead],
     };
 
+    /// <summary>
+    /// Roles held only by system actors, never by people: they cannot be granted (not in <see cref="All"/>).
+    /// </summary>
+    private static readonly Dictionary<string, string[]> SystemMap = new(StringComparer.Ordinal)
+    {
+        [ChangePropagation] = [Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.OrdersManage, Permissions.OrdersRelease, Permissions.PurchasingRead, Permissions.WorkforceRead, Permissions.ChangesManage],
+    };
+
+    /// <summary>The system role the propagation of a released engineering change acts with (V2.5).</summary>
+    public const string ChangePropagation = "system.ChangePropagation";
+
     public static IReadOnlyCollection<string> All => Map.Keys;
 
     public static bool IsKnown(string role) => Map.ContainsKey(role);
 
     public static IEnumerable<string> PermissionsOf(string role) =>
-        Map.TryGetValue(role, out var permissions) ? permissions : [];
+        Map.TryGetValue(role, out var permissions) ? permissions : SystemMap.TryGetValue(role, out var system) ? system : [];
 }

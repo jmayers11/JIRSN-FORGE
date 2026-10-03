@@ -59,6 +59,8 @@ public interface IProcurementStore
     Task SetStatusAsync(long poNumber, PurchaseOrderStatus status, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task UpdateLineAsync(long poNumber, PurchaseLineInfo line, CancellationToken ct);
+
+    Task InsertPackageAsync(TechnicalPackage package, CancellationToken ct);
 }
 
 /// <summary>
@@ -66,7 +68,7 @@ public interface IProcurementStore
 /// lines count as scheduled receipts. Supplier date changes are recorded with a reason so MRP and
 /// readiness can explain why material moved.
 /// </summary>
-public sealed class PurchasingService(CommandPipeline pipeline)
+public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackageResolver packages)
 {
     public const string SourceContext = "Procurement";
     private const string Entity = "PurchaseOrder";
@@ -146,7 +148,13 @@ public sealed class PurchasingService(CommandPipeline pipeline)
             }
 
             await uow.Store<IProcurementStore>().SetStatusAsync(po.PoNumber, PurchaseOrderStatus.Approved, now, context.Actor, ct);
-            return ("approved", "Approved", nameof(PurchaseOrderStatus.Draft), nameof(PurchaseOrderStatus.Approved), null);
+            var recorded = await packages.ResolveAsync(uow, po with { Lines = po.Lines.Where(l => l.Status == PurchaseLineStatus.Open).ToList() }, now, context.Actor, ct);
+            foreach (var package in recorded)
+            {
+                await uow.Store<IProcurementStore>().InsertPackageAsync(package, ct);
+            }
+
+            return ($"approved; technical package recorded for {recorded.Count} line(s)", "Approved", nameof(PurchaseOrderStatus.Draft), nameof(PurchaseOrderStatus.Approved), null);
         }, ct);
     }
 

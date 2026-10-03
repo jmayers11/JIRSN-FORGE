@@ -20,9 +20,11 @@ public sealed record CommandContext(
     Guid CorrelationId,
     string IdempotencyKey,
     CommandSource Source,
-    string? Reason)
+    string? Reason,
+    string? SystemActor = null)
 {
-    public string Actor => "person:" + Principal.PersonId;
+    /// <summary>Who the audit names: the person, or a named system actor (for example system:propagation).</summary>
+    public string Actor => SystemActor ?? "person:" + Principal.PersonId;
 }
 
 /// <summary>Outcome of a command, stable enough to be replayed for a repeated idempotency key.</summary>

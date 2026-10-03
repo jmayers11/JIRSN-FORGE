@@ -68,3 +68,26 @@ public interface IProcurementLookup
     /// <summary>Approved sources of one item, or of every item.</summary>
     Task<IReadOnlyList<ApprovedSourceInfo>> ListApprovedSourcesAsync(string? partNumber, CancellationToken ct);
 }
+
+/// <summary>One document in a technical package: the revision the supplier was sent, and its file.</summary>
+public sealed record PackageDocument(string DocumentNumber, string Title, string? Revision, string State, string Source, string? FileSha256, string? FileName);
+
+/// <summary>
+/// What a purchase order line was bought to (V2.5): the item revision and document revisions in force when
+/// the order was approved. Written once, never changed.
+/// </summary>
+public sealed record TechnicalPackage(long PoNumber, int LineNumber, string PartNumber, string? ItemRevision, string Summary, DateTimeOffset RecordedAt, string RecordedBy, IReadOnlyList<PackageDocument> Documents);
+
+/// <summary>Works out each line's technical package inside the approval's transaction (implemented by the host, which can see documents).</summary>
+public interface ITechnicalPackageResolver
+{
+    Task<IReadOnlyList<TechnicalPackage>> ResolveAsync(Kernel.Access.IKernelUnitOfWork uow, PurchaseOrderInfo po, DateTimeOffset now, string actor, CancellationToken ct);
+}
+
+public interface ITechnicalPackageLookup
+{
+    Task<TechnicalPackage?> FindPackageAsync(long poNumber, int lineNumber, CancellationToken ct);
+
+    /// <summary>Every recorded package of the open lines of approved orders for these parts.</summary>
+    Task<IReadOnlyList<TechnicalPackage>> ListPackagesAsync(IReadOnlyCollection<string> partNumbers, CancellationToken ct);
+}

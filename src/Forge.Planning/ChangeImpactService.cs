@@ -66,10 +66,19 @@ public sealed class ChangeImpactService(IKernelUnitOfWorkFactory unitOfWork, IFo
             parts.AddRange(current.Select(c => new ImpactedPart(c.Key, c.Value, null, $"rev {c.Value} is built to {line.DocumentNumber} (rev {line.FromRevision ?? "(none)"} → rev {line.ToRevision})")));
         }
 
+        // The order list carries no operations; orders of the parts reached are read whole to tell started from not started.
+        var execution = uow.Store<IExecutionLookup>();
+        var reached = parts.Select(p => p.PartNumber).ToHashSet(StringComparer.Ordinal);
+        var orders = new List<OrderInfo>();
+        foreach (var order in (await execution.ListOrdersAsync(ct)).Where(o => reached.Contains(o.PartNumber)))
+        {
+            orders.Add(await execution.FindOrderAsync(order.OrderNumber, ct) ?? order);
+        }
+
         return new ChangeImpactInput(
             change,
             parts,
-            await uow.Store<IExecutionLookup>().ListOrdersAsync(ct),
+            orders,
             await uow.Store<IProcurementLookup>().ListPurchaseOrdersAsync(ct),
             await uow.Store<IInventoryLookup>().ListBalancesAsync(null, ct),
             await uow.Store<IInventoryLookup>().ListLotsAsync(null, ct),

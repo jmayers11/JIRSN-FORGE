@@ -5,7 +5,7 @@ using Npgsql;
 
 namespace Forge.Procurement.Infrastructure;
 
-internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcurementStore, IProcurementLookup
+internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcurementStore, IProcurementLookup, ITechnicalPackageLookup
 {
     private const string OrderSql = "SELECT po_number, supplier, status, created_by, created_at, approved_by, approved_at, supplier_code FROM procurement.purchase_order";
     private const string LineSql = "SELECT po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status FROM procurement.purchase_order_line";
@@ -132,6 +132,55 @@ internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcur
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
+    public async Task InsertPackageAsync(TechnicalPackage package, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        await using (var cmd = uow.Command(
+            "INSERT INTO procurement.line_package (po_number, line_number, part_number, item_revision, summary, recorded_at, recorded_by) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            package.PoNumber, package.LineNumber, package.PartNumber, Text(package.ItemRevision), package.Summary, package.RecordedAt, package.RecordedBy))
+        {
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        var position = 0;
+        foreach (var d in package.Documents)
+        {
+            await using var cmd = uow.Command(
+                """
+                INSERT INTO procurement.line_package_document (po_number, line_number, position, document_number, title, revision, state, source, file_sha256, file_name)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                """,
+                package.PoNumber, package.LineNumber, ++position, d.DocumentNumber, d.Title, Text(d.Revision), d.State, d.Source, Text(d.FileSha256), Text(d.FileName));
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    public async Task<TechnicalPackage?> FindPackageAsync(long poNumber, int lineNumber, CancellationToken ct) =>
+        (await PackagesAsync(" WHERE p.po_number = $1 AND p.line_number = $2", ct, poNumber, lineNumber)).SingleOrDefault();
+
+    public Task<IReadOnlyList<TechnicalPackage>> ListPackagesAsync(IReadOnlyCollection<string> partNumbers, CancellationToken ct) =>
+        PackagesAsync(" WHERE p.part_number = ANY($1)", ct, new object?[] { partNumbers.ToArray() });
+
+    private async Task<IReadOnlyList<TechnicalPackage>> PackagesAsync(string where, CancellationToken ct, params object?[] args)
+    {
+        var packages = await ReadAsync(
+            "SELECT p.po_number, p.line_number, p.part_number, p.item_revision, p.summary, p.recorded_at, p.recorded_by FROM procurement.line_package p" + where + " ORDER BY p.po_number, p.line_number",
+            r => new TechnicalPackage(r.GetInt64(0), r.GetInt32(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetString(4), r.GetFieldValue<DateTimeOffset>(5), r.GetString(6), []),
+            ct,
+            args);
+        if (packages.Count == 0)
+        {
+            return packages;
+        }
+
+        var documents = (await ReadAsync(
+            "SELECT d.po_number, d.line_number, d.document_number, d.title, d.revision, d.state, d.source, d.file_sha256, d.file_name FROM procurement.line_package_document d JOIN procurement.line_package p USING (po_number, line_number)" + where + " ORDER BY d.po_number, d.line_number, d.position",
+            r => (Key: (r.GetInt64(0), r.GetInt32(1)), Document: new PackageDocument(r.GetString(2), r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4), r.GetString(5), r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8))),
+            ct,
+            args)).ToLookup(x => x.Key, x => x.Document);
+        return packages.Select(p => p with { Documents = documents[(p.PoNumber, p.LineNumber)].ToList() }).ToList();
+    }
+
     private static SupplierInfo ReadSupplier(NpgsqlDataReader r) =>
         new(r.GetString(0), r.GetString(1), Enum.Parse<SupplierStatus>(r.GetString(2)), r.IsDBNull(3) ? null : r.GetString(3), r.GetString(4), r.GetFieldValue<DateTimeOffset>(5));
 
@@ -162,6 +211,7 @@ public static class ProcurementRegistration
         services.AddForgeMigrations(typeof(ProcurementRegistration).Assembly, "procurement");
         services.AddForgeStore<IProcurementStore>(uow => new PostgresProcurementStore(uow));
         services.AddForgeStore<IProcurementLookup>(uow => new PostgresProcurementStore(uow));
+        services.AddForgeStore<ITechnicalPackageLookup>(uow => new PostgresProcurementStore(uow));
         services.AddSingleton<PurchasingService>();
         services.AddSingleton<SupplierService>();
         return services;

@@ -38,6 +38,20 @@ public sealed record ProductionOrderCreated(long OrderNumber, string PartNumber,
     public static int SchemaVersion => 1;
 }
 
+/// <summary>
+/// Moves an order that has not started to the revision a released engineering change put in force (V2.5,
+/// propagation). A planned order just changes revision; a released order not started is re-issued from
+/// the new revision's routing and bill of materials. Work in progress is never edited this way.
+/// </summary>
+public sealed record ApplyChangeRevision(long OrderNumber, string ToRevision, string ChangeNumber);
+
+public sealed record OrderRevisionChanged(long OrderNumber, string PartNumber, string From, string To, string ChangeNumber) : IDomainEvent
+{
+    public static string EventType => nameof(OrderRevisionChanged);
+
+    public static int SchemaVersion => 1;
+}
+
 public sealed record ProductionOrderStatusChanged(long OrderNumber, string From, string To) : IDomainEvent
 {
     public static string EventType => nameof(ProductionOrderStatusChanged);
@@ -54,6 +68,11 @@ public interface IExecutionStore
     Task SetWbsAsync(long orderNumber, string? wbsCode, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task SaveReleaseAsync(long orderNumber, IReadOnlyList<OrderOperationInfo> operations, IReadOnlyList<OrderMaterialInfo> materials, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task SetRevisionAsync(long orderNumber, string revision, DateTimeOffset at, string actor, CancellationToken ct);
+
+    /// <summary>Replaces the released copy of an order nothing has started on (operations and materials).</summary>
+    Task ReplaceReleasedCopyAsync(long orderNumber, IReadOnlyList<OrderOperationInfo> operations, IReadOnlyList<OrderMaterialInfo> materials, CancellationToken ct);
 }
 
 /// <summary>
@@ -172,31 +191,60 @@ public sealed class ProductionOrderService(CommandPipeline pipeline)
                 throw new CommandRejectedException("revision_not_in_force", $"{order.PartNumber} rev {order.Revision} is no longer in force. Cancel and re-plan against the current revision.");
             }
 
-            var operations = detail.Routing
-                .Select(op => new OrderOperationInfo(
-                    op.Sequence,
-                    op.Description,
-                    op.WorkCenterCode,
-                    op.ActivityCode,
-                    op.EligibleMachines,
-                    op.RequiredQualifications,
-                    op.SetupMinutes + (op.RunMinutesPerUnit * order.Quantity),
-                    op.CrewSize,
-                    OperationStatus.Pending))
-                .ToList();
-
-            var materials = new List<OrderMaterialInfo>();
-            foreach (var line in detail.Bom)
-            {
-                var component = await engineering.FindItemAsync(line.ComponentPartNumber, ct);
-                var componentRevision = await engineering.GetEffectiveRevisionAsync(line.ComponentPartNumber, now, ct);
-                var required = decimal.Round(line.QuantityPer * order.Quantity * (1 + (line.ScrapPercent / 100m)), 6, MidpointRounding.AwayFromZero);
-                materials.Add(new OrderMaterialInfo(line.LineNumber, line.ComponentPartNumber, componentRevision?.Revision, required, component?.UnitOfMeasure ?? "EA"));
-            }
-
+            var (operations, materials) = await CopyAsync(engineering, detail, order.Quantity, now, ct);
             await uow.Store<IExecutionStore>().SaveReleaseAsync(order.OrderNumber, operations, materials, now, context.Actor, ct);
             return OrderStatus.Released;
         }, ct, Permissions.OrdersRelease);
+
+    public Task<CommandResult> ApplyChangeRevisionAsync(ApplyChangeRevision c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var id = c.OrderNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var spec = new CommandSpec(SourceContext, nameof(ApplyChangeRevision), Permissions.OrdersRelease, ResourceRef.Of(OrderEntity, id), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var order = await uow.Store<IExecutionLookup>().FindOrderAsync(c.OrderNumber, ct);
+            if (order is null || (order.ProgramId is { } p && !context.Principal.Programs.Contains(new ProgramId(p))))
+            {
+                throw new CommandRejectedException("order_not_found", $"Order {id} does not exist.");
+            }
+
+            var program = order.ProgramId is { } pid ? new ProgramId(pid) : (ProgramId?)null;
+            var to = (c.ToRevision ?? string.Empty).Trim().ToUpperInvariant();
+            if (order.Revision == to)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(id, $"Order {id} is already at rev {to}."));
+            }
+
+            if (order.Status is not (OrderStatus.Planned or OrderStatus.FirmPlanned or OrderStatus.Released) || order.Operations.Any(op => op.Status != OperationStatus.Pending))
+            {
+                throw new CommandRejectedException("order_started", $"Order {id} is {order.Status}{(order.Operations.Any(op => op.Status != OperationStatus.Pending) ? " with work started" : string.Empty)}; it gets a disposition, not a new revision.");
+            }
+
+            var engineering = uow.Store<IEngineeringLookup>();
+            var detail = await engineering.GetRevisionDetailAsync(order.PartNumber, to, ct)
+                ?? throw new CommandRejectedException("unknown_revision", $"{order.PartNumber} has no revision {to}.");
+            if (!detail.Revision.IsEffectiveAt(now))
+            {
+                throw new CommandRejectedException("revision_not_in_force", $"{order.PartNumber} rev {to} is not in force yet.");
+            }
+
+            var store = uow.Store<IExecutionStore>();
+            await store.SetRevisionAsync(order.OrderNumber, to, now, context.Actor, ct);
+            object after = new { revision = to, c.ChangeNumber };
+            if (order.Status == OrderStatus.Released)
+            {
+                var (operations, materials) = await CopyAsync(engineering, detail, order.Quantity, now, ct);
+                await store.ReplaceReleasedCopyAsync(order.OrderNumber, operations, materials, ct);
+                after = new { revision = to, c.ChangeNumber, operations = operations.Select(o => $"{o.Sequence} {o.WorkCenterCode} {o.Description}"), materials = materials.Select(m => $"{m.LineNumber} {m.ComponentPartNumber} {m.RequiredQuantity}") };
+            }
+
+            return new CommandOutcome(
+                CommandResult.Ok(id, $"Order {id} moved from rev {order.Revision} to rev {to} by {c.ChangeNumber}{(order.Status == OrderStatus.Released ? "; its released copy was reissued from the new revision" : string.Empty)}."),
+                [pipeline.Event(new OrderRevisionChanged(order.OrderNumber, order.PartNumber, order.Revision, to, c.ChangeNumber), context, SourceContext, OrderEntity, id, program)],
+                new AuditChange(OrderEntity, id, CanonicalJson.Serialize(new { revision = order.Revision, operations = order.Operations.Select(o => $"{o.Sequence} {o.WorkCenterCode} {o.Description}"), materials = order.Materials.Select(m => $"{m.LineNumber} {m.ComponentPartNumber} {m.RequiredQuantity}") }), CanonicalJson.Serialize(after), program));
+        }, ct);
+    }
 
     public Task<CommandResult> HoldAsync(HoldProductionOrder c, CommandContext context, CancellationToken ct) =>
         TransitionAsync(nameof(HoldProductionOrder), c?.OrderNumber ?? 0, c!, context, true, (order, _) => order.Status is OrderStatus.Planned or OrderStatus.FirmPlanned or OrderStatus.Released
@@ -249,6 +297,34 @@ public sealed class ProductionOrderService(CommandPipeline pipeline)
                     new AuditChange(OrderEntity, id, order.Status.ToString(), next.ToString(), program));
             },
             ct);
+    }
+
+    /// <summary>The released copy of an order: the revision's routing and bill of materials scaled to its quantity.</summary>
+    private static async Task<(List<OrderOperationInfo> Operations, List<OrderMaterialInfo> Materials)> CopyAsync(IEngineeringLookup engineering, RevisionDetail detail, decimal quantity, DateTimeOffset now, CancellationToken ct)
+    {
+        var operations = detail.Routing
+            .Select(op => new OrderOperationInfo(
+                op.Sequence,
+                op.Description,
+                op.WorkCenterCode,
+                op.ActivityCode,
+                op.EligibleMachines,
+                op.RequiredQualifications,
+                op.SetupMinutes + (op.RunMinutesPerUnit * quantity),
+                op.CrewSize,
+                OperationStatus.Pending))
+            .ToList();
+
+        var materials = new List<OrderMaterialInfo>();
+        foreach (var line in detail.Bom)
+        {
+            var component = await engineering.FindItemAsync(line.ComponentPartNumber, ct);
+            var componentRevision = await engineering.GetEffectiveRevisionAsync(line.ComponentPartNumber, now, ct);
+            var required = decimal.Round(line.QuantityPer * quantity * (1 + (line.ScrapPercent / 100m)), 6, MidpointRounding.AwayFromZero);
+            materials.Add(new OrderMaterialInfo(line.LineNumber, line.ComponentPartNumber, componentRevision?.Revision, required, component?.UnitOfMeasure ?? "EA"));
+        }
+
+        return (operations, materials);
     }
 
     private static CommandRejectedException Invalid(OrderInfo order, string action) =>

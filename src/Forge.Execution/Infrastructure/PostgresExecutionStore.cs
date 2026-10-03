@@ -62,6 +62,56 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         await stamp.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task SetRevisionAsync(long orderNumber, string revision, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE execution.production_order SET revision = $2, updated_at = $3, updated_by = $4 WHERE order_number = $1", orderNumber, revision, at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task ReplaceReleasedCopyAsync(long orderNumber, IReadOnlyList<OrderOperationInfo> operations, IReadOnlyList<OrderMaterialInfo> materials, CancellationToken ct)
+    {
+        await using (var started = uow.Command("SELECT count(*) FROM execution.order_operation WHERE order_number = $1 AND status <> 'Pending'", orderNumber))
+        {
+            if ((long)(await started.ExecuteScalarAsync(ct))! > 0)
+            {
+                throw new InvalidOperationException($"Order {orderNumber} has started work; its released copy is never replaced.");
+            }
+        }
+
+        await using (var materialRows = uow.Command("DELETE FROM execution.order_material WHERE order_number = $1", orderNumber))
+        {
+            await materialRows.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var operationRows = uow.Command("DELETE FROM execution.order_operation WHERE order_number = $1", orderNumber))
+        {
+            await operationRows.ExecuteNonQueryAsync(ct);
+        }
+
+        foreach (var op in operations)
+        {
+            await using var cmd = uow.Command(
+                """
+                INSERT INTO execution.order_operation (order_number, sequence, description, work_center_code, activity_code, eligible_machines,
+                    required_qualifications, planned_minutes, crew_size, status)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                """,
+                orderNumber, op.Sequence, op.Description, op.WorkCenterCode, op.ActivityCode, TextArray(op.EligibleMachines),
+                TextArray(op.RequiredQualifications), op.PlannedMinutes, op.CrewSize, op.Status.ToString());
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        foreach (var m in materials)
+        {
+            await using var cmd = uow.Command(
+                "INSERT INTO execution.order_material (order_number, line_number, component, component_revision, required_quantity, unit_of_measure) VALUES ($1, $2, $3, $4, $5, $6)",
+                orderNumber, m.LineNumber, m.ComponentPartNumber,
+                new NpgsqlParameter { Value = (object?)m.ComponentRevision ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text },
+                m.RequiredQuantity, m.UnitOfMeasure);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
+
     public async Task<OrderInfo?> FindOrderAsync(long orderNumber, CancellationToken ct)
     {
         var order = (await Read(OrderSql + " WHERE order_number = $1", ReadOrder, ct, orderNumber)).SingleOrDefault();

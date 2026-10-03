@@ -249,6 +249,9 @@ public static class EngineeringRegistration
         services.AddForgeStore<IChangeStore>(uow => new PostgresChangeStore(uow));
         services.AddForgeStore<IChangeLookup>(uow => new PostgresChangeStore(uow));
         services.AddSingleton<ChangeService>();
+        services.AddForgeStore<IPropagationStore>(uow => new PostgresPropagationStore(uow));
+        services.AddForgeStore<IPropagationLookup>(uow => new PostgresPropagationStore(uow));
+        services.AddSingleton<ChangeActionService>();
         return services;
     }
 }

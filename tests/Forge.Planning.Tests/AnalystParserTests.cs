@@ -66,6 +66,8 @@ public class AnalystParserTests
     [InlineData("Which drawings need review?", "document-register")]
     [InlineData("show unclassified items", "item-classification")]
     [InlineData("Show open engineering changes", "engineering-changes")]
+    [InlineData("Show open change actions", "change-actions")]
+    [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)
     {

@@ -58,8 +58,10 @@ async function main() {
       const classification = !items.includes('BRG-6205-001');
       const documents = !(await get('eng', '/api/engineering/documents')).some(d => d.number === 'DWG-PANEL-500');
       const applicability = !documents && !(await panelRequirements()).length;
-      const changes = !(await get('eng', '/api/engineering/changes')).length;
-      if (!insight && !classification && !documents && !applicability && !changes) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const changeList = await get('eng', '/api/engineering/changes');
+      const changes = !changeList.length;
+      const propagation = !changes && changeList.some(c => c.title.startsWith('Panel edge radius') && c.status === 'InReview');
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -80,6 +82,10 @@ async function main() {
         console.log('Adding a sample engineering change and review policy.');
         await seedChanges();
       }
+      if (changes || propagation) {
+        console.log('Releasing the sample engineering change (propagation follows on the server).');
+        await seedPropagation();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -97,6 +103,7 @@ async function main() {
     await seedDocuments();
     await seedApplicability();
     await seedChanges();
+    await seedPropagation();
     return finish();
   }
 
@@ -499,6 +506,22 @@ async function seedChanges() {
   await post('eng', `/api/engineering/changes/${ecn}/lines`, { kind: 'DocumentRevision', subject: 'DWG-PANEL-500', toRevision: 'B', note: 'Edge radius' });
   await post('eng', `/api/engineering/changes/${ecn}/submit`);
   await post('approver', `/api/engineering/changes/${ecn}/reviews`, { kind: 'Technical', decision: 'Approve', notes: 'Radius within tooling capability' });
+}
+
+async function seedPropagation() {
+  step('Engineering change: the sample ECN reviewed, approved by the board and released by document control; Forge propagates it');
+  const sample = (await get('eng', '/api/engineering/changes')).find(c => c.title.startsWith('Panel edge radius') && c.status === 'InReview');
+  if (!sample) return;
+  const existing = (await get(adminSubject, '/api/kernel/people')).map(p => p.idpSubject);
+  if (!existing.includes('dina')) await person('dina', 'Dina Document Control', 'DocumentController');
+  if (!existing.includes('tara')) await person('tara', 'Tara Training', 'TrainingCoordinator');
+  const base = `/api/engineering/changes/${sample.number}`;
+  const open = sample.reviews.filter(r => r.round === sample.reviewRound && !r.decision).map(r => r.kind);
+  if (open.includes('Quality')) await post('qe', `${base}/reviews`, { kind: 'Quality', decision: 'ApproveWithComments', notes: 'Check paint adhesion on the first lot' });
+  if (open.includes('Manufacturing')) await post('planner', `${base}/reviews`, { kind: 'Manufacturing', decision: 'Approve' });
+  if (open.includes('Technical')) await post('approver', `${base}/reviews`, { kind: 'Technical', decision: 'Approve' });
+  await post('approver', `${base}/approve`);
+  await post('dina', `${base}/release`, { reason: 'Sample: approved by the change board' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

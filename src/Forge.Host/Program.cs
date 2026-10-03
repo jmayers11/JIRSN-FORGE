@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using System.Text.Json.Serialization;
 using Forge.Competency.Infrastructure;
 using Forge.Engineering.Infrastructure;
@@ -32,6 +33,7 @@ builder.Services.AddForgeWorkforce();
 builder.Services.AddForgeSafetyRules();
 builder.Services.AddForgeEngineering();
 builder.Services.AddSingleton<Forge.Engineering.Contracts.IDocumentTargetResolver, Forge.Host.Documents.DocumentTargetResolver>();
+builder.Services.AddSingleton<Forge.Procurement.Contracts.ITechnicalPackageResolver, Forge.Host.Documents.TechnicalPackageResolver>();
 builder.Services.AddForgePrograms();
 builder.Services.AddForgeExecution();
 builder.Services.AddForgeMaintenance();
@@ -39,6 +41,12 @@ builder.Services.AddForgeQuality();
 builder.Services.AddForgeProcurement();
 builder.Services.AddForgeInventory();
 builder.Services.AddForgePlanning();
+
+// V2.5: propagation of released engineering changes (a subscriber, with retries of incomplete propagations).
+builder.Services.TryAddSingleton<Forge.Host.Propagation.IPropagationFaults, Forge.Host.Propagation.NoPropagationFaults>();
+builder.Services.AddSingleton<Forge.Host.Propagation.ChangePropagationRunner>();
+builder.Services.AddSingleton<Forge.Host.Propagation.PropagationRetry>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Propagation.ChangePropagationSubscriber>();
 
 // Optional generative AI for Forge Analyst (off by default; Forge works fully without it).
 var narratorOptions = builder.Configuration.GetSection("Forge:Analyst").Get<Forge.Host.Api.AnalystNarratorOptions>() ?? new();
@@ -52,6 +60,7 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Ad
 if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
 {
     builder.Services.AddForgeKernelBackgroundServices();
+    builder.Services.AddHostedService<Forge.Host.Propagation.PropagationRetryService>();
 }
 
 builder.Services.AddSingleton<RequestPrincipal>();

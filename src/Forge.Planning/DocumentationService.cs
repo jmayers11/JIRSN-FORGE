@@ -44,24 +44,44 @@ public sealed class DocumentationService(IKernelUnitOfWorkFactory unitOfWork, IF
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
         var po = await uow.Store<IProcurementLookup>().FindPurchaseOrderAsync(poNumber, ct)
             ?? throw new CommandRejectedException("purchase_order_not_found", $"Purchase order {poNumber} does not exist.");
-        var now = time.GetUtcNow();
+        return await ForPurchaseOrderAsync(uow, po, time.GetUtcNow(), principal, ct);
+    }
+
+    /// <summary>
+    /// The documents each line of a purchase order is bought to, in an open transaction: the documents the
+    /// item revision in force is built to and the documents attached to the purchase order to follow.
+    /// With no viewer nothing is restricted (used to record the technical package at approval).
+    /// </summary>
+    public static async Task<PurchaseDocumentation> ForPurchaseOrderAsync(IKernelUnitOfWork uow, PurchaseOrderInfo po, DateTimeOffset now, ForgePrincipal? viewer, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(uow);
+        ArgumentNullException.ThrowIfNull(po);
         var engineering = uow.Store<IEngineeringLookup>();
-        var cache = new Cache(uow.Store<IDocumentLookup>());
+        var documents = uow.Store<IDocumentLookup>();
+        var cache = new Cache(documents);
+        var attached = (await documents.ListLinksAsync(DocumentTargetType.PurchaseOrder, po.PoNumber.ToString(System.Globalization.CultureInfo.InvariantCulture), null, false, ct))
+            .Where(l => l.Purpose == DocumentPurpose.Follow).ToList();
         var lines = new List<PurchaseLineDocumentation>();
         foreach (var line in po.Lines.Where(l => l.Status != PurchaseLineStatus.Cancelled))
         {
             var revision = await engineering.GetEffectiveRevisionAsync(line.PartNumber, now, ct);
-            if (revision is null)
+            var needs = new List<DocumentNeed>();
+            if (revision is not null)
+            {
+                needs.AddRange((await cache.RequirementsAsync(line.PartNumber, revision.Revision, ct)).Where(r => r.RemovedAt is null)
+                    .Select(r => new DocumentNeed(r.DocumentNumber, r.DocumentRevision, r.OperationSequence, $"{line.PartNumber} rev {revision.Revision}", r.AddedAt)));
+            }
+
+            needs.AddRange(attached.Select(l => new DocumentNeed(l.DocumentNumber, l.Revision, null, "Attached to the purchase order", l.LinkedAt)));
+            if (revision is null && needs.Count == 0)
             {
                 lines.Add(new PurchaseLineDocumentation(line.LineNumber, line.PartNumber, null, [], $"{line.PartNumber} has no released revision; no documents are defined for it."));
                 continue;
             }
 
-            var facts = new ApplicabilityFacts(null, line.PartNumber, revision.Revision, null, null, line.PromisedDate);
-            var needs = (await cache.RequirementsAsync(line.PartNumber, revision.Revision, ct)).Where(r => r.RemovedAt is null)
-                .Select(r => new DocumentNeed(r.DocumentNumber, r.DocumentRevision, r.OperationSequence, $"{line.PartNumber} rev {revision.Revision}", r.AddedAt));
-            var docs = await EvaluateAsync(cache, needs, facts, now, null, principal, ct);
-            lines.Add(new PurchaseLineDocumentation(line.LineNumber, line.PartNumber, revision.Revision, docs, Summarize(docs)));
+            var facts = new ApplicabilityFacts(null, line.PartNumber, revision?.Revision ?? string.Empty, null, null, line.PromisedDate);
+            var docs = await EvaluateAsync(cache, needs, facts, now, null, viewer, ct);
+            lines.Add(new PurchaseLineDocumentation(line.LineNumber, line.PartNumber, revision?.Revision, docs, Summarize(docs)));
         }
 
         return new PurchaseDocumentation(po.PoNumber, po.Supplier, lines);

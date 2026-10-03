@@ -191,7 +191,44 @@ internal static class StandardReports
                 ["status", "class", "priority", "originator"], "status", 3660,
                 "Changes as they stand now; the period does not apply. Changes for programs you cannot see are left out."),
             Permissions.EngineeringRead, null, EngineeringChangesAsync),
+        new(
+            new("change-actions", "Change actions", "Engineering",
+                "What released engineering changes ask people to decide: dispositions for work in progress, buyer reviews of open purchase lines and training acknowledgments, with who decided what.",
+                [StatusFilter(Enum.GetNames<ChangeActionStatus>()), SearchFilter],
+                [C("action", "Action", ReportColumnKind.Text), C("change", "Change", ReportColumnKind.Text), C("kind", "Kind", ReportColumnKind.Text), C("target", "For", ReportColumnKind.Text),
+                 C("status", "Status", ReportColumnKind.Text), C("resolution", "Decision", ReportColumnKind.Text), C("resolvedBy", "Decided by", ReportColumnKind.Text), C("raised", "Raised", ReportColumnKind.DateTime),
+                 C("age", "Days open", ReportColumnKind.Number)],
+                ["kind", "status", "change"], "status", 3660,
+                "Actions as they stand now; the period does not apply. Actions for programs you cannot see are left out."),
+            Permissions.EngineeringRead, null, ChangeActionsAsync),
     ];
+
+    private static async Task<ReportBody> ChangeActionsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var a in (await run.Uow.Store<IPropagationLookup>().ListActionsAsync(null, false, ct)).Where(a => run.Visible(a.ProgramId)))
+        {
+            if (!ReportRun.Is(a.Status.ToString(), p.Status) || !run.Matches(a.ChangeNumber, a.Target, a.Detail, a.PartNumber, a.DocumentNumber))
+            {
+                continue;
+            }
+
+            var age = a.Status == ChangeActionStatus.Open ? Math.Round((decimal)Math.Max(0, (run.Now - a.RaisedAt).TotalDays), 1) : (decimal?)null;
+            var trace = new List<string> { "change:" + a.ChangeNumber };
+            if (a.Kind == ChangeActionKind.WipDisposition)
+            {
+                trace.Add("order:" + a.Target);
+            }
+
+            rows.Add(new ReportRow(
+                [a.ActionId.ToString(System.Globalization.CultureInfo.InvariantCulture), a.ChangeNumber, a.Kind.ToString(), a.Target, a.Status.ToString(), a.Resolution, a.ResolvedBy, a.RaisedAt, age],
+                trace));
+        }
+
+        var open = rows.Count(r => r.Cells[4] is "Open");
+        return new ReportBody(rows, [$"{rows.Count} action(s); {open} open."], ["Change actions", "Propagation of released changes"]);
+    }
 
     private static async Task<ReportBody> EngineeringChangesAsync(ReportRun run, CancellationToken ct)
     {

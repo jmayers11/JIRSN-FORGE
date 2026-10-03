@@ -26,10 +26,11 @@ export async function engineeringPage(page, ctx) {
   const [first, second] = ctx.params;
   if (first === 'documents') return second ? documentDetail(page, ctx, decodeURIComponent(second)) : documentList(page, ctx);
   if (first === 'changes') return second ? changeDetail(page, ctx, decodeURIComponent(second)) : changeList(page, ctx);
+  if (first === 'actions') return actionList(page, ctx);
   return first ? itemDetail(page, ctx, decodeURIComponent(first)) : itemList(page, ctx);
 }
 
-const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['documents', 'Documents', '#/engineering/documents'], ['changes', 'Changes', '#/engineering/changes']]
+const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['documents', 'Documents', '#/engineering/documents'], ['changes', 'Changes', '#/engineering/changes'], ['actions', 'Change actions', '#/engineering/actions']]
   .map(([k, l, href]) => `<button class="${active === k ? 'on' : ''}" data-nav="${href}">${l}</button>`).join('')}</div>`;
 const wireTabs = page => $$('[data-nav]', page).forEach(b => b.addEventListener('click', () => { location.hash = b.dataset.nav; }));
 
@@ -494,7 +495,7 @@ const IMPACT_LABEL = {
   FutureOrder: 'Future orders', ReleasedNotStarted: 'Released, not started', WorkInProgress: 'Work in progress', Completed: 'Completed (unchanged)',
   OpenPurchase: 'Open purchase lines', Stock: 'Stock', WhereUsed: 'Used in', InspectionPlan: 'Inspection plans', Document: 'Documents built to',
 };
-const changePill = c => `<span class="pill ${CHANGE_TONE[c.status] ?? 'none'}">${esc(CHANGE_LABEL[c.status] ?? c.status)}</span>`;
+const changePill = (c, incomplete) => `<span class="pill ${CHANGE_TONE[c.status] ?? 'none'}">${esc(CHANGE_LABEL[c.status] ?? c.status)}</span>${incomplete ? ' <span class="pill warn" title="Propagation has steps not done yet">propagation incomplete</span>' : ''}`;
 const changeFields = (c = {}) => [
   { name: 'title', label: 'Title', value: c.title, required: true },
   { name: 'class', label: 'Class', type: 'select', value: c.class ?? 'Minor', options: [['Major', 'Major'], ['Minor', 'Minor'], ['Administrative', 'Administrative']] },
@@ -508,9 +509,10 @@ const changeFields = (c = {}) => [
 
 async function changeList(page, ctx) {
   const filter = ctx.query.get('status') ?? 'open';
-  const res = await tryGet('/api/engineering/changes');
+  const [res, pending] = await Promise.all([tryGet('/api/engineering/changes'), tryGet('/api/engineering/change-propagations')]);
   if (res.error) { page.innerHTML = errorBlock(res.error, 'engineering changes'); return; }
   const all = res.data;
+  const incomplete = new Set((pending.data ?? []).map(p => p.changeNumber));
   const isOpen = c => ['Draft', 'InReview', 'Approved'].includes(c.status);
   const list = filter === 'open' ? all.filter(isOpen) : filter === 'all' ? all : all.filter(c => c.status === filter);
   page.innerHTML = `
@@ -524,7 +526,7 @@ async function changeList(page, ctx) {
       <div class="table-wrap"><table class="table"><thead><tr><th>Change</th><th>Title</th><th>Class</th><th>Status</th><th>Changes</th><th>Reviews</th><th>Originator</th></tr></thead><tbody>
       ${list.map(c => {
         const current = c.reviews.filter(r => r.round === c.reviewRound);
-        return `<tr class="click" data-change="${esc(c.number)}"><td><b>${esc(c.number)}</b>${c.priority !== 'Routine' ? ` <span class="pill warn">${esc(c.priority)}</span>` : ''}</td><td>${esc(c.title)}</td><td>${esc(c.class)}</td><td>${changePill(c)}</td>
+        return `<tr class="click" data-change="${esc(c.number)}"><td><b>${esc(c.number)}</b>${c.priority !== 'Routine' ? ` <span class="pill warn">${esc(c.priority)}</span>` : ''}</td><td>${esc(c.title)}</td><td>${esc(c.class)}</td><td>${changePill(c, incomplete.has(c.number))}</td>
           <td>${c.lines.filter(l => !l.removedAt).map(l => `${esc(l.documentNumber ?? l.partNumber)} ${esc(l.fromRevision ?? 'new')}→${esc(l.toRevision)}`).join('<br>') || '<span class="faint">—</span>'}</td>
           <td>${current.length ? `${current.filter(r => r.decision).length}/${current.length}` : '<span class="faint">—</span>'}</td><td>${esc(who(c.originator))}</td></tr>`;
       }).join('')}
@@ -633,6 +635,7 @@ async function changeDetail(page, ctx, number) {
       ${history.length ? `<details><summary class="faint">Earlier rounds (${history.length})</summary><ul>${history.map(r => `<li>Round ${r.round} ${esc(r.kind)}: ${r.decision ? `${esc(DECISION_LABEL[r.decision])} by ${esc(who(r.reviewer))}${r.notes ? ` — ${esc(r.notes)}` : ''}` : 'not decided'}</li>`).join('')}</ul></details>` : ''}
     </section>`;
 
+  if (c.status === 'Released') appendPropagation(page, ctx, c, reload);
   const impact = document.createElement('section');
   impact.className = 'panel';
   page.append(impact);
@@ -693,4 +696,96 @@ async function changeDetail(page, ctx, number) {
     }[act];
     formModal({ title: `${text[0]}: ${c.number}`, detail: text[1], reasonRequired: text[2], confirmLabel: text[0], fields: [] }, (_, reason) => command(`${base}/${act}`, {}, reason), reload);
   }));
+}
+
+// V2.5: propagation of a released change, its verification record, and the actions people decide.
+const STEP_LABEL = {
+  MoveOrder: 'Orders moved to the new revision', ReissueDocumentation: 'Order documentation reissued', WipDisposition: 'Work in progress → disposition',
+  PurchaseReview: 'Open purchase lines → buyer review', TrainingAcknowledgment: 'Training acknowledgments', CompletedUnchanged: 'Completed orders left unchanged',
+};
+const STEP_TONE = { Done: 'ok', Pending: 'info', Waiting: 'warn', Failed: 'bad' };
+const PROPAGATION_TONE = { Complete: 'ok', Running: 'info', Incomplete: 'warn' };
+const ACTION_LABEL = { WipDisposition: 'WIP disposition', PurchaseReview: 'Purchase review', TrainingAcknowledgment: 'Training acknowledgment' };
+const ACTION_ROLES = { WipDisposition: ['QualityEngineer'], PurchaseReview: ['Buyer'], TrainingAcknowledgment: ['TrainingCoordinator'] };
+const RESOLUTIONS = {
+  WipDisposition: [['CompleteAtOldRevision', 'Complete at the old revision (deviation)'], ['ReworkToNewRevision', 'Rework to the new revision'], ['Scrap', 'Scrap'], ['ReplanAtNewRevision', 'Cancel and re-plan at the new revision']],
+  PurchaseReview: [['NoImpact', 'No impact on what the supplier makes'], ['SupplierNotified', 'Supplier sent the new revision'], ['LineAmended', 'Line amended or replaced'], ['LineCancelled', 'Line cancelled']],
+  TrainingAcknowledgment: [['Acknowledged', 'Read and understood']],
+};
+const RESOLUTION_LABEL = Object.fromEntries(Object.values(RESOLUTIONS).flat());
+const actionTarget = a => a.kind === 'WipDisposition' ? `<a href="#/orders/${encodeURIComponent(a.target)}">Order ${esc(a.target)}</a>`
+  : a.kind === 'PurchaseReview' ? `<a href="#/procurement">PO ${esc(a.target.replace('/', ' line '))}</a>`
+  : `${esc(who('person:' + a.personId))} <span class="faint">${esc(a.documentNumber)} rev ${esc(a.revision)}</span>`;
+
+function actionRows(list, me, reload, showChange) {
+  return `<div class="table-wrap"><table class="table"><thead><tr>${showChange ? '<th>Change</th>' : ''}<th>Action</th><th>For</th><th>What</th><th>Status</th><th></th></tr></thead><tbody>
+    ${list.map(a => `<tr>${showChange ? `<td><a href="#/engineering/changes/${encodeURIComponent(a.changeNumber)}"><b>${esc(a.changeNumber)}</b></a></td>` : ''}<td>${esc(ACTION_LABEL[a.kind])}</td><td>${actionTarget(a)}</td>
+      <td class="muted">${esc(a.detail)}</td>
+      <td>${a.status === 'Open' ? '<span class="pill warn">Open</span>' : `<span class="pill ok">${esc(RESOLUTION_LABEL[a.resolution] ?? a.resolution)}</span><div class="faint">${esc(who(a.resolvedBy))} ${esc(fmtDateTime(a.resolvedAt))}${a.notes ? ` — ${esc(a.notes)}` : ''}</div>`}</td>
+      <td>${a.status === 'Open' && can(me, ...ACTION_ROLES[a.kind]) ? `<button class="btn small primary" data-resolve="${a.actionId}">Resolve</button>` : ''}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+function wireResolve(root, list, reload) {
+  $$('[data-resolve]', root).forEach(b => b.addEventListener('click', () => {
+    const a = list.find(x => String(x.actionId) === b.dataset.resolve);
+    formModal({
+      title: `${ACTION_LABEL[a.kind]}: ${a.target}`, detail: a.detail, confirmLabel: 'Record',
+      fields: [
+        { name: 'resolution', label: 'Decision', type: 'select', value: RESOLUTIONS[a.kind][0][0], options: RESOLUTIONS[a.kind] },
+        { name: 'notes', label: a.kind === 'WipDisposition' ? 'Basis (deviation, concession or rework instruction) — required' : a.kind === 'PurchaseReview' ? 'Reference (required unless no impact)' : 'Notes', type: 'textarea' },
+      ],
+    }, (v, reason) => command(`/api/engineering/change-actions/${a.actionId}/resolve`, v, reason), reload);
+  }));
+}
+
+async function appendPropagation(page, ctx, c, reload) {
+  const section = document.createElement('section');
+  section.className = 'panel';
+  page.append(section);
+  const { data, error } = await tryGet(`/api/engineering/changes/${encodeURIComponent(c.number)}/propagation`);
+  if (error) { section.innerHTML = `<header><h2>Propagation</h2></header>${errorBlock(error, 'propagation')}`; return; }
+  const { propagation: p, verification: v, actions } = data;
+  if (!p) { section.innerHTML = `<header><h2>Propagation</h2></header>${emptyBlock('Not recorded', 'Changes released before V2.5 have no propagation record.')}`; return; }
+  section.innerHTML = `
+    <header><h2>Propagation</h2> <span class="pill ${PROPAGATION_TONE[p.status] ?? 'none'}">${esc(p.status)}</span><span class="spacer"></span>
+      ${p.status !== 'Complete' && can(ctx.me, ...RELEASERS) ? '<button class="btn small" id="retry-propagation">Run again</button>' : ''}</header>
+    <p>${esc(v.summary)}</p>
+    <div class="faint" style="margin-bottom:8px">Runs as Forge propagation under the release's correlation id; ${p.runs} run(s), last ${esc(fmtDateTime(p.lastRunAt))}.</div>
+    <h3 style="margin:8px 0 4px">Verification</h3>
+    <table class="table"><thead><tr><th>Step</th><th>Expected</th><th>Done</th><th>Waiting</th><th>Failed</th></tr></thead><tbody>
+      ${v.lines.map(l => `<tr><td>${esc(STEP_LABEL[l.kind] ?? l.kind)}</td><td>${l.expected}</td><td>${l.done}</td><td>${l.waiting || ''}</td><td>${l.failed ? `<span class="pill bad">${l.failed}</span>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="faint">Nothing reached.</td></tr>'}
+    </tbody></table>
+    <details style="margin-top:8px"><summary class="faint">Steps (${p.steps.length})</summary>
+      <table class="table"><tbody>${p.steps.map(s => `<tr><td style="width:12%"><span class="pill ${STEP_TONE[s.status] ?? 'none'}">${esc(s.status)}</span></td><td class="muted">${esc(s.detail)}${s.error ? `<div style="color:var(--bad)">${esc(s.error)}</div>` : ''}</td></tr>`).join('')}</tbody></table></details>
+    <h3 style="margin:12px 0 4px">Actions (${actions.length}, ${v.actionsOpen} open)</h3>
+    ${actions.length ? actionRows(actions, ctx.me, reload, false) : '<div class="faint">None raised.</div>'}`;
+  wireResolve(section, actions, reload);
+  $('#retry-propagation', section)?.addEventListener('click', async () => {
+    try {
+      await command(`/api/engineering/changes/${encodeURIComponent(c.number)}/propagation/retry`, {}, null);
+      toast('Propagation ran again.');
+      reload();
+    } catch (e) { toast(e.message ?? 'Could not run propagation', true); }
+  });
+}
+
+async function actionList(page, ctx) {
+  const filter = ctx.query.get('kind') ?? '';
+  const showAll = ctx.query.get('all') === '1';
+  const res = await tryGet(`/api/engineering/change-actions?open=${showAll ? 'false' : 'true'}${filter ? `&kind=${filter}` : ''}`);
+  const reload = () => actionList(page, ctx);
+  page.innerHTML = `
+    <div class="page-head"><div><h1>Engineering</h1><div class="sub">What released changes ask people to decide: dispositions for work in progress, buyer reviews of open purchase lines, training acknowledgments.</div></div></div>
+    ${tabs('actions')}
+    <section class="panel"><header><h2>${showAll ? 'All change actions' : 'Open change actions'}</h2><span class="spacer"></span>
+      <select class="select" id="action-kind"><option value="">Every kind</option>${Object.entries(ACTION_LABEL).map(([k, l]) => `<option value="${k}" ${filter === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <button class="btn small ghost" id="action-all">${showAll ? 'Open only' : 'Include resolved'}</button></header>
+      ${res.error ? errorBlock(res.error, 'change actions') : !res.data.length ? emptyBlock('Nothing to decide', 'Actions appear when a released change reaches work in progress, open purchase lines or people trained on a changed instruction.') : actionRows(res.data, ctx.me, reload, true)}
+    </section>`;
+  wireTabs(page);
+  if (!res.error) wireResolve(page, res.data, reload);
+  const go = (kind, all) => { location.hash = `#/engineering/actions?${new URLSearchParams({ ...(kind ? { kind } : {}), ...(all ? { all: '1' } : {}) })}`; };
+  $('#action-kind', page).onchange = e => go(e.target.value, showAll);
+  $('#action-all', page).onclick = () => go(filter, !showAll);
 }

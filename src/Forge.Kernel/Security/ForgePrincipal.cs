@@ -23,4 +23,7 @@ public static class SystemActors
 {
     public const string Bootstrap = "system:bootstrap";
     public const string OutboxRelay = "system:outbox-relay";
+
+    /// <summary>Carries a released engineering change into orders and actions (V2.5).</summary>
+    public const string Propagation = "system:propagation";
 }

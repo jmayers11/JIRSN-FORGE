@@ -200,6 +200,19 @@ See `docs/adr/0014-v2-3-applicability.md`.
 
 See `docs/adr/0015-v2-4-engineering-change-control.md`.
 
+## What V2.5 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Propagation | `src/Forge.Host/Propagation/` | Subscriber to `EngineeringChangeReleased`; one step per record; runs as `system:propagation` |
+| Orders | `ProductionOrderService.ApplyChangeRevisionAsync` | Future and released-not-started orders move to the new revision; WIP is never edited |
+| Actions | `src/Forge.Engineering/ChangeActionService.cs` | WIP dispositions (quality), purchase reviews (buyer), training acknowledgments (training coordinator) |
+| Verification | `PropagationVerification` | Expected vs done/waiting/failed per kind; "propagation incomplete" until they match; retries |
+| Technical packages | `procurement.line_package` | Recorded at PO approval, never changed |
+| UI and report | Engineering → Changes (propagation panel), Engineering → Change actions, PO line → Package; `change-actions` | |
+
+See `docs/adr/0016-v2-5-propagation-and-verification.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -454,4 +467,15 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/engineering/changes/{n}/approve`, `/reject` `{reason}` | `engineering.changes.approve` |
 | POST | `/api/engineering/changes/{n}/release` `{effectiveFrom?, reason}` | `engineering.release` |
 | GET / POST | `/api/engineering/review-policies[?history=true]` `{name, changeClass?, changeType?, itemClass?, programId?, customer?, requiredReviews, combineApprovalRelease, reason}`; `/review-policies/{id}/withdraw` `{reason}` | `engineering.read` / `engineering.changes.approve` |
+
+
+## V2.5 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/engineering/changes/{n}/propagation` (record, verification, actions), `/api/engineering/change-propagations` (incomplete) | `engineering.read` |
+| POST | `/api/engineering/changes/{n}/propagation/retry` | `engineering.release` |
+| GET | `/api/engineering/change-actions[?open=false&kind=]` | `engineering.read` |
+| POST | `/api/engineering/change-actions/{id}/resolve` `{resolution, notes?}` | by kind: `quality.disposition`, `procurement.manage`, `competency.manage` |
+| GET | `/api/procurement/purchase-orders/{po}/lines/{line}/package` | `procurement.read` |
 

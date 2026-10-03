@@ -4,6 +4,7 @@ using Forge.Execution.Contracts;
 using Forge.Inventory;
 using Forge.Inventory.Contracts;
 using Forge.Kernel.Access;
+using Forge.Kernel.Commands;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Planning;
@@ -190,6 +191,26 @@ public static class MaterialsEndpoints
                         return new PurchaseLineView(l.LineNumber, l.PartNumber, l.Quantity, l.UnitOfMeasure, l.PromisedDate, l.Status, got, open);
                     }).ToList(), po.SupplierCode))
                     .ToList();
+            }));
+
+        // V2.5: the technical package each line was approved with. Documents the reader may not see stay counted, unnamed.
+        api.MapGet("/purchase-orders/{po:long}/lines/{line:int}/package", (HttpContext http, long po, int line, CancellationToken _) =>
+            Read(http, Permissions.PurchasingRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var package = await uow.Store<ITechnicalPackageLookup>().FindPackageAsync(po, line, http.RequestAborted)
+                    ?? throw new CommandRejectedException("package_not_found", $"No technical package was recorded for PO {po} line {line} (it is recorded when the order is approved).");
+                var documents = uow.Store<Forge.Engineering.Contracts.IDocumentLookup>();
+                var shown = new List<PackageDocument>();
+                foreach (var d in package.Documents)
+                {
+                    var document = await documents.FindDocumentAsync(d.DocumentNumber, http.RequestAborted);
+                    shown.Add(document is not null && Forge.Engineering.Contracts.DocumentAccess.CanSee(principal, document)
+                        ? d
+                        : d with { DocumentNumber = Forge.Planning.DocumentationService.Restricted, Title = string.Empty, Revision = null, FileSha256 = null, FileName = null });
+                }
+
+                return package with { Documents = shown };
             }));
 
         api.MapGet("/suppliers", (HttpContext http, CancellationToken _) =>

@@ -1,7 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
-import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
+import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, drawer } from '../ui.js';
 import { formModal, qty, can, plusDays } from '../forms.js';
 
 // Purchase orders (spec §48): a buyer drafts, someone else approves, and only approved open lines
@@ -54,6 +54,7 @@ export async function procurementPage(page, ctx) {
     $$('[data-line]', page).forEach(b => b.addEventListener('click', () => addLine(Number(b.dataset.line))));
     $$('[data-docs-po]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`PO ${b.dataset.docsPo}`, { type: 'PurchaseOrder', id: b.dataset.docsPo, me })));
     $$('[data-date]', page).forEach(b => b.addEventListener('click', () => changeDate(...b.dataset.date.split('/').map(Number))));
+    $$('[data-package]', page).forEach(b => b.addEventListener('click', () => showPackage(...b.dataset.package.split('/'))));
     $$('[data-cancel-line]', page).forEach(b => b.addEventListener('click', async () => {
       const [po, line] = b.dataset.cancelLine.split('/');
       const done = await confirmWithReason({ title: `Cancel PO ${po} line ${line}`, confirmLabel: 'Cancel line' }, reason => command(`/api/procurement/purchase-orders/${po}/lines/${line}/cancel`, {}, reason));
@@ -78,7 +79,8 @@ export async function procurementPage(page, ctx) {
           return `<tr class="${l.status === 'Cancelled' ? 'retired' : ''}"><td>${l.lineNumber}</td><td><b>${esc(l.partNumber)}</b></td>
             <td class="num">${qty(l.quantity)} <span class="faint">${esc(l.unitOfMeasure)}</span></td><td class="num">${qty(l.received)}</td><td class="num">${o.status === 'Approved' ? qty(l.open) : '—'}</td>
             <td class="${overdue ? 'c-bad' : ''}">${esc(fmtDate(l.promisedDate))}${overdue ? ' · overdue' : ''}${l.status === 'Cancelled' ? ' <span class="pill bad">Cancelled</span>' : ''}</td>
-            <td class="nowrap">${open && buyer && l.status === 'Open' ? `<button class="btn small" data-date="${o.poNumber}/${l.lineNumber}">New date</button> <button class="btn small ghost" data-cancel-line="${o.poNumber}/${l.lineNumber}">Cancel</button>` : ''}</td></tr>`;
+            <td class="nowrap">${open && buyer && l.status === 'Open' ? `<button class="btn small" data-date="${o.poNumber}/${l.lineNumber}">New date</button> <button class="btn small ghost" data-cancel-line="${o.poNumber}/${l.lineNumber}">Cancel</button>` : ''}
+              ${o.status !== 'Draft' ? ` <button class="btn small ghost" data-package="${o.poNumber}/${l.lineNumber}" title="What this line was bought to when the order was approved">Package</button>` : ''}</td></tr>`;
         }).join('')}
       </tbody></table></section>`;
   }
@@ -108,6 +110,19 @@ export async function procurementPage(page, ctx) {
         { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true },
         { name: 'promisedDate', label: 'Promised date', type: 'date', value: plusDays(14), required: true },
       ] }, (v, reason) => command(`/api/procurement/purchase-orders/${po}/lines`, v, reason), reload);
+  }
+
+  // V2.5: the technical package recorded at approval — never changed afterwards, whatever engineering releases.
+  async function showPackage(po, line) {
+    const { data: p, error } = await tryGet(`/api/procurement/purchase-orders/${po}/lines/${line}/package`);
+    drawer(`PO ${po} line ${line} — technical package`, error ? errorBlock(error, 'technical package') : `
+      <p><b>${esc(p.partNumber)}</b> rev <b>${esc(p.itemRevision ?? '—')}</b></p>
+      <div class="faint" style="margin-bottom:8px">Recorded when the order was approved, by ${esc(who(p.recordedBy))} ${esc(fmtDateTime(p.recordedAt))}. ${esc(p.summary)}</div>
+      ${!p.documents.length ? emptyBlock('No documents', 'The item revision lists no documents and none were attached to follow.') : `
+      <table class="table"><thead><tr><th>Document</th><th>Revision sent</th><th>File</th></tr></thead><tbody>
+        ${p.documents.map(d => `<tr><td><b>${esc(d.documentNumber)}</b><div class="faint">${esc(d.title)} · ${esc(d.source)}</div></td><td>${esc(d.revision ?? '—')} <span class="faint">${esc(d.state)}</span></td>
+          <td class="faint">${d.fileName ? `${esc(d.fileName)}<div title="SHA-256">${esc((d.fileSha256 ?? '').slice(0, 12))}…</div>` : '—'}</td></tr>`).join('')}
+      </tbody></table>`}`);
   }
 
   function changeDate(po, line) {
