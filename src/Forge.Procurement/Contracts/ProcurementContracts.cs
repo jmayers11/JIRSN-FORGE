@@ -22,7 +22,18 @@ public enum PurchaseLineStatus
 }
 
 /// <summary>One purchased part on a purchase order, due on the supplier's promised date.</summary>
-public sealed record PurchaseLineInfo(int LineNumber, string PartNumber, decimal Quantity, string UnitOfMeasure, DateOnly PromisedDate, PurchaseLineStatus Status);
+/// <param name="RequisitionId">The requisition the line was bought for (V2.7), with its source: why this was purchased.</param>
+public sealed record PurchaseLineInfo(
+    int LineNumber,
+    string PartNumber,
+    decimal Quantity,
+    string UnitOfMeasure,
+    DateOnly PromisedDate,
+    PurchaseLineStatus Status,
+    long? RequisitionId = null,
+    PurchaseSourceKind? SourceKind = null,
+    string? SourceKey = null,
+    string? SourceLabel = null);
 
 /// <param name="Supplier">The supplier's name as written on the order.</param>
 /// <param name="SupplierCode">The supplier record the order is placed with.</param>
@@ -90,4 +101,73 @@ public interface ITechnicalPackageLookup
 
     /// <summary>Every recorded package of the open lines of approved orders for these parts.</summary>
     Task<IReadOnlyList<TechnicalPackage>> ListPackagesAsync(IReadOnlyCollection<string> partNumbers, CancellationToken ct);
+}
+
+/// <summary>Why something is bought: the demand kinds, plus order material (Production), safety stock and a mixture.</summary>
+public enum PurchaseSourceKind
+{
+    CustomerOrder,
+    Forecast,
+    Service,
+    Internal,
+    ContractDelivery,
+    Maintenance,
+    MroReplenishment,
+    FacilityProject,
+    CapitalProject,
+    Quality,
+    Tooling,
+    Engineering,
+
+    /// <summary>Material for production orders.</summary>
+    Production,
+
+    /// <summary>Kept on hand: safety stock and lot-size rounding.</summary>
+    SafetyStock,
+
+    /// <summary>Several sources at once (the label lists them).</summary>
+    Mixed,
+}
+
+public enum RequisitionStatus
+{
+    Open,
+    Ordered,
+    Cancelled,
+}
+
+/// <summary>
+/// A request to buy, from any source (V2.7): what, how many, by when, the configuration required, a
+/// preferred supplier, and — always — what it is for. A buyer turns it into a purchase order line, which
+/// keeps the source.
+/// </summary>
+public sealed record RequisitionInfo(
+    long RequisitionId,
+    string PartNumber,
+    decimal Quantity,
+    DateOnly NeedDate,
+    PurchaseSourceKind SourceKind,
+    string SourceKey,
+    string SourceLabel,
+    long? DemandId,
+    string? PlannedOrder,
+    string? RequiredRevision,
+    string? SupplierCode,
+    Guid? ProgramId,
+    RequisitionStatus Status,
+    string RequestedBy,
+    DateTimeOffset RequestedAt,
+    long? PoNumber,
+    int? PoLine,
+    string? OrderedBy,
+    DateTimeOffset? OrderedAt,
+    string? CancelledBy,
+    DateTimeOffset? CancelledAt,
+    string? CancelledReason);
+
+public interface IRequisitionLookup
+{
+    Task<IReadOnlyList<RequisitionInfo>> ListRequisitionsAsync(bool openOnly, CancellationToken ct);
+
+    Task<RequisitionInfo?> FindRequisitionAsync(long requisitionId, CancellationToken ct);
 }

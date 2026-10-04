@@ -8,12 +8,13 @@ using Forge.Procurement.Contracts;
 
 namespace Forge.Procurement;
 
-public sealed record NewPurchaseLine(string PartNumber, decimal Quantity, DateOnly PromisedDate);
+/// <param name="RequisitionId">The open requisition this line buys for (V2.7); the line keeps its source.</param>
+public sealed record NewPurchaseLine(string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null);
 
 /// <param name="Supplier">The supplier's code (or its exact name) in the supplier master.</param>
 public sealed record CreatePurchaseOrder(string Supplier, IReadOnlyList<NewPurchaseLine> Lines);
 
-public sealed record AddPurchaseLine(long PoNumber, string PartNumber, decimal Quantity, DateOnly PromisedDate);
+public sealed record AddPurchaseLine(long PoNumber, string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null);
 
 public sealed record ApprovePurchaseOrder(long PoNumber);
 
@@ -61,6 +62,13 @@ public interface IProcurementStore
     Task UpdateLineAsync(long poNumber, PurchaseLineInfo line, CancellationToken ct);
 
     Task InsertPackageAsync(TechnicalPackage package, CancellationToken ct);
+
+    Task<long> InsertRequisitionAsync(RequisitionInfo requisition, CancellationToken ct);
+
+    /// <summary>Marks a requisition ordered on a line, or back to open when the line or order is cancelled (null line).</summary>
+    Task SetRequisitionOrderedAsync(long requisitionId, long? poNumber, int? poLine, string? actor, DateTimeOffset? at, CancellationToken ct);
+
+    Task CancelRequisitionAsync(long requisitionId, string actor, DateTimeOffset at, string reason, CancellationToken ct);
 }
 
 /// <summary>
@@ -88,7 +96,8 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             var lines = new List<PurchaseLineInfo>();
             foreach (var (line, index) in c.Lines.Select((l, i) => (l, i)))
             {
-                lines.Add(await ValidLineAsync(uow, index + 1, line.PartNumber, line.Quantity, line.PromisedDate, now, supplier.Code, ct));
+                var valid = await ValidLineAsync(uow, index + 1, line.PartNumber, line.Quantity, line.PromisedDate, now, supplier.Code, ct);
+                lines.Add(await WithSourceAsync(uow, valid, line.RequisitionId, context, lines, ct));
             }
 
             var store = uow.Store<IProcurementStore>();
@@ -96,6 +105,10 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             foreach (var line in lines)
             {
                 await store.InsertLineAsync(number, line, ct);
+                if (line.RequisitionId is { } requisition)
+                {
+                    await store.SetRequisitionOrderedAsync(requisition, number, line.LineNumber, context.Actor, now, ct);
+                }
             }
 
             var id = Id(number);
@@ -117,7 +130,12 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             }
 
             var line = await ValidLineAsync(uow, po.Lines.Count == 0 ? 1 : po.Lines.Max(l => l.LineNumber) + 1, c.PartNumber, c.Quantity, c.PromisedDate, now, po.SupplierCode, ct);
+            line = await WithSourceAsync(uow, line, c.RequisitionId, context, [], ct);
             await uow.Store<IProcurementStore>().InsertLineAsync(po.PoNumber, line, ct);
+            if (line.RequisitionId is { } requisition)
+            {
+                await uow.Store<IProcurementStore>().SetRequisitionOrderedAsync(requisition, po.PoNumber, line.LineNumber, context.Actor, now, ct);
+            }
             return ($"line {line.LineNumber} added: {line.Quantity} {line.UnitOfMeasure} {line.PartNumber} by {line.PromisedDate:yyyy-MM-dd}", "LineAdded", null, CanonicalJson.Serialize(line), null);
         }, ct);
     }
@@ -182,7 +200,12 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
         {
             var line = OpenLine(po, c.LineNumber);
             await uow.Store<IProcurementStore>().UpdateLineAsync(po.PoNumber, line with { Status = PurchaseLineStatus.Cancelled }, ct);
-            return ($"line {line.LineNumber} cancelled", "LineCancelled", CanonicalJson.Serialize(line), nameof(PurchaseLineStatus.Cancelled), null);
+            if (line.RequisitionId is { } requisition)
+            {
+                await uow.Store<IProcurementStore>().SetRequisitionOrderedAsync(requisition, null, null, null, null, ct);
+            }
+
+            return ($"line {line.LineNumber} cancelled{(line.RequisitionId is { } r ? $"; requisition {r} is open again" : string.Empty)}", "LineCancelled", CanonicalJson.Serialize(line), nameof(PurchaseLineStatus.Cancelled), null);
         }, ct);
     }
 
@@ -212,11 +235,43 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             }
 
             await uow.Store<IProcurementStore>().SetStatusAsync(po.PoNumber, PurchaseOrderStatus.Cancelled, now, context.Actor, ct);
+            foreach (var requisition in po.Lines.Where(l => l.Status == PurchaseLineStatus.Open && l.RequisitionId is not null).Select(l => l.RequisitionId!.Value))
+            {
+                await uow.Store<IProcurementStore>().SetRequisitionOrderedAsync(requisition, null, null, null, null, ct);
+            }
+
             return ("cancelled", "Cancelled", nameof(PurchaseOrderStatus.Draft), nameof(PurchaseOrderStatus.Cancelled), null);
         }, ct);
     }
 
     private static string Id(long number) => number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>A line bought for a requisition carries its source; the requisition must be open, for the same part, and not used twice.</summary>
+    private static async Task<PurchaseLineInfo> WithSourceAsync(Kernel.Access.IKernelUnitOfWork uow, PurchaseLineInfo line, long? requisitionId, CommandContext context, IReadOnlyList<PurchaseLineInfo> earlier, CancellationToken ct)
+    {
+        if (requisitionId is not { } id)
+        {
+            return line;
+        }
+
+        var requisition = await uow.Store<IRequisitionLookup>().FindRequisitionAsync(id, ct);
+        if (requisition is null || (requisition.ProgramId is { } p && !context.Principal.Programs.Contains(new ProgramId(p))))
+        {
+            throw new CommandRejectedException("requisition_not_found", $"Requisition {id} does not exist.");
+        }
+
+        if (requisition.Status != RequisitionStatus.Open || earlier.Any(l => l.RequisitionId == id))
+        {
+            throw new CommandRejectedException("requisition_not_open", $"Requisition {id} is {requisition.Status}{(requisition.PoNumber is { } po ? $" on PO {po} line {requisition.PoLine}" : string.Empty)}.");
+        }
+
+        if (requisition.PartNumber != line.PartNumber)
+        {
+            throw new CommandRejectedException("requisition_part", $"Requisition {id} is for {requisition.PartNumber}, not {line.PartNumber}.");
+        }
+
+        return line with { RequisitionId = id, SourceKind = requisition.SourceKind, SourceKey = requisition.SourceKey, SourceLabel = requisition.SourceLabel };
+    }
 
     private static PurchaseLineInfo OpenLine(PurchaseOrderInfo po, int lineNumber)
     {

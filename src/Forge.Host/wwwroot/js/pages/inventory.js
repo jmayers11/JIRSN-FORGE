@@ -187,7 +187,8 @@ export async function inventoryPage(page, ctx) {
     <td class="nowrap">${esc(fmtDateTime(t.at))}</td><td>${esc(KIND_LABEL[t.kind] ?? t.kind)}</td><td>${esc(t.partNumber)}${t.partRevision ? ` <span class="faint">rev ${esc(t.partRevision)}</span>` : ''}${t.lotNumber ? ` <span class="faint">lot ${esc(t.lotNumber)}</span>` : ''}</td>
     <td class="num">${qty(t.quantity)}</td>
     <td>${t.fromLocation ? `${esc(t.fromLocation)} <span class="faint">${esc(t.fromStatus)}</span>` : '<span class="faint">—</span>'} → ${t.toLocation ? `${esc(t.toLocation)} <span class="faint">${esc(t.toStatus)}</span>` : '<span class="faint">out</span>'}</td>
-    <td>${t.orderNumber ? `<a href="#/orders/${t.orderNumber}">#${t.orderNumber}</a>` : ''}${t.poNumber ? `PO ${t.poNumber}/${t.poLine}` : ''}</td>
+    <td>${t.orderNumber ? `<a href="#/orders/${t.orderNumber}">#${t.orderNumber}</a>` : ''}${t.poNumber ? `PO ${t.poNumber}/${t.poLine}` : ''}${t.substitutesFor ? ` <span class="faint">for ${esc(t.substitutesFor)}</span>` : ''}
+      ${t.poNumber || t.lotNumber ? ` <button class="btn small ghost" data-why-txn="${t.transactionId}|${esc(t.partNumber)}" title="Why was this stock purchased?">Why bought?</button>` : ''}</td>
     <td class="muted">${esc(t.reason ?? '')}</td>
     <td>${esc(who(t.actor))}${t.approvedBy ? `<br><span class="faint">approved by ${esc(who(t.approvedBy))}</span>` : ''}</td></tr>`;
   const ledgerTable = rows => `<table class="table"><thead><tr><th>When</th><th>What</th><th>Part</th><th class="num">Qty</th><th>From → To</th><th>For</th><th>Why</th><th>Who</th></tr></thead><tbody>${rows.map(ledgerRow).join('')}</tbody></table>`;
@@ -249,6 +250,12 @@ export async function inventoryPage(page, ctx) {
       actions[b.dataset.act]();
     }));
     $$('[data-part]', page).forEach(r => r.addEventListener('click', () => partDrawer(r.dataset.part)));
+    $$('[data-why-txn]', page).forEach(b => b.addEventListener('click', async () => {
+      const [id, part] = b.dataset.whyTxn.split('|');
+      const { data: w, error } = await tryGet(`/api/inventory/transactions/${id}/why?part=${encodeURIComponent(part)}`);
+      drawer(`Why was this ${part} purchased?`, error ? errorBlock(error, 'the purchase') : `<p>${esc(w.answer)}</p>
+        ${w.purchases.map(p => `<div class="notice" style="margin-top:8px">PO ${p.poNumber} line ${p.lineNumber} · ${esc(p.supplier)}${p.sourceKey ? ` · for <b>${esc(p.sourceKey)}</b>` : ''}</div>`).join('')}`);
+    }));
     $$('[data-approve]', page).forEach(b => b.addEventListener('click', () => decide(b.dataset.approve, 'approve')));
     $$('[data-reject]', page).forEach(b => b.addEventListener('click', () => decide(b.dataset.reject, 'reject')));
     $$('[data-retire]', page).forEach(b => b.addEventListener('click', async () => {

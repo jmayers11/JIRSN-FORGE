@@ -16,6 +16,19 @@ public enum DemandKind
     Service,
     Internal,
     ContractDelivery,
+
+    /// <summary>Parts a maintenance work order needs (V2.7). Source: work-order:N.</summary>
+    Maintenance,
+
+    /// <summary>MRO and spares stock below its reorder point. Source: mro:PART.</summary>
+    MroReplenishment,
+    FacilityProject,
+    CapitalProject,
+
+    /// <summary>Material for quality work (rework, replacement of rejected stock, test samples). Source: ncr:N or similar.</summary>
+    Quality,
+    Tooling,
+    Engineering,
 }
 
 public enum DemandStatus
@@ -44,7 +57,8 @@ public sealed record DemandInfo(
     DateTimeOffset CreatedAt,
     string? SourceKey = null);
 
-public sealed record RecordDemand(string PartNumber, decimal Quantity, DateOnly NeedDate, int Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId);
+/// <param name="SourceKey">What the demand is for, as kind:key (work-order:57, project:FAC-2027-014/3). Required for the V2.7 kinds.</param>
+public sealed record RecordDemand(string PartNumber, decimal Quantity, DateOnly NeedDate, int Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId, string? SourceKey = null);
 
 public sealed record ChangeDemand(long DemandId, decimal Quantity, DateOnly NeedDate, int Priority);
 
@@ -99,7 +113,18 @@ public sealed class DemandService(CommandPipeline pipeline)
                 await RequireProgramAsync(uow, programId, context, ct);
             }
 
-            var demand = new DemandInfo(0, part, c.Quantity, c.NeedDate, c.Priority, c.Kind, Trim(c.Customer, 200), Trim(c.Reference, 100), c.ProgramId, DemandStatus.Open, context.Actor, now);
+            if (c.Kind == DemandKind.ContractDelivery)
+            {
+                throw new CommandRejectedException("use_contract", "Contract delivery demand is planned from the contract delivery itself.");
+            }
+
+            var source = Source(c.Kind, c.SourceKey);
+            if (source is not null && await uow.Store<IDemandStore>().FindBySourceAsync(source, ct) is { } existing)
+            {
+                throw new CommandRejectedException("source_exists", $"Demand {existing.DemandId} ({existing.Status}) already stands for {source}; change that demand instead.");
+            }
+
+            var demand = new DemandInfo(0, part, c.Quantity, c.NeedDate, c.Priority, c.Kind, Trim(c.Customer, 200), Trim(c.Reference, 100), c.ProgramId, DemandStatus.Open, context.Actor, now, source);
             var demandId = await uow.Store<IDemandStore>().InsertAsync(demand, ct);
             var id = demandId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             return new CommandOutcome(
@@ -245,6 +270,26 @@ public sealed class DemandService(CommandPipeline pipeline)
         {
             throw new CommandRejectedException("invalid_demand", "Quantity must be above zero and priority between 1 (highest) and 9.");
         }
+    }
+
+    /// <summary>The kinds added in V2.7 always say what they are for: kind:key, letters, digits and . _ / - only.</summary>
+    public static bool NeedsSource(DemandKind kind) => kind >= DemandKind.Maintenance;
+
+    private static string? Source(DemandKind kind, string? raw)
+    {
+        var key = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+        if (key is null)
+        {
+            return NeedsSource(kind) ? throw new CommandRejectedException("source_required", $"{kind} demand names what it is for, as kind:key (for example work-order:57).") : null;
+        }
+
+        var colon = key.IndexOf(':', StringComparison.Ordinal);
+        if (colon <= 0 || colon == key.Length - 1 || key.Length > 120 || !key.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is ':' or '-' or '_' or '.' or '/'))
+        {
+            throw new CommandRejectedException("invalid_source", "A source is kind:key, for example work-order:57 or project:FAC-2027-014/3.");
+        }
+
+        return key[..colon].ToLowerInvariant() + key[colon..];
     }
 
     private static string? Trim(string? value, int max)

@@ -62,7 +62,8 @@ async function main() {
       const changes = !changeList.length;
       const propagation = !changes && changeList.some(c => c.title.startsWith('Panel edge radius') && c.status === 'InReview');
       const alternates = !(await get('eng', '/api/engineering/alternates')).length;
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const requisitions = !(await get('planner', '/api/procurement/requisitions?open=false')).length;
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -91,6 +92,10 @@ async function main() {
         console.log('Adding sample alternates.');
         await seedAlternates();
       }
+      if (requisitions) {
+        console.log('Adding sample requisitions from maintenance and a facility project.');
+        await seedRequisitions();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -110,6 +115,7 @@ async function main() {
     await seedChanges();
     await seedPropagation();
     await seedAlternates();
+    await seedRequisitions();
     return finish();
   }
 
@@ -253,6 +259,10 @@ async function main() {
   await seedClassification();
   await seedDocuments();
   await seedApplicability();
+  await seedChanges();
+  await seedPropagation();
+  await seedAlternates();
+  await seedRequisitions();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -543,6 +553,30 @@ async function seedAlternates() {
     if (!items.includes('BRG-6205-002')) await post('eng', '/api/engineering/items', { partNumber: 'BRG-6205-002', description: 'Deep groove ball bearing, other maker', unitOfMeasure: 'EA', makeBuy: 'Buy', leadTimeDays: 5 });
     await post('bob', '/api/engineering/alternates', { primaryPart: 'BRG-6205-001', alternatePart: 'BRG-6205-002', kind: 'MaintenanceOnly', factor: 1, qualityNotes: 'Sample: check seal type before use' });
   }
+}
+
+async function seedRequisitions() {
+  step('Requisitions: spares for a maintenance repair, and anchors for a facility project planned by MRP and ordered by Bob');
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  const items = (await get('eng', '/api/engineering/items')).map(i => i.partNumber);
+  const orders = (await get('mp', '/api/maintenance/work-orders')).map(v => v.order).filter(o => o.kind === 'Corrective');
+  if (orders.length && items.includes('BRG-6205-001')) {
+    const wo = orders[orders.length - 1].workOrderId;
+    await post('mp', '/api/procurement/requisitions', { partNumber: 'BRG-6205-001', quantity: 2, needDate: day(7), sourceKind: 'Maintenance', sourceKey: `work-order:${wo}`, sourceLabel: `Sample: spare bearings for maintenance work order ${wo}` });
+  }
+  if (!items.includes('ANCHOR-M12')) {
+    await post('eng', '/api/engineering/items', { partNumber: 'ANCHOR-M12', description: 'Wedge anchor M12 x 120', unitOfMeasure: 'EA', makeBuy: 'Buy', leadTimeDays: 7 });
+    await post('eng', '/api/engineering/items/ANCHOR-M12/revisions', { revision: 'A' });
+    await post('approver', '/api/engineering/items/ANCHOR-M12/revisions/A/release', { reason: 'Sample: catalogue fastener' });
+  }
+  await post('planner', '/api/planning/demand', { partNumber: 'ANCHOR-M12', quantity: 48, needDate: day(28), priority: 4, kind: 'FacilityProject', sourceKey: 'project:FAC-2027-014/3', reference: 'Sample: new slitter foundation' });
+  const plan = await get('planner', '/api/planning/mrp');
+  const planned = plan.output.plannedOrders.find(p => p.partNumber === 'ANCHOR-M12');
+  if (!planned) return;
+  const req = await post('planner', '/api/planning/mrp/requisitions', { plannedOrder: planned.key });
+  const suppliers = (await get('bob', '/api/procurement/suppliers')).map(x => x.code);
+  if (!suppliers.includes('FASTENAL')) await post('bob', '/api/procurement/suppliers', { code: 'FASTENAL', name: 'Fastenal', notes: 'Fasteners and anchors' });
+  await post('bob', '/api/procurement/purchase-orders', { supplier: 'FASTENAL', lines: [{ partNumber: 'ANCHOR-M12', quantity: planned.quantity, promisedDate: day(14), requisitionId: Number(req.entityId) }] });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

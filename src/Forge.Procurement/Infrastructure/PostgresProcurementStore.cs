@@ -5,10 +5,17 @@ using Npgsql;
 
 namespace Forge.Procurement.Infrastructure;
 
-internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcurementStore, IProcurementLookup, ITechnicalPackageLookup
+internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcurementStore, IProcurementLookup, ITechnicalPackageLookup, IRequisitionLookup
 {
     private const string OrderSql = "SELECT po_number, supplier, status, created_by, created_at, approved_by, approved_at, supplier_code FROM procurement.purchase_order";
-    private const string LineSql = "SELECT po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status FROM procurement.purchase_order_line";
+    private const string LineSql = "SELECT po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status, requisition_id, source_kind, source_key, source_label FROM procurement.purchase_order_line";
+
+    private const string RequisitionSql =
+        """
+        SELECT requisition_id, part_number, quantity, need_date, source_kind, source_key, source_label, demand_id, planned_order, required_revision, supplier_code, program_id,
+               status, requested_by, requested_at, po_number, po_line, ordered_by, ordered_at, cancelled_by, cancelled_at, cancelled_reason
+        FROM procurement.requisition
+        """;
 
     public async Task<long> InsertOrderAsync(SupplierInfo supplier, DateTimeOffset at, string actor, CancellationToken ct)
     {
@@ -23,8 +30,13 @@ internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcur
     {
         ArgumentNullException.ThrowIfNull(line);
         await using var cmd = uow.Command(
-            "INSERT INTO procurement.purchase_order_line (po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
-            poNumber, line.LineNumber, line.PartNumber, line.Quantity, line.UnitOfMeasure, line.PromisedDate, line.Status.ToString());
+            """
+            INSERT INTO procurement.purchase_order_line (po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status, requisition_id, source_kind, source_key, source_label)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING
+            """,
+            poNumber, line.LineNumber, line.PartNumber, line.Quantity, line.UnitOfMeasure, line.PromisedDate, line.Status.ToString(),
+            new NpgsqlParameter { Value = (object?)line.RequisitionId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
+            Text(line.SourceKind?.ToString()), Text(line.SourceKey), Text(line.SourceLabel));
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
@@ -188,7 +200,59 @@ internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcur
 
     private static (long PoNumber, PurchaseLineInfo Line) ReadLine(NpgsqlDataReader r) => (
         r.GetInt64(0),
-        new PurchaseLineInfo(r.GetInt32(1), r.GetString(2), (r.GetDecimal(3) / 1.000000000000000000000000000000000m), r.GetString(4), r.GetFieldValue<DateOnly>(5), Enum.Parse<PurchaseLineStatus>(r.GetString(6))));
+        new PurchaseLineInfo(r.GetInt32(1), r.GetString(2), (r.GetDecimal(3) / 1.000000000000000000000000000000000m), r.GetString(4), r.GetFieldValue<DateOnly>(5), Enum.Parse<PurchaseLineStatus>(r.GetString(6)),
+            r.IsDBNull(7) ? null : r.GetInt64(7), r.IsDBNull(8) ? null : Enum.Parse<PurchaseSourceKind>(r.GetString(8)), r.IsDBNull(9) ? null : r.GetString(9), r.IsDBNull(10) ? null : r.GetString(10)));
+
+    public async Task<long> InsertRequisitionAsync(RequisitionInfo q, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(q);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO procurement.requisition (part_number, quantity, need_date, source_kind, source_key, source_label, demand_id, planned_order, required_revision, supplier_code,
+                program_id, status, requested_by, requested_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Open', $12, $13)
+            RETURNING requisition_id
+            """,
+            q.PartNumber, q.Quantity, q.NeedDate, q.SourceKind.ToString(), q.SourceKey, q.SourceLabel,
+            new NpgsqlParameter { Value = (object?)q.DemandId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
+            Text(q.PlannedOrder), Text(q.RequiredRevision), Text(q.SupplierCode),
+            new NpgsqlParameter { Value = (object?)q.ProgramId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid },
+            q.RequestedBy, q.RequestedAt);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task SetRequisitionOrderedAsync(long requisitionId, long? poNumber, int? poLine, string? actor, DateTimeOffset? at, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE procurement.requisition SET status = CASE WHEN $2::bigint IS NULL THEN 'Open' ELSE 'Ordered' END, po_number = $2, po_line = $3, ordered_by = $4, ordered_at = $5 WHERE requisition_id = $1",
+            requisitionId,
+            new NpgsqlParameter { Value = (object?)poNumber ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
+            new NpgsqlParameter { Value = (object?)poLine ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer },
+            Text(actor),
+            new NpgsqlParameter { Value = (object?)at ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.TimestampTz });
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task CancelRequisitionAsync(long requisitionId, string actor, DateTimeOffset at, string reason, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE procurement.requisition SET status = 'Cancelled', cancelled_by = $2, cancelled_at = $3, cancelled_reason = $4 WHERE requisition_id = $1 AND status = 'Open'",
+            requisitionId, actor, at, reason);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public Task<IReadOnlyList<RequisitionInfo>> ListRequisitionsAsync(bool openOnly, CancellationToken ct) =>
+        ReadAsync(RequisitionSql + (openOnly ? " WHERE status = 'Open'" : string.Empty) + " ORDER BY need_date, requisition_id", ReadRequisition, ct);
+
+    public async Task<RequisitionInfo?> FindRequisitionAsync(long requisitionId, CancellationToken ct) =>
+        (await ReadAsync(RequisitionSql + " WHERE requisition_id = $1", ReadRequisition, ct, requisitionId)).SingleOrDefault();
+
+    private static RequisitionInfo ReadRequisition(NpgsqlDataReader r) => new(
+        r.GetInt64(0), r.GetString(1), r.GetDecimal(2) / 1.000000000000000000000000000000000m, r.GetFieldValue<DateOnly>(3), Enum.Parse<PurchaseSourceKind>(r.GetString(4)), r.GetString(5), r.GetString(6),
+        r.IsDBNull(7) ? null : r.GetInt64(7), r.IsDBNull(8) ? null : r.GetString(8), r.IsDBNull(9) ? null : r.GetString(9), r.IsDBNull(10) ? null : r.GetString(10), r.IsDBNull(11) ? null : r.GetGuid(11),
+        Enum.Parse<RequisitionStatus>(r.GetString(12)), r.GetString(13), r.GetFieldValue<DateTimeOffset>(14), r.IsDBNull(15) ? null : r.GetInt64(15), r.IsDBNull(16) ? null : r.GetInt32(16),
+        r.IsDBNull(17) ? null : r.GetString(17), r.IsDBNull(18) ? null : r.GetFieldValue<DateTimeOffset>(18), r.IsDBNull(19) ? null : r.GetString(19),
+        r.IsDBNull(20) ? null : r.GetFieldValue<DateTimeOffset>(20), r.IsDBNull(21) ? null : r.GetString(21));
 
     private async Task<IReadOnlyList<T>> ReadAsync<T>(string sql, Func<NpgsqlDataReader, T> map, CancellationToken ct, params object?[] args)
     {
@@ -212,6 +276,8 @@ public static class ProcurementRegistration
         services.AddForgeStore<IProcurementStore>(uow => new PostgresProcurementStore(uow));
         services.AddForgeStore<IProcurementLookup>(uow => new PostgresProcurementStore(uow));
         services.AddForgeStore<ITechnicalPackageLookup>(uow => new PostgresProcurementStore(uow));
+        services.AddForgeStore<IRequisitionLookup>(uow => new PostgresProcurementStore(uow));
+        services.AddSingleton<RequisitionService>();
         services.AddSingleton<PurchasingService>();
         services.AddSingleton<SupplierService>();
         return services;

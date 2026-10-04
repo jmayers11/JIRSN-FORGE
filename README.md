@@ -226,6 +226,18 @@ See `docs/adr/0016-v2-5-propagation-and-verification.md`.
 
 See `docs/adr/0017-v2-6-alternates.md`.
 
+## What V2.7 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Demand kinds | `planning.demand` | Maintenance, MRO replenishment, facility/capital project, quality, tooling, engineering; these name their source as `kind:key` |
+| Requisitions | `src/Forge.Procurement/RequisitionService.cs` | One queue from every source; raised manually or from an MRP Buy recommendation |
+| Source on PO lines | `procurement.purchase_order_line` | Copied from the requisition, never changed; cancelling reopens the requisition |
+| Why purchased | `src/Forge.Planning/PurchaseTraceService.cs` | PO line, receipt or issue → source, requisition, demand, receipts and where the stock went |
+| UI | Purchasing → Requisitions, PO line → Why?, Material Plan → Requisition, Inventory ledger → Why bought? | |
+
+See `docs/adr/0018-v2-7-unified-demand-and-requisitions.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -503,3 +515,14 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/engineering/items/{part}/revisions/{rev}/bom/{line}/policy` `{policy, reason}` | `engineering.alternates.approve` |
 | POST | `/api/inventory/issues`, `/returns` now take `alternateFor` | `inventory.transact` |
 
+## V2.7 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/procurement/requisitions[?open=false]` | `procurement.requisition.raise` |
+| POST | `/api/procurement/requisitions` `{partNumber, quantity, needDate, sourceKind, sourceKey, sourceLabel, requiredRevision?, supplierCode?, programId?}` | `procurement.requisition.raise` |
+| POST | `/api/procurement/requisitions/{id}/cancel` `{reason}` | requester, or `procurement.manage` |
+| POST | `/api/planning/mrp/requisitions` `{plannedOrder, supplierCode?, requiredRevision?}` | `procurement.requisition.raise` |
+| POST | `/api/procurement/purchase-orders`, `/{po}/lines` lines take `requisitionId` | `procurement.manage` |
+| POST | `/api/planning/demand` takes `sourceKey` | `planning.demand.manage` |
+| GET | `/api/procurement/purchase-orders/{po}/lines/{line}/why`, `/api/inventory/transactions/{id}/why?part=` | `procurement.read`, `inventory.read` or `procurement.requisition.raise` |

@@ -10,7 +10,8 @@ const EXCEPTION_LABEL = {
   PastDueRelease: 'Release past due', RescheduleIn: 'Bring receipt in', OverdueReceipt: 'Receipt overdue', PastDueRequirement: 'Requirement past due',
   NoRevision: 'No released revision', BomLoop: 'BOM loop', UnknownItem: 'Unknown item',
 };
-const DEMAND_KINDS = [['CustomerOrder', 'Customer order'], ['Forecast', 'Forecast'], ['ContractDelivery', 'Contract delivery'], ['Service', 'Service / spares'], ['Internal', 'Internal']];
+const DEMAND_KINDS = [['CustomerOrder', 'Customer order'], ['Forecast', 'Forecast'], ['ContractDelivery', 'Contract delivery'], ['Service', 'Service / spares'], ['Internal', 'Internal'],
+  ['Maintenance', 'Maintenance'], ['MroReplenishment', 'MRO replenishment'], ['FacilityProject', 'Facility project'], ['CapitalProject', 'Capital project'], ['Quality', 'Quality'], ['Tooling', 'Tooling'], ['Engineering', 'Engineering']];
 const POLICIES = [['LotForLot', 'Lot-for-lot (exactly what is needed)'], ['FixedQuantity', 'Fixed quantity (whole lots)'], ['MinimumQuantity', 'Minimum quantity']];
 
 export async function mrpPage(page, ctx) {
@@ -55,6 +56,7 @@ export async function mrpPage(page, ctx) {
         <td class="muted">${esc(p.pegging.map(g => g.description).filter((v, j, a) => a.indexOf(v) === j).slice(0, 2).join('; '))}${p.pegging.length > 2 ? '…' : ''}</td>
         <td class="nowrap"><button class="btn small" data-why="${i}">Why?</button>
           ${p.makeBuy === 'Buy' ? `<button class="btn small ghost" data-alts="${esc(p.partNumber)}" title="Approved alternates and those requiring approval, kept apart">Alternates</button>` : ''}
+          ${p.makeBuy === 'Buy' && (planner || buyer) ? `<button class="btn small" data-req="${i}" title="A requisition that keeps what this purchase is for">Requisition</button>` : ''}
           ${p.makeBuy === 'Buy' && buyer ? `<button class="btn small primary" data-buy="${i}">Draft PO</button>` : ''}
           ${p.makeBuy === 'Make' && engineer ? `<button class="btn small primary" data-make="${i}">Create order</button>` : ''}</td></tr>`).join('')}
       </tbody></table>
@@ -140,6 +142,12 @@ export async function mrpPage(page, ctx) {
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
     $$('[data-why]', page).forEach(b => b.addEventListener('click', () => why(out().plannedOrders[Number(b.dataset.why)])));
     $$('[data-alts]', page).forEach(b => b.addEventListener('click', () => alternates(b.dataset.alts)));
+    $$('[data-req]', page).forEach(b => b.addEventListener('click', async () => {
+      const p = out().plannedOrders[Number(b.dataset.req)];
+      const done = await confirmWithReason({ title: `Requisition for ${p.partNumber}`, detail: `${qty(p.quantity)} ${p.unitOfMeasure} by ${fmtDate(p.dueDate)}. Its source comes from what the recommendation covers: ${p.pegging.map(g => g.description).filter((v, j, a) => a.indexOf(v) === j).join('; ')}.`, confirmLabel: 'Raise requisition', reasonRequired: false },
+        reason => command('/api/planning/mrp/requisitions', { plannedOrder: p.key }, reason));
+      if (done) { toast(done.message); location.hash = '#/procurement?tab=requisitions'; }
+    }));
     $$('[data-buy]', page).forEach(b => b.addEventListener('click', () => draftPo(out().plannedOrders[Number(b.dataset.buy)])));
     $$('[data-make]', page).forEach(b => b.addEventListener('click', () => createOrder(out().plannedOrders[Number(b.dataset.make)])));
     $$('[data-item]', page).forEach(r => r.addEventListener('click', e => { if (!e.target.closest('button')) itemDrawer(r.dataset.item); }));
@@ -213,7 +221,8 @@ export async function mrpPage(page, ctx) {
         { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true },
         { name: 'needDate', label: 'Needed by', type: 'date', value: plusDays(14), required: true },
         { name: 'priority', label: 'Priority (1 = highest)', type: 'number', min: 1, value: 5 },
-        { name: 'kind', label: 'Kind', type: 'select', options: DEMAND_KINDS },
+        { name: 'kind', label: 'Kind', type: 'select', options: DEMAND_KINDS.filter(([k]) => k !== 'ContractDelivery') },
+        { name: 'sourceKey', label: 'What it is for, as kind:key (required from Maintenance on)', placeholder: 'work-order:57' },
         { name: 'customer', label: 'Customer (optional)' },
         { name: 'reference', label: 'Reference — customer PO, contract line (optional)' },
       ],

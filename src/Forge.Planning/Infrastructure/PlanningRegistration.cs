@@ -19,6 +19,7 @@ public static class PlanningRegistration
         services.AddSingleton<ReadinessService>();
         services.AddSingleton<DocumentationService>();
         services.AddSingleton<ChangeImpactService>();
+        services.AddSingleton<PurchaseTraceService>();
         services.AddSingleton<ScheduleService>();
         services.AddSingleton<ProgramHorizonService>();
         services.AddSingleton<Reporting.ReportService>();

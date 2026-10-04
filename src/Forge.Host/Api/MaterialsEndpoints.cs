@@ -33,15 +33,19 @@ public sealed record AdjustmentRequestBody(string PartNumber, string LocationCod
 
 public sealed record CountRequest(string PartNumber, string LocationCode, string? LotNumber, StockStatus? Status, decimal Counted, string? Reason);
 
-public sealed record PurchaseLineRequest(string PartNumber, decimal Quantity, DateOnly PromisedDate);
+public sealed record RequisitionRequest(string PartNumber, decimal Quantity, DateOnly NeedDate, PurchaseSourceKind SourceKind, string SourceKey, string SourceLabel, string? RequiredRevision, string? SupplierCode, Guid? ProgramId, string? Reason);
+
+public sealed record PlannedRequisitionRequest(string PlannedOrder, string? SupplierCode, string? RequiredRevision, string? Reason);
+
+public sealed record PurchaseLineRequest(string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null);
 
 public sealed record PurchaseOrderRequest(string Supplier, PurchaseLineRequest[] Lines, string? Reason);
 
-public sealed record PurchaseLineAddRequest(string PartNumber, decimal Quantity, DateOnly PromisedDate, string? Reason);
+public sealed record PurchaseLineAddRequest(string PartNumber, decimal Quantity, DateOnly PromisedDate, string? Reason, long? RequisitionId = null);
 
 public sealed record PromisedDateRequest(DateOnly PromisedDate, string? Reason);
 
-public sealed record DemandRequest(string PartNumber, decimal Quantity, DateOnly NeedDate, int? Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId, string? Reason);
+public sealed record DemandRequest(string PartNumber, decimal Quantity, DateOnly NeedDate, int? Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId, string? Reason, string? SourceKey = null);
 
 public sealed record DemandChangeRequest(decimal Quantity, DateOnly NeedDate, int Priority, string? Reason);
 
@@ -49,7 +53,7 @@ public sealed record DemandChangeRequest(decimal Quantity, DateOnly NeedDate, in
 public sealed record DemandView(long DemandId, string PartNumber, decimal Quantity, decimal Shipped, decimal Remaining, DateOnly NeedDate, int Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId, DemandStatus Status, string CreatedBy, DateTimeOffset CreatedAt, long? DeliveryId = null, string? ContractNote = null);
 
 /// <summary>A purchase order line with what Inventory has received against it.</summary>
-public sealed record PurchaseLineView(int LineNumber, string PartNumber, decimal Quantity, string UnitOfMeasure, DateOnly PromisedDate, PurchaseLineStatus Status, decimal Received, decimal Open);
+public sealed record PurchaseLineView(int LineNumber, string PartNumber, decimal Quantity, string UnitOfMeasure, DateOnly PromisedDate, PurchaseLineStatus Status, decimal Received, decimal Open, long? RequisitionId = null, PurchaseSourceKind? SourceKind = null, string? SourceKey = null, string? SourceLabel = null);
 
 public sealed record PurchaseOrderView(long PoNumber, string Supplier, PurchaseOrderStatus Status, string CreatedBy, DateTimeOffset CreatedAt, string? ApprovedBy, DateTimeOffset? ApprovedAt, IReadOnlyList<PurchaseLineView> Lines, string? SupplierCode = null);
 
@@ -97,7 +101,7 @@ public static class MaterialsEndpoints
                 return views;
             }));
         planning.MapPost("/demand", (HttpContext http, DemandRequest b, DemandService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.RecordAsync(new RecordDemand(b.PartNumber, b.Quantity, b.NeedDate, b.Priority ?? 5, b.Kind, b.Customer, b.Reference, b.ProgramId), c, ct)));
+            Command(http, b.Reason, c => s.RecordAsync(new RecordDemand(b.PartNumber, b.Quantity, b.NeedDate, b.Priority ?? 5, b.Kind, b.Customer, b.Reference, b.ProgramId, b.SourceKey), c, ct)));
         planning.MapPost("/demand/{id:long}/change", (HttpContext http, long id, DemandChangeRequest b, DemandService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ChangeAsync(new ChangeDemand(id, b.Quantity, b.NeedDate, b.Priority), c, ct)));
         planning.MapPost("/demand/{id:long}/close", (HttpContext http, long id, ReasonRequest b, DemandService s, CancellationToken ct) =>
@@ -109,6 +113,34 @@ public static class MaterialsEndpoints
         {
             var principal = await PrincipalAsync(http);
             return principal is null ? NotRegistered() : Results.Ok(await s.EvaluateMrpAsync(principal, part, ct));
+        });
+        // V2.7: a requisition from a planned purchase, carrying the source its pegging leads back to.
+        planning.MapPost("/mrp/requisitions", async (HttpContext http, PlannedRequisitionRequest b, MaterialPlanningService mrp, RequisitionService s, IKernelUnitOfWorkFactory uows, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null)
+            {
+                return NotRegistered();
+            }
+
+            var run = (await mrp.EvaluateMrpAsync(principal, null, ct)).Output;
+            var planned = run.PlannedOrders.FirstOrDefault(p => p.Key == (b.PlannedOrder ?? string.Empty).Trim())
+                ?? throw new CommandRejectedException("planned_order_not_found", $"The material plan has no planned order {b.PlannedOrder} now; run it again.");
+            if (planned.MakeBuy != Forge.Engineering.Contracts.MakeBuy.Buy)
+            {
+                throw new CommandRejectedException("not_purchased", $"{planned.Key} is a production order recommendation; set up an order instead.");
+            }
+
+            IReadOnlyDictionary<long, DemandInfo> demands;
+            await using (var uow = await uows.BeginSnapshotAsync(ct))
+            {
+                demands = (await uow.Store<IDemandStore>().ListAsync(true, ct)).ToDictionary(d => d.DemandId);
+            }
+
+            var source = PurchaseTraceService.SourceOf(planned, run.PlannedOrders, demands);
+            var program = source.DemandId is { } d && demands.TryGetValue(d, out var demand) ? demand.ProgramId : null;
+            return await Command(http, b.Reason, c => s.RaiseAsync(new RaiseRequisition(planned.PartNumber, planned.Quantity, planned.DueDate, source.Kind, source.Key, source.Label, source.DemandId, planned.Key,
+                b.RequiredRevision, b.SupplierCode, program), c, ct));
         });
         planning.MapGet("/material", async (HttpContext http, MaterialPlanningService s, CancellationToken ct) =>
         {
@@ -131,6 +163,11 @@ public static class MaterialsEndpoints
         {
             var principal = await PrincipalAsync(http);
             return principal is null ? NotRegistered() : Results.Ok(await s.StockSummaryAsync(principal, ct));
+        });
+        api.MapGet("/transactions/{id:long}/why", async (HttpContext http, long id, string part, PurchaseTraceService s, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            return principal is null ? NotRegistered() : Results.Ok(await s.WhyTransactionAsync(principal, id, part, ct));
         });
         api.MapGet("/transactions", (HttpContext http, string? part, long? order, int? take, CancellationToken _) =>
             Read(http, Permissions.InventoryRead, async principal =>
@@ -188,10 +225,28 @@ public static class MaterialsEndpoints
                     {
                         var got = received.GetValueOrDefault((po.PoNumber, l.LineNumber));
                         var open = po.Status == PurchaseOrderStatus.Approved && l.Status == PurchaseLineStatus.Open ? Math.Max(0, l.Quantity - got) : 0;
-                        return new PurchaseLineView(l.LineNumber, l.PartNumber, l.Quantity, l.UnitOfMeasure, l.PromisedDate, l.Status, got, open);
+                        return new PurchaseLineView(l.LineNumber, l.PartNumber, l.Quantity, l.UnitOfMeasure, l.PromisedDate, l.Status, got, open, l.RequisitionId, l.SourceKind, l.SourceKey, l.SourceLabel);
                     }).ToList(), po.SupplierCode))
                     .ToList();
             }));
+
+        // V2.7: requisitions from every source, and why each purchase was made.
+        api.MapGet("/requisitions", (HttpContext http, bool? open, CancellationToken _) =>
+            Read(http, Permissions.RequisitionRaise, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                return (await uow.Store<IRequisitionLookup>().ListRequisitionsAsync(open != false, http.RequestAborted))
+                    .Where(r => r.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))).ToList();
+            }));
+        api.MapPost("/requisitions", (HttpContext http, RequisitionRequest b, RequisitionService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RaiseAsync(new RaiseRequisition(b.PartNumber, b.Quantity, b.NeedDate, b.SourceKind, b.SourceKey, b.SourceLabel, null, null, b.RequiredRevision, b.SupplierCode, b.ProgramId), c, ct)));
+        api.MapPost("/requisitions/{id:long}/cancel", (HttpContext http, long id, ReasonRequest b, RequisitionService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CancelAsync(new CancelRequisition(id), c, ct)));
+        api.MapGet("/purchase-orders/{po:long}/lines/{line:int}/why", async (HttpContext http, long po, int line, PurchaseTraceService s, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            return principal is null ? NotRegistered() : Results.Ok(await s.WhyLineAsync(principal, po, line, ct));
+        });
 
         // V2.5: the technical package each line was approved with. Documents the reader may not see stay counted, unnamed.
         api.MapGet("/purchase-orders/{po:long}/lines/{line:int}/package", (HttpContext http, long po, int line, CancellationToken _) =>
@@ -229,9 +284,9 @@ public static class MaterialsEndpoints
             Command(http, b.Reason, c => s.RemoveSourceAsync(new RemoveSource(part, code), c, ct)));
 
         api.MapPost("/purchase-orders", (HttpContext http, PurchaseOrderRequest b, PurchasingService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.CreateAsync(new CreatePurchaseOrder(b.Supplier, (b.Lines ?? []).Select(l => new NewPurchaseLine(l.PartNumber, l.Quantity, l.PromisedDate)).ToList()), c, ct)));
+            Command(http, b.Reason, c => s.CreateAsync(new CreatePurchaseOrder(b.Supplier, (b.Lines ?? []).Select(l => new NewPurchaseLine(l.PartNumber, l.Quantity, l.PromisedDate, l.RequisitionId)).ToList()), c, ct)));
         api.MapPost("/purchase-orders/{po:long}/lines", (HttpContext http, long po, PurchaseLineAddRequest b, PurchasingService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.AddLineAsync(new AddPurchaseLine(po, b.PartNumber, b.Quantity, b.PromisedDate), c, ct)));
+            Command(http, b.Reason, c => s.AddLineAsync(new AddPurchaseLine(po, b.PartNumber, b.Quantity, b.PromisedDate, b.RequisitionId), c, ct)));
         api.MapPost("/purchase-orders/{po:long}/approve", (HttpContext http, long po, ReasonRequest b, PurchasingService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ApproveAsync(new ApprovePurchaseOrder(po), c, ct)));
         api.MapPost("/purchase-orders/{po:long}/lines/{line:int}/date", (HttpContext http, long po, int line, PromisedDateRequest b, PurchasingService s, CancellationToken ct) =>
