@@ -201,7 +201,37 @@ internal static class StandardReports
                 ["kind", "status", "change"], "status", 3660,
                 "Actions as they stand now; the period does not apply. Actions for programs you cannot see are left out."),
             Permissions.EngineeringRead, null, ChangeActionsAsync),
+        new(
+            new("alternates", "Alternate parts", "Engineering",
+                "Every alternate relationship you may see: which part stands in for which, at what conversion, where it applies, and who proposed and decided it. Proposed alternates are never usable.",
+                [StatusFilter(Enum.GetNames<AlternateStatus>()), SearchFilter],
+                [C("alternate", "#", ReportColumnKind.Text), C("primary", "Primary", ReportColumnKind.Text), C("alternatePart", "Alternate", ReportColumnKind.Text), C("kind", "Kind", ReportColumnKind.Text),
+                 C("factor", "Per 1", ReportColumnKind.Text), C("where", "Where", ReportColumnKind.Text), C("status", "Status", ReportColumnKind.Text), C("proposedBy", "Proposed by", ReportColumnKind.Text),
+                 C("decidedBy", "Decided by", ReportColumnKind.Text), C("validTo", "Valid to", ReportColumnKind.Date)],
+                ["status", "kind", "primary"], "status", 3660,
+                "Relationships as they stand now; the period does not apply. Program-specific alternates for programs you cannot see are left out."),
+            Permissions.EngineeringRead, null, AlternatesAsync),
     ];
+
+    private static async Task<ReportBody> AlternatesAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var a in (await run.Uow.Store<IAlternateLookup>().ListAlternatesAsync(ct)).Where(a => run.Visible(a.ProgramId)))
+        {
+            if (!ReportRun.Is(a.Status.ToString(), p.Status) || !run.Matches(a.PrimaryPart, a.AlternatePart, a.Conditions, a.Evidence, a.QualityNotes))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [a.AlternateId.ToString(System.Globalization.CultureInfo.InvariantCulture), a.PrimaryPart, a.AlternatePart, Alternates.Label(a.Kind), a.Factor.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture),
+                 a.Conditions, a.Status.ToString(), a.ProposedBy, a.DecidedBy, a.ValidTo],
+                ["item:" + a.PrimaryPart, "item:" + a.AlternatePart]));
+        }
+
+        return new ReportBody(rows, [$"{rows.Count} relationship(s); {rows.Count(r => r.Cells[6] is "Proposed")} proposed, {rows.Count(r => r.Cells[6] is "Approved")} approved."], ["Alternate relationships"]);
+    }
 
     private static async Task<ReportBody> ChangeActionsAsync(ReportRun run, CancellationToken ct)
     {

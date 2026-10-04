@@ -110,8 +110,8 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
         }
 
         var bom = await Read(
-            "SELECT line_number, component, quantity_per, scrap_percent FROM engineering.bom_line WHERE part_number = $1 AND revision = $2 ORDER BY line_number",
-            r => new BomLineInfo(r.GetInt32(0), r.GetString(1), r.GetDecimal(2), r.GetDecimal(3)),
+            "SELECT b.line_number, b.component, b.quantity_per, b.scrap_percent, COALESCE((SELECT p.policy FROM engineering.bom_line_policy p WHERE p.part_number = b.part_number AND p.revision = b.revision AND p.line_number = b.line_number ORDER BY p.policy_id DESC LIMIT 1), 'Suggest') FROM engineering.bom_line b WHERE b.part_number = $1 AND b.revision = $2 ORDER BY b.line_number",
+            r => new BomLineInfo(r.GetInt32(0), r.GetString(1), r.GetDecimal(2), r.GetDecimal(3), Enum.Parse<SubstitutionPolicy>(r.GetString(4))),
             ct,
             partNumber,
             revision);
@@ -198,11 +198,12 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
         var revisions = await Read(RevisionSql + " WHERE status = 'Released' ORDER BY part_number, effective_from", ReadRevision, ct);
         var lines = await Read(
             """
-            SELECT b.part_number, b.revision, b.line_number, b.component, b.quantity_per, b.scrap_percent
+            SELECT b.part_number, b.revision, b.line_number, b.component, b.quantity_per, b.scrap_percent,
+                   COALESCE((SELECT p.policy FROM engineering.bom_line_policy p WHERE p.part_number = b.part_number AND p.revision = b.revision AND p.line_number = b.line_number ORDER BY p.policy_id DESC LIMIT 1), 'Suggest')
             FROM engineering.bom_line b JOIN engineering.revision r USING (part_number, revision)
             WHERE r.status = 'Released' ORDER BY b.part_number, b.revision, b.line_number
             """,
-            r => (Part: r.GetString(0), Revision: r.GetString(1), Line: new BomLineInfo(r.GetInt32(2), r.GetString(3), r.GetDecimal(4), r.GetDecimal(5))),
+            r => (Part: r.GetString(0), Revision: r.GetString(1), Line: new BomLineInfo(r.GetInt32(2), r.GetString(3), r.GetDecimal(4), r.GetDecimal(5), Enum.Parse<SubstitutionPolicy>(r.GetString(6)))),
             ct);
         var byRevision = lines.ToLookup(l => (l.Part, l.Revision), l => l.Line);
         return revisions.Select(rev => new RevisionStructure(rev, byRevision[(rev.PartNumber, rev.Revision)].ToList())).ToList();
@@ -252,6 +253,9 @@ public static class EngineeringRegistration
         services.AddForgeStore<IPropagationStore>(uow => new PostgresPropagationStore(uow));
         services.AddForgeStore<IPropagationLookup>(uow => new PostgresPropagationStore(uow));
         services.AddSingleton<ChangeActionService>();
+        services.AddForgeStore<IAlternateStore>(uow => new PostgresAlternateStore(uow));
+        services.AddForgeStore<IAlternateLookup>(uow => new PostgresAlternateStore(uow));
+        services.AddSingleton<AlternateService>();
         return services;
     }
 }

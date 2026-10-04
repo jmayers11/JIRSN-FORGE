@@ -61,7 +61,8 @@ async function main() {
       const changeList = await get('eng', '/api/engineering/changes');
       const changes = !changeList.length;
       const propagation = !changes && changeList.some(c => c.title.startsWith('Panel edge radius') && c.status === 'InReview');
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const alternates = !(await get('eng', '/api/engineering/alternates')).length;
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -86,6 +87,10 @@ async function main() {
         console.log('Releasing the sample engineering change (propagation follows on the server).');
         await seedPropagation();
       }
+      if (alternates) {
+        console.log('Adding sample alternates.');
+        await seedAlternates();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -104,6 +109,7 @@ async function main() {
     await seedApplicability();
     await seedChanges();
     await seedPropagation();
+    await seedAlternates();
     return finish();
   }
 
@@ -522,6 +528,21 @@ async function seedPropagation() {
   if (open.includes('Technical')) await post('approver', `${base}/reviews`, { kind: 'Technical', decision: 'Approve' });
   await post('approver', `${base}/approve`);
   await post('dina', `${base}/release`, { reason: 'Sample: approved by the change board' });
+}
+
+async function seedAlternates() {
+  step('Alternates: an approved equivalent coil (MRP suggests it), and a proposed bearing substitute waiting for maintenance');
+  const items = (await get('eng', '/api/engineering/items')).map(i => i.partNumber);
+  if (!items.includes('COIL-AL-5052')) {
+    await post('eng', '/api/engineering/items', { partNumber: 'COIL-AL-5052', description: 'Aluminum coil 5052-H32', unitOfMeasure: 'KG', makeBuy: 'Buy', leadTimeDays: 10 });
+    await post('stores', '/api/inventory/receipts', { partNumber: 'COIL-AL-5052', quantity: 400, locationCode: 'STORES', reason: 'Sample: equivalent coil on hand' });
+  }
+  const coil = await post('bob', '/api/engineering/alternates', { primaryPart: 'COIL-AL', alternatePart: 'COIL-AL-5052', kind: 'Equivalent', factor: 1, evidence: 'Sample: mill certs compared, slit trial TR-31 passed' });
+  await post('approver', `/api/engineering/alternates/${coil.entityId}/approve`, { reason: 'TR-31 reviewed' });
+  if (items.includes('BRG-6205-001')) {
+    if (!items.includes('BRG-6205-002')) await post('eng', '/api/engineering/items', { partNumber: 'BRG-6205-002', description: 'Deep groove ball bearing, other maker', unitOfMeasure: 'EA', makeBuy: 'Buy', leadTimeDays: 5 });
+    await post('bob', '/api/engineering/alternates', { primaryPart: 'BRG-6205-001', alternatePart: 'BRG-6205-002', kind: 'MaintenanceOnly', factor: 1, qualityNotes: 'Sample: check seal type before use' });
+  }
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

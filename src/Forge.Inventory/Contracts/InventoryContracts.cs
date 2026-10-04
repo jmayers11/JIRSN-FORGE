@@ -74,12 +74,16 @@ public sealed record InventoryTransaction(
     long? RequestId,
     long? ShipmentId = null,
     long? WorkOrderId = null,
-    string? PartRevision = null);
+    string? PartRevision = null,
+    string? SubstitutesFor = null,
+    long? AlternateId = null,
+    decimal? PrimaryQuantity = null);
 
 /// <param name="PartRevision">The part revision received into the lot; null when it was not recorded (stock received before V2.3).</param>
 public sealed record LotInfo(string PartNumber, string LotNumber, string? SupplierLot, DateTimeOffset FirstReceivedAt, string? PartRevision = null);
 
 /// <summary>Net quantity of a part issued to a production order (issues less returns).</summary>
+/// <summary>Net material issued to an order, in the terms of the part the order needs: approved alternates count at their converted quantity (V2.6).</summary>
 public sealed record OrderIssue(long OrderNumber, string PartNumber, decimal NetIssued);
 
 public sealed record PurchaseReceipt(long PoNumber, int LineNumber, decimal Received);

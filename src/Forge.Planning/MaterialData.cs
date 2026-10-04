@@ -6,6 +6,7 @@ using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Planning.Engines;
 using Forge.Procurement.Contracts;
+using Forge.Programs.Contracts;
 using Forge.Resources.Contracts;
 using NodaTime;
 
@@ -154,6 +155,14 @@ internal static class MaterialData
         // (needed now); planned and firm orders need their revision's BOM one lead time before they are due.
         var issued = (await uow.Store<IInventoryLookup>().ListOrderIssuesAsync(ct)).ToDictionary(i => (i.OrderNumber, i.PartNumber), i => i.NetIssued);
         var execution = uow.Store<IExecutionLookup>();
+        var customers = (await uow.Store<IProgramsLookup>().ListProgramsAsync(ct)).ToDictionary(p => p.ProgramId, p => p.Customer);
+        MrpLineContext? LineOf(OrderInfo order, string component, int? lineNumber)
+        {
+            var bom = structures.FirstOrDefault(s => s.PartNumber == order.PartNumber && s.Revision == order.Revision)?.Bom ?? [];
+            var line = bom.FirstOrDefault(l => lineNumber is { } n ? l.LineNumber == n : l.ComponentPartNumber == component);
+            return line is null ? null : new MrpLineContext(order.PartNumber, line.LineNumber, line.Policy, order.ProgramId, order.ProgramId is { } p ? customers.GetValueOrDefault(p) : null);
+        }
+
         foreach (var summary in (await execution.ListOrdersAsync(ct)).OrderBy(o => o.OrderNumber))
         {
             var label = Visible(principal, summary.ProgramId) ? $"Order {summary.OrderNumber} ({summary.PartNumber})" : Restricted;
@@ -165,7 +174,7 @@ internal static class MaterialData
                     var left = group.Sum(m => m.RequiredQuantity) - issued.GetValueOrDefault((summary.OrderNumber, group.Key));
                     if (left > 0)
                     {
-                        requirements.Add(new MrpRequirement($"WO{summary.OrderNumber}/{group.Key}", group.Key, left, today, summary.Priority, "OrderMaterial", label + " material still to issue"));
+                        requirements.Add(new MrpRequirement($"WO{summary.OrderNumber}/{group.Key}", group.Key, left, today, summary.Priority, "OrderMaterial", label + " material still to issue", LineOf(summary, group.Key, null)));
                     }
                 }
             }
@@ -176,13 +185,13 @@ internal static class MaterialData
                 foreach (var line in bom)
                 {
                     var quantity = decimal.Round(summary.Quantity * line.QuantityPer * (1 + (line.ScrapPercent / 100m)), 6, MidpointRounding.AwayFromZero);
-                    requirements.Add(new MrpRequirement($"WO{summary.OrderNumber}/{line.LineNumber}", line.ComponentPartNumber, quantity, need, summary.Priority, "OrderMaterial", $"{label} {summary.Status}, rev {summary.Revision} line {line.LineNumber}"));
+                    requirements.Add(new MrpRequirement($"WO{summary.OrderNumber}/{line.LineNumber}", line.ComponentPartNumber, quantity, need, summary.Priority, "OrderMaterial", $"{label} {summary.Status}, rev {summary.Revision} line {line.LineNumber}", LineOf(summary, line.ComponentPartNumber, line.LineNumber)));
                 }
             }
         }
 
         var supplies = (await SuppliesAsync(uow, principal, ct)).Select(s => new MrpSupply(s.Key, s.PartNumber, s.Quantity, s.DueDate, s.Kind, s.Description)).ToList();
-        return new MrpSnapshot(today, items, structures, stock, requirements, supplies);
+        return new MrpSnapshot(today, items, structures, stock, requirements, supplies, await uow.Store<IAlternateLookup>().ListAlternatesAsync(ct));
     }
 
     private static bool Visible(ForgePrincipal? principal, Guid? program) =>

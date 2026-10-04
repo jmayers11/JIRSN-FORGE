@@ -54,10 +54,35 @@ export async function mrpPage(page, ctx) {
         <td class="num"><b>${qty(p.quantity)}</b> <span class="faint">${esc(p.unitOfMeasure)}</span></td>
         <td class="muted">${esc(p.pegging.map(g => g.description).filter((v, j, a) => a.indexOf(v) === j).slice(0, 2).join('; '))}${p.pegging.length > 2 ? '…' : ''}</td>
         <td class="nowrap"><button class="btn small" data-why="${i}">Why?</button>
+          ${p.makeBuy === 'Buy' ? `<button class="btn small ghost" data-alts="${esc(p.partNumber)}" title="Approved alternates and those requiring approval, kept apart">Alternates</button>` : ''}
           ${p.makeBuy === 'Buy' && buyer ? `<button class="btn small primary" data-buy="${i}">Draft PO</button>` : ''}
           ${p.makeBuy === 'Make' && engineer ? `<button class="btn small primary" data-make="${i}">Create order</button>` : ''}</td></tr>`).join('')}
       </tbody></table>
       <div class="faint" style="margin-top:6px">Recommendations only: nothing is ordered until a buyer drafts a purchase order (approved by someone else) or an engineer sets up a production order (released by a planner).</div>`;
+  }
+
+  // V2.6: what MRP covered with approved alternates, and why (the substitution peg).
+  function substitutionsTab() {
+    if (data.mrp.error) return errorBlock(data.mrp.error, 'the material plan');
+    const list = out().substitutions ?? [];
+    if (!list.length) return emptyBlock('No substitutions', 'MRP substitutes only approved equivalents, only on BOM lines whose policy is automatic, and only up to the shortage. Lines that suggest show their alternates under Exceptions.');
+    return `<table class="table"><thead><tr><th>Need by</th><th>Short</th><th>Used instead</th><th class="num">Shortage</th><th class="num">Alternate free</th><th class="num">Allocated</th><th>Why</th></tr></thead><tbody>
+      ${list.map(x => `<tr><td class="nowrap">${esc(fmtDate(x.date))}</td><td><b>${esc(x.primaryPart)}</b></td><td><b>${esc(x.alternatePart)}</b> <span class="faint">alternate ${x.relationshipId}</span></td>
+        <td class="num">${qty(x.shortage)}</td><td class="num">${qty(x.alternateAvailable)}</td><td class="num"><b>${qty(x.alternateQuantity)}</b>${x.alternateQuantity !== x.primaryQuantity ? ` <span class="faint">= ${qty(x.primaryQuantity)} ${esc(x.primaryPart)}</span>` : ''}</td>
+        <td class="muted">${esc(x.explanation)}</td></tr>`).join('')}
+      </tbody></table>`;
+  }
+
+  async function alternates(part) {
+    const { data: c, error } = await tryGet(`/api/engineering/alternates/candidates/${encodeURIComponent(part)}`);
+    const row = x => `<tr><td><b>${esc(x.offeredPart)}</b> <span class="faint">alternate ${x.relationship.alternateId}</span></td><td>${qty(x.factor)} per 1</td><td class="muted">${esc(x.reasons.join(' '))}</td></tr>`;
+    drawer(`${part} — alternates`, error ? errorBlock(error, 'alternates') : `
+      <h3 style="margin:0 0 6px">Approved here (${c.approved.length})</h3>
+      ${c.approved.length ? `<table class="table"><tbody>${c.approved.map(row).join('')}</tbody></table>` : '<div class="muted">None.</div>'}
+      <h3 style="margin:14px 0 6px" class="c-warn">Requires approval (${c.requiresApproval.length})</h3>
+      <div class="faint" style="margin-bottom:6px">Never bought or used in place of ${esc(part)} until engineering approves them for this use.</div>
+      ${c.requiresApproval.length ? `<table class="table"><tbody>${c.requiresApproval.map(row).join('')}</tbody></table>` : '<div class="muted">None.</div>'}
+      <div style="margin-top:12px"><a href="#/engineering/${encodeURIComponent(part)}">Where-used and alternates of ${esc(part)} →</a></div>`);
   }
 
   function exceptionsTab() {
@@ -106,14 +131,15 @@ export async function mrpPage(page, ctx) {
       </div>
       ${kpis()}
       <section class="panel">
-        <header><div class="seg">${[['planned', 'Recommendations'], ['exceptions', 'Exceptions'], ['items', 'Items'], ['demand', 'Demand']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${tab === 'exceptions' ? exceptionsTab() : tab === 'items' ? itemsTab() : tab === 'demand' ? demandTab() : plannedTab()}
+        <header><div class="seg">${[['planned', 'Recommendations'], ['substitutions', `Substitutions${out()?.substitutions?.length ? ` (${out().substitutions.length})` : ''}`], ['exceptions', 'Exceptions'], ['items', 'Items'], ['demand', 'Demand']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        ${tab === 'exceptions' ? exceptionsTab() : tab === 'items' ? itemsTab() : tab === 'demand' ? demandTab() : tab === 'substitutions' ? substitutionsTab() : plannedTab()}
       </section>
       ${run ? `<div class="faint mono" style="font-size:11px">${esc(run.engineName)} v${esc(run.engineVersion)} · as of ${esc(fmtDate(run.output.today))} · input ${esc(run.inputFingerprint.slice(0, 12))} · output ${esc(run.outputFingerprint.slice(0, 12))} — the same inputs always give the same plan.</div>` : ''}`;
 
     $('#rerun', page)?.addEventListener('click', reload);
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
     $$('[data-why]', page).forEach(b => b.addEventListener('click', () => why(out().plannedOrders[Number(b.dataset.why)])));
+    $$('[data-alts]', page).forEach(b => b.addEventListener('click', () => alternates(b.dataset.alts)));
     $$('[data-buy]', page).forEach(b => b.addEventListener('click', () => draftPo(out().plannedOrders[Number(b.dataset.buy)])));
     $$('[data-make]', page).forEach(b => b.addEventListener('click', () => createOrder(out().plannedOrders[Number(b.dataset.make)])));
     $$('[data-item]', page).forEach(r => r.addEventListener('click', e => { if (!e.target.closest('button')) itemDrawer(r.dataset.item); }));

@@ -24,9 +24,10 @@ public sealed record RetireLocation(string Code);
 /// <param name="Revision">The part revision received, when the item has released revisions (V2.3). Optional; stock without one is reported as revision not recorded.</param>
 public sealed record ReceiveStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Revision = null);
 
-public sealed record IssueToOrder(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber);
+/// <param name="AlternateFor">The part the order needs, when <paramref name="PartNumber"/> is an approved alternate issued in its place (V2.6).</param>
+public sealed record IssueToOrder(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? AlternateFor = null);
 
-public sealed record ReturnFromOrder(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber);
+public sealed record ReturnFromOrder(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? AlternateFor = null);
 
 public sealed record TransferStock(string PartNumber, decimal Quantity, string FromLocation, string ToLocation, string? LotNumber, StockStatus Status);
 
@@ -97,6 +98,14 @@ public sealed record LocationChanged(string Code, string Change) : IDomainEvent
     public static int SchemaVersion => 1;
 }
 
+/// <summary>An approved alternate was issued in place of the part an order needs (V2.6).</summary>
+public sealed record AlternateUsed(long TransactionId, long AlternateId, string PrimaryPart, string AlternatePart, decimal Quantity, decimal PrimaryQuantity, long OrderNumber) : IDomainEvent
+{
+    public static string EventType => nameof(AlternateUsed);
+
+    public static int SchemaVersion => 1;
+}
+
 /// <summary>A ledger entry before it is written.</summary>
 public sealed record NewTransaction(
     InventoryTransactionKind Kind,
@@ -115,7 +124,10 @@ public sealed record NewTransaction(
     string? ApprovedBy = null,
     long? ShipmentId = null,
     long? WorkOrderId = null,
-    string? PartRevision = null);
+    string? PartRevision = null,
+    string? SubstitutesFor = null,
+    long? AlternateId = null,
+    decimal? PrimaryQuantity = null);
 
 public interface IInventoryStore
 {
@@ -311,28 +323,35 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
     public Task<CommandResult> IssueToOrderAsync(IssueToOrder c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        return PostAsync(nameof(IssueToOrder), c.PartNumber, c, context, Permissions.InventoryTransact, false, async (uow, item, _) =>
+        return PostAsync(nameof(IssueToOrder), c.PartNumber, c, context, Permissions.InventoryTransact, false, async (uow, item, now) =>
         {
             var order = await ReleasedOrderAsync(uow, c.OrderNumber, context, ct);
-            var required = order.Materials.Where(m => m.ComponentPartNumber == item.PartNumber).Sum(m => m.RequiredQuantity);
+            var (needed, alternate, factor) = await NeededPartAsync(uow, order, item.PartNumber, c.AlternateFor, now, ct);
+            var required = order.Materials.Where(m => m.ComponentPartNumber == needed).Sum(m => m.RequiredQuantity);
             if (required == 0)
             {
-                throw new CommandRejectedException("not_on_order", $"Order {order.OrderNumber} does not use {item.PartNumber}.");
+                throw new CommandRejectedException("not_on_order", $"Order {order.OrderNumber} does not use {needed}.");
             }
 
             var quantity = RequireQuantity(item, c.Quantity);
-            var issued = (await uow.Store<IInventoryLookup>().ListOrderIssuesAsync(ct)).FirstOrDefault(i => i.OrderNumber == order.OrderNumber && i.PartNumber == item.PartNumber)?.NetIssued ?? 0;
-            if (issued + quantity > required)
+            var primaryQuantity = alternate is null ? quantity : decimal.Round(quantity / factor, 6, MidpointRounding.AwayFromZero);
+            var issued = (await uow.Store<IInventoryLookup>().ListOrderIssuesAsync(ct)).FirstOrDefault(i => i.OrderNumber == order.OrderNumber && i.PartNumber == needed)?.NetIssued ?? 0;
+            if (issued + primaryQuantity > required)
             {
-                throw new CommandRejectedException("over_issue", $"Order {order.OrderNumber} needs {required} {item.PartNumber}; {issued} already issued, so at most {required - issued} more. Over-issue is not allowed; scrap or adjust instead.");
+                throw new CommandRejectedException("over_issue", $"Order {order.OrderNumber} needs {required} {needed}; {issued} already issued, so at most {required - issued} more{(alternate is null ? string.Empty : $" ({(required - issued) * factor} {item.PartNumber} at {factor} per 1)")}. Over-issue is not allowed; scrap or adjust instead.");
             }
 
             var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
             await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Available, quantity, ct);
-            var txn = new NewTransaction(InventoryTransactionKind.Issue, item.PartNumber, quantity, location.Code, StockStatus.Available, null, null, lot, OrderNumber: order.OrderNumber, Reason: context.Reason);
-            return (txn, $"Issued {quantity} {item.UnitOfMeasure} {item.PartNumber} from {location.Code} to order {order.OrderNumber}.",
-                id => pipeline.Event(new InventoryIssued(id, item.PartNumber, quantity, location.Code, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber));
+            var txn = new NewTransaction(InventoryTransactionKind.Issue, item.PartNumber, quantity, location.Code, StockStatus.Available, null, null, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
+                SubstitutesFor: alternate is null ? null : needed, AlternateId: alternate?.AlternateId, PrimaryQuantity: alternate is null ? null : primaryQuantity);
+            var message = alternate is null
+                ? $"Issued {quantity} {item.UnitOfMeasure} {item.PartNumber} from {location.Code} to order {order.OrderNumber}."
+                : $"Issued {quantity} {item.UnitOfMeasure} {item.PartNumber} from {location.Code} to order {order.OrderNumber} in place of {primaryQuantity} {needed} (approved alternate {alternate.AlternateId}).";
+            return (txn, message, id => alternate is null
+                ? pipeline.Event(new InventoryIssued(id, item.PartNumber, quantity, location.Code, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber)
+                : pipeline.Event(new AlternateUsed(id, alternate.AlternateId, needed, item.PartNumber, quantity, primaryQuantity, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber));
         }, ct);
     }
 
@@ -348,18 +367,55 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             }
 
             var quantity = RequireQuantity(item, c.Quantity);
-            var issued = (await uow.Store<IInventoryLookup>().ListOrderIssuesAsync(ct)).FirstOrDefault(i => i.OrderNumber == order.OrderNumber && i.PartNumber == item.PartNumber)?.NetIssued ?? 0;
+            var transactions = (await uow.Store<IInventoryLookup>().ListTransactionsAsync(item.PartNumber, order.OrderNumber, 1000, ct))
+                .Where(t => t.Kind is InventoryTransactionKind.Issue or InventoryTransactionKind.Return).ToList();
+            var primary = string.IsNullOrWhiteSpace(c.AlternateFor) ? null : c.AlternateFor.Trim().ToUpperInvariant();
+            var mine = transactions.Where(t => t.SubstitutesFor == primary).ToList();
+            var issued = mine.Sum(t => t.Kind == InventoryTransactionKind.Issue ? t.Quantity : -t.Quantity);
             if (quantity > issued)
             {
-                throw new CommandRejectedException("over_return", $"Only {issued} {item.PartNumber} is issued to order {order.OrderNumber}.");
+                throw new CommandRejectedException("over_return", $"Only {issued} {item.PartNumber} is issued to order {order.OrderNumber}{(primary is null ? string.Empty : $" in place of {primary}")}.");
             }
 
             var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
-            var txn = new NewTransaction(InventoryTransactionKind.Return, item.PartNumber, quantity, null, null, location.Code, StockStatus.Available, lot, OrderNumber: order.OrderNumber, Reason: context.Reason);
+            var issuedPrimary = mine.Sum(t => (t.Kind == InventoryTransactionKind.Issue ? 1 : -1) * (t.PrimaryQuantity ?? t.Quantity));
+            var primaryQuantity = primary is null ? (decimal?)null : decimal.Round(issuedPrimary * quantity / issued, 6, MidpointRounding.AwayFromZero);
+            var alternateId = primary is null ? null : mine.LastOrDefault(t => t.AlternateId is not null)?.AlternateId;
+            var txn = new NewTransaction(InventoryTransactionKind.Return, item.PartNumber, quantity, null, null, location.Code, StockStatus.Available, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
+                SubstitutesFor: primary, AlternateId: alternateId, PrimaryQuantity: primaryQuantity);
             return (txn, $"Returned {quantity} {item.UnitOfMeasure} {item.PartNumber} from order {order.OrderNumber} to {location.Code}.",
                 id => pipeline.Event(new InventoryMoved(id, nameof(InventoryTransactionKind.Return), item.PartNumber, quantity, null, location.Code), context, SourceContext, StockEntity, item.PartNumber));
         }, ct);
+    }
+
+    /// <summary>
+    /// The part an issue counts against: the part itself, or — for an alternate issued in place of a part the
+    /// order needs — that part, with the approved relationship that allows it here and its conversion. Proposed,
+    /// rejected, expired or conditional relationships whose conditions do not hold here are never used.
+    /// </summary>
+    private static async Task<(string Needed, AlternateInfo? Alternate, decimal Factor)> NeededPartAsync(Kernel.Access.IKernelUnitOfWork uow, OrderInfo order, string part, string? alternateFor, DateTimeOffset now, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(alternateFor))
+        {
+            return (part, null, 1m);
+        }
+
+        var primary = alternateFor.Trim().ToUpperInvariant();
+        var context = new AlternateContext(DateOnly.FromDateTime(now.UtcDateTime), order.PartNumber, order.ProgramId);
+        var options = Alternates.For(await uow.Store<IAlternateLookup>().ListAlternatesAsync(ct), primary).Where(x => x.OfferedPart == part).ToList();
+        foreach (var (relationship, _, factor) in options)
+        {
+            if (Alternates.Evaluate(relationship, context).Usability == AlternateUsability.Usable)
+            {
+                return (primary, relationship, factor);
+            }
+        }
+
+        var why = options.Count == 0
+            ? $"{part} is not an alternate for {primary}."
+            : string.Join(" ", options.SelectMany(o => Alternates.Evaluate(o.Relationship, context).Reasons).Distinct());
+        throw new CommandRejectedException("alternate_not_approved", $"{part} cannot be issued in place of {primary} on order {order.OrderNumber}: {why}");
     }
 
     public Task<CommandResult> TransferAsync(TransferStock c, CommandContext context, CancellationToken ct)

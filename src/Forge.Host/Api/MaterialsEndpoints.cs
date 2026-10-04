@@ -21,7 +21,7 @@ public sealed record LocationRequest(string Code, string SiteCode, string Name, 
 
 public sealed record ReceiptRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Reason, string? Revision = null);
 
-public sealed record OrderMaterialRequest(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason);
+public sealed record OrderMaterialRequest(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason, string? AlternateFor = null);
 
 public sealed record TransferRequest(string PartNumber, decimal Quantity, string FromLocation, string ToLocation, string? LotNumber, StockStatus? Status, string? Reason);
 
@@ -153,9 +153,9 @@ public static class MaterialsEndpoints
         api.MapPost("/receipts", (HttpContext http, ReceiptRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReceiveAsync(new ReceiveStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.SupplierLot, b.PoNumber, b.PoLine, b.Inspect, b.Revision), c, ct)));
         api.MapPost("/issues", (HttpContext http, OrderMaterialRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.IssueToOrderAsync(new IssueToOrder(b.OrderNumber, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber), c, ct)));
+            Command(http, b.Reason, c => s.IssueToOrderAsync(new IssueToOrder(b.OrderNumber, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.AlternateFor), c, ct)));
         api.MapPost("/returns", (HttpContext http, OrderMaterialRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ReturnFromOrderAsync(new ReturnFromOrder(b.OrderNumber, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber), c, ct)));
+            Command(http, b.Reason, c => s.ReturnFromOrderAsync(new ReturnFromOrder(b.OrderNumber, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.AlternateFor), c, ct)));
         api.MapPost("/transfers", (HttpContext http, TransferRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.TransferAsync(new TransferStock(b.PartNumber, b.Quantity, b.FromLocation, b.ToLocation, b.LotNumber, b.Status ?? StockStatus.Available), c, ct)));
         api.MapPost("/scrap", (HttpContext http, StockRequest b, InventoryService s, CancellationToken ct) =>

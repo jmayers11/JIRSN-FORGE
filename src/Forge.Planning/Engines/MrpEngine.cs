@@ -19,8 +19,11 @@ public sealed record MrpItem(
 /// <summary>A released revision's BOM and the local dates it is in force: [From, To).</summary>
 public sealed record MrpStructure(string PartNumber, string Revision, DateOnly EffectiveFrom, DateOnly? EffectiveTo, IReadOnlyList<BomLineInfo> Bom);
 
+/// <summary>Where a requirement comes from in a bill of materials, so MRP can tell which alternates apply (V2.6).</summary>
+public sealed record MrpLineContext(string ParentPart, int LineNumber, SubstitutionPolicy Policy, Guid? ProgramId = null, string? Customer = null);
+
 /// <summary>A gross requirement: independent demand, or material for an order that already exists.</summary>
-public sealed record MrpRequirement(string Key, string PartNumber, decimal Quantity, DateOnly NeedDate, int Priority, string Kind, string Description);
+public sealed record MrpRequirement(string Key, string PartNumber, decimal Quantity, DateOnly NeedDate, int Priority, string Kind, string Description, MrpLineContext? Line = null);
 
 /// <summary>A scheduled receipt: an approved purchase order line or an open production order.</summary>
 public sealed record MrpSupply(string Key, string PartNumber, decimal Quantity, DateOnly DueDate, string Kind, string Description);
@@ -34,7 +37,8 @@ public sealed record MrpSnapshot(
     IReadOnlyList<MrpStructure> Structures,
     IReadOnlyList<MrpStock> Stock,
     IReadOnlyList<MrpRequirement> Requirements,
-    IReadOnlyList<MrpSupply> Supplies);
+    IReadOnlyList<MrpSupply> Supplies,
+    IReadOnlyList<AlternateInfo>? Alternates = null);
 
 public sealed record MrpRequest(string? PartNumber = null);
 
@@ -56,7 +60,25 @@ public sealed record PlannedOrder(
     IReadOnlyList<MrpPeg> Pegging);
 
 /// <summary>One date in an item's plan: what is needed, what arrives and what is left.</summary>
-public sealed record MrpBucket(DateOnly Date, decimal Gross, decimal ScheduledReceipts, decimal PlannedReceipts, decimal ProjectedAvailable);
+public sealed record MrpBucket(DateOnly Date, decimal Gross, decimal ScheduledReceipts, decimal PlannedReceipts, decimal ProjectedAvailable, decimal Substituted = 0);
+
+/// <summary>
+/// A substitution peg (V2.6): the primary was short, an approved equivalent had stock free, the BOM line's
+/// policy allowed it, and this much was allocated — the written answer to "why did MRP plan the alternate?".
+/// </summary>
+public sealed record MrpSubstitution(
+    string Key,
+    string PrimaryPart,
+    string AlternatePart,
+    long RelationshipId,
+    string RequirementKey,
+    DateOnly Date,
+    decimal Shortage,
+    decimal AlternateAvailable,
+    string Policy,
+    decimal PrimaryQuantity,
+    decimal AlternateQuantity,
+    string Explanation);
 
 public sealed record MrpException(string PartNumber, string Kind, string Detail);
 
@@ -78,7 +100,7 @@ public sealed record MrpItemPlan(
     IReadOnlyList<MrpSupply> Receipts,
     IReadOnlyList<MrpBucket> Buckets);
 
-public sealed record MrpResult(DateOnly Today, IReadOnlyList<MrpItemPlan> Items, IReadOnlyList<PlannedOrder> PlannedOrders, IReadOnlyList<MrpException> Exceptions);
+public sealed record MrpResult(DateOnly Today, IReadOnlyList<MrpItemPlan> Items, IReadOnlyList<PlannedOrder> PlannedOrders, IReadOnlyList<MrpException> Exceptions, IReadOnlyList<MrpSubstitution>? Substitutions = null);
 
 /// <summary>
 /// Deterministic MRP (spec §13). Items are planned top-down by low-level code so a parent's planned
@@ -103,8 +125,12 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
         var items = snapshot.Items.ToDictionary(i => i.PartNumber, StringComparer.Ordinal);
         var exceptions = new List<MrpException>();
 
+        // Approved alternates (V2.6). An alternate is netted after the part it stands in for where the structure allows, so its own netting sees what substitution took.
+        var alternates = (snapshot.Alternates ?? []).Where(a => a.Status == AlternateStatus.Approved).ToList();
+        var soft = alternates.Where(a => Alternates.IsEquivalent(a.Kind) && a.Kind != AlternateKind.Interchangeable).Select(a => (a.PrimaryPart, a.AlternatePart)).ToList();
+
         // Low-level codes from every released structure; parts on a loop cannot be exploded.
-        var (order, levels, looped) = LowLevelCodes(snapshot, items.Keys);
+        var (order, levels, looped) = LowLevelCodes(snapshot, items.Keys, soft);
         foreach (var part in looped)
         {
             exceptions.Add(new MrpException(part, "BomLoop", $"{part} is part of a loop in released bills of materials; its components are not planned."));
@@ -125,6 +151,74 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
         var plans = new List<MrpItemPlan>();
         var planned = new List<PlannedOrder>();
         var evidence = new List<EvidenceNode>();
+        var substitutions = new List<MrpSubstitution>();
+        var processed = new HashSet<string>(StringComparer.Ordinal);
+        decimal Free(string alternatePart) =>
+            (snapshot.Stock.FirstOrDefault(x => x.PartNumber == alternatePart)?.Available ?? 0) - items[alternatePart].SafetyStock
+            - (gross.TryGetValue(alternatePart, out var taken) ? taken.Sum(r => r.Quantity) : 0);
+
+        // Covers a shortage on one date with approved alternates the requirements' BOM lines allow; returns the substitutions made.
+        List<MrpSubstitution> Substitute(MrpItem item, DateOnly date, decimal shortage, IReadOnlyList<MrpRequirement> due)
+        {
+            var made = new List<MrpSubstitution>();
+            var left = shortage;
+            foreach (var r in due)
+            {
+                if (left <= 0 || r.Line is not { Policy: not SubstitutionPolicy.Never } line)
+                {
+                    continue;
+                }
+
+                var context = new AlternateContext(date, line.ParentPart, line.ProgramId, line.Customer);
+                var fromThis = 0m;
+                foreach (var (relationship, offered, factor) in Alternates.For(alternates, item.PartNumber).OrderBy(x => x.OfferedPart, StringComparer.Ordinal).ThenBy(x => x.Relationship.AlternateId))
+                {
+                    if (left <= 0 || fromThis >= r.Quantity || !items.ContainsKey(offered) || Alternates.Evaluate(relationship, context).Usability != AlternateUsability.Usable)
+                    {
+                        continue;
+                    }
+
+                    var free = Round(Free(offered));
+                    if (free <= 0)
+                    {
+                        continue;
+                    }
+
+                    if (line.Policy != SubstitutionPolicy.Automatic || !Alternates.IsEquivalent(relationship.Kind))
+                    {
+                        exceptions.Add(new MrpException(item.PartNumber, "AlternateSuggested",
+                            $"{r.Description}: {item.PartNumber} is short {Q(left)} on {Day(date)}; approved {Alternates.Label(relationship.Kind)} {offered} has {Q(free)} free (alternate {relationship.AlternateId}, {Q(factor)} per 1). "
+                            + (line.Policy == SubstitutionPolicy.Suggest ? "The line suggests, never substitutes: a planner decides." : "Only equivalents are substituted automatically: a planner decides.")));
+                        continue;
+                    }
+
+                    if (processed.Contains(offered))
+                    {
+                        exceptions.Add(new MrpException(item.PartNumber, "AlternateNotUsed", $"{offered} was planned before {item.PartNumber} (it sits higher in the bills of materials), so it is not substituted automatically; {Q(free)} is free."));
+                        continue;
+                    }
+
+                    var take = Math.Min(Math.Min(left, r.Quantity - fromThis), Math.Floor(free / factor * 1_000_000m) / 1_000_000m);
+                    if (take <= 0)
+                    {
+                        continue;
+                    }
+
+                    var alternateQty = Round(take * factor);
+                    var key = $"SUB-{item.PartNumber}-{(substitutions.Count + made.Count + 1).ToString("000", CultureInfo.InvariantCulture)}";
+                    var explanation = $"On {Day(date)} {item.PartNumber} is short {Q(left)} for {r.Description}. Approved {Alternates.Label(relationship.Kind)} {offered} (alternate {relationship.AlternateId}, {relationship.Conditions}) "
+                        + $"has {Q(free)} free; line {line.LineNumber} of {line.ParentPart} allows automatic substitution, so {Q(alternateQty)} {offered} covers {Q(take)} {item.PartNumber}.";
+                    Add(gross, offered, new MrpRequirement(key, offered, alternateQty, date, r.Priority, "Substitution", $"Substitution {key} for {item.PartNumber} ({r.Description})"));
+                    made.Add(new MrpSubstitution(key, item.PartNumber, offered, relationship.AlternateId, r.Key, date, Round(left), free, line.Policy.ToString(), Round(take), alternateQty, explanation));
+                    left -= take;
+                    fromThis += take;
+                }
+            }
+
+            substitutions.AddRange(made);
+            return made;
+        }
+
         foreach (var part in order)
         {
             var item = items[part];
@@ -144,7 +238,8 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
                 exceptions.Add(new MrpException(part, "OverdueReceipt", $"{s.Description}: {Q(s.Quantity)} was due {Day(s.DueDate)} and has not arrived; counted as arriving today. Confirm the date with the supplier."));
             }
 
-            var (buckets, itemPlanned, nodes) = Net(item, stock, requirements, receipts, today, exceptions);
+            var (buckets, itemPlanned, nodes) = Net(item, stock, requirements, receipts, today, exceptions, (date, shortage, due) => Substitute(item, date, shortage, due));
+            processed.Add(part);
             planned.AddRange(itemPlanned);
 
             // Explode planned orders of made items into their components' requirements.
@@ -175,7 +270,8 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
                             Max(p.ReleaseDate, today),
                             5,
                             "PlannedOrder",
-                            $"Planned order {p.Key} ({p.Quantity} {part}, rev {structure.Revision} line {line.LineNumber})"));
+                            $"Planned order {p.Key} ({p.Quantity} {part}, rev {structure.Revision} line {line.LineNumber})",
+                            new MrpLineContext(part, line.LineNumber, line.Policy)));
                     }
 
                     var index = planned.IndexOf(p);
@@ -213,7 +309,8 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
         {
             Children = evidence,
         };
-        return new EngineEvaluation<MrpResult>(new MrpResult(today, plans, orderedPlanned, orderedExceptions), root);
+        var orderedSubstitutions = substitutions.Where(x => parameters.PartNumber is not { } p || x.PrimaryPart == p || x.AlternatePart == p).ToList();
+        return new EngineEvaluation<MrpResult>(new MrpResult(today, plans, orderedPlanned, orderedExceptions, orderedSubstitutions), root);
     }
 
     /// <summary>Sizes a planned order for a net requirement under the item's lot policy and multiple.</summary>
@@ -240,7 +337,8 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
         IReadOnlyList<MrpRequirement> requirements,
         IReadOnlyList<MrpSupply> receipts,
         DateOnly today,
-        List<MrpException> exceptions)
+        List<MrpException> exceptions,
+        Func<DateOnly, decimal, IReadOnlyList<MrpRequirement>, List<MrpSubstitution>> substitute)
     {
         var dates = requirements.Select(r => Max(r.NeedDate, today))
             .Concat(receipts.Select(s => Max(s.DueDate, today)))
@@ -254,6 +352,7 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
         var available = stock.Available;
         var withoutPlanned = stock.Available;
         var firstShort = (DateOnly?)null;
+        var substituted = new List<MrpSubstitution>();
 
         foreach (var date in dates)
         {
@@ -270,6 +369,19 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
             }
 
             var plannedQty = 0m;
+            var substitutedQty = 0m;
+            if (available < item.SafetyStock && dayRequirements.Count > 0)
+            {
+                var made = substitute(date, Round(item.SafetyStock - available), dayRequirements);
+                substituted.AddRange(made);
+                substitutedQty = made.Sum(m => m.PrimaryQuantity);
+                available += substitutedQty;
+                foreach (var m in made)
+                {
+                    nodes.Add(new EvidenceNode("Substitution", EvidenceOutcome.Info, $"{m.Key}: {m.Explanation}"));
+                }
+            }
+
             if (available < item.SafetyStock)
             {
                 var net = Round(item.SafetyStock - available);
@@ -277,7 +389,8 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
                 var release = date.AddDays(-item.LeadTimeDays);
                 var pastDue = release < today;
                 var key = $"PLN-{item.PartNumber}-{(planned.Count + 1).ToString("000", CultureInfo.InvariantCulture)}";
-                var explanation = Explain(item, date, before, receiptQty, dayRequirements, available, net, quantity, release, pastDue);
+                var explanation = Explain(item, date, before, receiptQty, dayRequirements, available, net, quantity, release, pastDue)
+                    + (substitutedQty > 0 ? $" Approved alternates covered {Q(substitutedQty)} of the shortage first." : string.Empty);
                 planned.Add(new PlannedOrder(key, item.PartNumber, item.MakeBuy, quantity, item.UnitOfMeasure, Max(release, today), date, pastDue, net, null, explanation, []));
                 nodes.Add(new EvidenceNode("PlannedOrder", pastDue ? EvidenceOutcome.Fail : EvidenceOutcome.Info, $"{key}: {explanation}"));
                 if (pastDue)
@@ -289,7 +402,7 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
                 available += quantity;
             }
 
-            buckets.Add(new MrpBucket(date, grossQty, receiptQty, plannedQty, available));
+            buckets.Add(new MrpBucket(date, grossQty, receiptQty, plannedQty, available, substitutedQty));
         }
 
         // A scheduled receipt due after stock first runs short should come in earlier.
@@ -301,7 +414,8 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
             }
         }
 
-        return (buckets, Peg(item, stock, requirements, receipts, planned, today), nodes);
+        var pegReceipts = receipts.Concat(substituted.Select(x => new MrpSupply(x.Key, item.PartNumber, x.PrimaryQuantity, x.Date, "Substitution", x.Explanation))).ToList();
+        return (buckets, Peg(item, stock, requirements, pegReceipts, planned, today), nodes);
     }
 
     /// <summary>
@@ -384,15 +498,42 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
             .ThenBy(s => s.Revision, StringComparer.Ordinal)
             .FirstOrDefault();
 
-    /// <summary>Topological order (parents first), each part's low-level code, and parts caught in a loop.</summary>
-    private static (List<string> Order, Dictionary<string, int> Levels, HashSet<string> Looped) LowLevelCodes(MrpSnapshot snapshot, IEnumerable<string> parts)
+    /// <summary>
+    /// Topological order (parents first), each part's low-level code, and parts caught in a loop. Approved
+    /// alternates are ordered after the parts they stand in for (a zero-length edge), unless that would make a
+    /// loop, so substitution is netted before the alternate's own plan.
+    /// </summary>
+    private static (List<string> Order, Dictionary<string, int> Levels, HashSet<string> Looped) LowLevelCodes(MrpSnapshot snapshot, IEnumerable<string> parts, IReadOnlyList<(string Primary, string Alternate)> soft)
     {
         var known = parts.ToHashSet(StringComparer.Ordinal);
-        var edges = snapshot.Structures
-            .SelectMany(s => s.Bom.Select(l => (Parent: s.PartNumber, Child: l.ComponentPartNumber)))
+        var hard = snapshot.Structures
+            .SelectMany(s => s.Bom.Select(l => (Parent: s.PartNumber, Child: l.ComponentPartNumber, Weight: 1)))
             .Where(e => known.Contains(e.Parent) && known.Contains(e.Child) && e.Parent != e.Child)
             .Distinct()
             .ToList();
+        var withSoft = hard.Concat(soft.Where(e => known.Contains(e.Primary) && known.Contains(e.Alternate) && e.Primary != e.Alternate)
+            .Select(e => (Parent: e.Primary, Child: e.Alternate, Weight: 0))).Distinct().ToList();
+
+        var (order, levels) = Sort(known, hard);
+        if (soft.Count > 0)
+        {
+            var (softOrder, softLevels) = Sort(known, withSoft);
+            if (softOrder.Count == order.Count)
+            {
+                (order, levels) = (softOrder, softLevels);
+            }
+        }
+
+        var looped = known.Where(p => !order.Contains(p)).ToHashSet(StringComparer.Ordinal);
+        order.AddRange(looped.Order(StringComparer.Ordinal));
+
+        // Plan by level so every parent of a part is netted before it.
+        var byLevel = order.Select((p, i) => (p, i)).OrderBy(x => levels[x.p]).ThenBy(x => x.i).Select(x => x.p).ToList();
+        return (byLevel, levels, looped);
+    }
+
+    private static (List<string> Order, Dictionary<string, int> Levels) Sort(HashSet<string> known, List<(string Parent, string Child, int Weight)> edges)
+    {
         var indegree = known.ToDictionary(p => p, _ => 0, StringComparer.Ordinal);
         foreach (var e in edges)
         {
@@ -409,7 +550,7 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
             order.Add(part);
             foreach (var e in edges.Where(e => e.Parent == part))
             {
-                levels[e.Child] = Math.Max(levels[e.Child], levels[part] + 1);
+                levels[e.Child] = Math.Max(levels[e.Child], levels[part] + e.Weight);
                 if (--indegree[e.Child] == 0)
                 {
                     ready.Add(e.Child);
@@ -417,12 +558,7 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
             }
         }
 
-        var looped = known.Where(p => !order.Contains(p)).ToHashSet(StringComparer.Ordinal);
-        order.AddRange(looped.Order(StringComparer.Ordinal));
-
-        // Plan by level so every parent of a part is netted before it.
-        var byLevel = order.Select((p, i) => (p, i)).OrderBy(x => levels[x.p]).ThenBy(x => x.i).Select(x => x.p).ToList();
-        return (byLevel, levels, looped);
+        return (order, levels);
     }
 
     private static void Add(Dictionary<string, List<MrpRequirement>> gross, string part, MrpRequirement requirement)

@@ -224,14 +224,14 @@ public sealed class Phase5Tests(PostgresFixture postgres)
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
         var f = await FloorAsync(app);
         await f.Plant.Ok(f.Kiosk, "/api/shopfloor/clock-in", new { badge = Sarah });
-        await f.Plant.Ok(f.Kiosk, "/api/shopfloor/pin", new { badge = Sarah, newPin = "86420" });
+        await f.Plant.Ok(f.Kiosk, "/api/shopfloor/pin", new { badge = Sarah, newPin = "86420931" });
         await Try(f.Plant, f.Kiosk, "/api/shopfloor/clock-in", new { badge = "B-NOBODY-9999" });
 
         foreach (var table in new[] { "kernel.audit_log", "kernel.outbox", "kernel.event_log", "kernel.idempotency", "workforce.badge" })
         {
             var text = await Text(app, $"SELECT coalesce(string_agg(t::text, ' '), '') FROM {table} t");
             Assert.DoesNotContain(Sarah, text, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("86420", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("86420931", text, StringComparison.Ordinal); // 8 digits: a timestamp or id can hold 5 by chance
             Assert.DoesNotContain("B-NOBODY", text, StringComparison.OrdinalIgnoreCase);
         }
 

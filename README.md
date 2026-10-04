@@ -213,6 +213,19 @@ See `docs/adr/0015-v2-4-engineering-change-control.md`.
 
 See `docs/adr/0016-v2-5-propagation-and-verification.md`.
 
+## What V2.6 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Alternate relationships | `src/Forge.Engineering/AlternateService.cs` | Proposed by one person, approved/rejected/expired by another with authority; conditions and conversion |
+| Usability | `Alternates` (Engineering contracts) | Pure; proposed never usable; unknown conditions never usable; approved vs requires approval never mixed |
+| BOM line policy | `engineering.bom_line_policy` | Never / Suggest (default) / Automatic, set with approval authority and a reason |
+| MRP substitution | `MrpEngine` | Approved equivalents on automatic lines, up to the shortage; substitution pegs explain it |
+| Issue | `InventoryService` | `alternateFor` issues/returns an approved alternate in place of the needed part |
+| UI and report | Engineering → Alternates, item where-used, Material Plan → Substitutions / Alternates; `alternates` | |
+
+See `docs/adr/0017-v2-6-alternates.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -478,4 +491,15 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | GET | `/api/engineering/change-actions[?open=false&kind=]` | `engineering.read` |
 | POST | `/api/engineering/change-actions/{id}/resolve` `{resolution, notes?}` | by kind: `quality.disposition`, `procurement.manage`, `competency.manage` |
 | GET | `/api/procurement/purchase-orders/{po}/lines/{line}/package` | `procurement.read` |
+
+
+## V2.6 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/engineering/alternates[?part=&status=]`, `/alternates/{id}`, `/alternates/where-used/{part}`, `/alternates/candidates/{part}?program=&customer=&parent=&asset=&machine=&operation=&supplier=&date=&maintenance=` | `engineering.read` |
+| POST | `/api/engineering/alternates` `{primaryPart, alternatePart, kind, factor?, programId?, customer?, parentPart?, assetCode?, machineCode?, operationSequence?, supplierCode?, validFrom?, validTo?, qualityNotes?, evidence?, changeNumber?}` | `engineering.alternates.propose` |
+| POST | `/api/engineering/alternates/{id}/approve`, `/reject` `{reason}`, `/expire` `{reason}` | `engineering.alternates.approve` (`maintenance.alternates.approve` for maintenance-only) |
+| POST | `/api/engineering/items/{part}/revisions/{rev}/bom/{line}/policy` `{policy, reason}` | `engineering.alternates.approve` |
+| POST | `/api/inventory/issues`, `/returns` now take `alternateFor` | `inventory.transact` |
 

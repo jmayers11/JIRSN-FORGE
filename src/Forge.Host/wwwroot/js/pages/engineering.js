@@ -27,10 +27,11 @@ export async function engineeringPage(page, ctx) {
   if (first === 'documents') return second ? documentDetail(page, ctx, decodeURIComponent(second)) : documentList(page, ctx);
   if (first === 'changes') return second ? changeDetail(page, ctx, decodeURIComponent(second)) : changeList(page, ctx);
   if (first === 'actions') return actionList(page, ctx);
+  if (first === 'alternates') return alternateList(page, ctx);
   return first ? itemDetail(page, ctx, decodeURIComponent(first)) : itemList(page, ctx);
 }
 
-const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['documents', 'Documents', '#/engineering/documents'], ['changes', 'Changes', '#/engineering/changes'], ['actions', 'Change actions', '#/engineering/actions']]
+const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['documents', 'Documents', '#/engineering/documents'], ['changes', 'Changes', '#/engineering/changes'], ['actions', 'Change actions', '#/engineering/actions'], ['alternates', 'Alternates', '#/engineering/alternates']]
   .map(([k, l, href]) => `<button class="${active === k ? 'on' : ''}" data-nav="${href}">${l}</button>`).join('')}</div>`;
 const wireTabs = page => $$('[data-nav]', page).forEach(b => b.addEventListener('click', () => { location.hash = b.dataset.nav; }));
 
@@ -106,6 +107,7 @@ async function itemDetail(page, ctx, partNumber) {
     </section>`;
 
   appendRequirements(page, ctx, item);
+  appendAlternates(page, ctx, item, items.data);
   appendAttachments(page, { type: 'Item', id: item.partNumber, me, title: 'Documents', note: 'Drawings, specifications and datasheets for this item. Released revisions apply; reference files never do.' });
 
   $('#classify', page)?.addEventListener('click', () => formModal({
@@ -788,4 +790,116 @@ async function actionList(page, ctx) {
   const go = (kind, all) => { location.hash = `#/engineering/actions?${new URLSearchParams({ ...(kind ? { kind } : {}), ...(all ? { all: '1' } : {}) })}`; };
   $('#action-kind', page).onchange = e => go(e.target.value, showAll);
   $('#action-all', page).onclick = () => go(filter, !showAll);
+}
+
+// ── Alternates (V2.6) ─────────────────────────────────────────────────────────────────────────────
+// A relationship is proposed by one person and approved by another with authority; proposed ones are
+// never usable and are always listed apart. Where-used works both ways.
+const ALT_KIND_LABEL = {
+  ApprovedAlternate: 'Approved alternate', Equivalent: 'Equivalent', SupersededBy: 'Superseded by', Interchangeable: 'Interchangeable', Conditional: 'Conditional',
+  Temporary: 'Temporary', MaintenanceOnly: 'Maintenance only', SupplierSpecific: 'Supplier-specific', ProgramSpecific: 'Program-specific', EngineeringApprovalRequired: 'Engineering approval required',
+};
+const ALT_TONE = { Proposed: 'warn', Approved: 'ok', Rejected: 'bad', Expired: 'none' };
+const POLICY_LABEL = { Never: 'Never', Suggest: 'Suggest (default)', Automatic: 'Automatic for approved equivalents' };
+const ALT_PROPOSERS = ['ManufacturingEngineer', 'Buyer', 'PurchasingManager', 'QualityEngineer', 'MaintenancePlanner'];
+const ALT_APPROVERS = ['EngineeringApprover', 'ChangeBoard'];
+const altApprover = (me, a) => a.kind === 'MaintenanceOnly' ? can(me, 'MaintenancePlanner') : can(me, ...ALT_APPROVERS);
+
+function alternateRows(list, me, showParts) {
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>#</th>${showParts ? '<th>Primary</th>' : ''}<th>Alternate</th><th>Kind</th><th>Per 1</th><th>Where</th><th>Status</th><th>Proposed / decided</th><th></th></tr></thead><tbody>
+    ${list.map(a => {
+      const mine = a.proposedBy === `person:${me.personId}`;
+      const decide = altApprover(me, a) && !mine;
+      return `<tr class="${['Rejected', 'Expired'].includes(a.status) ? 'retired' : ''}"><td>${a.alternateId}</td>
+        ${showParts ? `<td><a href="#/engineering/${encodeURIComponent(a.primaryPart)}"><b>${esc(a.primaryPart)}</b></a></td>` : ''}
+        <td><a href="#/engineering/${encodeURIComponent(a.alternatePart)}"><b>${esc(a.alternatePart)}</b></a></td><td>${esc(ALT_KIND_LABEL[a.kind] ?? a.kind)}</td><td>${esc(String(a.factor))}</td>
+        <td class="muted">${esc(a.conditions)}${a.qualityNotes ? `<div class="faint">Quality: ${esc(a.qualityNotes)}</div>` : ''}${a.evidence ? `<div class="faint">Evidence: ${esc(a.evidence)}</div>` : ''}</td>
+        <td><span class="pill ${ALT_TONE[a.status] ?? 'none'}">${esc(a.status)}</span></td>
+        <td>${esc(who(a.proposedBy))}<div class="faint">${esc(fmtDateTime(a.proposedAt))}</div>${a.decidedBy ? `<div>${esc(who(a.decidedBy))} <span class="faint">${esc(fmtDateTime(a.decidedAt))}${a.decisionReason ? ` — ${esc(a.decisionReason)}` : ''}</span></div>` : ''}${a.expiredReason ? `<div class="faint">Expired: ${esc(a.expiredReason)}</div>` : ''}</td>
+        <td class="nowrap">${a.status === 'Proposed' && decide ? `<button class="btn small primary" data-alt-approve="${a.alternateId}">Approve</button> <button class="btn small ghost" data-alt-reject="${a.alternateId}">Reject</button>` : ''}
+          ${a.status === 'Proposed' && mine ? '<span class="faint">You proposed it — someone else decides</span>' : ''}
+          ${['Proposed', 'Approved'].includes(a.status) && altApprover(me, a) ? ` <button class="btn small ghost" data-alt-expire="${a.alternateId}">Expire</button>` : ''}</td></tr>`;
+    }).join('')}
+    </tbody></table></div>`;
+}
+
+function wireAlternateActions(root, reload) {
+  const go = (id, verb, title, detail, reasonRequired) => formModal({ title, detail, reasonRequired, confirmLabel: title.split(' ')[0], fields: [] },
+    (_, reason) => command(`/api/engineering/alternates/${id}/${verb}`, {}, reason), reload);
+  $$('[data-alt-approve]', root).forEach(b => b.addEventListener('click', () => go(b.dataset.altApprove, 'approve', `Approve alternate ${b.dataset.altApprove}`, 'It becomes usable wherever its conditions hold: MRP (on lines that allow it), issue to orders and purchasing.', false)));
+  $$('[data-alt-reject]', root).forEach(b => b.addEventListener('click', () => go(b.dataset.altReject, 'reject', `Reject alternate ${b.dataset.altReject}`, 'It is never usable. The record stays.', true)));
+  $$('[data-alt-expire]', root).forEach(b => b.addEventListener('click', () => go(b.dataset.altExpire, 'expire', `Expire alternate ${b.dataset.altExpire}`, 'It stops being usable from now on. What was already issued keeps its record.', true)));
+}
+
+function proposeAlternate(primary, items, reload) {
+  return formModal({
+    title: primary ? `Propose an alternate for ${primary}` : 'Propose an alternate', detail: 'Recorded as proposed: never usable by MRP, issue or purchasing until someone else with authority approves it.', confirmLabel: 'Propose',
+    fields: [
+      ...(primary ? [] : [{ name: 'primaryPart', label: 'Primary part (the one needed)', type: 'select', options: items.map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]), required: true }]),
+      { name: 'alternatePart', label: 'Alternate part', type: 'select', options: items.filter(i => i.partNumber !== primary).map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]), required: true },
+      { name: 'kind', label: 'Kind', type: 'select', value: 'Equivalent', options: Object.entries(ALT_KIND_LABEL) },
+      { name: 'factor', label: 'Alternate units per 1 primary unit', type: 'number', value: 1, min: 0, step: 'any' },
+      { name: 'parentPart', label: 'Only in this assembly (optional)', type: 'select', blank: '— any —', options: items.filter(i => i.makeBuy === 'Make').map(i => [i.partNumber, i.partNumber]) },
+      { name: 'customer', label: 'Only for customer (optional)' },
+      { name: 'machineCode', label: 'Only on machine (optional)', code: true },
+      { name: 'assetCode', label: 'Only on asset (optional)', code: true },
+      { name: 'supplierCode', label: 'Only from supplier (optional)', code: true },
+      { name: 'validFrom', label: 'Valid from (optional)', type: 'date' },
+      { name: 'validTo', label: 'Valid to (required for temporary)', type: 'date' },
+      { name: 'qualityNotes', label: 'Quality notes', type: 'textarea' },
+      { name: 'evidence', label: 'Evidence (test report, datasheet, deviation)', type: 'textarea' },
+    ],
+  }, (v, reason) => command('/api/engineering/alternates', { ...v, primaryPart: primary ?? v.primaryPart }, reason), reload);
+}
+
+async function appendAlternates(page, ctx, item, items) {
+  const section = document.createElement('section');
+  section.className = 'panel';
+  page.append(section);
+  const reload = () => itemDetail(page, ctx, item.partNumber);
+  const { data, error } = await tryGet(`/api/engineering/alternates/where-used/${encodeURIComponent(item.partNumber)}`);
+  if (error) { section.innerHTML = `<header><h2>Where used and alternates</h2></header>${errorBlock(error, 'where-used')}`; return; }
+  const me = ctx.me;
+  const approved = data.alternates.filter(a => a.status !== 'Proposed');
+  const proposed = data.alternates.filter(a => a.status === 'Proposed');
+  section.innerHTML = `
+    <header><h2>Where used and alternates</h2><span class="spacer"></span>${can(me, ...ALT_PROPOSERS) ? '<button class="btn small primary" id="propose-alt">Propose an alternate</button>' : ''}</header>
+    <h3 style="margin:4px 0 6px">Used in (${data.usedIn.length})</h3>
+    ${!data.usedIn.length ? '<div class="muted">No released bill of materials uses it.</div>' : `<table class="table"><thead><tr><th>Assembly</th><th>Rev</th><th>Line</th><th>Qty per</th><th>Alternates on this line</th><th></th></tr></thead><tbody>
+      ${data.usedIn.map(w => `<tr class="${w.inForce ? '' : 'retired'}"><td><a href="#/engineering/${encodeURIComponent(w.parentPart)}"><b>${esc(w.parentPart)}</b></a></td><td>${esc(w.revision)}${w.inForce ? '' : ' <span class="faint">not in force</span>'}</td><td>${w.lineNumber}</td><td>${esc(String(w.quantityPer))}</td>
+        <td>${esc(POLICY_LABEL[w.policy] ?? w.policy)}</td><td>${can(me, ...ALT_APPROVERS) ? `<button class="btn small ghost" data-policy="${esc(w.parentPart)}|${esc(w.revision)}|${w.lineNumber}|${w.policy}">Policy</button>` : ''}</td></tr>`).join('')}</tbody></table>`}
+    <h3 style="margin:14px 0 6px">Alternates for ${esc(item.partNumber)} (${approved.length})</h3>
+    ${approved.length ? alternateRows(approved, me, false) : '<div class="muted">None approved.</div>'}
+    ${proposed.length ? `<div class="notice warn" style="margin-top:10px"><b>Proposed — not usable until approved (${proposed.length})</b>${alternateRows(proposed, me, false)}</div>` : ''}
+    <h3 style="margin:14px 0 6px">${esc(item.partNumber)} is an alternate for (${data.alternateFor.length})</h3>
+    ${data.alternateFor.length ? alternateRows(data.alternateFor, me, true) : '<div class="muted">Nothing.</div>'}`;
+  wireAlternateActions(section, reload);
+  $('#propose-alt', section)?.addEventListener('click', () => proposeAlternate(item.partNumber, items, reload));
+  $$('[data-policy]', section).forEach(b => b.addEventListener('click', () => {
+    const [parent, rev, line, policy] = b.dataset.policy.split('|');
+    formModal({ title: `Alternates on ${parent} rev ${rev} line ${line}`, detail: 'How MRP may use approved alternates for this line. Automatic substitutes approved equivalents up to the shortage and records why; suggest only lists them.', reasonRequired: true, confirmLabel: 'Set',
+      fields: [{ name: 'policy', label: 'Policy', type: 'select', value: policy, options: Object.entries(POLICY_LABEL) }] },
+    (v, reason) => command(`/api/engineering/items/${encodeURIComponent(parent)}/revisions/${encodeURIComponent(rev)}/bom/${line}/policy`, v, reason), reload);
+  }));
+}
+
+async function alternateList(page, ctx) {
+  const [res, items] = await Promise.all([tryGet('/api/engineering/alternates'), tryGet('/api/engineering/items')]);
+  const reload = () => alternateList(page, ctx);
+  const me = ctx.me;
+  const all = res.data ?? [];
+  const proposed = all.filter(a => a.status === 'Proposed');
+  const rest = all.filter(a => a.status !== 'Proposed');
+  page.innerHTML = `
+    <div class="page-head"><div><h1>Engineering</h1><div class="sub">Alternate parts: who proposed them, who approved them, and where they apply. Proposed alternates are never used anywhere.</div></div>
+      <div class="spacer"></div>${can(me, ...ALT_PROPOSERS) ? '<button class="btn primary" id="propose-alt">Propose an alternate</button>' : ''}</div>
+    ${tabs('alternates')}
+    ${res.error ? errorBlock(res.error, 'alternates') : `
+    <section class="panel" style="border-left:3px solid var(--warn)"><header><h2>Proposed — requires approval (${proposed.length})</h2></header>
+      ${proposed.length ? alternateRows(proposed, me, true) : '<div class="muted">Nothing waiting.</div>'}</section>
+    <section class="panel"><header><h2>Decided (${rest.length})</h2></header>
+      ${rest.length ? alternateRows(rest, me, true) : emptyBlock('No alternates', 'Propose one from an item or here.')}</section>`}`;
+  wireTabs(page);
+  wireAlternateActions(page, reload);
+  $('#propose-alt', page)?.addEventListener('click', () => proposeAlternate(null, items.data ?? [], reload));
 }
