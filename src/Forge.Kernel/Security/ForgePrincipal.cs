@@ -26,4 +26,7 @@ public static class SystemActors
 
     /// <summary>Carries a released engineering change into orders and actions (V2.5).</summary>
     public const string Propagation = "system:propagation";
+
+    /// <summary>Records parts issued to a work order as installed on its asset (V2.9).</summary>
+    public const string Installation = "system:installation";
 }

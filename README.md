@@ -252,6 +252,20 @@ See `docs/adr/0018-v2-7-unified-demand-and-requisitions.md`.
 
 See `docs/adr/0019-v2-8-assets-mro-obsolescence.md`.
 
+## What V2.9 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Work types | `WorkOrderKind` | Preventive, corrective, emergency, predictive, calibration, inspection, facility; on a machine, an asset or both |
+| Requirements | `maintenance.work_order_part`, `SetWorkOrderRequirements` | Asset, procedure revision, qualifications, parts with positions; fixed once work starts |
+| Readiness | `src/Forge.Planning/Engines/MaintenanceReadinessEngine.cs` | Asset, material (with approved MRO alternates), procedure, technician; blocked work is not scheduled |
+| Parts for blocked work | `POST /work-orders/{id}/request-parts` | Requisitions sourced to the work order (V2.7) |
+| Outages | `maintenance.outage`, `OutagePreviewEngine` | Proposed by one person; approved by another after the schedule preview; the impact is recorded |
+| Installation | `src/Forge.Host/Installation/InstallationSubscriber.cs` | Issues to a positioned requirement record the component on the asset |
+| UI and reports | Maintenance → Readiness / Outages; `maintenance-readiness`, `outages` | |
+
+See `docs/adr/0021-v2-9-maintenance-readiness-and-outages.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -556,3 +570,16 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/engineering/obsolescence` `{partNumber, status, lastTimeBuy?, endOfLife?, endOfSupport?, evidence, replacementPart?}`, `/{id}/replacement` `{replacementPart}` | `engineering.obsolescence.record` |
 | POST | `/api/engineering/obsolescence/{id}/replacement/approve`, `/reject` `{reason}` | `engineering.alternates.approve` (not the proposer) |
 
+## V2.9 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/maintenance/work-orders` `{machineCode?, assetCode?, title, description?, dueDate, kind}` | `maintenance.downtime.report` |
+| GET, POST | `/api/maintenance/work-orders/{id}/requirements` `{assetCode?, procedureDocument?, procedureRevision?, qualifications[], parts[{partNumber, quantity, position?}]}` | `maintenance.read`, `maintenance.plan` |
+| GET | `/api/maintenance/readiness`, `/work-orders/{id}/readiness` | `maintenance.read` |
+| POST | `/api/maintenance/work-orders/{id}/request-parts` `{reason}` | `procurement.requisition.raise` |
+| POST | `/api/maintenance/work-orders/{id}/schedule` `{startsAt, endsAt}` (proposes an outage on a running machine) | `maintenance.plan` |
+| GET | `/api/maintenance/outages[?includeDecided=true]`, `/outages/{id}` (with preview), `/outages/preview?machine=&from=&to=` | `maintenance.read` |
+| POST | `/api/maintenance/outages/{id}/approve`, `/reject` `{reason}` | `maintenance.outage.approve` (not the proposer) |
+| POST | `/api/maintenance/outages/{id}/withdraw` `{reason}` | proposer, or `maintenance.outage.approve` |
+| POST | `/api/maintenance/work-orders/{id}/parts` takes `alternateFor` | `inventory.spares.issue` |

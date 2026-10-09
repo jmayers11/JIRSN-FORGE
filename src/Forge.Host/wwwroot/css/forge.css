@@ -541,3 +541,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brief-section h3 { margin: 0 0 4px; font: 600 13.5px var(--font); }
 .brief-section.bad h3 { color: #FCA5A5; }
 .brief-section.warn h3 { color: #FCD34D; }
+
+/* V2.9: a status pill that opens its explanation */
+button.pill.linkish { cursor: pointer; border: 0; font: inherit; font-size: inherit; }
+button.pill.linkish:hover { text-decoration: underline; }

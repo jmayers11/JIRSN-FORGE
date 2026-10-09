@@ -69,7 +69,8 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
     private const string WorkOrderSql =
         """
         SELECT work_order_id, machine_code, kind, plan_id, title, description, tasks, due_date, status, scheduled_start, scheduled_end, downtime_id,
-               created_by, created_at, started_by, started_at, completed_by, completed_at, findings, closed_by, closed_at, cancel_reason, due_run_hours, run_hours_from
+               created_by, created_at, started_by, started_at, completed_by, completed_at, findings, closed_by, closed_at, cancel_reason, due_run_hours, run_hours_from,
+               asset_code, procedure_document, procedure_revision, required_qualifications
         FROM maintenance.work_order
         """;
 
@@ -145,11 +146,12 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
         ArgumentNullException.ThrowIfNull(order);
         await using var cmd = uow.Command(
             """
-            INSERT INTO maintenance.work_order (machine_code, kind, plan_id, title, description, tasks, due_date, status, downtime_id, created_at, created_by, due_run_hours, run_hours_from)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING work_order_id
+            INSERT INTO maintenance.work_order (machine_code, kind, plan_id, title, description, tasks, due_date, status, downtime_id, created_at, created_by, due_run_hours, run_hours_from,
+                asset_code, procedure_document, procedure_revision, required_qualifications)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING work_order_id
             """,
-            order.MachineCode, order.Kind.ToString(), Long(order.PlanId), order.Title, Text(order.Description), order.Tasks.ToArray(), Date(order.DueDate), order.Status.ToString(), Long(order.DowntimeId), order.CreatedAt, order.CreatedBy,
-            Num(order.DueRunHours), Time(order.RunHoursFrom));
+            Text(order.MachineCode), order.Kind.ToString(), Long(order.PlanId), order.Title, Text(order.Description), order.Tasks.ToArray(), Date(order.DueDate), order.Status.ToString(), Long(order.DowntimeId), order.CreatedAt, order.CreatedBy,
+            Num(order.DueRunHours), Time(order.RunHoursFrom), Text(order.AssetCode), Text(order.ProcedureDocument), Text(order.ProcedureRevision), order.Qualifications.ToArray());
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -159,13 +161,78 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
         await using var cmd = uow.Command(
             """
             UPDATE maintenance.work_order SET status = $2, scheduled_start = $3, scheduled_end = $4, downtime_id = $5, started_by = $6, started_at = $7,
-                completed_by = $8, completed_at = $9, findings = $10, closed_by = $11, closed_at = $12, cancel_reason = $13, due_date = $14, title = $15, tasks = $16
+                completed_by = $8, completed_at = $9, findings = $10, closed_by = $11, closed_at = $12, cancel_reason = $13, due_date = $14, title = $15, tasks = $16,
+                asset_code = $17, procedure_document = $18, procedure_revision = $19, required_qualifications = $20
             WHERE work_order_id = $1
             """,
             order.WorkOrderId, order.Status.ToString(), Time(order.ScheduledStart), Time(order.ScheduledEnd), Long(order.DowntimeId), Text(order.StartedBy), Time(order.StartedAt),
-            Text(order.CompletedBy), Time(order.CompletedAt), Text(order.Findings), Text(order.ClosedBy), Time(order.ClosedAt), Text(order.CancelReason), Date(order.DueDate), order.Title, order.Tasks.ToArray());
+            Text(order.CompletedBy), Time(order.CompletedAt), Text(order.Findings), Text(order.ClosedBy), Time(order.ClosedAt), Text(order.CancelReason), Date(order.DueDate), order.Title, order.Tasks.ToArray(),
+            Text(order.AssetCode), Text(order.ProcedureDocument), Text(order.ProcedureRevision), order.Qualifications.ToArray());
         await cmd.ExecuteNonQueryAsync(ct);
     }
+
+    public async Task ReplaceRequiredPartsAsync(long workOrderId, IReadOnlyList<WorkOrderPartRequirement> parts, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        await using (var delete = uow.Command("DELETE FROM maintenance.work_order_part WHERE work_order_id = $1", workOrderId))
+        {
+            await delete.ExecuteNonQueryAsync(ct);
+        }
+
+        foreach (var part in parts)
+        {
+            await using var insert = uow.Command(
+                "INSERT INTO maintenance.work_order_part (work_order_id, line_number, part_number, quantity, position) VALUES ($1, $2, $3, $4, $5)",
+                workOrderId, part.LineNumber, part.PartNumber, part.Quantity, Text(part.Position));
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    public Task<IReadOnlyList<WorkOrderPartRequirement>> ListRequiredPartsAsync(long? workOrderId, CancellationToken ct) =>
+        ReadRowsAsync(
+            """
+            SELECT p.work_order_id, p.line_number, p.part_number, p.quantity, p.position FROM maintenance.work_order_part p
+            JOIN maintenance.work_order w ON w.work_order_id = p.work_order_id
+            WHERE ($1::bigint IS NULL AND w.status IN ('Open', 'Scheduled', 'InProgress', 'Completed')) OR p.work_order_id = $1
+            ORDER BY p.work_order_id, p.line_number
+            """,
+            r => new WorkOrderPartRequirement(r.GetInt64(0), r.GetInt32(1), r.GetString(2), Dec(r, 3), NText(r, 4)),
+            ct,
+            Long(workOrderId));
+
+    private const string OutageSql =
+        "SELECT outage_id, machine_code, starts_at, ends_at, reason, work_order_id, status, proposed_by, proposed_at, decided_by, decided_at, decision_reason, impact, downtime_id FROM maintenance.outage";
+
+    public Task<IReadOnlyList<OutageInfo>> ListOutagesAsync(bool includeDecided, CancellationToken ct) =>
+        ReadRowsAsync(
+            OutageSql + (includeDecided ? string.Empty : " WHERE status = 'Proposed'") + " ORDER BY CASE WHEN status = 'Proposed' THEN 0 ELSE 1 END, starts_at DESC, outage_id DESC LIMIT 500",
+            ReadOutage,
+            ct);
+
+    public async Task<OutageInfo?> FindOutageAsync(long outageId, CancellationToken ct) =>
+        (await ReadRowsAsync(OutageSql + " WHERE outage_id = $1", ReadOutage, ct, outageId)).SingleOrDefault();
+
+    public async Task<long> InsertOutageAsync(OutageInfo outage, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(outage);
+        await using var cmd = uow.Command(
+            "INSERT INTO maintenance.outage (machine_code, starts_at, ends_at, reason, work_order_id, status, proposed_by, proposed_at) VALUES ($1, $2, $3, $4, $5, 'Proposed', $6, $7) RETURNING outage_id",
+            outage.MachineCode, outage.StartsAt, outage.EndsAt, outage.Reason, Long(outage.WorkOrderId), outage.ProposedBy, outage.ProposedAt);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task DecideOutageAsync(OutageInfo outage, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(outage);
+        await using var cmd = uow.Command(
+            "UPDATE maintenance.outage SET status = $2, decided_by = $3, decided_at = $4, decision_reason = $5, impact = $6, downtime_id = $7 WHERE outage_id = $1",
+            outage.OutageId, outage.Status.ToString(), Text(outage.DecidedBy), Time(outage.DecidedAt), Text(outage.DecisionReason), Text(outage.Impact), Long(outage.DowntimeId));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static OutageInfo ReadOutage(NpgsqlDataReader r) => new(
+        r.GetInt64(0), r.GetString(1), r.GetFieldValue<DateTimeOffset>(2), r.GetFieldValue<DateTimeOffset>(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetInt64(5),
+        Enum.Parse<OutageStatus>(r.GetString(6)), r.GetString(7), r.GetFieldValue<DateTimeOffset>(8), NText(r, 9), NTime(r, 10), NText(r, 11), NText(r, 12), r.IsDBNull(13) ? null : r.GetInt64(13));
 
     public async Task SetPlannedWindowAsync(long downtimeId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
     {
@@ -204,10 +271,10 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
         NDec(r, 9), Dec(r, 10));
 
     private static WorkOrderInfo ReadWorkOrder(NpgsqlDataReader r) => new(
-        r.GetInt64(0), r.GetString(1), Enum.Parse<WorkOrderKind>(r.GetString(2)), r.IsDBNull(3) ? null : r.GetInt64(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5),
+        r.GetInt64(0), NText(r, 1), Enum.Parse<WorkOrderKind>(r.GetString(2)), r.IsDBNull(3) ? null : r.GetInt64(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5),
         r.GetFieldValue<string[]>(6), r.IsDBNull(7) ? null : r.GetFieldValue<DateOnly>(7), Enum.Parse<WorkOrderStatus>(r.GetString(8)), NTime(r, 9), NTime(r, 10), r.IsDBNull(11) ? null : r.GetInt64(11),
         r.GetString(12), r.GetFieldValue<DateTimeOffset>(13), NText(r, 14), NTime(r, 15), NText(r, 16), NTime(r, 17), NText(r, 18), NText(r, 19), NTime(r, 20), NText(r, 21),
-        NDec(r, 22), NTime(r, 23));
+        NDec(r, 22), NTime(r, 23), NText(r, 24), NText(r, 25), NText(r, 26), r.GetFieldValue<string[]>(27));
 
     private static decimal Dec(NpgsqlDataReader r, int i) => r.GetDecimal(i) / 1.000000000000000000000000000000000m;
 

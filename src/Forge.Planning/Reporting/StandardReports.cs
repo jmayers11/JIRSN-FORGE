@@ -231,7 +231,76 @@ internal static class StandardReports
                 ["status", "replacement"], "status", 3660,
                 "Records as they stand now; the period does not apply."),
             Permissions.EngineeringRead, null, ObsolescenceAsync),
+        new(
+            new("maintenance-readiness", "Maintenance readiness", "Maintenance",
+                "Every open maintenance work order and whether it can be done: asset, material (with approved alternates, maintenance-only ones included), procedure and technician, each checked on its own. Blocked work is not planned as capacity loss.",
+                [StatusFilter(["Ready", "Blocked"]), SearchFilter],
+                [C("workOrder", "Work order", ReportColumnKind.Text), C("kind", "Type", ReportColumnKind.Text), C("target", "Machine / asset", ReportColumnKind.Text), C("title", "Work", ReportColumnKind.Text),
+                 C("due", "Due", ReportColumnKind.Date), C("status", "Readiness", ReportColumnKind.Text), C("blocking", "Blocked by", ReportColumnKind.Text), C("detail", "Why", ReportColumnKind.Text)],
+                ["status", "blocking", "kind"], "status", 3660,
+                "Work orders as they stand now; the period does not apply. Stock on hand is not reserved."),
+            Permissions.MaintenanceRead, null, MaintenanceReadinessAsync),
+        new(
+            new("outages", "Planned outages", "Maintenance",
+                "Outages proposed in the period: who proposed them, who decided, and the schedule impact the approver saw. A proposed outage takes no capacity until someone else approves it.",
+                [StatusFilter(Enum.GetNames<OutageStatus>()), SearchFilter],
+                [C("outage", "Outage", ReportColumnKind.Text), C("machine", "Machine", ReportColumnKind.Text), C("starts", "Starts", ReportColumnKind.DateTime), C("ends", "Ends", ReportColumnKind.DateTime),
+                 C("workOrder", "Work order", ReportColumnKind.Text), C("status", "Status", ReportColumnKind.Text), C("proposedBy", "Proposed by", ReportColumnKind.Text),
+                 C("decidedBy", "Decided by", ReportColumnKind.Text), C("impact", "Impact seen", ReportColumnKind.Text)],
+                ["status", "machine"], "starts", 92,
+                "Outages proposed in the period."),
+            Permissions.MaintenanceRead, null, OutagesAsync),
     ];
+
+    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private static async Task<ReportBody> MaintenanceReadinessAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var orders = (await run.Uow.Store<IMaintenanceLookup>().ListWorkOrdersAsync(false, ct)).ToDictionary(o => o.WorkOrderId);
+        var rows = new List<ReportRow>();
+        foreach (var r in await MaintenancePlanningService.ReadinessAsync(run.Uow, new FixedTime(run.Now), null, ct))
+        {
+            var o = orders[r.WorkOrderId];
+            if (!ReportRun.Is(r.Status, p.Status) || !run.Matches(r.Target, o.Title, r.Blocking, o.Kind.ToString()))
+            {
+                continue;
+            }
+
+            var why = r.Dimensions.Where(d => d.Outcome != EvidenceOutcome.Pass).Select(d => d.Detail).ToList();
+            List<string> trace = ["work-order:" + r.WorkOrderId.ToString(CultureInfo.InvariantCulture)];
+            if (o.AssetCode is { } asset)
+            {
+                trace.Add("asset:" + asset);
+            }
+
+            rows.Add(new ReportRow([r.WorkOrderId.ToString(CultureInfo.InvariantCulture), o.Kind.ToString(), r.Target, o.Title, o.DueDate, r.Status, r.Blocking, why.Count == 0 ? r.Summary : string.Join(" ", why)], trace));
+        }
+
+        return new ReportBody(rows, [$"{rows.Count} open work order(s): {rows.Count(x => x.Cells[5] is "Ready")} ready, {rows.Count(x => x.Cells[5] is "Blocked")} blocked."], ["Work orders", "Required parts", "Stock", "Alternates", "Documents", "Qualifications"]);
+    }
+
+    private static async Task<ReportBody> OutagesAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var x in (await run.Uow.Store<IMaintenanceLookup>().ListOutagesAsync(true, ct)).Where(x => run.InPeriod(x.ProposedAt)).OrderBy(x => x.StartsAt))
+        {
+            if (!ReportRun.Is(x.Status.ToString(), p.Status) || !run.Matches(x.MachineCode, x.Reason, x.Impact))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [x.OutageId.ToString(CultureInfo.InvariantCulture), x.MachineCode, x.StartsAt, x.EndsAt, x.WorkOrderId?.ToString(CultureInfo.InvariantCulture), x.Status.ToString(), x.ProposedBy, x.DecidedBy, x.Impact],
+                ["machine:" + x.MachineCode]));
+        }
+
+        return new ReportBody(rows, [$"{rows.Count} outage(s); {rows.Count(x => x.Cells[5] is "Proposed")} waiting for a decision."], ["Outages"]);
+    }
 
     private static async Task<ReportBody> AssetsAsync(ReportRun run, CancellationToken ct)
     {

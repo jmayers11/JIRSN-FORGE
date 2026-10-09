@@ -1,4 +1,6 @@
 using System.Globalization;
+using Forge.Competency.Contracts;
+using Forge.Engineering.Contracts;
 using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Events;
@@ -39,7 +41,8 @@ public sealed partial class MaintenanceService
 
             var store = uow.Store<IMaintenanceStore>();
             var planId = await store.InsertPlanAsync(plan, now, context.Actor, ct);
-            var first = Preventive(plan with { PlanId = planId }, plan.IntervalDays is null ? null : c.FirstDue, plan.IntervalRunHours, now, context.Actor, now);
+            var first = Preventive(plan with { PlanId = planId }, plan.IntervalDays is null ? null : c.FirstDue, plan.IntervalRunHours, now, context.Actor, now)
+                with { AssetCode = await AssetOfMachineAsync(uow, machine, ct) };
             var orderId = await store.InsertWorkOrderAsync(first, ct);
             var id = Key(planId);
             return new CommandOutcome(
@@ -79,7 +82,7 @@ public sealed partial class MaintenanceService
         ArgumentNullException.ThrowIfNull(c);
         var id = Key(c.PlanId);
         var spec = new CommandSpec(SourceContext, nameof(RetirePmPlan), Permissions.MaintenanceProgram, ResourceRef.Of(PlanEntity, id), ReasonRequired: true);
-        return pipeline.ExecuteAsync(spec, c, context, async (uow, _) =>
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var store = uow.Store<IMaintenanceStore>();
             var plan = await store.FindPlanAsync(c.PlanId, ct) ?? throw new CommandRejectedException("plan_not_found", $"PM plan {id} does not exist.");
@@ -96,6 +99,7 @@ public sealed partial class MaintenanceService
                 }
 
                 await ReleaseWindowAsync(store, open, ct);
+                await WithdrawPendingAsync(uow, open, context, now, $"PM plan retired: {context.Reason}", ct);
                 await store.UpdateWorkOrderAsync(open with { Status = WorkOrderStatus.Cancelled, CancelReason = $"PM plan retired: {context.Reason}" }, ct);
             }
 
@@ -107,52 +111,118 @@ public sealed partial class MaintenanceService
     public Task<CommandResult> RaiseWorkOrderAsync(RaiseWorkOrder c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        var machine = BusinessCode.Require(c.MachineCode, "Machine");
         var spec = new CommandSpec(SourceContext, nameof(RaiseWorkOrder), Permissions.DowntimeReport, ResourceRef.Of(WorkOrderEntity));
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
-            await RequireMachineAsync(uow.Store<IResourcesLookup>(), machine, ct);
-            var order = new WorkOrderInfo(0, machine, WorkOrderKind.Corrective, null, BusinessCode.RequireName(c.Title, "Work order"), Shorten(c.Description, 2000), [], c.DueDate,
-                WorkOrderStatus.Open, null, null, null, context.Actor, now, null, null, null, null, null, null, null, null);
+            if (c.Kind == WorkOrderKind.Preventive)
+            {
+                throw new CommandRejectedException("preventive_from_plan", "Preventive work orders come from a PM plan; raise a different type of work.");
+            }
+
+            var (machine, asset) = await TargetAsync(uow, c.MachineCode, c.AssetCode, ct);
+            var order = new WorkOrderInfo(0, machine, c.Kind, null, BusinessCode.RequireName(c.Title, "Work order"), Shorten(c.Description, 2000), [], c.DueDate,
+                WorkOrderStatus.Open, null, null, null, context.Actor, now, null, null, null, null, null, null, null, null, AssetCode: asset);
             var orderId = await uow.Store<IMaintenanceStore>().InsertWorkOrderAsync(order, ct);
-            return Outcome(context, order with { WorkOrderId = orderId }, null, $"Corrective work order {orderId} raised for {machine}, due {c.DueDate:yyyy-MM-dd}.");
+            var what = c.Kind == WorkOrderKind.Emergency ? "Emergency work order" : $"{c.Kind} work order";
+            return Outcome(context, order with { WorkOrderId = orderId }, null, $"{what} {orderId} raised for {order.Target}, due {c.DueDate:yyyy-MM-dd}."
+                + (c.Kind == WorkOrderKind.Emergency && machine is not null ? $" Starting it takes {machine} out of production at once." : string.Empty));
         }, ct);
     }
 
+    /// <summary>
+    /// Records what a work order needs (V2.9): the asset, the procedure revision to follow, the qualifications
+    /// whoever does it must hold, and the parts (with where each is installed). Changed only before work starts.
+    /// </summary>
+    public Task<CommandResult> SetRequirementsAsync(SetWorkOrderRequirements c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        return WorkOrderAsync(nameof(SetWorkOrderRequirements), c.WorkOrderId, c, context, Permissions.MaintenancePlan, false, async (uow, order, _) =>
+        {
+            if (order.Status is not (WorkOrderStatus.Open or WorkOrderStatus.Scheduled))
+            {
+                throw new CommandRejectedException("work_started", $"Work order {order.WorkOrderId} is {order.Status}; what it needs is kept as it was when work started.");
+            }
+
+            string? asset = order.AssetCode;
+            if (!string.IsNullOrWhiteSpace(c.AssetCode))
+            {
+                asset = (await TargetAsync(uow, order.MachineCode, c.AssetCode, ct)).Asset;
+            }
+
+            var (document, revision) = await ProcedureAsync(uow, c.ProcedureDocument, c.ProcedureRevision, ct);
+            var qualifications = await QualificationsAsync(uow, c.Qualifications, ct);
+            var parts = await PartsAsync(uow, order.WorkOrderId, c.Parts, ct);
+            if (parts.Any(p => p.Position is not null) && asset is null)
+            {
+                throw new CommandRejectedException("position_needs_asset", "A position is a place on an asset; name the asset first.");
+            }
+
+            await uow.Store<IMaintenanceStore>().ReplaceRequiredPartsAsync(order.WorkOrderId, parts, ct);
+            var next = order with { AssetCode = asset, ProcedureDocument = document, ProcedureRevision = revision, RequiredQualifications = qualifications };
+            var summary = new List<string>();
+            if (asset is not null)
+            {
+                summary.Add($"asset {asset}");
+            }
+
+            if (document is not null)
+            {
+                summary.Add($"procedure {document} rev {revision}");
+            }
+
+            if (qualifications.Count > 0)
+            {
+                summary.Add($"qualifications {string.Join(", ", qualifications)}");
+            }
+
+            summary.Add(parts.Count == 0 ? "no parts" : $"{parts.Count} part line(s)");
+            return (next, $"needs {string.Join("; ", summary)}");
+        }, ct);
+    }
+
+    /// <summary>
+    /// Plans when the work is done. A repair of a machine that is already down is scheduled at once; any other
+    /// work proposes an outage (V2.9), and the work is scheduled when a different person approves it.
+    /// Whether the work is ready (parts, technician, procedure) is checked by the caller before this.
+    /// </summary>
     public Task<CommandResult> ScheduleWorkOrderAsync(ScheduleWorkOrder c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        return WorkOrderAsync(nameof(ScheduleWorkOrder), c.WorkOrderId, c, context, Permissions.MaintenancePlan, false, async (uow, order, now) =>
+        var id = Key(c.WorkOrderId);
+        var spec = new CommandSpec(SourceContext, nameof(ScheduleWorkOrder), Permissions.MaintenancePlan, ResourceRef.Of(WorkOrderEntity, id));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
+            var order = await uow.Store<IMaintenanceLookup>().FindWorkOrderAsync(c.WorkOrderId, ct)
+                ?? throw new CommandRejectedException("work_order_not_found", $"Work order {id} does not exist.");
             if (order.Status is not (WorkOrderStatus.Open or WorkOrderStatus.Scheduled))
             {
                 throw new CommandRejectedException("not_schedulable", $"Work order {order.WorkOrderId} is {order.Status}.");
             }
 
-            var start = c.StartsAt.ToUniversalTime();
-            var end = c.EndsAt.ToUniversalTime();
-            if (end <= start || end <= now || end - start > TimeSpan.FromDays(30))
+            var (start, end) = Window(c.StartsAt, c.EndsAt, now);
+            var store = uow.Store<IMaintenanceStore>();
+            if (order.MachineCode is not { } machine)
             {
-                throw new CommandRejectedException("invalid_window", "The window must end after it starts, end in the future, and last at most 30 days.");
+                // Work on a building or utility takes no production capacity.
+                var planned = order with { Status = WorkOrderStatus.Scheduled, ScheduledStart = start, ScheduledEnd = end };
+                await store.UpdateWorkOrderAsync(planned, ct);
+                return Outcome(context, planned, order, $"Work order {id} scheduled {start:u} to {end:u}.");
             }
 
-            var store = uow.Store<IMaintenanceStore>();
-            long? downtime = order.DowntimeId;
             if (await RepairsOutageAsync(store, order, ct))
             {
                 // The machine is already down; the window only says when the repair is planned.
-            }
-            else if (downtime is { } existing)
-            {
-                await store.SetPlannedWindowAsync(existing, start, end, ct);
-            }
-            else
-            {
-                downtime = await store.InsertDowntimeAsync(order.MachineCode, DowntimeKind.Planned, start, end, $"Work order {order.WorkOrderId}: {order.Title}", now, context.Actor, ct);
+                var planned = order with { Status = WorkOrderStatus.Scheduled, ScheduledStart = start, ScheduledEnd = end };
+                await store.UpdateWorkOrderAsync(planned, ct);
+                return Outcome(context, planned, order, $"Work order {id} scheduled {start:u} to {end:u}; {machine} is already down.");
             }
 
-            return (order with { Status = WorkOrderStatus.Scheduled, ScheduledStart = start, ScheduledEnd = end, DowntimeId = downtime },
-                $"scheduled {start:u} to {end:u}; {order.MachineCode} is unavailable to production then");
+            if ((await uow.Store<IMaintenanceLookup>().ListOutagesAsync(false, ct)).FirstOrDefault(o => o.WorkOrderId == order.WorkOrderId) is { } pending)
+            {
+                throw new CommandRejectedException("outage_pending", $"Outage {pending.OutageId} for work order {id} is waiting for approval; withdraw it to propose another window.");
+            }
+
+            return await ProposeAsync(uow, context, machine, start, end, $"Work order {order.WorkOrderId}: {order.Title}", order.WorkOrderId, now, ct);
         }, ct);
     }
 
@@ -169,6 +239,12 @@ public sealed partial class MaintenanceService
             // Work on a machine takes it out of production from now until the planned end (or the plan's duration).
             var store = uow.Store<IMaintenanceStore>();
             var downtime = order.DowntimeId;
+            if (order.MachineCode is null)
+            {
+                return (order with { Status = WorkOrderStatus.InProgress, StartedBy = context.Actor, StartedAt = now }, "started");
+            }
+
+            await WithdrawPendingAsync(uow, order, context, now, "Work started", ct);
             if (!await RepairsOutageAsync(store, order, ct))
             {
                 var duration = order.PlanId is { } planId && await store.FindPlanAsync(planId, ct) is { } plan ? TimeSpan.FromMinutes(plan.DurationMinutes) : TimeSpan.FromHours(2);
@@ -253,7 +329,7 @@ public sealed partial class MaintenanceService
                 var doneOn = await LocalDateAsync(uow, doneAt, ct);
                 var next = Preventive(plan, plan.IntervalDays is { } days ? doneOn.AddDays(days) : null, plan.IntervalRunHours, doneAt, context.Actor, now);
                 await store.UpdateWorkOrderAsync(order with { Status = WorkOrderStatus.Closed, ClosedBy = context.Actor, ClosedAt = now }, ct);
-                var nextId = await store.InsertWorkOrderAsync(next, ct);
+                var nextId = await InsertNextAsync(uow, order, next, ct);
                 message += $"; next PM is work order {nextId}, {Due(next)}";
             }
 
@@ -278,6 +354,7 @@ public sealed partial class MaintenanceService
             }
 
             await ReleaseWindowAsync(store, order, ct);
+            await WithdrawPendingAsync(uow, order, context, now, $"Work order cancelled: {context.Reason}", ct);
             var message = "cancelled";
             if (order.PlanId is { } planId && await store.FindPlanAsync(planId, ct) is { Active: true } plan)
             {
@@ -289,7 +366,7 @@ public sealed partial class MaintenanceService
                 var next = plan.IntervalRunHours is { } hours
                     ? Preventive(plan, nextDue, (order.DueRunHours ?? 0) + hours, order.RunHoursFrom ?? now, context.Actor, now)
                     : Preventive(plan, nextDue, null, now, context.Actor, now);
-                var nextId = await store.InsertWorkOrderAsync(next, ct);
+                var nextId = await InsertNextAsync(uow, order, next, ct);
                 message += $"; next PM is work order {nextId}, {Due(next)}";
             }
 
@@ -326,13 +403,13 @@ public sealed partial class MaintenanceService
         var id = Key(order.WorkOrderId);
         return new CommandOutcome(
             CommandResult.Ok(id, message),
-            [pipeline.Event(new WorkOrderChanged(order.WorkOrderId, order.MachineCode, order.Kind.ToString(), order.Status.ToString()), context, SourceContext, WorkOrderEntity, id)],
+            [pipeline.Event(new WorkOrderChanged(order.WorkOrderId, order.Target, order.Kind.ToString(), order.Status.ToString()), context, SourceContext, WorkOrderEntity, id)],
             new AuditChange(WorkOrderEntity, id, before is null ? null : CanonicalJson.Serialize(before), CanonicalJson.Serialize(order)));
     }
 
     /// <summary>A corrective order raised by a breakdown repairs an outage that is still open.</summary>
     private static async Task<bool> RepairsOutageAsync(IMaintenanceStore store, WorkOrderInfo order, CancellationToken ct) =>
-        order.Kind == WorkOrderKind.Corrective && order.DowntimeId is { } id && await store.FindOpenOutageAsync(order.MachineCode, ct) is { } open && open.Id == id;
+        order.Kind == WorkOrderKind.Corrective && order.DowntimeId is { } id && order.MachineCode is { } machine && await store.FindOpenOutageAsync(machine, ct) is { } open && open.Id == id;
 
     private static async Task ReleaseWindowAsync(IMaintenanceStore store, WorkOrderInfo order, CancellationToken ct)
     {
@@ -391,6 +468,136 @@ public sealed partial class MaintenanceService
         order.DueDate is { } date ? date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null,
         order.DueRunHours is { } hours ? $"after {hours:0.##} run hours" : null,
     }.Where(x => x is not null));
+
+    // ------------------------------------------------------------------ V2.9 helpers
+
+    /// <summary>The machine and asset a work order is on: either may be given; they must agree.</summary>
+    private static async Task<(string? Machine, string? Asset)> TargetAsync(IKernelUnitOfWork uow, string? rawMachine, string? rawAsset, CancellationToken ct)
+    {
+        string? machine = string.IsNullOrWhiteSpace(rawMachine) ? null : BusinessCode.Require(rawMachine, "Machine");
+        if (machine is not null)
+        {
+            await RequireMachineAsync(uow.Store<IResourcesLookup>(), machine, ct);
+        }
+
+        if (string.IsNullOrWhiteSpace(rawAsset))
+        {
+            return machine is null
+                ? throw new CommandRejectedException("target_required", "Name the machine or the asset the work is on.")
+                : (machine, await AssetOfMachineAsync(uow, machine, ct));
+        }
+
+        var code = BusinessCode.Require(rawAsset, "Asset");
+        var asset = await uow.Store<IAssetLookup>().FindAssetAsync(code, ct) ?? throw new CommandRejectedException("asset_not_found", $"Asset {code} does not exist.");
+        if (asset.Status == AssetStatus.Decommissioned)
+        {
+            throw new CommandRejectedException("asset_decommissioned", $"Asset {code} is decommissioned.");
+        }
+
+        if (machine is not null && asset.MachineCode != machine)
+        {
+            throw new CommandRejectedException("asset_machine_mismatch", $"Asset {code} is {(asset.MachineCode is null ? "not a machine" : "machine " + asset.MachineCode)}, not {machine}.");
+        }
+
+        return (asset.MachineCode, code);
+    }
+
+    private static async Task<string?> AssetOfMachineAsync(IKernelUnitOfWork uow, string machine, CancellationToken ct) =>
+        (await uow.Store<IAssetLookup>().ListAssetsAsync(ct)).FirstOrDefault(a => a.MachineCode == machine)?.AssetCode;
+
+    private static async Task<(string? Document, string? Revision)> ProcedureAsync(IKernelUnitOfWork uow, string? rawDocument, string? rawRevision, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(rawDocument))
+        {
+            return (null, null);
+        }
+
+        var number = rawDocument.Trim().ToUpperInvariant();
+        var document = await uow.Store<IDocumentLookup>().FindDocumentAsync(number, ct) ?? throw new CommandRejectedException("document_not_found", $"Document {number} does not exist.");
+        if (document.Type is not (DocumentType.Procedure or DocumentType.WorkInstruction or DocumentType.Specification or DocumentType.Standard) || document.Authority == DocumentAuthority.Reference)
+        {
+            throw new CommandRejectedException("not_a_procedure", $"{number} is a {document.Authority} {document.Type}; a work order follows a controlled procedure, work instruction, specification or standard.");
+        }
+
+        var revision = string.IsNullOrWhiteSpace(rawRevision) ? document.Current?.Revision : rawRevision.Trim().ToUpperInvariant();
+        if (revision is null || document.Revisions.All(r => r.Revision != revision))
+        {
+            throw new CommandRejectedException("revision_not_found", revision is null ? $"{number} has no released revision; name the revision." : $"{number} has no revision {revision}.");
+        }
+
+        return (number, revision);
+    }
+
+    private static async Task<IReadOnlyList<string>> QualificationsAsync(IKernelUnitOfWork uow, IReadOnlyList<string>? raw, CancellationToken ct)
+    {
+        var codes = (raw ?? []).Where(q => !string.IsNullOrWhiteSpace(q)).Select(q => q.Trim().ToUpperInvariant()).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        if (codes.Count > 20)
+        {
+            throw new CommandRejectedException("too_many_qualifications", "At most 20 qualifications.");
+        }
+
+        var competency = uow.Store<ICompetencyLookup>();
+        foreach (var code in codes)
+        {
+            if (!await competency.QualificationTypeExistsAsync(code, ct))
+            {
+                throw new CommandRejectedException("unknown_qualification", $"Qualification {code} does not exist.");
+            }
+        }
+
+        return codes;
+    }
+
+    private static async Task<IReadOnlyList<WorkOrderPartRequirement>> PartsAsync(IKernelUnitOfWork uow, long workOrderId, IReadOnlyList<RequiredPart>? raw, CancellationToken ct)
+    {
+        var list = new List<WorkOrderPartRequirement>();
+        var engineering = uow.Store<IEngineeringLookup>();
+        foreach (var part in raw ?? [])
+        {
+            var number = BusinessCode.Require(part.PartNumber, "Part");
+            if (await engineering.FindItemAsync(number, ct) is null)
+            {
+                throw new CommandRejectedException("unknown_part", $"Part {number} does not exist.");
+            }
+
+            if (part.Quantity <= 0 || part.Quantity > 100_000)
+            {
+                throw new CommandRejectedException("invalid_quantity", $"{number}: quantity must be above zero.");
+            }
+
+            if (list.Any(l => l.PartNumber == number))
+            {
+                throw new CommandRejectedException("duplicate_part", $"{number} is listed twice; give one line with the total.");
+            }
+
+            var position = string.IsNullOrWhiteSpace(part.Position) ? null : part.Position.Trim();
+            list.Add(new WorkOrderPartRequirement(workOrderId, list.Count + 1, number, part.Quantity, position is { Length: > 100 } ? position[..100] : position));
+        }
+
+        return list.Count > 100 ? throw new CommandRejectedException("too_many_parts", "At most 100 part lines.") : list;
+    }
+
+    /// <summary>The next PM keeps what this one needed: asset, procedure, qualifications and parts.</summary>
+    private static async Task<long> InsertNextAsync(IKernelUnitOfWork uow, WorkOrderInfo done, WorkOrderInfo next, CancellationToken ct)
+    {
+        var store = uow.Store<IMaintenanceStore>();
+        var id = await store.InsertWorkOrderAsync(next with { AssetCode = done.AssetCode, ProcedureDocument = done.ProcedureDocument, ProcedureRevision = done.ProcedureRevision, RequiredQualifications = done.Qualifications }, ct);
+        var parts = await uow.Store<IMaintenanceLookup>().ListRequiredPartsAsync(done.WorkOrderId, ct);
+        if (parts.Count > 0)
+        {
+            await store.ReplaceRequiredPartsAsync(id, parts.Select(p => p with { WorkOrderId = id }).ToList(), ct);
+        }
+
+        return id;
+    }
+
+    private static async Task WithdrawPendingAsync(IKernelUnitOfWork uow, WorkOrderInfo order, CommandContext context, DateTimeOffset now, string reason, CancellationToken ct)
+    {
+        if ((await uow.Store<IMaintenanceLookup>().ListOutagesAsync(false, ct)).FirstOrDefault(o => o.WorkOrderId == order.WorkOrderId) is { } pending)
+        {
+            await uow.Store<IMaintenanceStore>().DecideOutageAsync(pending with { Status = OutageStatus.Withdrawn, DecidedBy = context.Actor, DecidedAt = now, DecisionReason = reason }, ct);
+        }
+    }
 
     private static string Key(long value) => value.ToString(CultureInfo.InvariantCulture);
 

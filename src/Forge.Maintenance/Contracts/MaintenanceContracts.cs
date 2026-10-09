@@ -48,6 +48,21 @@ public enum WorkOrderKind
 {
     Preventive,
     Corrective,
+
+    /// <summary>Corrective work that cannot wait (V2.9): raised and started at once.</summary>
+    Emergency,
+
+    /// <summary>Raised from a condition reading or trend before a failure (V2.9).</summary>
+    Predictive,
+
+    /// <summary>Calibration of test or measuring equipment (V2.9).</summary>
+    Calibration,
+
+    /// <summary>An inspection with a checklist and findings, no repair (V2.9).</summary>
+    Inspection,
+
+    /// <summary>Work on a building, utility or other non-production asset (V2.9).</summary>
+    Facility,
 }
 
 public enum WorkOrderStatus
@@ -63,9 +78,13 @@ public enum WorkOrderStatus
     Cancelled,
 }
 
+/// <param name="MachineCode">The machine worked on; empty for work on an asset that is not a machine (a building, a utility).</param>
+/// <param name="AssetCode">The asset worked on (V2.9); for a machine, its asset when it has one.</param>
+/// <param name="ProcedureDocument">The controlled procedure the work follows, with the revision it must use (V2.9).</param>
+/// <param name="RequiredQualifications">Qualifications whoever does the work must hold (V2.9).</param>
 public sealed record WorkOrderInfo(
     long WorkOrderId,
-    string MachineCode,
+    string? MachineCode,
     WorkOrderKind Kind,
     long? PlanId,
     string Title,
@@ -87,8 +106,17 @@ public sealed record WorkOrderInfo(
     DateTimeOffset? ClosedAt,
     string? CancelReason,
     decimal? DueRunHours = null,
-    DateTimeOffset? RunHoursFrom = null)
+    DateTimeOffset? RunHoursFrom = null,
+    string? AssetCode = null,
+    string? ProcedureDocument = null,
+    string? ProcedureRevision = null,
+    IReadOnlyList<string>? RequiredQualifications = null)
 {
+    public IReadOnlyList<string> Qualifications => RequiredQualifications ?? [];
+
+    /// <summary>What the work is on, for people: the machine, else the asset.</summary>
+    public string Target => MachineCode ?? AssetCode ?? "(none)";
+
     public bool IsOpen => Status is WorkOrderStatus.Open or WorkOrderStatus.Scheduled or WorkOrderStatus.InProgress or WorkOrderStatus.Completed;
 }
 
@@ -104,6 +132,41 @@ public interface IMachineUsageLookup
     Task<DateTimeOffset?> ReachedAsync(string machineCode, DateTimeOffset from, decimal hours, DateTimeOffset asOf, CancellationToken ct);
 }
 
+/// <summary>
+/// A part a work order needs (V2.9). <see cref="Position"/> names where it is installed on the asset; issuing
+/// it (or an approved alternate) to the work order then records the installation.
+/// </summary>
+public sealed record WorkOrderPartRequirement(long WorkOrderId, int LineNumber, string PartNumber, decimal Quantity, string? Position);
+
+public enum OutageStatus
+{
+    /// <summary>Asked for; not capacity loss until someone else approves it.</summary>
+    Proposed,
+    Approved,
+    Rejected,
+    Withdrawn,
+}
+
+/// <summary>
+/// A planned outage (V2.9): proposed by one person, approved by another after seeing what it does to the
+/// schedule (<see cref="Impact"/> is the preview the approver saw). Only an approved outage becomes downtime.
+/// </summary>
+public sealed record OutageInfo(
+    long OutageId,
+    string MachineCode,
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    string Reason,
+    long? WorkOrderId,
+    OutageStatus Status,
+    string ProposedBy,
+    DateTimeOffset ProposedAt,
+    string? DecidedBy,
+    DateTimeOffset? DecidedAt,
+    string? DecisionReason,
+    string? Impact,
+    long? DowntimeId);
+
 public interface IMaintenanceLookup
 {
     /// <summary>Downtime overlapping [from, to), including open outages, sorted by machine then start.</summary>
@@ -115,6 +178,14 @@ public interface IMaintenanceLookup
     Task<IReadOnlyList<WorkOrderInfo>> ListWorkOrdersAsync(bool includeClosed, CancellationToken ct);
 
     Task<WorkOrderInfo?> FindWorkOrderAsync(long workOrderId, CancellationToken ct);
+
+    /// <summary>Required parts of one work order, or of every open one.</summary>
+    Task<IReadOnlyList<WorkOrderPartRequirement>> ListRequiredPartsAsync(long? workOrderId, CancellationToken ct);
+
+    /// <summary>Outages, proposed ones first; decided ones only when asked.</summary>
+    Task<IReadOnlyList<OutageInfo>> ListOutagesAsync(bool includeDecided, CancellationToken ct);
+
+    Task<OutageInfo?> FindOutageAsync(long outageId, CancellationToken ct);
 }
 
 public enum AssetType

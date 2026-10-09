@@ -48,6 +48,13 @@ public sealed record InstallComponent(string AssetCode, string PartNumber, strin
 
 public sealed record RemoveComponent(long ComponentId, long? WorkOrderId);
 
+/// <summary>
+/// A part issued to a work order whose required-part line names a position (V2.9): record it as installed
+/// there, replacing what earlier work installed at that position. <paramref name="AlternateFor"/> is the
+/// required part an approved alternate was issued in place of.
+/// </summary>
+public sealed record RecordIssuedInstall(long TransactionId, long WorkOrderId, string PartNumber, decimal Quantity, string? Revision, string? AlternateFor, long? AlternateId);
+
 public sealed record AssetChanged(string AssetCode, string Change, string Status) : IDomainEvent
 {
     public static string EventType => nameof(AssetChanged);
@@ -251,6 +258,7 @@ public sealed class AssetService(CommandPipeline pipeline)
             await uow.Store<IAssetStore>().InsertEventAsync(Event(asset, "ComponentInstalled", asset.Status, detail, context, now), ct);
             return ((AssetInfo?)null, (AssetEvent?)null, $"Asset {asset.AssetCode}: {detail} (component {id}).",
                 pipeline.Event(new AssetComponentChanged(asset.AssetCode, id, part, c.Quantity, "Installed", workOrder), context, SourceContext, Entity, asset.AssetCode),
+                id.ToString(CultureInfo.InvariantCulture),
                 CanonicalJson.Serialize(component with { ComponentId = id }));
         }, ct);
     }
@@ -290,6 +298,50 @@ public sealed class AssetService(CommandPipeline pipeline)
         }, ct);
     }
 
+    /// <summary>
+    /// Records a part issued to a work order as installed on its asset (V2.9), when the work order's required
+    /// part line names a position. Runs as the installation system actor, once per issue.
+    /// </summary>
+    public Task<CommandResult> RecordIssuedInstallAsync(RecordIssuedInstall c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var key = c.TransactionId.ToString(CultureInfo.InvariantCulture);
+        var spec = new CommandSpec(SourceContext, nameof(RecordIssuedInstall), Permissions.MaintenanceWork, ResourceRef.Of("AssetComponent", key));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var lookup = uow.Store<IMaintenanceLookup>();
+            var order = await lookup.FindWorkOrderAsync(c.WorkOrderId, ct);
+            var needed = c.AlternateFor ?? c.PartNumber;
+            var line = (await lookup.ListRequiredPartsAsync(c.WorkOrderId, ct)).FirstOrDefault(p => p.PartNumber == needed);
+            var assets = uow.Store<IAssetLookup>();
+            var asset = order?.AssetCode is { } code ? await assets.FindAssetAsync(code, ct) : null;
+            if (order is null || line?.Position is not { } position || asset is null || asset.Status == AssetStatus.Decommissioned)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(key, "Nothing to install: the work order names no position for this part on an asset in service."));
+            }
+
+            var store = uow.Store<IAssetStore>();
+            var replaced = (await assets.ListComponentsAsync(asset.AssetCode, null, false, ct))
+                .Where(x => string.Equals(x.Position, position, StringComparison.OrdinalIgnoreCase) && x.InstalledByWorkOrder != order.WorkOrderId).ToList();
+            foreach (var old in replaced)
+            {
+                await store.RemoveComponentAsync(old.ComponentId, order.WorkOrderId, context.Actor, now, $"Replaced by work order {order.WorkOrderId}", ct);
+                await store.InsertEventAsync(Event(asset, "ComponentRemoved", asset.Status, $"{Q(old.Quantity)} {old.PartNumber} removed from {old.Position} by work order {order.WorkOrderId} (replaced)", context, now), ct);
+            }
+
+            var component = new AssetComponentInfo(0, asset.AssetCode, c.PartNumber, c.Revision, position, c.Quantity, order.WorkOrderId, context.Actor, now, null, null, null, null);
+            var id = await store.InsertComponentAsync(component, ct);
+            var detail = $"{Q(c.Quantity)} {c.PartNumber}{(c.Revision is null ? string.Empty : " rev " + c.Revision)} installed at {position} by work order {order.WorkOrderId}"
+                + (c.AlternateFor is null ? string.Empty : $", in place of {c.AlternateFor} (approved alternate {c.AlternateId})")
+                + $" from issue {key}";
+            await store.InsertEventAsync(Event(asset, "ComponentInstalled", asset.Status, detail, context, now), ct);
+            return new CommandOutcome(
+                CommandResult.Ok(id.ToString(CultureInfo.InvariantCulture), $"Asset {asset.AssetCode}: {detail}."),
+                [pipeline.Event(new AssetComponentChanged(asset.AssetCode, id, c.PartNumber, c.Quantity, "Installed", order.WorkOrderId), context, SourceContext, Entity, asset.AssetCode)],
+                new AuditChange("AssetComponent", id.ToString(CultureInfo.InvariantCulture), null, CanonicalJson.Serialize(component with { ComponentId = id })));
+        }, ct);
+    }
+
     /// <summary>One command on one asset: load it, apply the change, write the asset and its history line together.</summary>
     private Task<CommandResult> AssetCommandAsync<TCommand>(
         string type,
@@ -303,7 +355,7 @@ public sealed class AssetService(CommandPipeline pipeline)
         AssetCoreAsync(type, rawCode, command, permission, reasonRequired, context, async (uow, asset, now) =>
         {
             var (updated, e, message) = await change(uow, asset, now);
-            return ((AssetInfo?)updated, e, message, (EventEnvelope?)null, (string?)null);
+            return ((AssetInfo?)updated, e, message, (EventEnvelope?)null, (string?)null, (string?)null);
         }, ct);
 
     private Task<CommandResult> AssetCoreAsync<TCommand>(
@@ -313,7 +365,7 @@ public sealed class AssetService(CommandPipeline pipeline)
         string permission,
         bool reasonRequired,
         CommandContext context,
-        Func<IKernelUnitOfWork, AssetInfo, DateTimeOffset, Task<(AssetInfo? Updated, AssetEvent? Event, string Message, EventEnvelope? Extra, string? AuditAfter)>> change,
+        Func<IKernelUnitOfWork, AssetInfo, DateTimeOffset, Task<(AssetInfo? Updated, AssetEvent? Event, string Message, EventEnvelope? Extra, string? AuditEntityId, string? AuditAfter)>> change,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -329,10 +381,10 @@ public sealed class AssetService(CommandPipeline pipeline)
                 throw new CommandRejectedException("asset_decommissioned", $"Asset {code} is decommissioned; its record stays as it was.");
             }
 
-            var (updated, e, message, extra, auditAfter) = await change(uow, asset, now);
+            var (updated, e, message, extra, auditEntityId, auditAfter) = await change(uow, asset, now);
             if (extra is not null)
             {
-                return new CommandOutcome(CommandResult.Ok(code, message), [extra], new AuditChange("AssetComponent", code, null, auditAfter));
+                return new CommandOutcome(CommandResult.Ok(code, message), [extra], new AuditChange("AssetComponent", auditEntityId ?? code, null, auditAfter));
             }
 
             if (e is null || updated is null)
@@ -404,22 +456,18 @@ public sealed class AssetService(CommandPipeline pipeline)
             throw new CommandRejectedException("work_order_not_open", $"Work order {id} is {order.Status}.");
         }
 
-        return asset.MachineCode is { } machine && order.MachineCode == machine
+        return order.AssetCode == asset.AssetCode || (asset.MachineCode is { } machine && order.MachineCode == machine)
             ? id
-            : throw new CommandRejectedException("work_order_not_for_asset", $"Work order {id} is for machine {order.MachineCode}, not asset {asset.AssetCode}{(asset.MachineCode is null ? " (which has no machine)" : string.Empty)}.");
+            : throw new CommandRejectedException("work_order_not_for_asset", $"Work order {id} is for {order.Target}, not asset {asset.AssetCode}.");
     }
 
     private static async Task RequireNoOpenWorkAsync(IKernelUnitOfWork uow, AssetInfo asset, CancellationToken ct)
     {
-        if (asset.MachineCode is not { } machine)
-        {
-            return;
-        }
-
-        var open = (await uow.Store<IMaintenanceLookup>().ListWorkOrdersAsync(false, ct)).Where(w => w.MachineCode == machine && w.IsOpen).Select(w => w.WorkOrderId).ToList();
+        var machine = asset.MachineCode;
+        var open = (await uow.Store<IMaintenanceLookup>().ListWorkOrdersAsync(false, ct)).Where(w => ((machine is not null && w.MachineCode == machine) || w.AssetCode == asset.AssetCode) && w.IsOpen).Select(w => w.WorkOrderId).ToList();
         if (open.Count > 0)
         {
-            throw new CommandRejectedException("open_work_orders", $"Machine {machine} has open work orders ({string.Join(", ", open)}); finish or cancel them first.");
+            throw new CommandRejectedException("open_work_orders", $"Asset {asset.AssetCode} has open work orders ({string.Join(", ", open)}); finish or cancel them first.");
         }
     }
 

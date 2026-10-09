@@ -64,7 +64,8 @@ async function main() {
       const alternates = !(await get('eng', '/api/engineering/alternates')).length;
       const requisitions = !(await get('planner', '/api/procurement/requisitions?open=false')).length;
       const assets = !(await get('mp', '/api/maintenance/assets')).length;
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const outages = !(await get('mp', '/api/maintenance/outages?includeDecided=true')).length;
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -101,6 +102,10 @@ async function main() {
         console.log('Adding sample assets, MRO levels and an obsolescence record.');
         await seedAssets();
       }
+      if (outages) {
+        console.log('Adding sample maintenance readiness and a proposed outage.');
+        await seedMaintenanceReadiness();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -122,6 +127,7 @@ async function main() {
     await seedAlternates();
     await seedRequisitions();
     await seedAssets();
+    await seedMaintenanceReadiness();
     return finish();
   }
 
@@ -270,6 +276,7 @@ async function main() {
   await seedAlternates();
   await seedRequisitions();
   await seedAssets();
+  await seedMaintenanceReadiness();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -605,6 +612,25 @@ async function seedAssets() {
   await post('eng', '/api/engineering/obsolescence', { partNumber: 'SC-440', status: 'Obsolete', endOfSupport: '2028-12-31', evidence: 'Sample: manufacturer discontinuation notice PCN-2291' });
   if (items.includes('BRG-6205-001')) {
     await post('mp', '/api/inventory/mro/BRG-6205-001', { minQuantity: 2, reorderPoint: 2, maxQuantity: 6, criticalSpare: true, reason: 'Sample: two slitters use this bearing' });
+  }
+}
+
+async function seedMaintenanceReadiness() {
+  step('Maintenance readiness: a predictive bearing job on SL-02 blocked for parts (requested from purchasing), and a calibration outage waiting for a second person');
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  const assets = (await get('mp', '/api/maintenance/assets')).map(a => a.assetCode);
+  const items = (await get('eng', '/api/engineering/items')).map(i => i.partNumber);
+  if (assets.includes('SL-02') && items.includes('BRG-6205-001')) {
+    const wo = await post('mp', '/api/maintenance/work-orders', { assetCode: 'SL-02', title: 'Sample: replace rewind motor bearings (vibration trending up)', dueDate: day(10), kind: 'Predictive' });
+    await post('mp', `/api/maintenance/work-orders/${wo.entityId}/requirements`, { parts: [{ partNumber: 'BRG-6205-001', quantity: 2, position: 'Rewind motor bearings' }], reason: 'Sample: per vibration report' });
+    await post('mp', `/api/maintenance/work-orders/${wo.entityId}/request-parts`, { reason: 'Sample: bearings for predictive replacement' });
+  }
+  const machines = (await get('mp', '/api/resources/')).machines.map(m => m.code);
+  if (machines.includes('SLITTER-A')) {
+    const cal = await post('mp', '/api/maintenance/work-orders', { machineCode: 'SLITTER-A', title: 'Sample: calibrate tension load cells', dueDate: day(14), kind: 'Calibration' });
+    const start = new Date(Date.now() + 3 * 864e5);
+    start.setUTCHours(6, 0, 0, 0);
+    await post('mp', `/api/maintenance/work-orders/${cal.entityId}/schedule`, { startsAt: start.toISOString(), endsAt: new Date(start.getTime() + 3 * 36e5).toISOString(), reason: 'Sample: early shift before the customer run' });
   }
 }
 

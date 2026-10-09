@@ -98,12 +98,12 @@ public sealed record LocationChanged(string Code, string Change) : IDomainEvent
     public static int SchemaVersion => 1;
 }
 
-/// <summary>An approved alternate was issued in place of the part an order needs (V2.6).</summary>
-public sealed record AlternateUsed(long TransactionId, long AlternateId, string PrimaryPart, string AlternatePart, decimal Quantity, decimal PrimaryQuantity, long OrderNumber) : IDomainEvent
+/// <summary>An approved alternate was issued in place of the part an order (V2.6) or a maintenance work order (V2.9) needs.</summary>
+public sealed record AlternateUsed(long TransactionId, long AlternateId, string PrimaryPart, string AlternatePart, decimal Quantity, decimal PrimaryQuantity, long? OrderNumber, long? WorkOrderId = null, string? PartRevision = null) : IDomainEvent
 {
     public static string EventType => nameof(AlternateUsed);
 
-    public static int SchemaVersion => 1;
+    public static int SchemaVersion => 2;
 }
 
 /// <summary>A ledger entry before it is written.</summary>

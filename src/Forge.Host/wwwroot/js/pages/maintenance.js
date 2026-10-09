@@ -20,6 +20,10 @@ const dueText = o => [o.dueDate ? `due ${fmtDate(o.dueDate)}` : null, o.dueRunHo
 const ASSET_TONE = { Planned: 'none', Active: 'ok', Restricted: 'bad', Obsolete: 'warn', Decommissioned: 'none' };
 const ASSET_TYPES = ['Production', 'Building', 'Utility', 'TestEquipment', 'Tooling', 'Vehicle', 'Other'];
 const CRITICALITY = ['Low', 'Medium', 'High', 'Critical'];
+const KINDS = ['Corrective', 'Emergency', 'Predictive', 'Calibration', 'Inspection', 'Facility'];
+const OUTAGE_TONE = { Proposed: 'warn', Approved: 'ok', Rejected: 'bad', Withdrawn: 'none' };
+const DIM_TONE = { Pass: 'ok', Fail: 'bad', Indeterminate: 'warn' };
+const target = o => o.machineCode ?? o.assetCode ?? '—';
 const local = iso => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
 export async function maintenancePage(page, ctx) {
@@ -30,6 +34,8 @@ export async function maintenancePage(page, ctx) {
   const planner = can(me, 'MaintenancePlanner');
   const schedule = can(me, 'MaintenanceTechnician', 'MaintenancePlanner');
   const assetsManage = can(me, 'MaintenancePlanner', 'ManufacturingEngineer');
+  const outageApprover = can(me, 'MaintenancePlanner', 'Planner');
+  const requisitioner = can(me, 'MaintenancePlanner', 'Planner', 'Buyer');
   let tab = ctx.query.get('tab') ?? 'machines';
   let showClosed = false;
   let data = {};
@@ -37,14 +43,16 @@ export async function maintenancePage(page, ctx) {
   async function load() {
     const now = Date.now();
     const iso = ms => new Date(ms).toISOString();
-    const [resources, stock, items, downtime, orders, plans, assets] = await Promise.all([
+    const [resources, stock, items, downtime, orders, plans, assets, readiness, outages] = await Promise.all([
       tryGet('/api/resources/'), tryGet('/api/inventory/stock'), tryGet('/api/engineering/items'),
       tryGet(`/api/maintenance/downtime?from=${encodeURIComponent(iso(now - 30 * 864e5))}&to=${encodeURIComponent(iso(now + 60 * 864e5))}`),
       tryGet(`/api/maintenance/work-orders?includeClosed=${showClosed}`), tryGet('/api/maintenance/plans'), tryGet('/api/maintenance/assets'),
+      tryGet('/api/maintenance/readiness'), tryGet('/api/maintenance/outages?includeDecided=true'),
     ]);
     // Each entry wraps a work order with its run hours (run-hour PM) and the spare parts used on it.
     if (orders.data) orders.data = orders.data.map(v => ({ ...v.order, runHours: v.runHours, dueByRunHours: v.dueByRunHours, parts: v.parts }));
-    data = { machines: resources.data?.machines ?? [], workCenters: resources.data?.workCenters ?? [], resources, downtime, orders, plans, assets, stock: stock.data ?? [], items: items.data ?? [] };
+    data = { machines: resources.data?.machines ?? [], workCenters: resources.data?.workCenters ?? [], resources, downtime, orders, plans, assets, stock: stock.data ?? [], items: items.data ?? [],
+      readiness: new Map((readiness.data ?? []).map(r => [r.workOrderId, r])), outages };
   }
   const reload = async () => { await load(); render(); };
   const mine = actor => actor === `person:${me.personId}`;
@@ -54,19 +62,21 @@ export async function maintenancePage(page, ctx) {
     const orders = data.orders.data ?? [];
     const overdue = orders.filter(overdueNow);
     const signOff = orders.filter(o => o.status === 'Completed').length;
-    const tabs = [['machines', 'Machines'], ['orders', `Work orders${orders.length ? ` (${orders.filter(o => o.status !== 'Closed' && o.status !== 'Cancelled').length})` : ''}`], ['plans', 'PM plans'], ['assets', 'Assets'], ['log', 'Downtime log']];
+    const proposed = (data.outages.data ?? []).filter(o => o.status === 'Proposed');
+    const tabs = [['machines', 'Machines'], ['orders', `Work orders${orders.length ? ` (${orders.filter(o => o.status !== 'Closed' && o.status !== 'Cancelled').length})` : ''}`], ['outages', `Outages${proposed.length ? ` (${proposed.length} proposed)` : ''}`], ['plans', 'PM plans'], ['assets', 'Assets'], ['log', 'Downtime log']];
     page.innerHTML = `
-      <div class="page-head"><div><h1>Maintenance</h1><div class="sub">Machine status, preventive maintenance and work orders. Maintenance work is planned downtime: it removes capacity and moves scheduled work.</div></div>
+      <div class="page-head"><div><h1>Maintenance</h1><div class="sub">Machine status, preventive maintenance and work orders. Work that is not ready is shown as blocked, not planned; an outage takes capacity only once someone else approves it after seeing the schedule preview.</div></div>
         <div class="spacer"></div>
         ${report ? '<button class="btn" id="raise">Raise work order</button>' : ''}
         ${planner ? '<button class="btn primary" id="new-plan">New PM plan</button>' : ''}
         ${assetsManage && tab === 'assets' ? '<button class="btn" id="new-asset">Register asset</button>' : ''}</div>
-      ${overdue.length ? `<div class="notice bad">${overdue.length} work order(s) are past due: ${overdue.map(o => `${o.workOrderId} (${esc(o.machineCode)})`).join(', ')}.</div>` : ''}
+      ${overdue.length ? `<div class="notice bad">${overdue.length} work order(s) are past due: ${overdue.map(o => `${o.workOrderId} (${esc(target(o))})`).join(', ')}.</div>` : ''}
       ${signOff && planner ? `<div class="notice">${signOff} work order(s) are waiting for your sign-off.</div>` : ''}
+      ${proposed.length && outageApprover ? `<div class="notice">${proposed.length} proposed outage(s) are waiting for a decision. Open each to see what it does to the schedule.</div>` : ''}
       <section class="panel">
         <header><div class="seg">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
           ${tab === 'orders' ? `<span class="spacer"></span><label class="opt"><input type="checkbox" id="closed" ${showClosed ? 'checked' : ''}> Show closed</label>` : ''}</header>
-        ${{ machines: machinesTab, orders: ordersTab, plans: plansTab, assets: assetsTab, log: logTab }[tab]?.() ?? machinesTab()}
+        ${{ machines: machinesTab, orders: ordersTab, outages: outagesTab, plans: plansTab, assets: assetsTab, log: logTab }[tab]?.() ?? machinesTab()}
       </section>`;
 
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
@@ -89,6 +99,10 @@ export async function maintenancePage(page, ctx) {
     $$('[data-return]', page).forEach(b => b.addEventListener('click', () => sparePart(Number(b.dataset.return), true)));
     $('#new-asset', page)?.addEventListener('click', () => registerAsset());
     $$('[data-asset]', page).forEach(b => b.addEventListener('click', () => assetDrawer(b.dataset.asset)));
+    $$('[data-needs]', page).forEach(b => b.addEventListener('click', () => requirements(Number(b.dataset.needs))));
+    $$('[data-ready]', page).forEach(b => b.addEventListener('click', () => readinessDrawer(Number(b.dataset.ready))));
+    $$('[data-request-parts]', page).forEach(b => b.addEventListener('click', () => requestParts(Number(b.dataset.requestParts))));
+    $$('[data-outage]', page).forEach(b => b.addEventListener('click', () => outageDrawer(Number(b.dataset.outage))));
   }
 
   // ------------------------------------------------------------ tabs
@@ -108,7 +122,7 @@ export async function maintenancePage(page, ctx) {
           <td>${nextPm ? `${esc(nextPm.title)} <span class="${overdueNow(nextPm) ? 'c-bad' : 'faint'}">${esc(dueText(nextPm))}</span>` : '<span class="faint">—</span>'}</td>
           <td class="nowrap">${down && down.kind === 'Unplanned' && report ? `<button class="btn small" data-restore="${esc(m.code)}">Restore</button>` : ''}
             ${!down && report ? `<button class="btn small" data-down="${esc(m.code)}">Report down</button>` : ''}
-            ${schedule ? `<button class="btn small ghost" data-window="${esc(m.code)}">Plan window</button>` : ''}</td></tr>`;
+            ${schedule ? `<button class="btn small ghost" data-window="${esc(m.code)}">Propose outage</button>` : ''}</td></tr>`;
       }).join('')}</tbody></table>`;
   }
 
@@ -118,9 +132,15 @@ export async function maintenancePage(page, ctx) {
     if (!rows.length) return emptyBlock('No work orders', 'PM plans raise them on schedule; a breakdown raises a corrective one.');
     return rows.map(o => {
       const late = overdueNow(o);
+      const ready = data.readiness.get(o.workOrderId);
+      const pending = (data.outages.data ?? []).find(x => x.status === 'Proposed' && x.workOrderId === o.workOrderId);
       return `<div class="card-row">
         <div class="grow">
-          <div><b>WO ${o.workOrderId}</b> · ${esc(o.machineCode)} · ${esc(o.title)} <span class="pill ${WO_TONE[o.status]}">${esc(WO_LABEL[o.status])}</span> <span class="pill none">${esc(o.kind)}</span></div>
+          <div><b>WO ${o.workOrderId}</b> · ${esc(target(o))}${o.assetCode && o.machineCode ? ` <span class="faint">(asset ${esc(o.assetCode)})</span>` : ''} · ${esc(o.title)} <span class="pill ${WO_TONE[o.status]}">${esc(WO_LABEL[o.status])}</span> <span class="pill ${o.kind === 'Emergency' ? 'bad' : 'none'}">${esc(o.kind)}</span>
+            ${ready ? `<button class="pill ${ready.status === 'Ready' ? 'ok' : 'bad'} linkish" data-ready="${o.workOrderId}" title="${esc(ready.summary)}">${ready.status === 'Ready' ? 'Ready' : `Blocked · ${esc(ready.blocking)}`}</button>` : ''}</div>
+          ${pending ? `<div class="faint">Outage ${pending.outageId} proposed ${esc(fmtDateTime(pending.startsAt))} – ${esc(fmtDateTime(pending.endsAt))}; scheduled when someone else approves it.</div>` : ''}
+          ${o.procedureDocument || o.requiredQualifications?.length ? `<div class="faint">${o.procedureDocument ? `Procedure ${esc(o.procedureDocument)} rev ${esc(o.procedureRevision)}` : ''}${o.procedureDocument && o.requiredQualifications?.length ? ' · ' : ''}${o.requiredQualifications?.length ? `Needs ${o.requiredQualifications.map(esc).join(', ')}` : ''}</div>` : ''}
+          ${ready?.parts.length ? `<div class="faint">Parts needed: ${ready.parts.map(p => `<span class="${p.covered ? '' : 'c-bad'}">${qty(p.required)} ${esc(p.partNumber)}${p.alternate ? ` (via ${esc(p.alternate)})` : ''}</span>`).join(' · ')}</div>` : ''}
           <div class="faint ${late ? 'c-bad' : ''}">${esc(dueText(o).replace(/^d/, 'D'))}${late ? ' · overdue' : ''}${o.scheduledStart ? ` · window ${esc(fmtDateTime(o.scheduledStart))} – ${esc(fmtDateTime(o.scheduledEnd))}` : ''}</div>
           ${o.description ? `<div>${esc(o.description)}</div>` : ''}
           ${o.tasks.length ? `<div class="faint">Checklist: ${o.tasks.map(esc).join(' · ')}</div>` : ''}
@@ -128,7 +148,9 @@ export async function maintenancePage(page, ctx) {
           <div class="faint">Raised by ${esc(who(o.createdBy))}${o.startedBy ? ` · started by ${esc(who(o.startedBy))} ${esc(fmtDateTime(o.startedAt))}` : ''}${o.completedBy ? ` · completed by ${esc(who(o.completedBy))}: ${esc(o.findings ?? '')}` : ''}${o.closedBy ? ` · signed off by ${esc(who(o.closedBy))} ${esc(fmtDateTime(o.closedAt))}` : ''}${o.cancelReason ? ` · cancelled: ${esc(o.cancelReason)}` : ''}</div>
         </div>
         <div class="nowrap">
-          ${['Open', 'Scheduled'].includes(o.status) && schedule ? `<button class="btn small" data-schedule="${o.workOrderId}">${o.status === 'Scheduled' ? 'Reschedule' : 'Schedule'}</button>` : ''}
+          ${['Open', 'Scheduled'].includes(o.status) && schedule && !pending ? `<button class="btn small" data-schedule="${o.workOrderId}" ${ready?.status === 'Blocked' ? `disabled title="Not ready: ${esc(ready.blocking)}"` : ''}>${o.status === 'Scheduled' ? 'Reschedule' : 'Schedule'}</button>` : ''}
+          ${['Open', 'Scheduled'].includes(o.status) && schedule ? `<button class="btn small ghost" data-needs="${o.workOrderId}">Requirements</button>` : ''}
+          ${ready?.parts.some(p => !p.covered) && requisitioner ? `<button class="btn small" data-request-parts="${o.workOrderId}">Request parts</button>` : ''}
           ${['Open', 'Scheduled'].includes(o.status) && tech ? `<button class="btn primary small" data-start="${o.workOrderId}">Start</button>` : ''}
           ${o.status === 'InProgress' && tech ? `<button class="btn primary small" data-complete="${o.workOrderId}">Complete</button>` : ''}
           ${o.status === 'Completed' && planner && !mine(o.completedBy) && !mine(o.startedBy) ? `<button class="btn primary small" data-signoff="${o.workOrderId}">Sign off</button> <button class="btn small" data-sendback="${o.workOrderId}">Send back</button>` : ''}
@@ -139,6 +161,18 @@ export async function maintenancePage(page, ctx) {
           <button class="btn small ghost" data-docs-wo="${o.workOrderId}">Documents</button>
         </div></div>`;
     }).join('');
+  }
+
+  function outagesTab() {
+    if (data.outages.error) return errorBlock(data.outages.error, 'outages');
+    const rows = data.outages.data;
+    if (!rows.length) return emptyBlock('No outages', 'Plan a window on a machine, or schedule a work order: it is proposed here, and a different person approves it after the schedule preview.');
+    return `<table class="table"><thead><tr><th>Outage</th><th>Machine</th><th>Window</th><th>For</th><th>Status</th><th>Proposed</th><th>Decision</th><th></th></tr></thead><tbody>
+      ${rows.map(x => `<tr><td><b>${x.outageId}</b></td><td>${esc(x.machineCode)}</td><td>${esc(fmtDateTime(x.startsAt))} – ${esc(fmtDateTime(x.endsAt))}</td>
+        <td>${x.workOrderId ? `WO ${x.workOrderId}` : ''} <span class="faint">${esc(x.reason)}</span></td>
+        <td><span class="pill ${OUTAGE_TONE[x.status]}">${esc(x.status)}</span></td><td class="faint">${esc(who(x.proposedBy))} ${esc(fmtDateTime(x.proposedAt))}</td>
+        <td class="faint">${x.decidedBy ? `${esc(who(x.decidedBy))}: ${esc(x.decisionReason ?? '')}${x.impact ? `<div>${esc(x.impact)}</div>` : ''}` : ''}</td>
+        <td><button class="btn small" data-outage="${x.outageId}">${x.status === 'Proposed' ? 'Preview' : 'Open'}</button></td></tr>`).join('')}</tbody></table>`;
   }
 
   function plansTab() {
@@ -186,7 +220,7 @@ export async function maintenancePage(page, ctx) {
   }
 
   function planWindow(machine) {
-    return formModal({ title: `Plan a maintenance window on ${machine}`, confirmLabel: 'Plan window',
+    return formModal({ title: `Propose an outage on ${machine}`, detail: 'It takes no capacity until a different person approves it after seeing the schedule preview.', confirmLabel: 'Propose',
       fields: [
         { name: 'startsAt', label: 'Starts', type: 'datetime-local', required: true },
         { name: 'endsAt', label: 'Ends', type: 'datetime-local', required: true },
@@ -196,13 +230,18 @@ export async function maintenancePage(page, ctx) {
   }
 
   function raise() {
-    return formModal({ title: 'Raise a corrective work order', detail: 'For a fault that has not stopped the machine. If it has, report the machine down instead.', confirmLabel: 'Raise',
+    return formModal({ title: 'Raise a work order', detail: 'If a machine has stopped, report it down instead: that raises the repair and takes it out of production.', confirmLabel: 'Raise',
       fields: [
-        { name: 'machineCode', label: 'Machine', type: 'select', options: machineOptions(), required: true },
+        { name: 'kind', label: 'Type of work', type: 'select', options: KINDS.map(k => [k, k]), value: 'Corrective', required: true },
+        { name: 'machineCode', label: 'Machine', type: 'select', blank: '— not a machine —', options: machineOptions() },
+        { name: 'assetCode', label: 'Asset (buildings, utilities, test equipment — or the machine\'s asset)', type: 'select', blank: '— from the machine —', options: (data.assets.data ?? []).filter(a => a.status !== 'Decommissioned').map(a => [a.assetCode, `${a.assetCode} — ${a.name}`]) },
         { name: 'title', label: 'What needs doing', required: true },
         { name: 'description', label: 'Details', type: 'textarea' },
         { name: 'dueDate', label: 'Due', type: 'date', value: plusDays(7), required: true },
-      ] }, (v, reason) => command('/api/maintenance/work-orders', v, reason), reload);
+      ] }, (v, reason) => {
+        if (!v.machineCode && !v.assetCode) throw new Error('Choose the machine or the asset the work is on.');
+        return command('/api/maintenance/work-orders', { ...v, machineCode: v.machineCode || null, assetCode: v.assetCode || null }, reason);
+      }, reload);
   }
 
   function scheduleOrder(id) {
@@ -210,7 +249,7 @@ export async function maintenancePage(page, ctx) {
     const plan = (data.plans.data ?? []).find(p => p.planId === o.planId);
     const start = o.scheduledStart ?? new Date(o.dueDate ? `${o.dueDate}T07:00:00` : Date.now() + 864e5).toISOString();
     const end = o.scheduledEnd ?? new Date(new Date(start).getTime() + (plan?.durationMinutes ?? 120) * 6e4).toISOString();
-    return formModal({ title: `Schedule work order ${id} on ${o.machineCode}`, detail: 'The machine is unavailable to production in this window.', confirmLabel: 'Schedule',
+    return formModal({ title: `Schedule work order ${id} on ${target(o)}`, detail: o.machineCode ? 'Proposes an outage for this window; the work is scheduled when someone else approves it after the schedule preview. A repair of a machine that is already down is scheduled at once.' : 'Work on an asset that is not a machine takes no production capacity.', confirmLabel: 'Schedule',
       fields: [
         { name: 'startsAt', label: 'Starts', type: 'datetime-local', value: local(start), required: true },
         { name: 'endsAt', label: 'Ends', type: 'datetime-local', value: local(end), required: true },
@@ -264,7 +303,84 @@ export async function maintenancePage(page, ctx) {
         { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true },
         { name: 'locationCode', label: giveBack ? 'Into location' : 'From location', type: 'select', options: locations, required: true },
         { name: 'lotNumber', label: 'Lot (lot-tracked parts only)' },
-      ] }, (v, reason) => command(`/api/maintenance/work-orders/${id}/parts${giveBack ? '/return' : ''}`, { ...v, workOrderId: id }, reason), reload);
+        { name: 'alternateFor', label: 'In place of (approved alternate only)', type: 'select', blank: '— the part itself —', options: (data.readiness.get(id)?.parts ?? []).map(p => [p.partNumber, p.alternate ? `${p.partNumber} (readiness suggests ${p.alternate})` : p.partNumber]) },
+      ] }, (v, reason) => command(`/api/maintenance/work-orders/${id}/parts${giveBack ? '/return' : ''}`, { ...v, workOrderId: id, alternateFor: v.alternateFor || null }, reason), reload);
+  }
+
+  // ------------------------------------------------------------ readiness and outages (V2.9)
+
+  function readinessDrawer(id) {
+    const r = data.readiness.get(id);
+    if (!r) return;
+    drawer(`Work order ${id} — ${r.status === 'Ready' ? 'ready' : 'blocked'}`, `
+      <p>${esc(r.summary)}</p>
+      <table class="table"><thead><tr><th>Dimension</th><th></th><th>Why</th></tr></thead><tbody>
+        ${r.dimensions.map(d => `<tr><td><b>${esc(d.name)}</b></td><td><span class="pill ${DIM_TONE[d.outcome] ?? 'none'}">${d.outcome === 'Pass' ? 'Pass' : 'Fail'}</span></td><td>${esc(d.detail)}</td></tr>`).join('')}</tbody></table>
+      ${r.parts.length ? `<h3>Parts</h3><table class="table"><thead><tr><th>Part</th><th>Needed</th><th>Issued</th><th>On hand</th><th></th></tr></thead><tbody>
+        ${r.parts.map(p => `<tr><td><b>${esc(p.partNumber)}</b></td><td>${qty(p.required)}</td><td>${qty(p.issued)}</td><td>${qty(p.onHand)}</td><td class="${p.covered ? '' : 'c-bad'}">${esc(p.detail)}</td></tr>`).join('')}</tbody></table>` : ''}
+      <p class="faint">Stock on hand is not reserved; other work may use it first. Each dimension is checked on its own and none is assumed.</p>`);
+  }
+
+  async function requirements(id) {
+    const o = (data.orders.data ?? []).find(x => x.workOrderId === id);
+    const current = await tryGet(`/api/maintenance/work-orders/${id}/requirements`);
+    const parts = current.data ?? [];
+    const rows = Array.from({ length: Math.max(6, parts.length + 2) }, (_, i) => i);
+    const assets = (data.assets.data ?? []).filter(a => a.status !== 'Decommissioned' && (!o.machineCode || a.machineCode === o.machineCode));
+    const itemOptions = data.items.map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]);
+    return formModal({ title: `What work order ${id} needs`, detail: 'Readiness checks each of these on its own. Parts with a position are recorded as installed on the asset when they are issued.', confirmLabel: 'Save', fields: [
+      { name: 'assetCode', label: 'Asset', type: 'select', blank: '— none —', options: assets.map(a => [a.assetCode, `${a.assetCode} — ${a.name}`]), value: o.assetCode },
+      { name: 'procedureDocument', label: 'Procedure document number', value: o.procedureDocument, hint: 'A controlled procedure or work instruction.' },
+      { name: 'procedureRevision', label: 'Procedure revision (blank = the one in force)', value: o.procedureRevision },
+      { name: 'qualifications', label: 'Qualifications required (comma separated codes)', value: (o.requiredQualifications ?? []).join(', ') },
+      ...rows.flatMap(i => [
+        { name: `p${i}`, label: `Part ${i + 1}`, type: 'select', blank: '—', options: itemOptions, value: parts[i]?.partNumber },
+        { name: `q${i}`, label: `Quantity ${i + 1}`, type: 'number', min: 0, step: 'any', value: parts[i]?.quantity },
+        { name: `x${i}`, label: `Position ${i + 1} (optional)`, value: parts[i]?.position },
+      ]),
+    ] }, (v, reason) => command(`/api/maintenance/work-orders/${id}/requirements`, {
+      assetCode: v.assetCode || null, procedureDocument: v.procedureDocument || null, procedureRevision: v.procedureRevision || null,
+      qualifications: (v.qualifications ?? '').split(',').map(x => x.trim()).filter(Boolean),
+      parts: rows.filter(i => v[`p${i}`]).map(i => ({ partNumber: v[`p${i}`], quantity: Number(v[`q${i}`] || 0), position: v[`x${i}`] || null })),
+    }, reason), reload);
+  }
+
+  async function requestParts(id) {
+    const r = data.readiness.get(id);
+    const short = (r?.parts ?? []).filter(p => !p.covered);
+    const done = await confirmWithReason({ title: `Request parts for work order ${id}`, detail: `Raises a maintenance requisition for each part that is short (${short.map(p => `${qty(p.stillNeeded - p.onHand)} ${p.partNumber}`).join(', ')}), sourced to this work order, for purchasing to order.`, confirmLabel: 'Request', reasonRequired: false },
+      reason => command(`/api/maintenance/work-orders/${id}/request-parts`, {}, reason));
+    if (done) { toast(done.lines.map(l => `${l.partNumber}: ${l.outcome}${l.requisitionId ? ` (requisition ${l.requisitionId})` : ''}`).join(' · ')); await reload(); }
+  }
+
+  async function outageDrawer(id) {
+    const r = await tryGet(`/api/maintenance/outages/${id}`);
+    if (r.error) { toast(r.error.message ?? 'Could not load the outage.', true); return; }
+    const { outage: x, preview: p } = r.data;
+    const mineOutage = x.proposedBy === `person:${me.personId}`;
+    const EFFECT = { Moves: 'info', Delayed: 'warn', CannotMove: 'bad', Unchanged: 'none' };
+    const d = drawer(`Outage ${id} on ${x.machineCode}`, `
+      <p><span class="pill ${OUTAGE_TONE[x.status]}">${esc(x.status)}</span> ${esc(fmtDateTime(x.startsAt))} – ${esc(fmtDateTime(x.endsAt))} · ${esc(x.reason)}</p>
+      <p class="faint">Proposed by ${esc(who(x.proposedBy))} ${esc(fmtDateTime(x.proposedAt))}${x.decidedBy ? ` · ${esc(x.status.toLowerCase())} by ${esc(who(x.decidedBy))} ${esc(fmtDateTime(x.decidedAt))}: ${esc(x.decisionReason ?? '')}` : ''}</p>
+      ${x.impact ? `<div class="notice">Seen at approval: ${esc(x.impact)}</div>` : ''}
+      ${p ? `<h3>Schedule preview — with and without this outage</h3><div class="notice ${p.ordersLate ? 'bad' : p.affected ? 'warn' : ''}">${esc(p.summary)}</div>
+        ${p.operations.length ? `<table class="table"><thead><tr><th>Order / op</th><th>Planned</th><th>With the outage</th><th></th></tr></thead><tbody>
+          ${p.operations.map(o => `<tr><td>${o.orderNumber} / ${o.sequence} <span class="faint">${esc(o.description)}</span></td><td>${esc(o.machineBefore ?? '')} ${esc(fmtDateTime(o.startBefore))}</td>
+            <td>${o.startAfter ? `${esc(o.machineAfter ?? '')} ${esc(fmtDateTime(o.startAfter))}` : '<span class="c-bad">not scheduled</span>'}</td><td><span class="pill ${EFFECT[o.effect]}">${esc(o.effect === 'CannotMove' ? 'Cannot move' : o.effect)}</span></td></tr>`).join('')}</tbody></table>` : ''}
+        ${p.orders.length ? `<h3>Orders</h3><ul>${p.orders.map(o => `<li>Order ${o.orderNumber} (${esc(o.partNumber)}, due ${esc(fmtDate(o.dueDate))}): ${esc(o.statusBefore)} → <b class="${o.becomesLate ? 'c-bad' : ''}">${esc(o.statusAfter)}</b>${o.completionAfter ? `, finishes ${esc(fmtDateTime(o.completionAfter))}` : ''}</li>`).join('')}</ul>` : ''}` : ''}
+      <div class="row-actions">
+        ${x.status === 'Proposed' && outageApprover && !mineOutage ? '<button class="btn primary small" data-o="approve">Approve</button> <button class="btn small" data-o="reject">Reject</button>' : ''}
+        ${x.status === 'Proposed' && mineOutage ? '<span class="faint">You proposed this — someone else decides it.</span> <button class="btn small ghost" data-o="withdraw">Withdraw</button>' : ''}
+      </div>`);
+    const act = async (verb, title, detail) => {
+      const done = await confirmWithReason({ title: `${title} outage ${id}`, detail, confirmLabel: title }, reason => command(`/api/maintenance/outages/${id}/${verb}`, {}, reason));
+      if (done) { toast(done.message); d.close(); await reload(); }
+    };
+    $$('[data-o]', d.element).forEach(b => b.addEventListener('click', () => ({
+      approve: () => act('approve', 'Approve', 'The preview is run again at approval and recorded with your decision. The machine leaves capacity in this window.'),
+      reject: () => act('reject', 'Reject', 'The machine keeps its capacity.'),
+      withdraw: () => act('withdraw', 'Withdraw', 'The proposal is withdrawn.'),
+    })[b.dataset.o]()));
   }
 
   // ------------------------------------------------------------ assets (V2.8)
@@ -289,7 +405,7 @@ export async function maintenancePage(page, ctx) {
     const installed = components.filter(c => !c.removedAt);
     const removed = components.filter(c => c.removedAt);
     const flagged = obsolescence.filter(o => o.replacement !== 'Approved');
-    const open = (data.orders.data ?? []).filter(o => isOpen(o) && a.machineCode && o.machineCode === a.machineCode);
+    const open = (data.orders.data ?? []).filter(o => isOpen(o) && (o.assetCode === a.assetCode || (a.machineCode && o.machineCode === a.machineCode)));
     const live = a.status !== 'Decommissioned';
     const mineRequest = a.decommissionRequestedBy === `person:${me.personId}`;
     const actions = live ? [

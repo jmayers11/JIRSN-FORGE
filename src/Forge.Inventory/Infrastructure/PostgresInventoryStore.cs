@@ -230,8 +230,13 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
 
     public Task<IReadOnlyList<WorkOrderPart>> ListWorkOrderPartsAsync(long? workOrderId, CancellationToken ct) =>
         ReadAsync(
-            "SELECT work_order_id, part_number, sum(CASE WHEN kind = 'MaintenanceIssue' THEN quantity ELSE -quantity END) FROM inventory.transaction WHERE work_order_id IS NOT NULL AND ($1::bigint IS NULL OR work_order_id = $1) GROUP BY work_order_id, part_number ORDER BY work_order_id, part_number",
-            r => new WorkOrderPart(r.GetInt64(0), r.GetString(1), Dec(r, 2)),
+            """
+            SELECT work_order_id, part_number, sum(CASE WHEN kind = 'MaintenanceIssue' THEN quantity ELSE -quantity END), substitutes_for,
+                   sum(CASE WHEN kind = 'MaintenanceIssue' THEN primary_quantity ELSE -primary_quantity END)
+            FROM inventory.transaction WHERE work_order_id IS NOT NULL AND ($1::bigint IS NULL OR work_order_id = $1)
+            GROUP BY work_order_id, part_number, substitutes_for ORDER BY work_order_id, part_number, substitutes_for NULLS FIRST
+            """,
+            r => new WorkOrderPart(r.GetInt64(0), r.GetString(1), Dec(r, 2), r.IsDBNull(3) ? null : r.GetString(3), r.IsDBNull(4) ? null : Dec(r, 4)),
             ct,
             Long(workOrderId));
 

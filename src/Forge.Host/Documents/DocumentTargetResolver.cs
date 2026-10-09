@@ -88,7 +88,7 @@ public sealed class DocumentTargetResolver : IDocumentTargetResolver
                     }
 
                     var wo = await uow.Store<IMaintenanceLookup>().FindWorkOrderAsync(number, ct);
-                    return wo is null ? null : new DocumentTarget(type, Text(number), $"Work order {number} ({wo.MachineCode})", null, Permissions.MaintenanceRead);
+                    return wo is null ? null : new DocumentTarget(type, Text(number), $"Work order {number} ({wo.Target})", null, Permissions.MaintenanceRead);
                 }
 
             case DocumentTargetType.Ncr:

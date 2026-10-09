@@ -70,6 +70,9 @@ public class AnalystParserTests
     [InlineData("Show proposed alternates", "alternates")]
     [InlineData("Which parts are obsolete?", "obsolescence")]
     [InlineData("Show restricted assets", "assets")]
+    [InlineData("Which work orders are blocked?", "maintenance-readiness")]
+    [InlineData("Show maintenance readiness", "maintenance-readiness")]
+    [InlineData("Show proposed outages", "outages")]
     [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)

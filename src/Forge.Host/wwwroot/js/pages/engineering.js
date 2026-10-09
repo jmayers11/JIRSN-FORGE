@@ -971,4 +971,3 @@ export async function obsolescenceImpact(recordId) {
     <h3>What is recorded</h3><ul>${i.findings.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
     <p class="faint">No score and no suggested replacement: whether to buy spares, approve an alternate or open a capital project is for people to decide.</p>`);
 }
-

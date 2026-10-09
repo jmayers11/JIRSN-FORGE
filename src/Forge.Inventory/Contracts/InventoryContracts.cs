@@ -167,7 +167,8 @@ public sealed record ShipmentInfo(
     IReadOnlyList<ShipmentLineInfo> Lines);
 
 /// <summary>Spare parts used on a maintenance work order (issues less returns), by part.</summary>
-public sealed record WorkOrderPart(long WorkOrderId, string PartNumber, decimal NetIssued);
+/// <param name="SubstitutesFor">Issued in place of this part through an approved alternate (V2.9); <paramref name="PrimaryNetIssued"/> is how much of it that covers.</param>
+public sealed record WorkOrderPart(long WorkOrderId, string PartNumber, decimal NetIssued, string? SubstitutesFor = null, decimal? PrimaryNetIssued = null);
 
 /// <summary>What has shipped against a demand, by part.</summary>
 public sealed record DemandShipped(long DemandId, string PartNumber, decimal Shipped);

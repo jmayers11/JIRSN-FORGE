@@ -47,6 +47,7 @@ builder.Services.TryAddSingleton<Forge.Host.Propagation.IPropagationFaults, Forg
 builder.Services.AddSingleton<Forge.Host.Propagation.ChangePropagationRunner>();
 builder.Services.AddSingleton<Forge.Host.Propagation.PropagationRetry>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Propagation.ChangePropagationSubscriber>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Installation.InstallationSubscriber>();
 
 // Optional generative AI for Forge Analyst (off by default; Forge works fully without it).
 var narratorOptions = builder.Configuration.GetSection("Forge:Analyst").Get<Forge.Host.Api.AnalystNarratorOptions>() ?? new();
@@ -153,6 +154,7 @@ app.MapDocumentEndpoints();
 app.MapChangeEndpoints();
 app.MapAlternateEndpoints();
 app.MapAssetEndpoints();
+app.MapMaintenanceReadinessEndpoints();
 app.MapPlanningEndpoints();
 app.MapShopFloorEndpoints();
 app.MapMaterialsEndpoints();

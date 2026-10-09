@@ -8,6 +8,7 @@
     <ProjectReference Include="..\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
     <ProjectReference Include="..\Forge.Resources\Forge.Resources.csproj" />
     <ProjectReference Include="..\Forge.Engineering\Forge.Engineering.csproj" />
+    <ProjectReference Include="..\Forge.Competency\Forge.Competency.csproj" />
     <PackageReference Include="NodaTime" />
   </ItemGroup>
   <ItemGroup>
