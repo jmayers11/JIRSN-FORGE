@@ -14,7 +14,14 @@ public sealed record MrpItem(
     decimal SafetyStock,
     LotPolicy LotPolicy,
     decimal OrderQuantity,
-    decimal OrderMultiple);
+    decimal OrderMultiple,
+    MrpMroLevels? Mro = null);
+
+/// <summary>
+/// MRO stocking levels (V2.8): at or below the reorder point MRP plans a purchase up to the maximum; a
+/// critical spare projected below its minimum is an exception.
+/// </summary>
+public sealed record MrpMroLevels(decimal Minimum, decimal ReorderPoint, decimal Maximum, bool Critical);
 
 /// <summary>A released revision's BOM and the local dates it is in force: [From, To).</summary>
 public sealed record MrpStructure(string PartNumber, string Revision, DateOnly EffectiveFrom, DateOnly? EffectiveTo, IReadOnlyList<BomLineInfo> Bom);
@@ -353,6 +360,8 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
         var withoutPlanned = stock.Available;
         var firstShort = (DateOnly?)null;
         var substituted = new List<MrpSubstitution>();
+        var criticalShort = false;
+        var pending = new List<(DateOnly Due, decimal Quantity)>();
 
         foreach (var date in dates)
         {
@@ -370,6 +379,12 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
 
             var plannedQty = 0m;
             var substitutedQty = 0m;
+
+            // MRO purchases planned earlier arrive at their due dates; until then they count as on order.
+            var arrived = pending.Where(x => x.Due <= date).Sum(x => x.Quantity);
+            pending.RemoveAll(x => x.Due <= date);
+            available += arrived;
+            plannedQty += arrived;
             if (available < item.SafetyStock && dayRequirements.Count > 0)
             {
                 var made = substitute(date, Round(item.SafetyStock - available), dayRequirements);
@@ -382,27 +397,66 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
                 }
             }
 
-            if (available < item.SafetyStock)
+            var position = available + pending.Sum(x => x.Quantity);
+
+            var belowSafety = available < item.SafetyStock;
+            var belowReorder = item.Mro is { } levels && position <= levels.ReorderPoint;
+            if (belowSafety || belowReorder)
             {
                 var net = Round(item.SafetyStock - available);
-                var quantity = LotSize(item, net);
+                var quantity = item.Mro is null ? LotSize(item, net) : 0m;
+                var due = date;
                 var release = date.AddDays(-item.LeadTimeDays);
                 var pastDue = release < today;
                 var key = $"PLN-{item.PartNumber}-{(planned.Count + 1).ToString("000", CultureInfo.InvariantCulture)}";
-                var explanation = Explain(item, date, before, receiptQty, dayRequirements, available, net, quantity, release, pastDue)
-                    + (substitutedQty > 0 ? $" Approved alternates covered {Q(substitutedQty)} of the shortage first." : string.Empty);
-                planned.Add(new PlannedOrder(key, item.PartNumber, item.MakeBuy, quantity, item.UnitOfMeasure, Max(release, today), date, pastDue, net, null, explanation, []));
+                var explanation = Explain(item, date, before, receiptQty, dayRequirements, available, net, quantity, release, pastDue);
+                if (item.Mro is { } mro)
+                {
+                    // Min/max: buy up to the maximum from what is on hand and on order. Reaching the reorder point
+                    // is the signal to order now (it arrives after the lead time); only a real shortage below
+                    // safety stock has a date the purchase is late for.
+                    quantity = Round(Math.Max(Math.Max(mro.Maximum, item.SafetyStock) - position, belowSafety ? net : 0));
+                    net = Math.Max(net, 0);
+                    if (!belowSafety)
+                    {
+                        due = Max(date, today.AddDays(item.LeadTimeDays));
+                        release = due.AddDays(-item.LeadTimeDays);
+                        pastDue = false;
+                    }
+
+                    explanation = $"Projected {Q(available)} {item.UnitOfMeasure} on {Day(date)}"
+                        + (position != available ? $" ({Q(position)} with what is on order)" : string.Empty)
+                        + $" is at or below the reorder point {Q(mro.ReorderPoint)}"
+                        + (belowSafety ? $" and short of {(item.SafetyStock > 0 ? "safety stock" : "zero")} by {Q(net)}" : string.Empty)
+                        + $". Buy {Q(quantity)} to bring it up to the maximum {Q(mro.Maximum)}: release {Day(Max(release, today))}, due {Day(due)} ({item.LeadTimeDays}-day lead time)."
+                        + (pastDue ? " The release date has passed: expedite." : string.Empty);
+                }
+
+                explanation += substitutedQty > 0 ? $" Approved alternates covered {Q(substitutedQty)} of the shortage first." : string.Empty;
+                planned.Add(new PlannedOrder(key, item.PartNumber, item.MakeBuy, quantity, item.UnitOfMeasure, Max(release, today), due, pastDue, net, null, explanation, []));
                 nodes.Add(new EvidenceNode("PlannedOrder", pastDue ? EvidenceOutcome.Fail : EvidenceOutcome.Info, $"{key}: {explanation}"));
                 if (pastDue)
                 {
                     exceptions.Add(new MrpException(item.PartNumber, "PastDueRelease", $"{key}: {Q(quantity)} {item.UnitOfMeasure} needed {Day(date)} should have been released {Day(release)} ({item.LeadTimeDays}-day lead time). Release now and expedite."));
                 }
 
-                plannedQty = quantity;
-                available += quantity;
+                if (due > date)
+                {
+                    pending.Add((due, quantity));
+                }
+                else
+                {
+                    plannedQty += quantity;
+                    available += quantity;
+                }
             }
 
             buckets.Add(new MrpBucket(date, grossQty, receiptQty, plannedQty, available, substitutedQty));
+            if (item.Mro is { Critical: true } critical && withoutPlanned < critical.Minimum && !criticalShort)
+            {
+                criticalShort = true;
+                exceptions.Add(new MrpException(item.PartNumber, "CriticalSpareShort", $"{item.PartNumber} is a critical spare: projected {Q(withoutPlanned)} {item.UnitOfMeasure} on {Day(date)} without new purchases, below its minimum {Q(critical.Minimum)}."));
+            }
         }
 
         // A scheduled receipt due after stock first runs short should come in earlier.
@@ -461,7 +515,9 @@ public sealed class MrpEngine : IEngine<MrpSnapshot, MrpRequest, MrpResult>
             var left = Round(p.Quantity - list.Sum(x => x.Quantity));
             if (left > 0)
             {
-                list.Add(new MrpPeg("stock", item.SafetyStock > 0 ? "SafetyStock" : "LotSize", item.SafetyStock > 0 ? $"Kept on hand: safety stock {Q(item.SafetyStock)} and lot-size rounding" : "Lot-size rounding, kept on hand", p.DueDate, left));
+                list.Add(item.Mro is { } mro
+                    ? new MrpPeg($"mro:{item.PartNumber}", "MroReplenishment", $"MRO stock: up to the maximum {Q(mro.Maximum)} (reorder point {Q(mro.ReorderPoint)})", p.DueDate, left)
+                    : new MrpPeg("stock", item.SafetyStock > 0 ? "SafetyStock" : "LotSize", item.SafetyStock > 0 ? $"Kept on hand: safety stock {Q(item.SafetyStock)} and lot-size rounding" : "Lot-size rounding, kept on hand", p.DueDate, left));
             }
 
             return p with { Pegging = list };

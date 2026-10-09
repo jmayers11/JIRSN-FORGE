@@ -431,6 +431,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .plant-row img.ico.sm { width: 18px; height: 18px; vertical-align: -4px; }
 .plant-sub { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 4px; }
 .row-actions { display: flex; gap: 6px; flex: none; }
+.drawer .row-actions { flex-wrap: wrap; margin: 10px 0; }
+.timeline { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+.timeline li { padding: 5px 0; border-bottom: 1px solid var(--line); }
 .machine-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: #12161B; font-size: 12px; }
 .chip:not(:has(.chip-x)) { padding-right: 10px; }

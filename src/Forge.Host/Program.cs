@@ -152,6 +152,7 @@ app.MapEngineeringEndpoints();
 app.MapDocumentEndpoints();
 app.MapChangeEndpoints();
 app.MapAlternateEndpoints();
+app.MapAssetEndpoints();
 app.MapPlanningEndpoints();
 app.MapShopFloorEndpoints();
 app.MapMaterialsEndpoints();

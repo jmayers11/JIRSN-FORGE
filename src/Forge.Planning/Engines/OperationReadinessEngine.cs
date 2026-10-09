@@ -43,6 +43,7 @@ public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, R
                 {
                     Maintenance.Contracts.DowntimeKind.Planned => $"{machineCode} is in planned maintenance until {down.EndsAt:u}: {down.Reason}.",
                     Maintenance.Contracts.DowntimeKind.MaintenanceOverdue => $"{machineCode} is locked out: {down.Reason}.",
+                    Maintenance.Contracts.DowntimeKind.AssetOutOfService => $"{machineCode} is out of service: {down.Reason}.",
                     _ => $"{machineCode} is down since {down.StartsAt:u}: {down.Reason}.",
                 })
             {

@@ -10,6 +10,7 @@ import { formModal, qty, can } from '../forms.js';
 const KIND_LABEL = {
   Receipt: 'Receipt', Issue: 'Issue to order', Return: 'Return from order', Transfer: 'Move', Adjustment: 'Adjustment',
   ProductionReceipt: 'From production', Scrap: 'Scrap', CycleCount: 'Count variance', QualityHold: 'Hold', QualityRelease: 'Release', Shipment: 'Shipped',
+  MaintenanceIssue: 'Issue to work order', MaintenanceReturn: 'Return from work order',
 };
 const STATUS_TONE = { Available: 'ok', Inspection: 'info', Hold: 'warn' };
 
@@ -17,15 +18,16 @@ export async function inventoryPage(page, ctx) {
   const me = ctx.me;
   const handler = can(me, 'MaterialHandler');
   const controller = can(me, 'InventoryController');
+  const mroManager = can(me, 'MaintenancePlanner', 'InventoryController', 'Planner');
   let tab = ctx.query.get('tab') ?? 'stock';
   let data = {};
 
   async function load() {
-    const [summary, locations, requests, ledger, items, orders, resources] = await Promise.all([
+    const [summary, locations, requests, ledger, items, orders, resources, mro] = await Promise.all([
       tryGet('/api/inventory/summary'), tryGet('/api/inventory/locations'), tryGet('/api/inventory/requests?pending=true'),
-      tryGet('/api/inventory/transactions?take=200'), tryGet('/api/engineering/items'), tryGet('/api/orders/'), tryGet('/api/resources/'),
+      tryGet('/api/inventory/transactions?take=200'), tryGet('/api/engineering/items'), tryGet('/api/orders/'), tryGet('/api/resources/'), tryGet('/api/inventory/mro'),
     ]);
-    data = { summary, locations, requests, ledger, items, orders, sites: resources.data?.sites ?? [] };
+    data = { summary, locations, requests, ledger, items, orders, mro, sites: resources.data?.sites ?? [] };
   }
 
   const locs = (active = true) => (data.locations.data ?? []).filter(l => !active || l.active).map(l => [l.code, `${l.code} — ${l.name} (${l.kind})`]);
@@ -226,6 +228,37 @@ export async function inventoryPage(page, ctx) {
       </tbody></table>`;
   }
 
+  // MRO stocking levels (V2.8): at or below the reorder point MRP plans a purchase up to the maximum.
+  function mroTab() {
+    if (data.mro.error) return errorBlock(data.mro.error, 'MRO levels');
+    const rows = data.mro.data;
+    const add = mroManager ? '<div class="toolbar"><button class="btn small" data-mro-set="">Set MRO levels for an item</button></div>' : '';
+    if (!rows.length) return add + emptyBlock('No MRO levels set', 'Give spares and consumables a reorder point and maximum; MRP then plans their purchases.');
+    return `${add}<table class="table"><thead><tr><th>Part</th><th class="num">Available</th><th class="num">Minimum</th><th class="num">Reorder point</th><th class="num">Maximum</th><th>Critical</th><th>Shelf life</th><th>Set by</th><th></th></tr></thead><tbody>
+      ${rows.map(r => { const p = r.policy; return `<tr><td><b>${esc(p.partNumber)}</b> <span class="muted">${esc(r.description)}</span></td>
+        <td class="num ${r.belowMinimum ? 'c-bad' : r.atOrBelowReorderPoint ? 'c-warn' : ''}">${qty(r.available)} ${esc(r.unitOfMeasure)}</td>
+        <td class="num">${qty(p.minQuantity)}</td><td class="num">${qty(p.reorderPoint)}</td><td class="num">${qty(p.maxQuantity)}</td>
+        <td>${p.criticalSpare ? '<span class="pill bad">Critical</span>' : ''}${r.belowMinimum ? ' <span class="pill bad">Below minimum</span>' : r.atOrBelowReorderPoint ? ' <span class="pill warn">Reorder</span>' : ''}</td>
+        <td>${p.shelfLifeDays ? `${p.shelfLifeDays} d` : '—'}</td><td class="faint">${esc(who(p.setBy))} · ${esc(fmtDateTime(p.setAt))}<br>${esc(p.reason)}</td>
+        <td class="nowrap">${mroManager ? `<button class="btn small" data-mro-set="${esc(p.partNumber)}">Change</button> <button class="btn small ghost" data-mro-clear="${esc(p.partNumber)}">Clear</button>` : ''}</td></tr>`; }).join('')}
+      </tbody></table>`;
+  }
+
+  function setMro(part) {
+    const current = (data.mro.data ?? []).find(r => r.policy.partNumber === part)?.policy;
+    const buy = (data.items.data ?? []).filter(i => i.makeBuy === 'Buy').map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]);
+    return formModal({ title: part ? `MRO levels for ${part}` : 'Set MRO levels', detail: 'At or below the reorder point (on hand plus on order, less what is needed), MRP plans a purchase up to the maximum. Every setting is kept.', confirmLabel: 'Save', reasonRequired: true,
+      fields: [
+        part ? { name: 'part', label: 'Part', value: part, readonly: true } : { name: 'part', label: 'Part', type: 'select', options: buy, required: true },
+        { name: 'minQuantity', label: 'Minimum', type: 'number', min: 0, step: 'any', value: current?.minQuantity ?? 0, required: true },
+        { name: 'reorderPoint', label: 'Reorder point', type: 'number', min: 0, step: 'any', value: current?.reorderPoint, required: true },
+        { name: 'maxQuantity', label: 'Maximum', type: 'number', min: 0, step: 'any', value: current?.maxQuantity, required: true },
+        { name: 'criticalSpare', type: 'check', label: 'Critical spare', text: 'Report when projected below the minimum', value: current?.criticalSpare ?? false },
+        { name: 'shelfLifeDays', label: 'Shelf life (days, optional)', type: 'number', min: 1, value: current?.shelfLifeDays },
+      ] },
+    (v, reason) => command(`/api/inventory/mro/${encodeURIComponent(v.part)}`, v, reason), reload);
+  }
+
   function render() {
     const pending = data.requests.data?.length ?? 0;
     const buttons = [
@@ -240,8 +273,8 @@ export async function inventoryPage(page, ctx) {
       ${buttons.length ? `<div class="toolbar">${buttons.map(([k, l]) => `<button class="btn ${k === 'receive' ? 'primary' : ''}" data-act="${k}">${esc(l)}</button>`).join('')}</div>` : '<div class="notice">You can look at stock. Material handlers move it; inventory controllers approve changes.</div>'}
       ${kpis()}
       <section class="panel">
-        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : stockTab()}
+        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        ${tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : stockTab()}
       </section>`;
 
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
@@ -250,6 +283,12 @@ export async function inventoryPage(page, ctx) {
       actions[b.dataset.act]();
     }));
     $$('[data-part]', page).forEach(r => r.addEventListener('click', () => partDrawer(r.dataset.part)));
+    $$('[data-mro-set]', page).forEach(b => b.addEventListener('click', () => setMro(b.dataset.mroSet)));
+    $$('[data-mro-clear]', page).forEach(b => b.addEventListener('click', async () => {
+      const done = await confirmWithReason({ title: `Clear MRO levels for ${b.dataset.mroClear}`, detail: 'MRP stops replenishing it to a maximum. The old levels stay in the history.', confirmLabel: 'Clear' },
+        reason => command(`/api/inventory/mro/${encodeURIComponent(b.dataset.mroClear)}/clear`, {}, reason));
+      if (done) { toast(done.message); await reload(); }
+    }));
     $$('[data-why-txn]', page).forEach(b => b.addEventListener('click', async () => {
       const [id, part] = b.dataset.whyTxn.split('|');
       const { data: w, error } = await tryGet(`/api/inventory/transactions/${id}/why?part=${encodeURIComponent(part)}`);

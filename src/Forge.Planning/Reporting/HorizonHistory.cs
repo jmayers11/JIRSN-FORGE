@@ -409,6 +409,7 @@ public sealed class HorizonHistoryService(IKernelUnitOfWorkFactory unitOfWork, I
         DowntimeKind.Unplanned => "unplanned outage",
         DowntimeKind.Planned => "planned maintenance",
         DowntimeKind.MaintenanceOverdue => "locked out, PM overdue",
+        DowntimeKind.AssetOutOfService => "asset out of service",
         _ => kind.ToString(),
     };
 

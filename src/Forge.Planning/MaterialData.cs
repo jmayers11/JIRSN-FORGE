@@ -109,8 +109,10 @@ internal static class MaterialData
 
         var engineering = uow.Store<IEngineeringLookup>();
         var itemList = await engineering.ListItemsAsync(ct);
+        var mro = (await uow.Store<IMroLookup>().ListMroPoliciesAsync(ct)).ToDictionary(m => m.PartNumber, StringComparer.Ordinal);
         var items = itemList
-            .Select(i => new MrpItem(i.PartNumber, i.Description, i.UnitOfMeasure, i.MakeBuy, i.LeadTimeDays, i.SafetyStock, i.LotPolicy, i.OrderQuantity, i.OrderMultiple))
+            .Select(i => new MrpItem(i.PartNumber, i.Description, i.UnitOfMeasure, i.MakeBuy, i.LeadTimeDays, i.SafetyStock, i.LotPolicy, i.OrderQuantity, i.OrderMultiple,
+                mro.TryGetValue(i.PartNumber, out var m) && i.MakeBuy == MakeBuy.Buy ? new MrpMroLevels(m.MinQuantity, m.ReorderPoint, m.MaxQuantity, m.CriticalSpare) : null))
             .ToList();
         var leadTimes = itemList.ToDictionary(i => i.PartNumber, i => i.LeadTimeDays, StringComparer.Ordinal);
         var structures = (await engineering.ListReleasedStructuresAsync(ct))

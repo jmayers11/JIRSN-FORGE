@@ -677,6 +677,7 @@ public sealed class AnalystService(
         DowntimeKind.Unplanned => "down (unplanned)",
         DowntimeKind.Planned => "planned maintenance",
         DowntimeKind.MaintenanceOverdue => "locked out, PM overdue",
+        DowntimeKind.AssetOutOfService => "asset out of service",
         _ => kind.ToString(),
     };
 

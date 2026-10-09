@@ -1,6 +1,6 @@
 import { tryGet, command, upload, download } from '../api.js';
 import { who } from '../people.js';
-import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast } from '../ui.js';
+import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, drawer, confirmWithReason } from '../ui.js';
 import { formModal, can, today } from '../forms.js';
 import { appendAttachments, TYPE_LABEL, MARKING_LABEL, markings, markingPills, fileSize, fileUrl } from '../attachments.js';
 
@@ -28,10 +28,11 @@ export async function engineeringPage(page, ctx) {
   if (first === 'changes') return second ? changeDetail(page, ctx, decodeURIComponent(second)) : changeList(page, ctx);
   if (first === 'actions') return actionList(page, ctx);
   if (first === 'alternates') return alternateList(page, ctx);
+  if (first === 'obsolescence') return obsolescenceList(page, ctx);
   return first ? itemDetail(page, ctx, decodeURIComponent(first)) : itemList(page, ctx);
 }
 
-const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['documents', 'Documents', '#/engineering/documents'], ['changes', 'Changes', '#/engineering/changes'], ['actions', 'Change actions', '#/engineering/actions'], ['alternates', 'Alternates', '#/engineering/alternates']]
+const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['documents', 'Documents', '#/engineering/documents'], ['changes', 'Changes', '#/engineering/changes'], ['actions', 'Change actions', '#/engineering/actions'], ['alternates', 'Alternates', '#/engineering/alternates'], ['obsolescence', 'Obsolescence', '#/engineering/obsolescence']]
   .map(([k, l, href]) => `<button class="${active === k ? 'on' : ''}" data-nav="${href}">${l}</button>`).join('')}</div>`;
 const wireTabs = page => $$('[data-nav]', page).forEach(b => b.addEventListener('click', () => { location.hash = b.dataset.nav; }));
 
@@ -903,3 +904,71 @@ async function alternateList(page, ctx) {
   wireAlternateActions(page, reload);
   $('#propose-alt', page)?.addEventListener('click', () => proposeAlternate(null, items.data ?? [], reload));
 }
+
+// ------------------------------------------------------------ obsolescence (V2.8)
+
+const OBS_LABEL = { NotRecommended: 'Not recommended', LastTimeBuy: 'Last-time buy', EndOfLife: 'End of life', Obsolete: 'Obsolete' };
+const OBS_TONE = { NotRecommended: 'warn', LastTimeBuy: 'warn', EndOfLife: 'bad', Obsolete: 'bad' };
+const REPL_TONE = { None: 'bad', Proposed: 'info', Approved: 'ok', Rejected: 'bad' };
+
+async function obsolescenceList(page, ctx) {
+  const me = ctx.me;
+  const recorder = can(me, 'ManufacturingEngineer', 'Buyer', 'PurchasingManager', 'MaintenancePlanner');
+  const approver = can(me, 'EngineeringApprover');
+  const showAll = ctx.query.get('all') === '1';
+  const [records, items] = await Promise.all([tryGet(`/api/engineering/obsolescence${showAll ? '?all=true' : ''}`), tryGet('/api/engineering/items')]);
+  if (records.error) { page.innerHTML = errorBlock(records.error, 'obsolescence records'); return; }
+  const rows = records.data;
+  const flagged = rows.filter(r => r.replacement !== 'Approved');
+  page.innerHTML = `
+    <div class="page-head"><div><h1>Engineering</h1><div class="sub">Obsolescence: what is known about an item's end of life, from what evidence, and what it touches. Forge never invents a replacement.</div></div>
+      <div class="spacer"></div>${recorder ? '<button class="btn primary" id="record">Record obsolescence</button>' : ''}</div>
+    ${tabs('obsolescence')}
+    ${flagged.length && !showAll ? `<div class="notice bad">${flagged.length} item(s) have no approved replacement and stay flagged.</div>` : ''}
+    <section class="panel"><header><h2>${showAll ? 'All records' : 'Current record per item'}</h2><span class="spacer"></span><label class="opt"><input type="checkbox" id="all" ${showAll ? 'checked' : ''}> Show superseded records</label></header>
+      ${!rows.length ? emptyBlock('No obsolescence recorded', 'Record a manufacturer notice, last-time buy or end of support with its evidence.') : `
+      <div class="table-wrap"><table class="table"><thead><tr><th>Record</th><th>Part</th><th>Status</th><th>Last-time buy</th><th>End of life</th><th>End of support</th><th>Replacement</th><th></th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td>${r.recordId}</td><td><b>${esc(r.partNumber)}</b></td><td><span class="pill ${OBS_TONE[r.status]}">${esc(OBS_LABEL[r.status])}</span></td>
+        <td>${r.lastTimeBuy ? esc(fmtDate(r.lastTimeBuy)) : '—'}</td><td>${r.endOfLife ? esc(fmtDate(r.endOfLife)) : '—'}</td><td>${r.endOfSupport ? esc(fmtDate(r.endOfSupport)) : '—'}</td>
+        <td><span class="pill ${REPL_TONE[r.replacement]}">${r.replacement === 'None' ? 'None recorded' : `${esc(r.replacementPart)} · ${esc(r.replacement)}`}</span></td>
+        <td class="nowrap"><button class="btn small" data-impact="${r.recordId}">Impact</button>
+          ${recorder && ['None', 'Rejected'].includes(r.replacement) ? `<button class="btn small ghost" data-propose="${r.recordId}">Propose replacement</button>` : ''}
+          ${approver && r.replacement === 'Proposed' && r.replacementProposedBy !== `person:${me.personId}` ? `<button class="btn small" data-approve="${r.recordId}">Approve</button> <button class="btn small ghost" data-reject="${r.recordId}">Reject</button>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>`}
+    </section>`;
+  wireTabs(page);
+  const reload = () => obsolescenceList(page, ctx);
+  const partOptions = (items.data ?? []).map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]);
+  $('#all', page).onchange = e => { location.hash = e.target.checked ? '#/engineering/obsolescence?all=1' : '#/engineering/obsolescence'; };
+  $('#record', page)?.addEventListener('click', () => formModal({ title: 'Record obsolescence', detail: 'A newer record for the same item supersedes the older one; nothing is edited. Name a replacement only if one is known — someone else approves it.', confirmLabel: 'Record', fields: [
+    { name: 'partNumber', label: 'Item', type: 'select', options: partOptions, required: true },
+    { name: 'status', label: 'Status', type: 'select', options: Object.entries(OBS_LABEL), required: true },
+    { name: 'lastTimeBuy', label: 'Last-time buy', type: 'date' }, { name: 'endOfLife', label: 'End of life', type: 'date' }, { name: 'endOfSupport', label: 'End of support', type: 'date' },
+    { name: 'evidence', label: 'Evidence (notice, distributor statement…)', type: 'textarea', required: true },
+    { name: 'replacementPart', label: 'Replacement (only if known)', type: 'select', blank: '— none —', options: partOptions },
+  ] }, (v, reason) => command('/api/engineering/obsolescence', v, reason), reload));
+  $$('[data-propose]', page).forEach(b => b.addEventListener('click', () => formModal({ title: `Propose a replacement for record ${b.dataset.propose}`, detail: 'A different person with engineering authority approves it. Alternates, BOMs and assets still change only through their own records.', confirmLabel: 'Propose',
+    fields: [{ name: 'replacementPart', label: 'Replacement', type: 'select', options: partOptions, required: true }] },
+  (v, reason) => command(`/api/engineering/obsolescence/${b.dataset.propose}/replacement`, v, reason), reload)));
+  for (const [attr, verb, label] of [['approve', 'approve', 'Approve replacement'], ['reject', 'reject', 'Reject replacement']]) {
+    $$(`[data-${attr}]`, page).forEach(b => b.addEventListener('click', async () => {
+      const done = await confirmWithReason({ title: `${label} (record ${b.dataset[attr]})`, confirmLabel: label }, reason => command(`/api/engineering/obsolescence/${b.dataset[attr]}/replacement/${verb}`, {}, reason));
+      if (done) { toast(done.message); await reload(); }
+    }));
+  }
+  $$('[data-impact]', page).forEach(b => b.addEventListener('click', () => obsolescenceImpact(Number(b.dataset.impact))));
+}
+
+export async function obsolescenceImpact(recordId) {
+  const r = await tryGet(`/api/engineering/obsolescence/${recordId}/impact`);
+  if (r.error) { toast(r.error.message ?? 'Could not load the impact.', true); return; }
+  const i = r.data;
+  drawer(`Obsolescence ${recordId}: ${i.partNumber}`, `
+    <div class="notice ${i.actionRequired ? 'bad' : ''}">${esc(i.headline)}</div>
+    <dl class="kv"><dt>Installed</dt><dd>${i.installedQuantity}</dd><dt>Assets</dt><dd>${esc(i.assets.join(', ') || '—')}</dd><dt>Work centers</dt><dd>${esc(i.workCenters.join(', ') || '—')}</dd>
+      <dt>Spares available</dt><dd>${i.sparesAvailable}${i.sparesHeld ? ` (+${i.sparesHeld} held)` : ''}</dd><dt>On order</dt><dd>${i.onOrder}</dd>
+      <dt>Approved alternates</dt><dd>${esc(i.approvedAlternates.join('; ') || 'none')}</dd><dt>Replacement</dt><dd>${esc(i.replacement)}</dd></dl>
+    <h3>What is recorded</h3><ul>${i.findings.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+    <p class="faint">No score and no suggested replacement: whether to buy spares, approve an alternate or open a capital project is for people to decide.</p>`);
+}
+

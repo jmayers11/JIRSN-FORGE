@@ -68,6 +68,8 @@ public class AnalystParserTests
     [InlineData("Show open engineering changes", "engineering-changes")]
     [InlineData("Show open change actions", "change-actions")]
     [InlineData("Show proposed alternates", "alternates")]
+    [InlineData("Which parts are obsolete?", "obsolescence")]
+    [InlineData("Show restricted assets", "assets")]
     [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)

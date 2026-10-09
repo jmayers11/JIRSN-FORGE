@@ -238,6 +238,20 @@ See `docs/adr/0017-v2-6-alternates.md`.
 
 See `docs/adr/0018-v2-7-unified-demand-and-requisitions.md`.
 
+## What V2.8 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Assets | `src/Forge.Maintenance/AssetService.cs` | Production assets point at their machine; buildings, utilities and test equipment too |
+| Lifecycle | `maintenance.asset_event` | Every change is a history row; nothing is edited or deleted; decommissioning needs a second person |
+| Capacity | `AssetOutOfService` downtime | A restricted or decommissioned production asset takes its machine out of capacity |
+| Components | `maintenance.asset_component` | Recorded as delivered, then installed and removed only by work order |
+| MRO levels | `engineering.item_mro`, `MrpEngine` | At or below the reorder point MRP buys up to the maximum; critical spares below minimum are reported |
+| Obsolescence | `src/Forge.Engineering/ObsolescenceService.cs`, `ObsolescenceImpactEngine` | Records with evidence; replacement approved by someone else; impact without scores or invented replacements |
+| UI | Maintenance → Assets, Inventory → MRO levels, Engineering → Obsolescence | |
+
+See `docs/adr/0019-v2-8-assets-mro-obsolescence.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -526,3 +540,19 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/procurement/purchase-orders`, `/{po}/lines` lines take `requisitionId` | `procurement.manage` |
 | POST | `/api/planning/demand` takes `sourceKey` | `planning.demand.manage` |
 | GET | `/api/procurement/purchase-orders/{po}/lines/{line}/why`, `/api/inventory/transactions/{id}/why?part=` | `procurement.read`, `inventory.read` or `procurement.requisition.raise` |
+
+## V2.8 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/maintenance/assets`, `/assets/{code}` (asset, history, components, obsolescence) | `maintenance.read` |
+| POST | `/api/maintenance/assets` `{assetCode, name, type, machineCode?, workCenterCode?, location?, manufacturer?, model?, serialNumber?, criticality, expectedLifeYears?, replacementCost?}` | `maintenance.assets.manage` |
+| POST | `/api/maintenance/assets/{code}/change`, `/status` `{status: Active\|Restricted\|Obsolete, commissionedOn?, reason}`, `/decommission` `{reason}` | `maintenance.assets.manage` |
+| POST | `/api/maintenance/assets/{code}/decommission/decide` `{approve, reason}` | `maintenance.approve` (not the requester) |
+| POST | `/api/maintenance/assets/{code}/components` `{partNumber, revision?, position, quantity, workOrderId?}`, `/api/maintenance/components/{id}/remove` `{workOrderId?, reason}` | `maintenance.work` with a work order; `maintenance.assets.manage` while Planned |
+| GET | `/api/inventory/mro`, `/mro/{part}/history` | `inventory.read` |
+| POST | `/api/inventory/mro/{part}` `{minQuantity, reorderPoint, maxQuantity, criticalSpare, shelfLifeDays?, reason}`, `/mro/{part}/clear` `{reason}` | `inventory.mro.manage` |
+| GET | `/api/engineering/obsolescence[?all=true]`, `/obsolescence/{id}/impact` | `engineering.read` |
+| POST | `/api/engineering/obsolescence` `{partNumber, status, lastTimeBuy?, endOfLife?, endOfSupport?, evidence, replacementPart?}`, `/{id}/replacement` `{replacementPart}` | `engineering.obsolescence.record` |
+| POST | `/api/engineering/obsolescence/{id}/replacement/approve`, `/reject` `{reason}` | `engineering.alternates.approve` (not the proposer) |
+

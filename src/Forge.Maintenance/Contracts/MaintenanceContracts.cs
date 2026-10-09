@@ -13,6 +13,12 @@ public enum DowntimeKind
     /// completed. Not recorded; derived from the work order, so it ends the moment the work is done.
     /// </summary>
     MaintenanceOverdue,
+
+    /// <summary>
+    /// The machine's asset is Restricted or Decommissioned (V2.8). Not recorded; derived from the asset's
+    /// lifecycle, from the change until the asset is made active again.
+    /// </summary>
+    AssetOutOfService,
 }
 
 /// <summary>A period a machine cannot run. <see cref="EndsAt"/> is null while an unplanned outage is open.</summary>
@@ -109,4 +115,99 @@ public interface IMaintenanceLookup
     Task<IReadOnlyList<WorkOrderInfo>> ListWorkOrdersAsync(bool includeClosed, CancellationToken ct);
 
     Task<WorkOrderInfo?> FindWorkOrderAsync(long workOrderId, CancellationToken ct);
+}
+
+public enum AssetType
+{
+    Production,
+    Building,
+    Utility,
+    TestEquipment,
+    Tooling,
+    Vehicle,
+    Other,
+}
+
+public enum AssetCriticality
+{
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+/// <summary>
+/// Where an asset is in its life (V2.8). Planned assets are not yet in service; Restricted and
+/// Decommissioned production assets take their machine out of capacity; Obsolete assets still run but are
+/// no longer supported.
+/// </summary>
+public enum AssetStatus
+{
+    Planned,
+    Active,
+    Restricted,
+    Obsolete,
+    Decommissioned,
+}
+
+/// <summary>
+/// A physical asset (V2.8): a production machine's asset points at its machine code (the machine stays the
+/// capacity unit in Resources), and buildings, utilities and test equipment are assets too.
+/// </summary>
+public sealed record AssetInfo(
+    string AssetCode,
+    string Name,
+    AssetType Type,
+    string? Manufacturer,
+    string? Model,
+    string? SerialNumber,
+    string? Location,
+    string? WorkCenterCode,
+    string? MachineCode,
+    AssetCriticality Criticality,
+    DateOnly? CommissionedOn,
+    int? ExpectedLifeYears,
+    decimal? ReplacementCost,
+    AssetStatus Status,
+    string CreatedBy,
+    DateTimeOffset CreatedAt,
+    string? DecommissionRequestedBy = null,
+    DateTimeOffset? DecommissionRequestedAt = null,
+    string? DecommissionReason = null);
+
+/// <summary>One line of an asset's history. Lines are added, never changed.</summary>
+public sealed record AssetEvent(long EventId, string AssetCode, string Kind, AssetStatus? FromStatus, AssetStatus Status, string Detail, string Actor, DateTimeOffset At, string? Reason);
+
+/// <summary>
+/// A part installed in an asset (V2.8): which item and revision, where, how many, and the work order that
+/// installed it; removal ends the row (with its work order and reason) and never deletes it.
+/// </summary>
+public sealed record AssetComponentInfo(
+    long ComponentId,
+    string AssetCode,
+    string PartNumber,
+    string? Revision,
+    string Position,
+    decimal Quantity,
+    long? InstalledByWorkOrder,
+    string InstalledBy,
+    DateTimeOffset InstalledAt,
+    long? RemovedByWorkOrder,
+    string? RemovedBy,
+    DateTimeOffset? RemovedAt,
+    string? RemovalReason)
+{
+    public bool Installed => RemovedAt is null;
+}
+
+public interface IAssetLookup
+{
+    Task<IReadOnlyList<AssetInfo>> ListAssetsAsync(CancellationToken ct);
+
+    Task<AssetInfo?> FindAssetAsync(string assetCode, CancellationToken ct);
+
+    Task<IReadOnlyList<AssetEvent>> ListAssetHistoryAsync(string assetCode, CancellationToken ct);
+
+    /// <summary>Components, optionally of one asset and/or one part; removed ones only when asked.</summary>
+    Task<IReadOnlyList<AssetComponentInfo>> ListComponentsAsync(string? assetCode, string? partNumber, bool includeRemoved, CancellationToken ct);
 }

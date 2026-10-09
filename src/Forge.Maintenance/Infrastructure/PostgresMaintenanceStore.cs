@@ -46,6 +46,19 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
                        || '; the machine is locked out until it is done'
             FROM maintenance.work_order w JOIN maintenance.pm_plan p ON p.plan_id = w.plan_id
             WHERE p.lock_out_when_overdue AND w.status IN ('Open', 'Scheduled', 'InProgress')
+            UNION ALL
+            -- A restricted or decommissioned production asset takes its machine out of capacity from that
+            -- change until it is returned to service (V2.8). Ids below -1e12 never meet a work order's.
+            SELECT -1000000000000 - o.event_id, a.machine_code, 'AssetOutOfService', o.at, o.until,
+                   'Asset ' || a.asset_code || ' is ' || lower(o.status) || COALESCE(': ' || o.reason, '')
+            FROM (
+                SELECT e.event_id, e.asset_code, e.status, e.at, e.reason,
+                       (SELECT min(n.at) FROM maintenance.asset_event n
+                        WHERE n.asset_code = e.asset_code AND n.event_id > e.event_id AND n.status NOT IN ('Restricted', 'Decommissioned')) AS until
+                FROM maintenance.asset_event e
+                WHERE e.status IN ('Restricted', 'Decommissioned') AND e.from_status NOT IN ('Restricted', 'Decommissioned')
+            ) o JOIN maintenance.asset a ON a.asset_code = o.asset_code
+            WHERE a.machine_code IS NOT NULL
         ) d
         WHERE starts_at < $2 AND (ends_at IS NULL OR ends_at > $1)
         ORDER BY machine_code, starts_at, downtime_id
@@ -257,6 +270,9 @@ public static class MaintenanceRegistration
         services.AddForgeStore<IMaintenanceStore>(uow => new PostgresMaintenanceStore(uow));
         services.AddForgeStore<IMaintenanceLookup>(uow => new PostgresMaintenanceStore(uow));
         services.AddSingleton<MaintenanceService>();
+        services.AddForgeStore<IAssetStore>(uow => new PostgresAssetStore(uow));
+        services.AddForgeStore<IAssetLookup>(uow => new PostgresAssetStore(uow));
+        services.AddSingleton<AssetService>();
         return services;
     }
 }

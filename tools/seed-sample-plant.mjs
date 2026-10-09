@@ -63,7 +63,8 @@ async function main() {
       const propagation = !changes && changeList.some(c => c.title.startsWith('Panel edge radius') && c.status === 'InReview');
       const alternates = !(await get('eng', '/api/engineering/alternates')).length;
       const requisitions = !(await get('planner', '/api/procurement/requisitions?open=false')).length;
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const assets = !(await get('mp', '/api/maintenance/assets')).length;
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -96,6 +97,10 @@ async function main() {
         console.log('Adding sample requisitions from maintenance and a facility project.');
         await seedRequisitions();
       }
+      if (assets) {
+        console.log('Adding sample assets, MRO levels and an obsolescence record.');
+        await seedAssets();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -116,6 +121,7 @@ async function main() {
     await seedPropagation();
     await seedAlternates();
     await seedRequisitions();
+    await seedAssets();
     return finish();
   }
 
@@ -263,6 +269,7 @@ async function main() {
   await seedPropagation();
   await seedAlternates();
   await seedRequisitions();
+  await seedAssets();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -577,6 +584,28 @@ async function seedRequisitions() {
   const suppliers = (await get('bob', '/api/procurement/suppliers')).map(x => x.code);
   if (!suppliers.includes('FASTENAL')) await post('bob', '/api/procurement/suppliers', { code: 'FASTENAL', name: 'Fastenal', notes: 'Fasteners and anchors' });
   await post('bob', '/api/procurement/purchase-orders', { supplier: 'FASTENAL', lines: [{ partNumber: 'ANCHOR-M12', quantity: planned.quantity, promisedDate: day(14), requisitionId: Number(req.entityId) }] });
+}
+
+async function seedAssets() {
+  step('Assets: Slitter B as asset SL-02 with two SC-440 controllers (end of support 2028, no replacement), a building, and MRO levels on spares');
+  const items = (await get('eng', '/api/engineering/items')).map(i => i.partNumber);
+  if (!items.includes('SC-440')) {
+    await post('eng', '/api/engineering/items', { partNumber: 'SC-440', description: 'Servo controller SC-440', unitOfMeasure: 'EA', makeBuy: 'Buy', leadTimeDays: 42 });
+    await post('eng', '/api/engineering/items/SC-440/revisions', { revision: 'A' });
+    await post('approver', '/api/engineering/items/SC-440/revisions/A/release', { reason: 'Sample: catalogue controller' });
+  }
+  const machines = (await get('mp', '/api/resources/')).machines.map(m => m.code);
+  if (machines.includes('SLITTER-B')) {
+    await post('mp', '/api/maintenance/assets', { assetCode: 'SL-02', name: 'Slitter 2 (Slitter B)', type: 'Production', machineCode: 'SLITTER-B', criticality: 'Critical', manufacturer: 'Atlas', model: 'S-1600', serialNumber: 'AT-16-0442', expectedLifeYears: 25, replacementCost: 850000 });
+    for (const slot of [1, 2]) await post('mp', '/api/maintenance/assets/SL-02/components', { partNumber: 'SC-440', revision: 'A', position: `Control cabinet slot ${slot}`, quantity: 1 });
+    await post('mp', '/api/maintenance/assets/SL-02/status', { status: 'Active', commissionedOn: '2019-04-15', reason: 'Sample: in service since 2019' });
+  }
+  await post('mp', '/api/maintenance/assets', { assetCode: 'BLDG-MAIN', name: 'Main plant building', type: 'Building', criticality: 'High', location: 'Plant 1', expectedLifeYears: 60 });
+  await post('mp', '/api/maintenance/assets/BLDG-MAIN/status', { status: 'Active', commissionedOn: '2004-09-01', reason: 'Sample: in use' });
+  await post('eng', '/api/engineering/obsolescence', { partNumber: 'SC-440', status: 'Obsolete', endOfSupport: '2028-12-31', evidence: 'Sample: manufacturer discontinuation notice PCN-2291' });
+  if (items.includes('BRG-6205-001')) {
+    await post('mp', '/api/inventory/mro/BRG-6205-001', { minQuantity: 2, reorderPoint: 2, maxQuantity: 6, criticalSpare: true, reason: 'Sample: two slitters use this bearing' });
+  }
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

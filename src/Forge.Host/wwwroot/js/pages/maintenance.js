@@ -1,7 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
-import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
+import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, drawer } from '../ui.js';
 import { formModal, can, today, plusDays, qty } from '../forms.js';
 import { isDownAt } from '../model.js';
 
@@ -12,11 +12,14 @@ import { isDownAt } from '../model.js';
 
 const WO_TONE = { Open: 'none', Scheduled: 'info', InProgress: 'warn', Completed: 'info', Closed: 'ok', Cancelled: 'bad' };
 const WO_LABEL = { Open: 'Open', Scheduled: 'Scheduled', InProgress: 'In progress', Completed: 'Awaiting sign-off', Closed: 'Closed', Cancelled: 'Cancelled' };
-const DOWN_LABEL = { Planned: 'Planned maintenance', Unplanned: 'Down', MaintenanceOverdue: 'Locked out — PM overdue' };
+const DOWN_LABEL = { Planned: 'Planned maintenance', Unplanned: 'Down', MaintenanceOverdue: 'Locked out — PM overdue', AssetOutOfService: 'Asset out of service' };
 // Due by date and/or by run hours; overdue when either is past.
 const isOpen = o => ['Open', 'Scheduled', 'InProgress'].includes(o.status);
 const overdueNow = o => isOpen(o) && ((o.dueDate && o.dueDate < today()) || o.dueByRunHours);
 const dueText = o => [o.dueDate ? `due ${fmtDate(o.dueDate)}` : null, o.dueRunHours != null ? `due at ${fmtNumber(o.dueRunHours)} run h${o.runHours != null ? ` (${fmtNumber(o.runHours)} so far)` : ''}` : null].filter(Boolean).join(' or ');
+const ASSET_TONE = { Planned: 'none', Active: 'ok', Restricted: 'bad', Obsolete: 'warn', Decommissioned: 'none' };
+const ASSET_TYPES = ['Production', 'Building', 'Utility', 'TestEquipment', 'Tooling', 'Vehicle', 'Other'];
+const CRITICALITY = ['Low', 'Medium', 'High', 'Critical'];
 const local = iso => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
 export async function maintenancePage(page, ctx) {
@@ -26,6 +29,7 @@ export async function maintenancePage(page, ctx) {
   const spares = can(me, 'MaintenanceTechnician', 'MaterialHandler');
   const planner = can(me, 'MaintenancePlanner');
   const schedule = can(me, 'MaintenanceTechnician', 'MaintenancePlanner');
+  const assetsManage = can(me, 'MaintenancePlanner', 'ManufacturingEngineer');
   let tab = ctx.query.get('tab') ?? 'machines';
   let showClosed = false;
   let data = {};
@@ -33,14 +37,14 @@ export async function maintenancePage(page, ctx) {
   async function load() {
     const now = Date.now();
     const iso = ms => new Date(ms).toISOString();
-    const [resources, stock, items, downtime, orders, plans] = await Promise.all([
+    const [resources, stock, items, downtime, orders, plans, assets] = await Promise.all([
       tryGet('/api/resources/'), tryGet('/api/inventory/stock'), tryGet('/api/engineering/items'),
       tryGet(`/api/maintenance/downtime?from=${encodeURIComponent(iso(now - 30 * 864e5))}&to=${encodeURIComponent(iso(now + 60 * 864e5))}`),
-      tryGet(`/api/maintenance/work-orders?includeClosed=${showClosed}`), tryGet('/api/maintenance/plans'),
+      tryGet(`/api/maintenance/work-orders?includeClosed=${showClosed}`), tryGet('/api/maintenance/plans'), tryGet('/api/maintenance/assets'),
     ]);
     // Each entry wraps a work order with its run hours (run-hour PM) and the spare parts used on it.
     if (orders.data) orders.data = orders.data.map(v => ({ ...v.order, runHours: v.runHours, dueByRunHours: v.dueByRunHours, parts: v.parts }));
-    data = { machines: resources.data?.machines ?? [], resources, downtime, orders, plans, stock: stock.data ?? [], items: items.data ?? [] };
+    data = { machines: resources.data?.machines ?? [], workCenters: resources.data?.workCenters ?? [], resources, downtime, orders, plans, assets, stock: stock.data ?? [], items: items.data ?? [] };
   }
   const reload = async () => { await load(); render(); };
   const mine = actor => actor === `person:${me.personId}`;
@@ -50,18 +54,19 @@ export async function maintenancePage(page, ctx) {
     const orders = data.orders.data ?? [];
     const overdue = orders.filter(overdueNow);
     const signOff = orders.filter(o => o.status === 'Completed').length;
-    const tabs = [['machines', 'Machines'], ['orders', `Work orders${orders.length ? ` (${orders.filter(o => o.status !== 'Closed' && o.status !== 'Cancelled').length})` : ''}`], ['plans', 'PM plans'], ['log', 'Downtime log']];
+    const tabs = [['machines', 'Machines'], ['orders', `Work orders${orders.length ? ` (${orders.filter(o => o.status !== 'Closed' && o.status !== 'Cancelled').length})` : ''}`], ['plans', 'PM plans'], ['assets', 'Assets'], ['log', 'Downtime log']];
     page.innerHTML = `
       <div class="page-head"><div><h1>Maintenance</h1><div class="sub">Machine status, preventive maintenance and work orders. Maintenance work is planned downtime: it removes capacity and moves scheduled work.</div></div>
         <div class="spacer"></div>
         ${report ? '<button class="btn" id="raise">Raise work order</button>' : ''}
-        ${planner ? '<button class="btn primary" id="new-plan">New PM plan</button>' : ''}</div>
+        ${planner ? '<button class="btn primary" id="new-plan">New PM plan</button>' : ''}
+        ${assetsManage && tab === 'assets' ? '<button class="btn" id="new-asset">Register asset</button>' : ''}</div>
       ${overdue.length ? `<div class="notice bad">${overdue.length} work order(s) are past due: ${overdue.map(o => `${o.workOrderId} (${esc(o.machineCode)})`).join(', ')}.</div>` : ''}
       ${signOff && planner ? `<div class="notice">${signOff} work order(s) are waiting for your sign-off.</div>` : ''}
       <section class="panel">
         <header><div class="seg">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
           ${tab === 'orders' ? `<span class="spacer"></span><label class="opt"><input type="checkbox" id="closed" ${showClosed ? 'checked' : ''}> Show closed</label>` : ''}</header>
-        ${{ machines: machinesTab, orders: ordersTab, plans: plansTab, log: logTab }[tab]?.() ?? machinesTab()}
+        ${{ machines: machinesTab, orders: ordersTab, plans: plansTab, assets: assetsTab, log: logTab }[tab]?.() ?? machinesTab()}
       </section>`;
 
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
@@ -82,6 +87,8 @@ export async function maintenancePage(page, ctx) {
     $$('[data-retire]', page).forEach(b => b.addEventListener('click', () => retire(Number(b.dataset.retire))));
     $$('[data-issue]', page).forEach(b => b.addEventListener('click', () => sparePart(Number(b.dataset.issue), false)));
     $$('[data-return]', page).forEach(b => b.addEventListener('click', () => sparePart(Number(b.dataset.return), true)));
+    $('#new-asset', page)?.addEventListener('click', () => registerAsset());
+    $$('[data-asset]', page).forEach(b => b.addEventListener('click', () => assetDrawer(b.dataset.asset)));
   }
 
   // ------------------------------------------------------------ tabs
@@ -258,6 +265,103 @@ export async function maintenancePage(page, ctx) {
         { name: 'locationCode', label: giveBack ? 'Into location' : 'From location', type: 'select', options: locations, required: true },
         { name: 'lotNumber', label: 'Lot (lot-tracked parts only)' },
       ] }, (v, reason) => command(`/api/maintenance/work-orders/${id}/parts${giveBack ? '/return' : ''}`, { ...v, workOrderId: id }, reason), reload);
+  }
+
+  // ------------------------------------------------------------ assets (V2.8)
+
+  function assetsTab() {
+    if (data.assets.error) return errorBlock(data.assets.error, 'assets');
+    const rows = data.assets.data;
+    if (!rows.length) return emptyBlock('No assets yet', assetsManage ? 'Register machines, buildings, utilities and test equipment as assets: lifecycle, components and obsolescence.' : 'A maintenance planner registers them.');
+    return `<table class="table"><thead><tr><th>Asset</th><th>Type</th><th>Machine / work center</th><th>Criticality</th><th>Status</th><th>Commissioned</th><th></th></tr></thead><tbody>
+      ${rows.map(a => `<tr><td><b>${esc(a.assetCode)}</b> <span class="muted">${esc(a.name)}</span>${a.manufacturer ? `<div class="faint">${esc([a.manufacturer, a.model, a.serialNumber].filter(Boolean).join(' · '))}</div>` : ''}</td>
+        <td>${esc(a.type)}</td><td>${esc([a.machineCode, a.workCenterCode].filter(Boolean).join(' / ') || a.location || '—')}</td>
+        <td><span class="pill ${a.criticality === 'Critical' ? 'bad' : a.criticality === 'High' ? 'warn' : 'none'}">${esc(a.criticality)}</span></td>
+        <td><span class="pill ${ASSET_TONE[a.status]}">${esc(a.status)}</span>${a.decommissionRequestedBy ? ' <span class="pill warn">Decommission requested</span>' : ''}</td>
+        <td>${a.commissionedOn ? esc(fmtDate(a.commissionedOn)) : '<span class="faint">—</span>'}</td>
+        <td><button class="btn small" data-asset="${esc(a.assetCode)}">Open</button></td></tr>`).join('')}</tbody></table>`;
+  }
+
+  async function assetDrawer(code) {
+    const r = await tryGet(`/api/maintenance/assets/${encodeURIComponent(code)}`);
+    if (r.error) { toast(r.error.message ?? 'Could not load the asset.', true); return; }
+    const { asset: a, history, components, obsolescence } = r.data;
+    const installed = components.filter(c => !c.removedAt);
+    const removed = components.filter(c => c.removedAt);
+    const flagged = obsolescence.filter(o => o.replacement !== 'Approved');
+    const open = (data.orders.data ?? []).filter(o => isOpen(o) && a.machineCode && o.machineCode === a.machineCode);
+    const live = a.status !== 'Decommissioned';
+    const mineRequest = a.decommissionRequestedBy === `person:${me.personId}`;
+    const actions = live ? [
+      assetsManage ? '<button class="btn small" data-a="edit">Edit</button>' : '',
+      assetsManage && a.status === 'Planned' ? '<button class="btn primary small" data-a="commission">Commission</button>' : '',
+      assetsManage && ['Active', 'Obsolete'].includes(a.status) ? '<button class="btn small" data-a="restrict">Restrict</button>' : '',
+      assetsManage && ['Restricted', 'Obsolete'].includes(a.status) ? '<button class="btn small" data-a="active">Return to service</button>' : '',
+      assetsManage && ['Active', 'Restricted'].includes(a.status) ? '<button class="btn small ghost" data-a="obsolete">Mark obsolete</button>' : '',
+      assetsManage && !a.decommissionRequestedBy ? '<button class="btn small ghost" data-a="decommission">Request decommissioning</button>' : '',
+      a.decommissionRequestedBy && planner && !mineRequest ? '<button class="btn small" data-a="approve-dec">Approve decommissioning</button> <button class="btn small ghost" data-a="reject-dec">Reject</button>' : '',
+      (a.status === 'Planned' ? assetsManage : (tech && open.length)) ? '<button class="btn small" data-a="install">Install component</button>' : '',
+    ].filter(Boolean).join(' ') : '';
+    const d = drawer(`Asset ${a.assetCode}`, `
+      <p><b>${esc(a.name)}</b> <span class="pill ${ASSET_TONE[a.status]}">${esc(a.status)}</span> <span class="pill none">${esc(a.type)}</span> <span class="pill ${a.criticality === 'Critical' ? 'bad' : 'none'}">${esc(a.criticality)}</span></p>
+      <dl class="kv">
+        <dt>Machine</dt><dd>${esc(a.machineCode ?? '—')}${a.machineCode && a.status === 'Restricted' ? ' <span class="c-bad">out of capacity</span>' : ''}</dd>
+        <dt>Work center</dt><dd>${esc(a.workCenterCode ?? '—')}</dd><dt>Location</dt><dd>${esc(a.location ?? '—')}</dd>
+        <dt>Make / model / serial</dt><dd>${esc([a.manufacturer, a.model, a.serialNumber].filter(Boolean).join(' · ') || '—')}</dd>
+        <dt>Commissioned</dt><dd>${a.commissionedOn ? esc(fmtDate(a.commissionedOn)) : '—'}${a.expectedLifeYears ? ` · expected life ${a.expectedLifeYears} years` : ''}</dd>
+        <dt>Replacement cost</dt><dd>${a.replacementCost != null ? fmtNumber(a.replacementCost, 2) : '—'}</dd>
+      </dl>
+      ${a.decommissionRequestedBy ? `<div class="notice warn">Decommissioning requested by ${esc(who(a.decommissionRequestedBy))}: ${esc(a.decommissionReason ?? '')}. A different person approves it.</div>` : ''}
+      ${flagged.length ? `<div class="notice bad">Obsolescence: ${flagged.map(o => `${esc(o.partNumber)} ${esc(o.status)}${o.endOfSupport ? `, end of support ${esc(fmtDate(o.endOfSupport))}` : ''} — replacement ${o.replacementPart && o.replacement === 'Proposed' ? `${esc(o.replacementPart)} proposed` : 'none approved'}`).join('; ')}.</div>` : ''}
+      <div class="row-actions">${actions}</div>
+      <h3>Installed components</h3>
+      ${installed.length ? `<table class="table"><thead><tr><th>Part</th><th>Position</th><th>Qty</th><th>Installed</th><th></th></tr></thead><tbody>${installed.map(c => `<tr><td><b>${esc(c.partNumber)}</b>${c.revision ? ` rev ${esc(c.revision)}` : ''}</td><td>${esc(c.position)}</td><td>${qty(c.quantity)}</td>
+        <td class="faint">${c.installedByWorkOrder ? `WO ${c.installedByWorkOrder}` : 'as delivered'} · ${esc(who(c.installedBy))} ${esc(fmtDate(c.installedAt))}</td>
+        <td>${live && ((a.status === 'Planned' && assetsManage) || (tech && open.length)) ? `<button class="btn small ghost" data-remove="${c.componentId}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="faint">None recorded.</p>'}
+      ${removed.length ? `<h3>Removed</h3><ul class="faint">${removed.map(c => `<li>${qty(c.quantity)} ${esc(c.partNumber)} at ${esc(c.position)}: installed ${esc(fmtDate(c.installedAt))}, removed ${esc(fmtDate(c.removedAt))}${c.removedByWorkOrder ? ` by WO ${c.removedByWorkOrder}` : ''} — ${esc(c.removalReason)}</li>`).join('')}</ul>` : ''}
+      <h3>History</h3>
+      <ul class="timeline">${[...history].reverse().map(e => `<li><span class="faint">${esc(fmtDateTime(e.at))}</span> <b>${esc(e.kind)}</b> ${esc(e.detail)}${e.reason ? ` — <i>${esc(e.reason)}</i>` : ''} <span class="faint">${esc(who(e.actor))}</span></li>`).join('')}</ul>`);
+    const after = async () => { d.close(); await reload(); await assetDrawer(code); };
+    const status = (target, title, detail, extra = []) => formModal({ title, detail, confirmLabel: title, reasonRequired: true, fields: extra },
+      (v, reason) => command(`/api/maintenance/assets/${encodeURIComponent(code)}/status`, { status: target, commissionedOn: v.commissionedOn ?? null }, reason), after);
+    const woOptions = open.map(o => [String(o.workOrderId), `WO ${o.workOrderId} — ${o.title}`]);
+    const handlers = {
+      edit: () => formModal({ title: `Edit asset ${code}`, confirmLabel: 'Save', reasonRequired: true, fields: [
+        { name: 'name', label: 'Name', value: a.name, required: true }, { name: 'manufacturer', label: 'Manufacturer', value: a.manufacturer }, { name: 'model', label: 'Model', value: a.model },
+        { name: 'serialNumber', label: 'Serial number', value: a.serialNumber }, { name: 'location', label: 'Location', value: a.location },
+        { name: 'criticality', label: 'Criticality', type: 'select', options: CRITICALITY.map(c => [c, c]), value: a.criticality },
+        { name: 'expectedLifeYears', label: 'Expected life (years)', type: 'number', min: 1, value: a.expectedLifeYears }, { name: 'replacementCost', label: 'Replacement cost', type: 'number', min: 0, step: 'any', value: a.replacementCost },
+      ] }, (v, reason) => command(`/api/maintenance/assets/${encodeURIComponent(code)}/change`, v, reason), after),
+      commission: () => status('Active', 'Commission', 'The asset goes into service. From now on components are installed and removed by work order.', [{ name: 'commissionedOn', label: 'Commissioned on', type: 'date', value: today() }]),
+      restrict: () => status('Restricted', 'Restrict', a.machineCode ? `Machine ${a.machineCode} leaves capacity until the asset is returned to service.` : 'Record why it may not be used.'),
+      active: () => status('Active', 'Return to service', a.machineCode ? `Machine ${a.machineCode} returns to capacity.` : ''),
+      obsolete: () => status('Obsolete', 'Mark obsolete', 'It still runs, but is no longer supported. Capacity is not reduced.'),
+      decommission: async () => { const done = await confirmWithReason({ title: `Request decommissioning of ${code}`, detail: 'A different person with maintenance approval decides it. Open work orders must be finished or cancelled first.', confirmLabel: 'Request' }, reason => command(`/api/maintenance/assets/${encodeURIComponent(code)}/decommission`, {}, reason)); if (done) { toast(done.message); await after(); } },
+      'approve-dec': async () => { const done = await confirmWithReason({ title: `Decommission ${code}`, detail: 'The asset leaves service for good; its history stays.', confirmLabel: 'Decommission' }, reason => command(`/api/maintenance/assets/${encodeURIComponent(code)}/decommission/decide`, { approve: true }, reason)); if (done) { toast(done.message); await after(); } },
+      'reject-dec': async () => { const done = await confirmWithReason({ title: `Reject decommissioning of ${code}`, confirmLabel: 'Reject' }, reason => command(`/api/maintenance/assets/${encodeURIComponent(code)}/decommission/decide`, { approve: false }, reason)); if (done) { toast(done.message); await after(); } },
+      install: () => formModal({ title: `Install a component in ${code}`, detail: a.status === 'Planned' ? 'Recorded as delivered (the asset is not yet commissioned).' : 'Installed under an open work order on this asset.', confirmLabel: 'Install', fields: [
+        { name: 'partNumber', label: 'Part', type: 'select', options: data.items.map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]), required: true },
+        { name: 'revision', label: 'Revision (if known)' }, { name: 'position', label: 'Position', required: true, placeholder: 'e.g. Control cabinet slot 2' },
+        { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', value: 1, required: true },
+        ...(a.status === 'Planned' ? [] : [{ name: 'workOrderId', label: 'Work order', type: 'select', options: woOptions, required: true }]),
+      ] }, (v, reason) => command(`/api/maintenance/assets/${encodeURIComponent(code)}/components`, { ...v, workOrderId: v.workOrderId ? Number(v.workOrderId) : null }, reason), after),
+    };
+    $$('[data-a]', d.element).forEach(b => b.addEventListener('click', () => handlers[b.dataset.a]()));
+    $$('[data-remove]', d.element).forEach(b => b.addEventListener('click', () => formModal({ title: `Remove component ${b.dataset.remove}`, detail: 'The installation stays in the history; removal is recorded with its work order and reason.', confirmLabel: 'Remove', reasonRequired: true,
+      fields: a.status === 'Planned' ? [] : [{ name: 'workOrderId', label: 'Work order', type: 'select', options: woOptions, required: true }] },
+    (v, reason) => command(`/api/maintenance/components/${b.dataset.remove}/remove`, { workOrderId: v.workOrderId ? Number(v.workOrderId) : null }, reason), after)));
+  }
+
+  function registerAsset() {
+    return formModal({ title: 'Register an asset', detail: 'It starts as Planned: record what it was delivered with, then commission it. A production asset points at its machine; capacity stays with the machine.', confirmLabel: 'Register', fields: [
+      { name: 'assetCode', label: 'Asset code', code: true, required: true }, { name: 'name', label: 'Name', required: true },
+      { name: 'type', label: 'Type', type: 'select', options: ASSET_TYPES.map(t => [t, t]), required: true },
+      { name: 'machineCode', label: 'Machine (production assets)', type: 'select', blank: '— none —', options: machineOptions() },
+      { name: 'workCenterCode', label: 'Work center', type: 'select', blank: '— from the machine, or none —', options: data.workCenters.map(w => [w.code, `${w.code} — ${w.name}`]) },
+      { name: 'location', label: 'Location' }, { name: 'manufacturer', label: 'Manufacturer' }, { name: 'model', label: 'Model' }, { name: 'serialNumber', label: 'Serial number' },
+      { name: 'criticality', label: 'Criticality', type: 'select', options: CRITICALITY.map(c => [c, c]), value: 'Medium', required: true },
+      { name: 'expectedLifeYears', label: 'Expected life (years)', type: 'number', min: 1 }, { name: 'replacementCost', label: 'Replacement cost', type: 'number', min: 0, step: 'any' },
+    ] }, (v, reason) => command('/api/maintenance/assets', v, reason), reload);
   }
 
   async function retire(id) {

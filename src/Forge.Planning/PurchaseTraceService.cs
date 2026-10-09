@@ -118,6 +118,10 @@ public sealed class PurchaseTraceService(IKernelUnitOfWorkFactory unitOfWork)
             {
                 kinds.Add((Enum.Parse<PurchaseSourceKind>(demand.Kind.ToString()), demand.SourceKey ?? $"demand:{id}", id));
             }
+            else if (peg.Kind == "MroReplenishment")
+            {
+                kinds.Add((PurchaseSourceKind.MroReplenishment, peg.RequirementKey, null));
+            }
             else if (peg.Kind == "Substitution")
             {
                 kinds.Add((PurchaseSourceKind.Production, $"substitution:{peg.RequirementKey}", null));

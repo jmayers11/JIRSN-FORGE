@@ -256,6 +256,10 @@ public static class EngineeringRegistration
         services.AddForgeStore<IAlternateStore>(uow => new PostgresAlternateStore(uow));
         services.AddForgeStore<IAlternateLookup>(uow => new PostgresAlternateStore(uow));
         services.AddSingleton<AlternateService>();
+        services.AddForgeStore<IObsolescenceStore>(uow => new PostgresObsolescenceStore(uow));
+        services.AddForgeStore<IObsolescenceLookup>(uow => new PostgresObsolescenceStore(uow));
+        services.AddForgeStore<IMroLookup>(uow => new PostgresObsolescenceStore(uow));
+        services.AddSingleton<ObsolescenceService>();
         return services;
     }
 }

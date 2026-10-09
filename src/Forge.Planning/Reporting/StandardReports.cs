@@ -66,7 +66,7 @@ internal static class StandardReports
         new(
             new("downtime", "Machine downtime", "Maintenance",
                 "Unplanned outages, planned maintenance windows and overdue-PM lockouts in the period, with the hours each took out of it.",
-                [FromFilter, ToFilter, MachineFilter, StatusFilter("Unplanned", "Planned", "MaintenanceOverdue"), SearchFilter],
+                [FromFilter, ToFilter, MachineFilter, StatusFilter("Unplanned", "Planned", "MaintenanceOverdue", "AssetOutOfService"), SearchFilter],
                 [C("startsAt", "Starts", ReportColumnKind.DateTime), C("machine", "Machine", ReportColumnKind.Text), C("kind", "Kind", ReportColumnKind.Text), C("endsAt", "Ends", ReportColumnKind.DateTime), C("hours", "Hours in period", ReportColumnKind.Hours), C("reason", "Reason", ReportColumnKind.Text)],
                 ["machine", "kind", "startsAt"], "machine", 366,
                 "Downtime windows recorded by maintenance and lockouts derived from overdue PM work. Open outages run to now. Hours are clipped to the period."),
@@ -211,7 +211,77 @@ internal static class StandardReports
                 ["status", "kind", "primary"], "status", 3660,
                 "Relationships as they stand now; the period does not apply. Program-specific alternates for programs you cannot see are left out."),
             Permissions.EngineeringRead, null, AlternatesAsync),
+        new(
+            new("assets", "Assets", "Maintenance",
+                "Every asset with its lifecycle status, machine, criticality and what is installed in it, and how many of those components are flagged obsolete without an approved replacement.",
+                [StatusFilter(Enum.GetNames<AssetStatus>()), SearchFilter],
+                [C("asset", "Asset", ReportColumnKind.Text), C("name", "Name", ReportColumnKind.Text), C("type", "Type", ReportColumnKind.Text), C("machine", "Machine", ReportColumnKind.Text),
+                 C("criticality", "Criticality", ReportColumnKind.Text), C("status", "Status", ReportColumnKind.Text), C("commissioned", "Commissioned", ReportColumnKind.Date),
+                 C("components", "Components installed", ReportColumnKind.Number), C("obsolete", "Obsolete, no replacement", ReportColumnKind.Number)],
+                ["status", "type", "criticality"], "status", 3660,
+                "Assets as they stand now; the period does not apply."),
+            Permissions.MaintenanceRead, null, AssetsAsync),
+        new(
+            new("obsolescence", "Obsolescence", "Engineering",
+                "The current obsolescence record of each item: status, dates, evidence and the replacement, if anyone named and approved one. Items without an approved replacement stay flagged.",
+                [StatusFilter(Enum.GetNames<ObsolescenceStatus>()), SearchFilter],
+                [C("record", "Record", ReportColumnKind.Text), C("part", "Item", ReportColumnKind.Text), C("status", "Status", ReportColumnKind.Text), C("lastTimeBuy", "Last-time buy", ReportColumnKind.Date),
+                 C("endOfSupport", "End of support", ReportColumnKind.Date), C("replacement", "Replacement", ReportColumnKind.Text), C("installed", "Installed in assets", ReportColumnKind.Number),
+                 C("evidence", "Evidence", ReportColumnKind.Text)],
+                ["status", "replacement"], "status", 3660,
+                "Records as they stand now; the period does not apply."),
+            Permissions.EngineeringRead, null, ObsolescenceAsync),
     ];
+
+    private static async Task<ReportBody> AssetsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var lookup = run.Uow.Store<IAssetLookup>();
+        var components = await lookup.ListComponentsAsync(null, null, false, ct);
+        var flagged = (await run.Uow.Store<IObsolescenceLookup>().ListObsolescenceAsync(true, ct)).Where(o => o.Flagged).Select(o => o.PartNumber).ToHashSet(StringComparer.Ordinal);
+        var rows = new List<ReportRow>();
+        foreach (var a in await lookup.ListAssetsAsync(ct))
+        {
+            if (!ReportRun.Is(a.Status.ToString(), p.Status) || !run.Matches(a.AssetCode, a.Name, a.MachineCode, a.Manufacturer, a.Model, a.Location))
+            {
+                continue;
+            }
+
+            var mine = components.Where(c => c.AssetCode == a.AssetCode).ToList();
+            List<string> trace = ["asset:" + a.AssetCode];
+            if (a.MachineCode is { } m)
+            {
+                trace.Add("machine:" + m);
+            }
+
+            rows.Add(new ReportRow(
+                [a.AssetCode, a.Name, a.Type.ToString(), a.MachineCode, a.Criticality.ToString(), a.Status.ToString(), a.CommissionedOn, mine.Sum(c => c.Quantity), mine.Where(c => flagged.Contains(c.PartNumber)).Sum(c => c.Quantity)],
+                trace));
+        }
+
+        return new ReportBody(rows, [$"{rows.Count} asset(s); {rows.Count(r => r.Cells[5] is "Restricted" or "Decommissioned")} out of service; {rows.Count(r => r.Cells[8] is decimal d && d > 0)} with obsolete components lacking a replacement."], ["Assets", "Asset components", "Obsolescence records"]);
+    }
+
+    private static async Task<ReportBody> ObsolescenceAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var installed = (await run.Uow.Store<IAssetLookup>().ListComponentsAsync(null, null, false, ct)).GroupBy(c => c.PartNumber, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Sum(c => c.Quantity), StringComparer.Ordinal);
+        var rows = new List<ReportRow>();
+        foreach (var o in await run.Uow.Store<IObsolescenceLookup>().ListObsolescenceAsync(true, ct))
+        {
+            if (!ReportRun.Is(o.Status.ToString(), p.Status) || !run.Matches(o.PartNumber, o.Evidence, o.ReplacementPart))
+            {
+                continue;
+            }
+
+            var replacement = o.Replacement == ReplacementStatus.None ? "None recorded" : $"{o.ReplacementPart} ({o.Replacement})";
+            rows.Add(new ReportRow(
+                [o.RecordId.ToString(CultureInfo.InvariantCulture), o.PartNumber, o.Status.ToString(), o.LastTimeBuy, o.EndOfSupport, replacement, installed.GetValueOrDefault(o.PartNumber), o.Evidence],
+                ["item:" + o.PartNumber]));
+        }
+
+        return new ReportBody(rows, [$"{rows.Count} item(s) with an obsolescence record; {rows.Count(r => r.Cells[5] is string s && !s.EndsWith("(Approved)", StringComparison.Ordinal))} still flagged."], ["Obsolescence records", "Asset components"]);
+    }
 
     private static async Task<ReportBody> AlternatesAsync(ReportRun run, CancellationToken ct)
     {
