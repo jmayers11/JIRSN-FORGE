@@ -45,7 +45,7 @@ public sealed partial class InventoryService
         foreach (var serial in serials)
         {
             await RequireNewSerialAsync(uow, item.PartNumber, serial, ct);
-            await LotAsync(uow, item.PartNumber, serial, null, order.Revision, now, context.Actor, ct);
+            await LotAsync(uow, item.PartNumber, serial, null, order.Revision, IdentityKind.Serial, now, context.Actor, ct);
             var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, 1, null, null, location, StockStatus.Released, serial, OrderNumber: order.OrderNumber,
                 Reason: context.Reason, PartRevision: order.Revision);
             var id = await store.InsertTransactionAsync(txn, now, context.Actor, ct);

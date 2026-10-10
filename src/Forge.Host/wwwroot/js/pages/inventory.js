@@ -11,8 +11,9 @@ import { serialDrawer } from '../genealogy.js';
 const KIND_LABEL = {
   Receipt: 'Receipt', Issue: 'Issue to order', Return: 'Return from order', Transfer: 'Move', Adjustment: 'Adjustment',
   ProductionReceipt: 'From production', Scrap: 'Scrap', CycleCount: 'Count variance', QualityHold: 'Hold', QualityRelease: 'Release', Shipment: 'Shipped',
-  MaintenanceIssue: 'Issue to work order', MaintenanceReturn: 'Return from work order', ProjectIssue: 'Issue to project', ProjectReturn: 'Return from project',
+  MaintenanceIssue: 'Issue to work order', MaintenanceReturn: 'Return from work order', ProjectIssue: 'Issue to project', ProjectReturn: 'Return from project', Split: 'Split', Merge: 'Merge',
 };
+const IDENTITY_KINDS = ['Lot', 'Batch', 'Roll', 'Reel', 'Sheet', 'Piece'];
 const STATUS_TONE = { Released: 'ok', Inspection: 'info', Hold: 'warn' };
 const LOCATION_KINDS = ['Stores', 'Receiving', 'Inspection', 'Quarantine', 'Production', 'Shipping', 'Staging', 'MachineSide', 'WipStorage', 'ExternalProcessor', 'InTransit'];
 const KIND_NAME = { MachineSide: 'Machine side', WipStorage: 'WIP storage', ExternalProcessor: 'Outside processor', InTransit: 'In transit' };
@@ -43,6 +44,7 @@ export async function inventoryPage(page, ctx) {
   const lotField = { name: 'lotNumber', label: 'Lot (lot-tracked parts only)', hint: 'Leave empty for parts that are not lot-tracked.' };
   const statusField = (value = 'Released') => ({ name: 'status', label: 'Quality status', type: 'select', value, options: [['Released', 'Released'], ['Inspection', 'Inspection'], ['Hold', 'Hold']] });
   const reload = async () => { await load(); render(); };
+  const shares = text => (text ?? '').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean).map(x => { const [lotNumber, q] = x.split(/\s+/); return { lotNumber: lotNumber.toUpperCase(), quantity: Number(q) }; });
 
   // V3.1: where a location sits, what it serves, and who holds stock there.
   const placeFields = l => [
@@ -77,9 +79,33 @@ export async function inventoryPage(page, ctx) {
         lotField,
         { name: 'supplierLot', label: 'Supplier lot (optional)' },
         { name: 'revision', label: 'Part revision received (optional)', code: true, hint: 'The released revision on the paperwork. Without it the stock shows as revision not recorded. One lot holds one revision.' },
+        { name: 'identityKind', label: 'What the lot physically is', type: 'select', options: [['', 'Lot (serialized parts: serial)'], ...IDENTITY_KINDS.map(k => [k, k])] },
         { name: 'inspect', type: 'check', label: 'Incoming inspection', text: 'Hold in Inspection until released' },
       ],
-    }, (v, reason) => command('/api/inventory/receipts', v, reason), reload),
+    }, (v, reason) => command('/api/inventory/receipts', { ...v, identityKind: v.identityKind || null }, reason), reload),
+
+    // V3.2: dividing an instance creates new instances whose quantities add up to what left it.
+    split: (preset = {}) => formModal({
+      title: 'Split a lot, roll or batch', detail: 'Each new instance gets its own number and keeps the source\'s revision and supplier lot. What you do not divide off stays in the source. Serials are never split.', confirmLabel: 'Split', reasonRequired: true,
+      fields: [
+        { name: 'partNumber', label: 'Part', type: 'select', options: parts(), value: preset.partNumber, required: true },
+        { name: 'lotNumber', label: 'Lot to split', value: preset.lotNumber, code: true, required: true },
+        { name: 'locationCode', label: 'Where it is', type: 'select', options: locs(), value: preset.locationCode, required: true },
+        statusField(preset.status),
+        { name: 'results', label: 'New instances', required: true, placeholder: 'C-1001-A 900, C-1001-B 70', hint: 'Number and quantity for each, separated by commas.' },
+      ],
+    }, (v, reason) => command('/api/inventory/splits', { ...v, results: shares(v.results) }, reason), reload),
+
+    merge: () => formModal({
+      title: 'Merge lots', detail: 'Only for parts whose merge policy allows it. The sources stop being separately traceable in the result, so every merge is recorded.', confirmLabel: 'Merge', reasonRequired: true,
+      fields: [
+        { name: 'partNumber', label: 'Part', type: 'select', options: parts(), required: true },
+        { name: 'sources', label: 'From lots', required: true, placeholder: 'R-12 40, R-13 25', hint: 'Lot and quantity for each, separated by commas.' },
+        { name: 'resultLot', label: 'Into lot (new or existing)', code: true, required: true },
+        { name: 'locationCode', label: 'Where they are', type: 'select', options: locs(), required: true },
+        statusField(),
+      ],
+    }, (v, reason) => command('/api/inventory/merges', { ...v, sources: shares(v.sources) }, reason), reload),
 
     issue: () => formModal({
       title: 'Issue material to an order', detail: 'Only to released orders, and never more than the order needs.', confirmLabel: 'Issue',
@@ -308,7 +334,7 @@ export async function inventoryPage(page, ctx) {
     const pending = data.requests.data?.length ?? 0;
     const buttons = [
       handler && ['receive', 'Receive'], handler && ['issue', 'Issue to order'], handler && ['return', 'Return'], handler && ['move', 'Move'],
-      handler && ['produced', 'From production'], handler && ['hold', 'Hold'], controller && ['release', 'Release'], handler && ['scrap', 'Scrap'],
+      handler && ['produced', 'From production'], handler && ['split', 'Split'], handler && ['merge', 'Merge'], handler && ['hold', 'Hold'], controller && ['release', 'Release'], handler && ['scrap', 'Scrap'],
       handler && ['count', 'Count'], handler && ['adjust', 'Adjust'], controller && ['location', '+ Location'],
     ].filter(Boolean);
     page.innerHTML = `
@@ -327,7 +353,7 @@ export async function inventoryPage(page, ctx) {
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
     $$('[data-act]', page).forEach(b => b.addEventListener('click', () => {
       if (!(data.locations.data ?? []).length && b.dataset.act !== 'location') { toast('Add a location first (inventory controller).', true); return; }
-      actions[b.dataset.act]();
+      actions[b.dataset.act]({});
     }));
     $$('[data-part]', page).forEach(r => r.addEventListener('click', () => partDrawer(r.dataset.part)));
     $$('[data-mro-set]', page).forEach(b => b.addEventListener('click', () => setMro(b.dataset.mroSet)));
@@ -360,16 +386,40 @@ export async function inventoryPage(page, ctx) {
 
   async function partDrawer(part) {
     const d = drawer(`${part}${item(part) ? ` — ${item(part).description}` : ''}`, '<div class="muted">Loading…</div>');
-    const [stock, ledger] = await Promise.all([tryGet(`/api/inventory/positions?part=${encodeURIComponent(part)}`), tryGet(`/api/inventory/transactions?part=${encodeURIComponent(part)}&take=100`)]);
+    const [stock, ledger, lots, policy] = await Promise.all([tryGet(`/api/inventory/positions?part=${encodeURIComponent(part)}`), tryGet(`/api/inventory/transactions?part=${encodeURIComponent(part)}&take=100`),
+      tryGet(`/api/inventory/lots?part=${encodeURIComponent(part)}`), tryGet(`/api/inventory/merge-policy/${encodeURIComponent(part)}`)]);
+    const kindOf = lot => (lots.data ?? []).find(l => l.lotNumber === lot)?.identityKind;
+    const divisible = item(part)?.lotTracked && !item(part)?.serialized;
+    const p = policy.data;
     d.element.innerHTML = `
       <h3 style="margin:0">Where it is</h3>
-      ${stock.error ? errorBlock(stock.error, 'stock') : stock.data.length ? `<table class="table"><thead><tr><th>Location</th><th>Lot</th><th>Quality</th><th>Custody</th><th>Point of use</th><th>Planning</th><th class="num">Qty</th></tr></thead><tbody>
-        ${stock.data.map(b => `<tr><td>${esc(b.locationPath)}</td><td>${esc(b.lotNumber ?? '—')}</td><td><span class="pill ${STATUS_TONE[b.qualityStatus]}">${esc(b.qualityStatus)}</span></td>
+      ${stock.error ? errorBlock(stock.error, 'stock') : stock.data.length ? `<table class="table"><thead><tr><th>Location</th><th>Instance</th><th>Quality</th><th>Custody</th><th>Point of use</th><th>Planning</th><th class="num">Qty</th></tr></thead><tbody>
+        ${stock.data.map(b => `<tr><td>${esc(b.locationPath)}</td><td>${b.lotNumber ? `${esc(b.lotNumber)} <span class="faint">${esc(kindOf(b.lotNumber) ?? '')}</span> <button class="btn small ghost" data-lineage="${esc(b.lotNumber)}">Lineage</button>${handler && divisible && b.custody === 'Company' ? ` <button class="btn small ghost" data-split='${esc(JSON.stringify({ partNumber: part, lotNumber: b.lotNumber, locationCode: b.locationCode, status: b.qualityStatus }))}'>Split</button>` : ''}` : '—'}</td><td><span class="pill ${STATUS_TONE[b.qualityStatus]}">${esc(b.qualityStatus)}</span></td>
           <td>${b.custody === 'Company' ? 'Company' : `<span class="pill warn">${esc(custodyText(b))}</span>`}</td><td>${esc(b.pointOfUseWorkCenter ? `${b.pointOfUseWorkCenter}${b.machineCode ? ` · ${b.machineCode}` : ''}` : '—')}</td>
           <td>${b.availableForPlanning ? 'Counts' : '<span class="faint">Not counted</span>'}</td><td class="num">${qty(b.quantity)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None on hand.</div>'}
+      ${divisible ? `<div class="notice" style="margin-top:8px">Merging lots: ${p?.allowed ? `allowed${p.sameRevisionRequired ? ', within one revision' : ''}${p.sameSupplierLotRequired ? ', within one supplier lot' : ''}` : 'never'}${p?.setBy && p.setBy !== 'system' ? ` <span class="faint">· set by ${esc(who(p.setBy))}: ${esc(p.reason)}</span>` : ''}
+        ${controller ? ' <button class="btn small" data-merge-policy>Change</button>' : ''}</div>` : ''}
+      <div id="lineage"></div>
       <h3 style="margin:0">How it got there</h3>
       ${ledger.error ? errorBlock(ledger.error, 'ledger') : ledger.data.length ? ledgerTable(ledger.data) : '<div class="muted">No transactions.</div>'}
       <div class="faint"><a href="#/material-plan?part=${encodeURIComponent(part)}">Open the material plan for ${esc(part)} →</a></div>`;
+    $$('[data-split]', d.element).forEach(b => b.addEventListener('click', () => actions.split(JSON.parse(b.dataset.split))));
+    $$('[data-lineage]', d.element).forEach(b => b.addEventListener('click', async () => {
+      const { data: g, error } = await tryGet(`/api/inventory/lots/${encodeURIComponent(part)}/${encodeURIComponent(b.dataset.lineage)}/lineage`);
+      const link = (l, other) => `<li>${esc(l.relation === 'Split' ? 'Split' : 'Merged')} ${qty(l.quantity)} ${esc(other)} <span class="faint">${esc(fmtDateTime(l.at))} · ${esc(who(l.actor))}${l.reason ? ` · ${esc(l.reason)}` : ''}</span></li>`;
+      $('#lineage', d.element).innerHTML = error ? errorBlock(error, 'the lineage') : `<h3 style="margin:8px 0 0">Lineage of ${esc(g.lotNumber)}</h3>
+        ${g.sources.length ? `<div>Came from:</div><ul>${g.sources.map(l => link(l, `from ${l.sourceLot}`)).join('')}</ul>` : '<div class="muted">Not split or merged from another instance.</div>'}
+        ${g.results.length ? `<div>Became:</div><ul>${g.results.map(l => link(l, `into ${l.resultLot}`)).join('')}</ul>` : ''}
+        ${g.origins.length ? `<div class="faint">First instances: ${g.origins.map(esc).join(', ')}</div>` : ''}`;
+    }));
+    $('[data-merge-policy]', d.element)?.addEventListener('click', () => formModal({
+      title: `Merge policy for ${part}`, detail: 'Merged lots stop being separately traceable. Every setting is kept with who set it and why.', confirmLabel: 'Save', reasonRequired: true,
+      fields: [
+        { name: 'allowed', type: 'check', label: 'Merging', text: 'Lots of this part may be merged', value: p?.allowed ?? false },
+        { name: 'sameRevisionRequired', type: 'check', label: 'Revision', text: 'Only lots of the same revision', value: p?.sameRevisionRequired ?? true },
+        { name: 'sameSupplierLotRequired', type: 'check', label: 'Supplier lot', text: 'Only lots from the same supplier lot', value: p?.sameSupplierLotRequired ?? true },
+      ],
+    }, (v, reason) => command(`/api/inventory/merge-policy/${encodeURIComponent(part)}`, v, reason), async () => { await reload(); partDrawer(part); }));
   }
 
   await load();

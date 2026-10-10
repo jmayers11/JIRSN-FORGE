@@ -33,7 +33,8 @@ public sealed record RetireLocation(string Code);
 /// opening balances or customer-supplied material. <paramref name="Inspect"/> puts it into Inspection.
 /// </summary>
 /// <param name="Revision">The part revision received, when the item has released revisions (V2.3). Optional; stock without one is reported as revision not recorded.</param>
-public sealed record ReceiveStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Revision = null);
+/// <param name="IdentityKind">What the received instance physically is (V3.2): a lot, batch, roll, reel, sheet or piece; serialized parts are always serials.</param>
+public sealed record ReceiveStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Revision = null, IdentityKind? IdentityKind = null);
 
 /// <param name="AlternateFor">The part the order needs, when <paramref name="PartNumber"/> is an approved alternate issued in its place (V2.6).</param>
 public sealed record IssueToOrder(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? AlternateFor = null);
@@ -156,7 +157,11 @@ public interface IInventoryStore
 
     Task<long> InsertTransactionAsync(NewTransaction transaction, DateTimeOffset at, string actor, CancellationToken ct);
 
-    Task EnsureLotAsync(string partNumber, string lotNumber, string? supplierLot, DateTimeOffset at, string actor, CancellationToken ct);
+    Task EnsureLotAsync(string partNumber, string lotNumber, string? supplierLot, IdentityKind kind, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task InsertInstanceLinkAsync(InstanceLink link, CancellationToken ct);
+
+    Task InsertMergePolicyAsync(MergePolicy policy, CancellationToken ct);
 
     Task SetLotRevisionAsync(string partNumber, string lotNumber, string revision, CancellationToken ct);
 
@@ -240,13 +245,13 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
     /// Creates the lot with its revision, or checks an existing lot: one lot holds one revision, and a lot
     /// received before revisions were recorded is never given one after the fact.
     /// </summary>
-    private static async Task LotAsync(IKernelUnitOfWork uow, string partNumber, string lot, string? supplierLot, string? revision, DateTimeOffset now, string actor, CancellationToken ct)
+    private static async Task LotAsync(IKernelUnitOfWork uow, string partNumber, string lot, string? supplierLot, string? revision, IdentityKind kind, DateTimeOffset now, string actor, CancellationToken ct)
     {
         var existing = (await uow.Store<IInventoryLookup>().ListLotsAsync(partNumber, ct)).FirstOrDefault(l => l.LotNumber == lot);
         var store = uow.Store<IInventoryStore>();
         if (existing is null)
         {
-            await store.EnsureLotAsync(partNumber, lot, supplierLot, now, actor, ct);
+            await store.EnsureLotAsync(partNumber, lot, supplierLot, kind, now, actor, ct);
             if (revision is not null)
             {
                 await store.SetLotRevisionAsync(partNumber, lot, revision, ct);
@@ -315,9 +320,16 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 await RequireNewSerialAsync(uow, item.PartNumber, lot, ct);
             }
 
+            if (c.IdentityKind is { } kind && (kind == IdentityKind.Serial) != item.Serialized)
+            {
+                throw new CommandRejectedException("invalid_identity_kind", item.Serialized
+                    ? $"{item.PartNumber} is serialized: every unit is received as a serial."
+                    : $"{item.PartNumber} is not serialized, so it is not received as serials.");
+            }
+
             if (lot is not null)
             {
-                await LotAsync(uow, item.PartNumber, lot, Optional(c.SupplierLot), revision, now, context.Actor, ct);
+                await LotAsync(uow, item.PartNumber, lot, Optional(c.SupplierLot), revision, item.Serialized ? IdentityKind.Serial : c.IdentityKind ?? IdentityKind.Lot, now, context.Actor, ct);
             }
 
             var status = c.Inspect ? StockStatus.Inspection : StockStatus.Released;
@@ -582,7 +594,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 // The order's revision is what was built (V2.3).
                 if (lot is not null)
                 {
-                    await LotAsync(uow, item.PartNumber, lot, null, order.Revision, now, context.Actor, ct);
+                    await LotAsync(uow, item.PartNumber, lot, null, order.Revision, item.Serialized ? IdentityKind.Serial : IdentityKind.Lot, now, context.Actor, ct);
                 }
 
                 var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, quantity, null, null, location.Code, StockStatus.Released, lot, OrderNumber: order.OrderNumber, Reason: context.Reason, PartRevision: order.Revision);

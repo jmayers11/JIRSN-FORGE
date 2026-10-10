@@ -68,7 +68,8 @@ async function main() {
       const projects = !(await get('planner', '/api/projects/')).length;
       const horizon = !(await horizonWindow());
       const places = !(await get('ivy', '/api/inventory/locations')).some(l => l.code === 'SL-B-SIDE');
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const identity = !(await get('eng', '/api/engineering/items')).some(i => i.partNumber === 'FOIL-CU');
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -122,6 +123,10 @@ async function main() {
         console.log('Adding sample location hierarchy, point-of-use stock and an outside processor.');
         await seedPlaces();
       }
+      if (identity) {
+        console.log('Adding a sample copper foil roll split to width and a merge policy.');
+        await seedIdentity();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -148,6 +153,7 @@ async function main() {
     await seedGenealogy();
     await seedHorizon();
     await seedPlaces();
+    await seedIdentity();
     return finish();
   }
 
@@ -301,6 +307,7 @@ async function main() {
   await seedGenealogy();
   await seedHorizon();
   await seedPlaces();
+  await seedIdentity();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -731,6 +738,18 @@ async function seedPlaces() {
   await post('ivy', '/api/inventory/locations', { code: 'PRECOAT-OP', siteCode: 'PLANT1', name: 'At Precoat Metals', kind: 'ExternalProcessor', custodianSupplier: 'PRECOAT' });
   await post('stores', '/api/inventory/receipts', { partNumber: 'COIL-AL', quantity: 300, locationCode: 'SL-B-SIDE', reason: 'Sample: coil delivered straight to slitter B' });
   await post('stores', '/api/inventory/transfers', { partNumber: 'COIL-AL', quantity: 100, fromLocation: 'SL-B-SIDE', toLocation: 'PRECOAT-OP', status: 'Released', reason: 'Sample: out for pre-coating' });
+}
+
+async function seedIdentity() {
+  step('Material identity: a copper foil roll split to width beside slitter B, and a merge policy — see the part drawer for FOIL-CU and its Lineage');
+  await post('eng', '/api/engineering/items', { partNumber: 'FOIL-CU', description: 'Copper foil roll', unitOfMeasure: 'M', makeBuy: 'Buy', leadTimeDays: 21, lotTracked: true });
+  await post('eng', '/api/engineering/items/FOIL-CU/revisions', { revision: 'A' });
+  await post('approver', '/api/engineering/items/FOIL-CU/revisions/A/release', { reason: 'Sample: copper foil baseline' });
+  await post('stores', '/api/inventory/receipts', { partNumber: 'FOIL-CU', quantity: 1000, locationCode: 'STORES', lotNumber: 'CU-1001', supplierLot: 'MILL-88', revision: 'A', identityKind: 'Roll', reason: 'Sample: master roll received' });
+  await post('stores', '/api/inventory/receipts', { partNumber: 'FOIL-CU', quantity: 60, locationCode: 'STORES', lotNumber: 'CU-0990', supplierLot: 'MILL-88', revision: 'A', identityKind: 'Roll', reason: 'Sample: short roll from the last order' });
+  await post('stores', '/api/inventory/transfers', { partNumber: 'FOIL-CU', quantity: 1000, fromLocation: 'STORES', toLocation: 'SL-B-SIDE', lotNumber: 'CU-1001', status: 'Released', reason: 'Sample: to slitter B' });
+  await post('stores', '/api/inventory/splits', { partNumber: 'FOIL-CU', lotNumber: 'CU-1001', locationCode: 'SL-B-SIDE', status: 'Released', results: [{ lotNumber: 'CU-1001-A', quantity: 900 }, { lotNumber: 'CU-1001-B', quantity: 70 }, { lotNumber: 'CU-1001-C', quantity: 30 }], reason: 'Sample: slit to three widths' });
+  await post('ivy', '/api/inventory/merge-policy/FOIL-CU', { allowed: true, sameRevisionRequired: true, sameSupplierLotRequired: true, reason: 'Sample: short rolls of one mill lot may be combined' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

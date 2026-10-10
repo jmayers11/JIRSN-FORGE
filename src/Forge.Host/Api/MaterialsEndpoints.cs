@@ -40,7 +40,13 @@ public sealed record LocationChangeRequest(
     string? MachineCode = null,
     string? CustodianSupplier = null);
 
-public sealed record ReceiptRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Reason, string? Revision = null);
+public sealed record ReceiptRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Reason, string? Revision = null, IdentityKind? IdentityKind = null);
+
+public sealed record SplitRequest(string PartNumber, string LotNumber, string LocationCode, StockStatus? Status, InstanceShare[] Results, string? Reason);
+
+public sealed record MergeRequest(string PartNumber, InstanceShare[] Sources, string ResultLot, string LocationCode, StockStatus? Status, string? Reason);
+
+public sealed record MergePolicyRequest(bool Allowed, bool SameRevisionRequired, bool SameSupplierLotRequired, string? Reason);
 
 public sealed record OrderMaterialRequest(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason, string? AlternateFor = null);
 
@@ -210,6 +216,22 @@ public static class MaterialsEndpoints
             }));
         api.MapGet("/lots", (HttpContext http, string? part, CancellationToken _) =>
             ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListLotsAsync(Part(part), ct)));
+        // V3.2: an instance's lineage (what it was split or merged from, what came of it, and its first instances).
+        api.MapGet("/lots/{part}/{lot}/lineage", (HttpContext http, string part, string lot, CancellationToken _) =>
+            ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) =>
+            {
+                var p = part.Trim().ToUpperInvariant();
+                var code = lot.Trim().ToUpperInvariant();
+                if (!(await l.ListLotsAsync(p, ct)).Any(x => x.LotNumber == code))
+                {
+                    throw new CommandRejectedException("lot_not_found", $"{p} lot {code} does not exist.");
+                }
+
+                return InstanceLineage.From(p, code, await l.ListInstanceLinksAsync(p, null, ct));
+            }));
+        api.MapGet("/merge-policy/{part}", (HttpContext http, string part, CancellationToken _) =>
+            ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) =>
+                await l.FindMergePolicyAsync(part.Trim().ToUpperInvariant(), ct) ?? new MergePolicy(part.Trim().ToUpperInvariant(), false, true, true, "No policy set: lots are never merged.", "system", DateTimeOffset.MinValue)));
         api.MapGet("/requests", (HttpContext http, bool? pending, CancellationToken _) =>
             ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListRequestsAsync(pending ?? true, ct)));
 
@@ -220,7 +242,7 @@ public static class MaterialsEndpoints
         api.MapPost("/locations/{code}/retire", (HttpContext http, string code, ReasonRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RetireLocationAsync(new RetireLocation(code), c, ct)));
         api.MapPost("/receipts", (HttpContext http, ReceiptRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ReceiveAsync(new ReceiveStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.SupplierLot, b.PoNumber, b.PoLine, b.Inspect, b.Revision), c, ct)));
+            Command(http, b.Reason, c => s.ReceiveAsync(new ReceiveStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.SupplierLot, b.PoNumber, b.PoLine, b.Inspect, b.Revision, b.IdentityKind), c, ct)));
         api.MapPost("/issues", (HttpContext http, OrderMaterialRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.IssueToOrderAsync(new IssueToOrder(b.OrderNumber, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.AlternateFor), c, ct)));
         api.MapPost("/returns", (HttpContext http, OrderMaterialRequest b, InventoryService s, CancellationToken ct) =>
@@ -239,6 +261,12 @@ public static class MaterialsEndpoints
             Command(http, b.Reason, c => s.RequestAdjustmentAsync(new RequestAdjustment(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released, b.Change), c, ct)));
         api.MapPost("/counts", (HttpContext http, CountRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordCountAsync(new RecordCount(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released, b.Counted), c, ct)));
+        api.MapPost("/splits", (HttpContext http, SplitRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SplitAsync(new SplitInstance(b.PartNumber, b.LotNumber, b.LocationCode, b.Status ?? StockStatus.Released, b.Results ?? []), c, ct)));
+        api.MapPost("/merges", (HttpContext http, MergeRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.MergeAsync(new MergeInstances(b.PartNumber, b.Sources ?? [], b.ResultLot, b.LocationCode, b.Status ?? StockStatus.Released), c, ct)));
+        api.MapPost("/merge-policy/{part}", (HttpContext http, string part, MergePolicyRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SetMergePolicyAsync(new SetMergePolicy(part, b.Allowed, b.SameRevisionRequired, b.SameSupplierLotRequired), c, ct)));
         api.MapPost("/requests/{id:long}/approve", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ApproveAdjustmentAsync(new ApproveAdjustment(id), c, ct)));
         api.MapPost("/requests/{id:long}/reject", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>

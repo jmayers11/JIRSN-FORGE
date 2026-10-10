@@ -192,6 +192,15 @@ internal static class StandardReports
                 "Stock as it stands now; the period does not apply. Counts for planning = released by quality and in a nettable location."),
             Permissions.InventoryRead, null, StockPositionsAsync),
         new(
+            new("lot-lineage", "Lot splits and merges", "Inventory",
+                "Every split and merge of a lot, roll, batch or other instance in the period: what it came from, what it became, how much, who and why. Each is a recorded link, never changed.",
+                [FromFilter, ToFilter, PartFilter, StatusFilter(Enum.GetNames<InstanceRelation>()), SearchFilter],
+                [C("at", "When", ReportColumnKind.DateTime), C("status", "Relation", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("from", "From", ReportColumnKind.Text),
+                 C("to", "Into", ReportColumnKind.Text), C("quantity", "Quantity", ReportColumnKind.Number), C("actor", "By", ReportColumnKind.Text), C("reason", "Why", ReportColumnKind.Text)],
+                ["status", "part"], "at", 366,
+                "Splits and merges recorded in the period."),
+            Permissions.InventoryRead, null, LotLineageAsync),
+        new(
             new("engineering-changes", "Engineering changes", "Engineering",
                 "Every engineering change you may see: what it changes, which reviews it needs and has, who approved and released it, and when it takes effect.",
                 [StatusFilter(Enum.GetNames<ChangeStatus>()), SearchFilter],
@@ -527,6 +536,25 @@ internal static class StandardReports
 
         var open = rows.Count(r => r.Cells[4] is "Draft" or "InReview" or "Approved");
         return new ReportBody(rows, [$"{rows.Count} change(s); {open} open."], ["Engineering changes", "Change reviews"]);
+    }
+
+    private static async Task<ReportBody> LotLineageAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var l in (await run.Uow.Store<IInventoryLookup>().ListInstanceLinksAsync(p.PartNumber, null, ct)).Where(l => run.InPeriod(l.At)))
+        {
+            if (!ReportRun.Is(l.Relation.ToString(), p.Status) || !run.Matches(l.SourcePart, l.SourceLot, l.ResultLot, l.Reason))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [l.At, l.Relation.ToString(), l.SourcePart, l.SourceLot, l.ResultLot, l.Quantity, l.Actor, l.Reason],
+                ["item:" + l.SourcePart]));
+        }
+
+        return new ReportBody(rows, [$"{rows.Count} link(s): {rows.Count(r => (string)r.Cells[1]! == "Split")} split, {rows.Count(r => (string)r.Cells[1]! == "Merge")} merge."], ["Instance links", "Inventory ledger"]);
     }
 
     private static async Task<ReportBody> StockPositionsAsync(ReportRun run, CancellationToken ct)

@@ -68,13 +68,63 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
-    public async Task EnsureLotAsync(string partNumber, string lotNumber, string? supplierLot, DateTimeOffset at, string actor, CancellationToken ct)
+    public async Task EnsureLotAsync(string partNumber, string lotNumber, string? supplierLot, IdentityKind kind, DateTimeOffset at, string actor, CancellationToken ct)
     {
         await using var cmd = uow.Command(
-            "INSERT INTO inventory.lot (part_number, lot_number, supplier_lot, first_received_at, created_by) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
-            partNumber, lotNumber, Text(supplierLot), at, actor);
+            "INSERT INTO inventory.lot (part_number, lot_number, supplier_lot, first_received_at, created_by, identity_kind) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING",
+            partNumber, lotNumber, Text(supplierLot), at, actor, kind.ToString());
         await cmd.ExecuteNonQueryAsync(ct);
     }
+
+    public async Task InsertInstanceLinkAsync(InstanceLink link, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(link);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO inventory.instance_link (relation, source_part, source_lot, result_part, result_lot, quantity, out_transaction_id, in_transaction_id, reason, at, actor)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            """,
+            link.Relation.ToString(), link.SourcePart, link.SourceLot, link.ResultPart, link.ResultLot, link.Quantity, link.OutTransactionId, link.InTransactionId,
+            Text(link.Reason), link.At, link.Actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task InsertMergePolicyAsync(MergePolicy policy, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO inventory.merge_policy (part_number, allowed, same_revision_required, same_supplier_lot_required, reason, set_by, set_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            policy.PartNumber, policy.Allowed, policy.SameRevisionRequired, policy.SameSupplierLotRequired, policy.Reason, policy.SetBy, policy.SetAt);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public Task<IReadOnlyList<InstanceLink>> ListInstanceLinksAsync(string? partNumber, string? lotNumber, CancellationToken ct) =>
+        ReadAsync(
+            """
+            SELECT link_id, relation, source_part, source_lot, result_part, result_lot, quantity, out_transaction_id, in_transaction_id, reason, at, actor
+            FROM inventory.instance_link
+            WHERE $1::text IS NULL
+               OR (source_part = $1 AND ($2::text IS NULL OR source_lot = $2))
+               OR (result_part = $1 AND ($2::text IS NULL OR result_lot = $2))
+            ORDER BY link_id
+            """,
+            r => new InstanceLink(r.GetInt64(0), Enum.Parse<InstanceRelation>(r.GetString(1)), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), Dec(r, 6),
+                r.GetInt64(7), r.GetInt64(8), NullableText(r, 9), r.GetFieldValue<DateTimeOffset>(10), r.GetString(11)),
+            ct,
+            Text(partNumber), Text(lotNumber));
+
+    public async Task<MergePolicy?> FindMergePolicyAsync(string partNumber, CancellationToken ct) =>
+        (await ReadAsync(
+            """
+            SELECT part_number, allowed, same_revision_required, same_supplier_lot_required, reason, set_by, set_at
+            FROM inventory.merge_policy WHERE part_number = $1 ORDER BY policy_id DESC LIMIT 1
+            """,
+            r => new MergePolicy(r.GetString(0), r.GetBoolean(1), r.GetBoolean(2), r.GetBoolean(3), r.GetString(4), r.GetString(5), r.GetFieldValue<DateTimeOffset>(6)),
+            ct,
+            partNumber)).SingleOrDefault();
 
     public async Task SetLotRevisionAsync(string partNumber, string lotNumber, string revision, CancellationToken ct)
     {
@@ -182,8 +232,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
 
     public Task<IReadOnlyList<LotInfo>> ListLotsAsync(string? partNumber, CancellationToken ct) =>
         ReadAsync(
-            "SELECT part_number, lot_number, supplier_lot, first_received_at, part_revision FROM inventory.lot WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, first_received_at, lot_number",
-            r => new LotInfo(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4)),
+            "SELECT part_number, lot_number, supplier_lot, first_received_at, part_revision, identity_kind FROM inventory.lot WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, first_received_at, lot_number",
+            r => new LotInfo(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4), Enum.Parse<IdentityKind>(r.GetString(5))),
             ct,
             Text(partNumber));
 

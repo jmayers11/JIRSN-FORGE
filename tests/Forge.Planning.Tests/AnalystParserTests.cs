@@ -80,6 +80,9 @@ public class AnalystParserTests
     [InlineData("Where is lot L-104?", "stock-positions")]
     [InlineData("What material is at outside processors?", "stock-positions")]
     [InlineData("Show stock at the point of use", "stock-positions")]
+    [InlineData("What was roll R-100 split into?", "lot-lineage")]
+    [InlineData("Show lot splits and merges", "lot-lineage")]
+    [InlineData("What is the lineage of lot CU-1001-A?", "lot-lineage")]
     [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)
@@ -258,5 +261,13 @@ public class AnalystParserTests
         Assert.Equal("Outside processor", Parse("What material is at outside processors?").Report!.Parameters.Search);
         Assert.Equal("In transit", Parse("Show material in transit").Report!.Parameters.Search);
         Assert.Null(Parse("Show stock at the point of use").Report!.Parameters.Search);
+    }
+
+    [Fact]
+    public void Lineage_questions_search_for_the_instance_asked_about()
+    {
+        Assert.Equal("R-100", Parse("What was roll R-100 split into?").Report!.Parameters.Search);
+        Assert.Equal("CU-1001-A", Parse("What is the lineage of lot CU-1001-A?").Report!.Parameters.Search);
+        Assert.Null(Parse("Show lot splits and merges").Report!.Parameters.Search);
     }
 }

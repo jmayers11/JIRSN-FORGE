@@ -89,7 +89,100 @@ public enum InventoryTransactionKind
 
     /// <summary>Unused material returned from a project line (V2.10).</summary>
     ProjectReturn,
+
+    /// <summary>Part of an instance divided off into a new instance (V3.2): one entry out of the source, one into each result.</summary>
+    Split,
+
+    /// <summary>Instances combined into one where policy allows (V3.2): one entry out of each source, one into the result.</summary>
+    Merge,
 }
+
+/// <summary>What kind of physical instance a lot row is (V3.2). The quantity is always the ledger sum; the kind never changes.</summary>
+public enum IdentityKind
+{
+    Lot,
+    Batch,
+    Roll,
+    Serial,
+    Reel,
+    Sheet,
+    Piece,
+}
+
+public enum InstanceRelation
+{
+    /// <summary>The result was divided off the source.</summary>
+    Split,
+
+    /// <summary>The source was combined into the result.</summary>
+    Merge,
+}
+
+/// <summary>A recorded link between two physical instances (V3.2), never changed: what became what, how much, when, by whom.</summary>
+public sealed record InstanceLink(
+    long LinkId,
+    InstanceRelation Relation,
+    string SourcePart,
+    string SourceLot,
+    string ResultPart,
+    string ResultLot,
+    decimal Quantity,
+    long OutTransactionId,
+    long InTransactionId,
+    string? Reason,
+    DateTimeOffset At,
+    string Actor);
+
+/// <summary>
+/// Where an instance came from and what came of it (V3.2): the instances it was split from or merged out of
+/// (sources), the instances divided off or merged into (results), and the first instances its line goes back to
+/// (origins, the ones nothing was split or merged into).
+/// </summary>
+public sealed record InstanceLineage(string PartNumber, string LotNumber, IReadOnlyList<InstanceLink> Sources, IReadOnlyList<InstanceLink> Results, IReadOnlyList<string> Origins)
+{
+    public static InstanceLineage From(string partNumber, string lotNumber, IReadOnlyList<InstanceLink> links)
+    {
+        ArgumentNullException.ThrowIfNull(links);
+        var into = links.ToLookup(l => (l.ResultPart, l.ResultLot));
+        var origins = new SortedSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<(string, string)>();
+        var queue = new Queue<(string Part, string Lot)>([(partNumber, lotNumber)]);
+        while (queue.Count > 0)
+        {
+            var at = queue.Dequeue();
+            if (!seen.Add(at))
+            {
+                continue;
+            }
+
+            var parents = into[at].ToList();
+            if (parents.Count == 0)
+            {
+                if (at != (partNumber, lotNumber))
+                {
+                    origins.Add(at.Part == partNumber ? at.Lot : $"{at.Part}/{at.Lot}");
+                }
+
+                continue;
+            }
+
+            foreach (var p in parents)
+            {
+                queue.Enqueue((p.SourcePart, p.SourceLot));
+            }
+        }
+
+        return new InstanceLineage(
+            partNumber,
+            lotNumber,
+            into[(partNumber, lotNumber)].ToList(),
+            links.Where(l => l.SourcePart == partNumber && l.SourceLot == lotNumber).ToList(),
+            origins.ToList());
+    }
+}
+
+/// <summary>Whether lots of a part may be merged, and what the sources must share (V3.2). Absent = never.</summary>
+public sealed record MergePolicy(string PartNumber, bool Allowed, bool SameRevisionRequired, bool SameSupplierLotRequired, string Reason, string SetBy, DateTimeOffset SetAt);
 
 /// <param name="ParentCode">The location this one sits in (V3.1); null for a top-level area.</param>
 /// <param name="Nettable">Whether released stock here counts for planning (V3.1).</param>
@@ -211,7 +304,8 @@ public sealed record InventoryTransaction(
     int? ProjectLine = null);
 
 /// <param name="PartRevision">The part revision received into the lot; null when it was not recorded (stock received before V2.3).</param>
-public sealed record LotInfo(string PartNumber, string LotNumber, string? SupplierLot, DateTimeOffset FirstReceivedAt, string? PartRevision = null);
+/// <param name="IdentityKind">What the instance physically is (V3.2).</param>
+public sealed record LotInfo(string PartNumber, string LotNumber, string? SupplierLot, DateTimeOffset FirstReceivedAt, string? PartRevision = null, IdentityKind IdentityKind = IdentityKind.Lot);
 
 /// <summary>Net quantity of a part issued to a production order (issues less returns).</summary>
 /// <summary>Net material issued to an order, in the terms of the part the order needs: approved alternates count at their converted quantity (V2.6).</summary>
@@ -346,4 +440,10 @@ public interface IInventoryLookup
 
     /// <summary>Spare parts per work order; one order, or all.</summary>
     Task<IReadOnlyList<WorkOrderPart>> ListWorkOrderPartsAsync(long? workOrderId, CancellationToken ct);
+
+    /// <summary>Links where the instance is the source or the result (V3.2); every link when no part is given.</summary>
+    Task<IReadOnlyList<InstanceLink>> ListInstanceLinksAsync(string? partNumber, string? lotNumber, CancellationToken ct);
+
+    /// <summary>The merge policy in force for a part, or null (never merged).</summary>
+    Task<MergePolicy?> FindMergePolicyAsync(string partNumber, CancellationToken ct);
 }

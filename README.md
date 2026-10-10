@@ -314,6 +314,17 @@ See `docs/adr/0024-v2-12-horizon-and-what-changed.md`.
 
 See `docs/adr/0025-v3-1-stock-dimensions-and-locations.md`.
 
+## What V3.2 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Identity kind | `inventory.lot.identity_kind` | Lot, batch, roll, serial, reel, sheet or piece; serialized parts are always serials; a move never changes identity |
+| Split | `POST /api/inventory/splits` | New instances whose quantities add up exactly to what left the source; revision and supplier lot carried; serials never split |
+| Merge | `POST /api/inventory/merges`, `inventory.merge_policy` | Off for every part until inventory approval authority allows it; may require one revision and one supplier lot |
+| Lineage | `inventory.instance_link`, `/api/inventory/lots/{part}/{lot}/lineage` | Every split and merge recorded for good: sources, results, first instances |
+
+See `docs/adr/0026-v3-2-material-identity-and-quantity.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -670,3 +681,14 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/inventory/locations` takes `parentCode`, `level`, `nettable`, `workCenterCode`, `machineCode`, `custodianSupplier` | `inventory.manage` |
 | POST | `/api/inventory/locations/{code}` (change, reason required) | `inventory.manage` |
 | GET | `/api/inventory/positions[?part=&location=&lot=]` | `inventory.read` |
+
+## V3.2 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/inventory/receipts` takes `identityKind` | `inventory.transact` |
+| POST | `/api/inventory/splits` (reason required) | `inventory.transact` |
+| POST | `/api/inventory/merges` (reason required, policy must allow) | `inventory.transact` |
+| GET | `/api/inventory/merge-policy/{part}` | `inventory.read` |
+| POST | `/api/inventory/merge-policy/{part}` (reason required) | `inventory.approve` |
+| GET | `/api/inventory/lots/{part}/{lot}/lineage` | `inventory.read` |
