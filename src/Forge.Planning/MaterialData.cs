@@ -72,7 +72,7 @@ internal static class MaterialData
     public static async Task<MaterialSnapshot> MaterialSnapshotAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct)
     {
         var inventory = uow.Store<IInventoryLookup>();
-        var stock = StockPosition.From(await inventory.ListBalancesAsync(null, ct), await inventory.ListLocationsAsync(ct))
+        var stock = (await Forge.Inventory.Contracts.ShelfLifeQueries.PositionsAsync(uow, null, time.GetUtcNow(), ct))
             .Where(p => p.AvailableForPlanning)
             .GroupBy(b => b.PartNumber, StringComparer.Ordinal)
             .OrderBy(g => g.Key, StringComparer.Ordinal)
@@ -129,7 +129,7 @@ internal static class MaterialData
         // V3.1: MRP nets released stock in nettable locations only; stock at an outside processor, in transit or in
         // quarantine is on hand but not available for planning. Inspection and hold are reported, never netted.
         var inventoryLookup = uow.Store<IInventoryLookup>();
-        var stock = StockPosition.From(await inventoryLookup.ListBalancesAsync(null, ct), await inventoryLookup.ListLocationsAsync(ct))
+        var stock = (await Forge.Inventory.Contracts.ShelfLifeQueries.PositionsAsync(uow, null, time.GetUtcNow(), ct))
             .GroupBy(b => b.PartNumber, StringComparer.Ordinal)
             .OrderBy(g => g.Key, StringComparer.Ordinal)
             .Select(g => new MrpStock(

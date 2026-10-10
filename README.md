@@ -359,6 +359,19 @@ See `docs/adr/0028-v3-4-movement-and-point-of-use.md`.
 
 See `docs/adr/0029-v3-5-production-actuals-and-quantity-states.md`.
 
+## What V3.6 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Shelf-life rules | `inventory.shelf_life_rule`, part drawer | Days from manufacture or receipt, retest interval, open life, storage limits, FIFO or FEFO; set by quality with a reason |
+| Lot dates | `inventory.lot` manufacture, expiry, retest, opened | Given once at receipt (earlier of rule and paperwork) and never changed; splits and remnants inherit; merges need matching expiry |
+| Extensions | `inventory.shelf_life_extension` | Requested with evidence, decided by someone else with quality approval; the original date stays |
+| Retests and excursions | `inventory.retest`, `inventory.storage_excursion` | A failed retest or an excursion outside storage limits stops a lot until a passing retest |
+| Hard rules | issues, shipments, planning netting | Expired, open-life-over, retest-overdue or failed, excursion lots are never issued or shipped and never counted for planning |
+| Selection | `/api/inventory/selection`, `shelf-life` report | FEFO or FIFO ranks only the lots the hard rules leave, with the reason for each one left out |
+
+See `docs/adr/0030-v3-6-aging-shelf-life-and-selection.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -761,3 +774,19 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | GET | `/api/quality/rework[?order=&open=]` | `execution.shopfloor.read` |
 | POST | `/api/quality/rework` (reason required), `/api/quality/rework/{id}/close` | `execution.shopfloor.record` |
 | GET | `/api/orders/{order}/quantity-states` | `execution.orders.read` |
+
+## V3.6 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/inventory/receipts` takes `manufacturedOn`, `expiresOn` | `inventory.transact` |
+| GET | `/api/inventory/shelf-life[?part=&all=]`, `/api/inventory/shelf-life-rules/{part}` | `inventory.read` |
+| POST | `/api/inventory/shelf-life-rules/{part}` (reason required) | `quality.plan` |
+| POST | `/api/inventory/lots/{part}/{lot}/open` | `inventory.transact` |
+| POST | `/api/inventory/lots/{part}/{lot}/extensions` (reason required) | `quality.plan` |
+| GET | `/api/inventory/extensions[?pending=]` | `inventory.read` |
+| POST | `/api/inventory/extensions/{id}/approve`, `/reject` (reason required, not the requester) | `quality.approve` |
+| POST | `/api/inventory/lots/{part}/{lot}/retests` | `quality.inspect` |
+| GET | `/api/inventory/excursions` | `inventory.read` |
+| POST | `/api/inventory/excursions` (reason required) | `inventory.transact` |
+| GET | `/api/inventory/selection?part=[&order=]` | `inventory.read` |

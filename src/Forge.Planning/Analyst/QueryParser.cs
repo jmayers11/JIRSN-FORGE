@@ -236,6 +236,12 @@ public static partial class QueryParser
             return AnalystIntent.OrderStatus;
         }
 
+        // V3.5, V3.6: stoppage and shelf-life questions are reports even when they say "overdue" or "blocked".
+        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages")
+        {
+            return AnalystIntent.Report;
+        }
+
         if (machine is not null && Has("prevent", "blocking", "block", "stopping", "cant run", "cannot run", "can not run", "why can", "can it run", "able to run", "not running", "keeping"))
         {
             return AnalystIntent.MachineBlockers;
@@ -282,6 +288,7 @@ public static partial class QueryParser
             : Has("lineage", "split from", "merged from", "merged into", "split into", "lot splits", "splits and merges", "was split", "were merged") ? "lot-lineage"
             : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
             : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
+            : Has("shelf life", "shelf-life", "expir", "expiring", "retest", "open life", "excursion", "aging", "how old", "oldest lot", "fefo", "fifo") && !Has("cert", "qualif", "training", "alternate", "document", "drawing", "contract") ? "shelf-life"
             : Has("stoppage", "stopped", "changeover", "change over", "setup time", "setups", "starved", "blocked machine", "machines blocked", "were blocked", "root cause", "reason code", "downtime by category", "downtime category") ? "stoppages"
             : Has("quantity state", "in rework", "rework", "in repair", "repaired", "in process", "pending inspection", "how much of order", "where is order") ? "quantity-states"
             : Has("where is lot", "where is serial", "where is the lot", "where is batch", "where is roll", "custody", "outside processor", "at outside", "in transit", "point of use", "stock position", "where is the material", "at the machine") ? "stock-positions"
@@ -386,6 +393,21 @@ public static partial class QueryParser
         if (t.Contains(" graph", StringComparison.Ordinal) || t.Contains(" chart", StringComparison.Ordinal))
         {
             notes.Add("Forge shows this as a table with totals; charts are not part of reports yet.");
+        }
+
+        // V3.6: "Which lots are expired?", "What needs a retest?" — the status asked about.
+        if (entry.Id == "shelf-life")
+        {
+            var status = t.Contains(" expired", StringComparison.Ordinal) ? "Expired"
+                : t.Contains(" expiring", StringComparison.Ordinal) || t.Contains(" expire soon", StringComparison.Ordinal) || t.Contains(" expires soon", StringComparison.Ordinal) ? "Expiring"
+                : t.Contains(" retest", StringComparison.Ordinal) && (t.Contains(" overdue", StringComparison.Ordinal) || t.Contains(" due", StringComparison.Ordinal) || t.Contains(" need", StringComparison.Ordinal)) ? "RetestOverdue"
+                : t.Contains(" excursion", StringComparison.Ordinal) ? "Excursion"
+                : null;
+            if (status is not null)
+            {
+                parameters = parameters with { Status = status };
+                notes.Add($"Only lots that are {status.ToLowerInvariant()}.");
+            }
         }
 
         // V3.5: "How much time did we lose to starved machines?" — the stoppage category asked about.

@@ -31,7 +31,7 @@ public sealed partial class InventoryService
     public Task<CommandResult> IssueToProjectAsync(IssueToProject c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        return PostAsync(nameof(IssueToProject), c.PartNumber, c, context, Permissions.InventoryTransact, false, async (uow, item, _) =>
+        return PostAsync(nameof(IssueToProject), c.PartNumber, c, context, Permissions.InventoryTransact, false, async (uow, item, now) =>
         {
             var (project, line) = await ProjectLineAsync(uow, c.ProjectCode, c.LineNumber, item.PartNumber, ct);
             var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
@@ -44,6 +44,7 @@ public sealed partial class InventoryService
             }
 
             await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
+            await RequireUsableAsync(uow, item, lot, now, ct);
             var txn = new NewTransaction(InventoryTransactionKind.ProjectIssue, item.PartNumber, quantity, location.Code, StockStatus.Released, null, null, lot,
                 Reason: $"Project {project.Code} line {line.LineNumber}: {project.Title}", ProjectCode: project.Code, ProjectLine: line.LineNumber);
             return (txn, $"Issued {Q(quantity)} {item.UnitOfMeasure} {item.PartNumber} to project {project.Code} line {line.LineNumber} ({Q(issued + quantity)} of {Q(line.Quantity)}).",

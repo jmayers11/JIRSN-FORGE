@@ -74,7 +74,8 @@ async function main() {
       const identity = !itemList.some(i => i.partNumber === 'FOIL-CU');
       const transformation = !itemList.some(i => i.partNumber === 'SHIELD-CU');
       const actuals = !(await get('eng', '/api/execution/reason-codes')).length;
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const shelf = !itemList.some(i => i.partNumber === 'ADH-EP');
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals && !shelf) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -144,6 +145,10 @@ async function main() {
         console.log('Adding reason codes, a starved slitter with a proven root cause, and a changeover against its expected time.');
         await seedActuals();
       }
+      if (shelf) {
+        console.log('Adding an epoxy adhesive with a shelf life: one lot expired, one extended, one expiring, one failed a retest.');
+        await seedShelfLife();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -174,6 +179,7 @@ async function main() {
     await seedTransformation();
     await seedMaterialFlow();
     await seedActuals();
+    await seedShelfLife();
     return finish();
   }
 
@@ -331,6 +337,7 @@ async function main() {
   await seedTransformation();
   await seedMaterialFlow();
   await seedActuals();
+  await seedShelfLife();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -825,6 +832,22 @@ async function seedActuals() {
     const knife = await post('planner', '/api/execution/stoppages', { machineCode: 'SLITTER-A', category: 'Changeover', reasonCode: 'KNIFE', orderNumber: released[0], sequence: 30, startedAt: ago(100) });
     await post('planner', `/api/execution/stoppages/${knife.entityId}/end`, { endedAt: ago(55) });
   }
+}
+
+async function seedShelfLife() {
+  step('Shelf life: an epoxy adhesive, 180 days from manufacture, retest every 90, 8 hours once opened, first expired first out — see Inventory → Shelf life and the part drawer for ADH-EP');
+  const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+  await post('eng', '/api/engineering/items', { partNumber: 'ADH-EP', description: 'Two-part epoxy adhesive', unitOfMeasure: 'EA', makeBuy: 'Buy', leadTimeDays: 10, lotTracked: true });
+  await post('eng', '/api/engineering/items/ADH-EP/revisions', { revision: 'A' });
+  await post('approver', '/api/engineering/items/ADH-EP/revisions/A/release', { reason: 'Sample: adhesive baseline' });
+  await post('qe', '/api/inventory/shelf-life-rules/ADH-EP', { shelfLifeDays: 180, basis: 'Manufacture', retestDays: 90, openLifeHours: 8, storageMinC: 2, storageMaxC: 25, storageNote: 'Keep below 25 °C', selection: 'Fefo', reason: 'Sample: supplier datasheet' });
+  for (const [lot, made, note] of [['EP-0412', 200, 'expired'], ['EP-0533', 170, 'expiring'], ['EP-0601', 60, 'fresh'], ['EP-0388', 210, 'to be extended'], ['EP-0590', 80, 'to fail retest']]) {
+    await post('stores', '/api/inventory/receipts', { partNumber: 'ADH-EP', quantity: 12, locationCode: 'STORES', lotNumber: lot, revision: 'A', manufacturedOn: day(-made), reason: `Sample: adhesive, ${note}` });
+  }
+  const ext = await post('qe', '/api/inventory/lots/ADH-EP/EP-0388/extensions', { newExpires: day(45), evidence: 'Sample: viscosity and lap-shear retest QR-88 within datasheet', reason: 'Sample: short of adhesive' });
+  await post('qm', `/api/inventory/extensions/${ext.entityId}/approve`, { reason: 'Sample: QR-88 reviewed' });
+  await post('insp', '/api/inventory/lots/ADH-EP/EP-0590/retests', { passed: false, evidence: 'Sample: viscosity out of range' });
+  await post('stores', '/api/inventory/lots/ADH-EP/EP-0601/open', {});
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

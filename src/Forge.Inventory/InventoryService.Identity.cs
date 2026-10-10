@@ -78,6 +78,8 @@ public sealed partial class InventoryService
                     await store.SetLotRevisionAsync(part, share.LotNumber, revision, ct);
                 }
 
+                await uow.Store<IShelfLifeStore>().InheritLotDatesAsync(part, [source.LotNumber], share.LotNumber, ct); // same age and expiry (V3.6)
+
                 var inId = await store.InsertTransactionAsync(
                     new NewTransaction(InventoryTransactionKind.Split, part, share.Quantity, null, null, location.Code, c.Status, share.LotNumber, Reason: context.Reason, PartRevision: source.PartRevision), now, context.Actor, ct);
                 await store.InsertInstanceLinkAsync(new InstanceLink(0, InstanceRelation.Split, part, source.LotNumber, part, share.LotNumber, share.Quantity, outId, inId, context.Reason, now, context.Actor), ct);
@@ -144,6 +146,12 @@ public sealed partial class InventoryService
                 throw new CommandRejectedException("supplier_lot_mismatch", $"{part} lots are merged only within one supplier lot: {string.Join(", ", members.Select(m => $"{m.LotNumber} {m.SupplierLot ?? "none"}"))}.");
             }
 
+            // V3.6: a merge never hides an earlier expiry inside a later one.
+            if (members.Select(m => m.ExpiresOn).Distinct().Count() > 1)
+            {
+                throw new CommandRejectedException("expiry_mismatch", $"{part} lots are merged only when they expire on the same date: {string.Join(", ", members.Select(m => $"{m.LotNumber} {m.ExpiresOn?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "no expiry"}"))}.");
+            }
+
             if (existing is null)
             {
                 var revisions = members.Select(m => m.PartRevision).Distinct().ToList();
@@ -153,6 +161,8 @@ public sealed partial class InventoryService
                 {
                     await store.SetLotRevisionAsync(part, resultLot, revision, ct);
                 }
+
+                await uow.Store<IShelfLifeStore>().InheritLotDatesAsync(part, sources.Select(s => s.Lot.LotNumber).ToList(), resultLot, ct);
             }
 
             var resultRevision = existing?.PartRevision ?? (members.Select(m => m.PartRevision).Distinct().ToList() is [{ } only] ? only : null);

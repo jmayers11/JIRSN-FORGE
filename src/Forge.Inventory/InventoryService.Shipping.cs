@@ -77,7 +77,7 @@ public sealed partial class InventoryService
                 throw new CommandRejectedException("not_open", $"Shipment {shipment.ShipmentId} is {shipment.Status}.");
             }
 
-            await CheckShippableAsync(uow, shipment, ct);
+            await CheckShippableAsync(uow, shipment, now, ct);
             return (shipment with { Status = ShipmentStatus.Packed, PackedBy = context.Actor, PackedAt = now }, "packed; a different person must ship it", []);
         }, ct);
     }
@@ -103,7 +103,7 @@ public sealed partial class InventoryService
                 await store.LockPartAsync(part, ct);
             }
 
-            await CheckShippableAsync(uow, shipment, ct);
+            await CheckShippableAsync(uow, shipment, now, ct);
             var transactions = new List<long>();
             foreach (var line in shipment.Lines)
             {
@@ -129,11 +129,12 @@ public sealed partial class InventoryService
     }
 
     /// <summary>Stock is there (released, at the line's location and lot) and is not on an undecided nonconformance.</summary>
-    private static async Task CheckShippableAsync(IKernelUnitOfWork uow, ShipmentInfo shipment, CancellationToken ct)
+    private static async Task CheckShippableAsync(IKernelUnitOfWork uow, ShipmentInfo shipment, DateTimeOffset now, CancellationToken ct)
     {
         foreach (var group in shipment.Lines.GroupBy(l => (l.PartNumber, l.LocationCode, l.LotNumber)))
         {
             await RequireStockAsync(uow, group.Key.PartNumber, group.Key.LocationCode, group.Key.LotNumber, StockStatus.Released, group.Sum(l => l.Quantity), ct);
+            await RequireUsableAsync(uow, await ItemAsync(uow, group.Key.PartNumber, ct), group.Key.LotNumber, now, ct); // never ship what has expired (V3.6)
         }
 
         var ncrs = (await uow.Store<IQualityLookup>().ListNcrsAsync(false, ct))

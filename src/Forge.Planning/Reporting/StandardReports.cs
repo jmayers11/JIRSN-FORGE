@@ -215,6 +215,17 @@ internal static class StandardReports
                 "Stock as it stands now; the period does not apply. Counts for planning = released by quality and in a nettable location."),
             Permissions.InventoryRead, null, StockPositionsAsync),
         new(
+            new("shelf-life", "Shelf life and aging", "Inventory",
+                "Every lot on hand that has a shelf life, retest, open life or storage limits: its age, the expiry it was given and the one in force after any approved extension, days left, retest due, open life, and whether it may be used.",
+                [PartFilter, StatusFilter(Enum.GetNames<ShelfLifeStatus>()), SearchFilter],
+                [C("part", "Part", ReportColumnKind.Text), C("lot", "Lot", ReportColumnKind.Text), C("onHand", "On hand", ReportColumnKind.Number), C("age", "Age (days)", ReportColumnKind.Number),
+                 C("manufactured", "Manufactured", ReportColumnKind.Date), C("originalExpires", "Expiry given", ReportColumnKind.Date), C("expires", "Expires", ReportColumnKind.Date),
+                 C("daysLeft", "Days left", ReportColumnKind.Number), C("retestDue", "Retest due", ReportColumnKind.Date), C("openExpires", "Open life ends", ReportColumnKind.DateTime),
+                 C("status", "Status", ReportColumnKind.Text), C("why", "Why", ReportColumnKind.Text)],
+                ["status", "part"], "status", 3660,
+                "Lots as they stand now; the period does not apply. Expired, open-life-expired, retest-overdue or failed lots, and lots through a storage excursion without a retest since, are never issued or shipped."),
+            Permissions.InventoryRead, null, ShelfLifeAsync),
+        new(
             new("lot-lineage", "Lot splits and merges", "Inventory",
                 "Every split and merge of a lot, roll, batch or other instance in the period: what it came from, what it became, how much, who and why. Each is a recorded link, never changed.",
                 [FromFilter, ToFilter, PartFilter, StatusFilter(Enum.GetNames<InstanceRelation>()), SearchFilter],
@@ -716,12 +727,40 @@ internal static class StandardReports
         return new ReportBody(rows, [$"{rows.Count} link(s): {rows.Count(r => (string)r.Cells[1]! == "Split")} split, {rows.Count(r => (string)r.Cells[1]! == "Merge")} merge."], ["Instance links", "Inventory ledger"]);
     }
 
+    private static async Task<ReportBody> ShelfLifeAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var onHand = (await run.Uow.Store<IInventoryLookup>().ListBalancesAsync(null, ct))
+            .Where(b => b.LotNumber is not null).GroupBy(b => (b.PartNumber, b.LotNumber!)).ToDictionary(g => g.Key, g => g.Sum(b => b.Quantity));
+        var today = DateOnly.FromDateTime(run.Now.UtcDateTime);
+        var rows = new List<ReportRow>();
+        foreach (var s in await Forge.Inventory.Contracts.ShelfLifeQueries.StatesAsync(run.Uow, null, run.Now, ct))
+        {
+            var quantity = onHand.GetValueOrDefault((s.PartNumber, s.LotNumber));
+            if (quantity <= 0 || s.Status == ShelfLifeStatus.NotTracked || !ReportRun.Is(s.PartNumber, p.PartNumber) || !ReportRun.Is(s.Status.ToString(), p.Status)
+                || !run.Matches(s.PartNumber, s.LotNumber, s.Explanation))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [s.PartNumber, s.LotNumber, quantity, (decimal)s.AgeDays, s.ManufacturedOn, s.OriginalExpires, s.Expires, s.Expires is { } e ? (decimal)(e.DayNumber - today.DayNumber) : null,
+                 s.RetestDue, s.OpenExpiresAt, s.Status.ToString(), s.Explanation],
+                ["item:" + s.PartNumber, $"lot:{s.PartNumber}/{s.LotNumber}"]));
+        }
+
+        var blocked = rows.Count(r => (string)r.Cells[10]! is not (nameof(ShelfLifeStatus.Ok) or nameof(ShelfLifeStatus.Expiring)));
+        var expiring = rows.Count(r => (string)r.Cells[10]! == nameof(ShelfLifeStatus.Expiring));
+        return new ReportBody(rows, [rows.Count == 0 ? "No lots on hand with shelf life." : $"{rows.Count} lot(s): {blocked} not usable, {expiring} expiring within {LotShelfLife.ExpiringDays} days."],
+            ["Lots", "Shelf-life rules", "Extensions", "Retests", "Storage excursions", "Inventory ledger"]);
+    }
+
     private static async Task<ReportBody> StockPositionsAsync(ReportRun run, CancellationToken ct)
     {
         var p = run.Parameters;
         var inventory = run.Uow.Store<IInventoryLookup>();
         var rows = new List<ReportRow>();
-        foreach (var x in StockPosition.From(await inventory.ListBalancesAsync(null, ct), await inventory.ListLocationsAsync(ct)))
+        foreach (var x in await Forge.Inventory.Contracts.ShelfLifeQueries.PositionsAsync(run.Uow, null, run.Now, ct))
         {
             var custody = x.Custody switch
             {

@@ -34,7 +34,9 @@ public sealed record RetireLocation(string Code);
 /// </summary>
 /// <param name="Revision">The part revision received, when the item has released revisions (V2.3). Optional; stock without one is reported as revision not recorded.</param>
 /// <param name="IdentityKind">What the received instance physically is (V3.2): a lot, batch, roll, reel, sheet or piece; serialized parts are always serials.</param>
-public sealed record ReceiveStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Revision = null, IdentityKind? IdentityKind = null);
+/// <param name="ManufacturedOn">Manufacture date from the certificate (V3.6); shelf life may count from it.</param>
+/// <param name="ExpiresOn">Expiry stated on the paperwork (V3.6); the lot keeps the earlier of it and the part's rule.</param>
+public sealed record ReceiveStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Revision = null, IdentityKind? IdentityKind = null, DateOnly? ManufacturedOn = null, DateOnly? ExpiresOn = null);
 
 /// <param name="AlternateFor">The part the order needs, when <paramref name="PartNumber"/> is an approved alternate issued in its place (V2.6).</param>
 public sealed record IssueToOrder(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? AlternateFor = null);
@@ -344,6 +346,11 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             if (lot is not null)
             {
                 await LotAsync(uow, item.PartNumber, lot, Optional(c.SupplierLot), revision, item.Serialized ? IdentityKind.Serial : c.IdentityKind ?? IdentityKind.Lot, now, context.Actor, ct);
+                await ReceiptDatesAsync(uow, item, lot, c.ManufacturedOn, c.ExpiresOn, now, ct);
+            }
+            else if (c.ManufacturedOn is not null || c.ExpiresOn is not null)
+            {
+                throw new CommandRejectedException("dates_need_lot", $"{item.PartNumber} is not lot-tracked; manufacture and expiry dates belong to a lot.");
             }
 
             var status = c.Inspect ? StockStatus.Inspection : StockStatus.Released;
@@ -383,6 +390,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
             await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
+            await RequireUsableAsync(uow, item, lot, now, ct);
             var txn = new NewTransaction(InventoryTransactionKind.Issue, item.PartNumber, quantity, location.Code, StockStatus.Released, null, null, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
                 SubstitutesFor: alternate is null ? null : needed, AlternateId: alternate?.AlternateId, PrimaryQuantity: alternate is null ? null : primaryQuantity);
             (through, needs, issuedPrimary) = (alternate, needed, primaryQuantity);
@@ -618,6 +626,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 if (lot is not null)
                 {
                     await LotAsync(uow, item.PartNumber, lot, null, order.Revision, item.Serialized ? IdentityKind.Serial : IdentityKind.Lot, now, context.Actor, ct);
+                    await ReceiptDatesAsync(uow, item, lot, DateOnly.FromDateTime(now.UtcDateTime), null, now, ct); // made today (V3.6)
                 }
 
                 var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, quantity, null, null, location.Code, StockStatus.Released, lot, OrderNumber: order.OrderNumber, Reason: context.Reason, PartRevision: order.Revision);

@@ -232,8 +232,13 @@ internal sealed partial class PostgresInventoryStore(PostgresUnitOfWork uow) : I
 
     public Task<IReadOnlyList<LotInfo>> ListLotsAsync(string? partNumber, CancellationToken ct) =>
         ReadAsync(
-            "SELECT part_number, lot_number, supplier_lot, first_received_at, part_revision, identity_kind FROM inventory.lot WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, first_received_at, lot_number",
-            r => new LotInfo(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4), Enum.Parse<IdentityKind>(r.GetString(5))),
+            """
+            SELECT part_number, lot_number, supplier_lot, first_received_at, part_revision, identity_kind, manufactured_on, expires_on, retest_due, opened_at
+            FROM inventory.lot WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, first_received_at, lot_number
+            """,
+            r => new LotInfo(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4), Enum.Parse<IdentityKind>(r.GetString(5)),
+                r.IsDBNull(6) ? null : r.GetFieldValue<DateOnly>(6), r.IsDBNull(7) ? null : r.GetFieldValue<DateOnly>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateOnly>(8),
+                r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9)),
             ct,
             Text(partNumber));
 
@@ -439,6 +444,8 @@ public static class InventoryRegistration
         services.AddForgeMigrations(typeof(InventoryRegistration).Assembly, "inventory");
         services.AddForgeStore<IInventoryStore>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IInventoryLookup>(uow => new PostgresInventoryStore(uow));
+        services.AddForgeStore<IShelfLifeLookup>(uow => new PostgresShelfLifeStore(uow));
+        services.AddForgeStore<IShelfLifeStore>(uow => new PostgresShelfLifeStore(uow));
         services.AddSingleton<InventoryService>();
         return services;
     }

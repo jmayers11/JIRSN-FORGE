@@ -88,6 +88,10 @@ public class AnalystParserTests
     [InlineData("Which stoppages have no root cause?", "stoppages")]
     [InlineData("How much of order 1042 is in rework?", "quantity-states")]
     [InlineData("Show order quantity states", "quantity-states")]
+    [InlineData("Which lots are expired?", "shelf-life")]
+    [InlineData("What needs a retest?", "shelf-life")]
+    [InlineData("Show shelf life and aging", "shelf-life")]
+    [InlineData("Which lots are overdue for retest?", "shelf-life")]
     [InlineData("Trace roll R-100", "genealogy-trace")]
     [InlineData("What became of lot L-7?", "genealogy-trace")]
     [InlineData("Where did roll CU-1001-A come from?", "genealogy-trace")]
@@ -300,5 +304,15 @@ public class AnalystParserTests
         Assert.Equal("Changeover", Parse("Show changeovers against expected").Report!.Parameters.Status);
         Assert.Null(Parse("Which stoppages have no root cause?").Report!.Parameters.Status);
         Assert.Equal("1042", Parse("How much of order 1042 is in rework?").Report!.Parameters.Search);
+    }
+
+    [Fact]
+    public void Shelf_life_questions_carry_the_status_asked_about()
+    {
+        Assert.Equal("Expired", Parse("Which lots are expired?").Report!.Parameters.Status);
+        Assert.Equal("Expiring", Parse("Which lots are expiring soon?").Report!.Parameters.Status);
+        Assert.Equal("RetestOverdue", Parse("Which lots are overdue for retest?").Report!.Parameters.Status);
+        Assert.Null(Parse("Show shelf life and aging").Report!.Parameters.Status);
+        Assert.Equal("qualifications-expiring", Parse("Which certifications expire in the next 90 days?").Report!.ReportId);
     }
 }

@@ -362,12 +362,14 @@ public sealed record StockPosition(
     string? CustodianSupplier,
     bool Nettable,
     string? PointOfUseWorkCenter,
-    string? MachineCode)
+    string? MachineCode,
+    bool Usable = true)
 {
-    /// <summary>Counts for planning: released by quality, in a nettable location.</summary>
-    public bool AvailableForPlanning => QualityStatus == StockStatus.Released && Nettable;
+    /// <summary>Counts for planning: released by quality, in a nettable location, and usable by shelf life (V3.6).</summary>
+    public bool AvailableForPlanning => QualityStatus == StockStatus.Released && Nettable && Usable;
 
-    public static IReadOnlyList<StockPosition> From(IEnumerable<StockBalance> balances, IReadOnlyCollection<LocationInfo> locations)
+    /// <param name="notUsable">Lots that are not usable by shelf life (V3.6): on hand, never counted for planning.</param>
+    public static IReadOnlyList<StockPosition> From(IEnumerable<StockBalance> balances, IReadOnlyCollection<LocationInfo> locations, IReadOnlySet<(string PartNumber, string LotNumber)>? notUsable = null)
     {
         ArgumentNullException.ThrowIfNull(balances);
         ArgumentNullException.ThrowIfNull(locations);
@@ -377,7 +379,8 @@ public sealed record StockPosition(
             var l = byCode.GetValueOrDefault(b.LocationCode);
             return new StockPosition(
                 b.PartNumber, b.LotNumber, b.LocationCode, Path(b.LocationCode, byCode), l?.Kind ?? LocationKind.Stores, b.Status, b.Quantity,
-                l?.Custody ?? Custody.Company, l?.CustodianSupplier, l?.Nettable ?? true, l is { PointOfUse: true } ? l.WorkCenterCode : null, l?.MachineCode);
+                l?.Custody ?? Custody.Company, l?.CustodianSupplier, l?.Nettable ?? true, l is { PointOfUse: true } ? l.WorkCenterCode : null, l?.MachineCode,
+                notUsable is null || b.LotNumber is not { } lot || !notUsable.Contains((b.PartNumber, lot)));
         }).ToList();
     }
 
@@ -434,7 +437,20 @@ public sealed record InventoryTransaction(
 
 /// <param name="PartRevision">The part revision received into the lot; null when it was not recorded (stock received before V2.3).</param>
 /// <param name="IdentityKind">What the instance physically is (V3.2).</param>
-public sealed record LotInfo(string PartNumber, string LotNumber, string? SupplierLot, DateTimeOffset FirstReceivedAt, string? PartRevision = null, IdentityKind IdentityKind = IdentityKind.Lot);
+/// <param name="ExpiresOn">The expiry the lot was given (V3.6); an approved extension is its own record and never changes it.</param>
+/// <param name="RetestDue">The first retest date the lot was given (V3.6); retests are their own records.</param>
+/// <param name="OpenedAt">When the container was first opened (V3.6), starting its open life.</param>
+public sealed record LotInfo(
+    string PartNumber,
+    string LotNumber,
+    string? SupplierLot,
+    DateTimeOffset FirstReceivedAt,
+    string? PartRevision = null,
+    IdentityKind IdentityKind = IdentityKind.Lot,
+    DateOnly? ManufacturedOn = null,
+    DateOnly? ExpiresOn = null,
+    DateOnly? RetestDue = null,
+    DateTimeOffset? OpenedAt = null);
 
 /// <summary>Net quantity of a part issued to a production order (issues less returns).</summary>
 /// <summary>Net material issued to an order, in the terms of the part the order needs: approved alternates count at their converted quantity (V2.6).</summary>

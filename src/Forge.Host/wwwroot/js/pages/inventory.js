@@ -4,6 +4,7 @@ import { who } from '../people.js';
 import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from '../ui.js';
 import { formModal, qty, can } from '../forms.js';
 import { serialDrawer, traceDrawer } from '../genealogy.js';
+import { loadShelfLife, shelfLifeTab, bindShelfLifeTab, appendPartShelfLife } from '../shelflife.js';
 
 // Inventory (spec §11, §49): every quantity is the sum of ledger entries, and every entry says who,
 // when, why and what it relates to. Adjustments, count variances and quality releases need a second person.
@@ -34,7 +35,8 @@ export async function inventoryPage(page, ctx) {
       tryGet('/api/inventory/transactions?take=200'), tryGet('/api/engineering/items'), tryGet('/api/orders/'), tryGet('/api/resources/'), tryGet('/api/inventory/mro'),
       tryGet('/api/procurement/suppliers'), tryGet('/api/inventory/tasks?open=true'), tryGet('/api/inventory/count-programs'), tryGet('/api/inventory/counts-due'),
     ]);
-    data = { summary, locations, requests, ledger, items, orders, mro, tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
+    const shelf = await loadShelfLife();
+    data = { shelf, summary, locations, requests, ledger, items, orders, mro, tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
   }
 
   const locs = (active = true, ours = true) => (data.locations.data ?? []).filter(l => (!active || l.active) && (!ours || l.inCompanyCustody)).map(l => [l.code, `${l.code} — ${l.name} (${l.kind})`]);
@@ -80,9 +82,11 @@ export async function inventoryPage(page, ctx) {
         { name: 'supplierLot', label: 'Supplier lot (optional)' },
         { name: 'revision', label: 'Part revision received (optional)', code: true, hint: 'The released revision on the paperwork. Without it the stock shows as revision not recorded. One lot holds one revision.' },
         { name: 'identityKind', label: 'What the lot physically is', type: 'select', options: [['', 'Lot (serialized parts: serial)'], ...IDENTITY_KINDS.map(k => [k, k])] },
+        { name: 'manufacturedOn', label: 'Manufactured on (from the certificate, optional)', type: 'date' },
+        { name: 'expiresOn', label: 'Expires on (from the paperwork, optional)', type: 'date', hint: 'The lot keeps the earlier of this and the part\'s shelf-life rule.' },
         { name: 'inspect', type: 'check', label: 'Incoming inspection', text: 'Hold in Inspection until released' },
       ],
-    }, (v, reason) => command('/api/inventory/receipts', { ...v, identityKind: v.identityKind || null }, reason), reload),
+    }, (v, reason) => command('/api/inventory/receipts', { ...v, identityKind: v.identityKind || null, manufacturedOn: v.manufacturedOn || null, expiresOn: v.expiresOn || null }, reason), reload),
 
     // V3.2: dividing an instance creates new instances whose quantities add up to what left it.
     split: (preset = {}) => formModal({
@@ -404,8 +408,8 @@ export async function inventoryPage(page, ctx) {
       ${buttons.length ? `<div class="toolbar">${buttons.map(([k, l]) => `<button class="btn ${k === 'receive' ? 'primary' : ''}" data-act="${k}">${esc(l)}</button>`).join('')}</div>` : '<div class="notice">You can look at stock. Material handlers move it; inventory controllers approve changes.</div>'}
       ${kpis()}
       <section class="panel">
-        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : stockTab()}
+        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        ${tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : stockTab()}
       </section>`;
     $('#trace-q', page)?.addEventListener('click', () => { const q = $('#serial-q', page).value.trim(); if (q) traceDrawer({ lot: q.toUpperCase() }); });
     $('#serial-find', page)?.addEventListener('submit', ev => { ev.preventDefault(); const q = $('#serial-q', page).value.trim(); if (q) serialDrawer(q.toUpperCase()); });
@@ -416,6 +420,7 @@ export async function inventoryPage(page, ctx) {
       actions[b.dataset.act]({});
     }));
     $$('[data-part]', page).forEach(r => r.addEventListener('click', () => partDrawer(r.dataset.part)));
+    if (tab === 'shelf') bindShelfLifeTab(page, locs(true, false), reload);
     $$('[data-mro-set]', page).forEach(b => b.addEventListener('click', () => setMro(b.dataset.mroSet)));
     $$('[data-mro-clear]', page).forEach(b => b.addEventListener('click', async () => {
       const done = await confirmWithReason({ title: `Clear MRO levels for ${b.dataset.mroClear}`, detail: 'MRP stops replenishing it to a maximum. The old levels stay in the history.', confirmLabel: 'Clear' },
@@ -490,12 +495,14 @@ export async function inventoryPage(page, ctx) {
         ${controller ? ' <button class="btn small" data-merge-policy>Change</button>' : ''}</div>` : ''}
       <div class="notice" style="margin-top:8px">Yield tolerance: ${tolerance ? `±${qty(tolerance.percent)}% of what is issued <span class="faint">· set by ${esc(who(tolerance.setBy))}: ${esc(tolerance.reason)}</span>` : 'none — issued and accounted must match exactly'}
         ${controller ? ' <button class="btn small" data-yield>Change</button>' : ''}</div>
+      <div id="shelf-life"></div>
       <div id="lineage"></div>
       <h3 style="margin:0">How it got there</h3>
       ${ledger.error ? errorBlock(ledger.error, 'ledger') : ledger.data.length ? ledgerTable(ledger.data) : '<div class="muted">No transactions.</div>'}
       <div class="faint"><a href="#/material-plan?part=${encodeURIComponent(part)}">Open the material plan for ${esc(part)} →</a></div>`;
     $$('[data-trace]', d.element).forEach(b => b.addEventListener('click', () => traceDrawer({ part, lot: b.dataset.trace })));
     $$('[data-split]', d.element).forEach(b => b.addEventListener('click', () => actions.split(JSON.parse(b.dataset.split))));
+    appendPartShelfLife(d.element.querySelector('#shelf-life'), part, item(part), me, async () => { await reload(); partDrawer(part); });
     $$('[data-lineage]', d.element).forEach(b => b.addEventListener('click', async () => {
       const { data: g, error } = await tryGet(`/api/inventory/lots/${encodeURIComponent(part)}/${encodeURIComponent(b.dataset.lineage)}/lineage`);
       const link = (l, other) => `<li>${esc(l.relation === 'Split' ? 'Split' : 'Merged')} ${qty(l.quantity)} ${esc(other)} <span class="faint">${esc(fmtDateTime(l.at))} · ${esc(who(l.actor))}${l.reason ? ` · ${esc(l.reason)}` : ''}</span></li>`;

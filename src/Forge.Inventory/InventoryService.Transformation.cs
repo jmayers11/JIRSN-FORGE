@@ -132,6 +132,8 @@ public sealed partial class InventoryService
                             await store.SetLotRevisionAsync(item.PartNumber, lot, revision, ct);
                         }
 
+                        await uow.Store<IShelfLifeStore>().InheritLotDatesAsync(item.PartNumber, [source!], lot, ct); // a remnant keeps its roll's age and expiry (V3.6)
+
                         var id = await store.InsertTransactionAsync(
                             new NewTransaction(InventoryTransactionKind.Remnant, item.PartNumber, quantity, null, null, location.Code, StockStatus.Released, lot, OrderNumber: order.OrderNumber,
                                 Reason: context.Reason, PartRevision: sourceLot.PartRevision), now, context.Actor, ct);

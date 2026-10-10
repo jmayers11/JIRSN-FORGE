@@ -160,6 +160,7 @@ app.MapMaintenanceReadinessEndpoints();
 app.MapPlanningEndpoints();
 app.MapShopFloorEndpoints();
 app.MapProductionActualsEndpoints();
+app.MapShelfLifeEndpoints();
 app.MapMaterialsEndpoints();
 app.MapQualityEndpoints();
 app.MapProgramsEndpoints();

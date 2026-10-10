@@ -37,6 +37,7 @@ public sealed partial class InventoryService
             var lot = RequireLot(item, c.LotNumber);
             var quantity = RequireQuantity(item, c.Quantity);
             await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
+            await RequireUsableAsync(uow, item, lot, now, ct);
             var (primary, alternate, factor) = await MaintenanceAlternateAsync(uow, order, item.PartNumber, c.AlternateFor, now, ct);
             var primaryQuantity = alternate is null ? (decimal?)null : decimal.Round(quantity / factor, 6, MidpointRounding.AwayFromZero);
             var revision = lot is null ? null : (await uow.Store<IInventoryLookup>().ListLotsAsync(item.PartNumber, ct)).FirstOrDefault(l => l.LotNumber == lot)?.PartRevision;

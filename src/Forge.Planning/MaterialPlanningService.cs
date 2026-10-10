@@ -69,7 +69,7 @@ public sealed class MaterialPlanningService(IKernelUnitOfWorkFactory unitOfWork,
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
         var items = await uow.Store<Forge.Engineering.Contracts.IEngineeringLookup>().ListItemsAsync(ct);
         var inventory = uow.Store<Forge.Inventory.Contracts.IInventoryLookup>();
-        var positions = Forge.Inventory.Contracts.StockPosition.From(await inventory.ListBalancesAsync(null, ct), await inventory.ListLocationsAsync(ct));
+        var positions = await Forge.Inventory.Contracts.ShelfLifeQueries.PositionsAsync(uow, null, time.GetUtcNow(), ct);
         var material = await MaterialData.MaterialSnapshotAsync(uow, time, ct);
         var supplies = await MaterialData.SuppliesAsync(uow, principal, ct);
         var allocated = material.Orders

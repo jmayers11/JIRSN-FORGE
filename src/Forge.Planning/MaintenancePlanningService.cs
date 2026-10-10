@@ -43,7 +43,7 @@ public sealed class MaintenancePlanningService(IKernelUnitOfWorkFactory unitOfWo
         var now = snapshot.AsOf;
         var parts = (await maintenance.ListRequiredPartsAsync(workOrderId, ct)).ToLookup(p => p.WorkOrderId);
         var inventory = uow.Store<IInventoryLookup>();
-        var available = StockPosition.From(await inventory.ListBalancesAsync(null, ct), await inventory.ListLocationsAsync(ct))
+        var available = (await Forge.Inventory.Contracts.ShelfLifeQueries.PositionsAsync(uow, null, now, ct))
             .Where(b => b.AvailableForPlanning)
             .GroupBy(b => b.PartNumber, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.Sum(b => b.Quantity), StringComparer.Ordinal);
