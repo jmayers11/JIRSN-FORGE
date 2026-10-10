@@ -303,6 +303,17 @@ See `docs/adr/0023-v2-11-serial-genealogy.md`.
 
 See `docs/adr/0024-v2-12-horizon-and-what-changed.md`.
 
+## What V3.1 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Quality status | `inventory.transaction` status | `Released`, `Inspection`, `Hold` (was `Available`); migration proves every balance unchanged |
+| Locations | `inventory.location` | Hierarchy (area to position), kinds incl. staging, machine side, WIP, outside processor, in transit; nettable; point of use; custody |
+| Stock positions | `StockPosition`, `/api/inventory/positions`, `stock-positions` report | On hand, released, available for planning, at point of use and custody kept apart |
+| Planning | MRP, material, maintenance, project and MRO netting | Only released stock in nettable locations |
+
+See `docs/adr/0025-v3-1-stock-dimensions-and-locations.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -651,3 +662,11 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | GET | `/api/history/{subject}[?kind=asset\|machine\|project\|document\|change\|item&days=]` | read permission of the subject's context (program access applies) |
 | GET | `/api/horizon/events[?days=90]` | any; each kind of event only with its context's read permission |
 | GET | `/api/reports/dated-events` | `planning.analyst.use` |
+
+## V3.1 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/inventory/locations` takes `parentCode`, `level`, `nettable`, `workCenterCode`, `machineCode`, `custodianSupplier` | `inventory.manage` |
+| POST | `/api/inventory/locations/{code}` (change, reason required) | `inventory.manage` |
+| GET | `/api/inventory/positions[?part=&location=&lot=]` | `inventory.read` |

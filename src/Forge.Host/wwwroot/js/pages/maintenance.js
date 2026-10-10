@@ -294,12 +294,12 @@ export async function maintenancePage(page, ctx) {
   function sparePart(id, giveBack) {
     const o = (data.orders.data ?? []).find(x => x.workOrderId === id);
     const used = (o.parts ?? []).filter(p => p.netIssued > 0);
-    const available = data.stock.filter(b => b.status === 'Available' && b.quantity > 0);
+    const available = data.stock.filter(b => b.status === 'Released' && b.quantity > 0);
     const parts = giveBack
       ? used.map(p => [p.partNumber, `${p.partNumber} — ${qty(p.netIssued)} issued`])
       : [...new Set(available.map(b => b.partNumber))].map(pn => [pn, `${pn} — ${data.items.find(i => i.partNumber === pn)?.description ?? ''}`]);
     const locations = [...new Set(data.stock.map(b => b.locationCode))].map(l => [l, l]);
-    return formModal({ title: `${giveBack ? 'Return a part from' : 'Issue a part to'} work order ${id}`, detail: giveBack ? 'Unused parts go back into Available stock.' : 'From Available stock, recorded in the inventory ledger against this work order.', confirmLabel: giveBack ? 'Return' : 'Issue', reasonRequired: giveBack,
+    return formModal({ title: `${giveBack ? 'Return a part from' : 'Issue a part to'} work order ${id}`, detail: giveBack ? 'Unused parts go back into released stock.' : 'From released stock, recorded in the inventory ledger against this work order.', confirmLabel: giveBack ? 'Return' : 'Issue', reasonRequired: giveBack,
       fields: [
         { name: 'partNumber', label: 'Part', type: 'select', options: parts, required: true },
         { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true },

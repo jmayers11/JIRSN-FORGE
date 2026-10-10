@@ -271,6 +271,7 @@ public static partial class QueryParser
         bool Has(params string[] words) => words.Any(w => t.Contains(" " + w, StringComparison.Ordinal));
         return Has("obsolete", "obsolescence", "end of life", "end of support", "last time buy", "last-time buy") ? "obsolescence"
             : Has("maintenance readiness", "blocked work order", "work orders blocked", "work orders are blocked", "maintenance blocked", "not ready for maintenance", "ready for maintenance") ? "maintenance-readiness"
+            : Has("where is lot", "where is serial", "where is the lot", "where is batch", "where is roll", "custody", "outside processor", "at outside", "in transit", "point of use", "stock position", "where is the material", "at the machine") ? "stock-positions"
             : Has("as built", "as-built", "genealogy", "where used lot", "which lot", "serial number") ? "as-built"
             : Has("coming up", "dated event", "upcoming date", "takes effect", "take effect", "due in the next", "what is ahead", "whats ahead") ? "dated-events"
             : Has("project material", "facility project", "capital project", "projects short", "short for project", "project short", "project line") ? "project-material"
@@ -372,6 +373,20 @@ public static partial class QueryParser
         if (t.Contains(" graph", StringComparison.Ordinal) || t.Contains(" chart", StringComparison.Ordinal))
         {
             notes.Add("Forge shows this as a table with totals; charts are not part of reports yet.");
+        }
+
+        // V3.1: "Where is lot L-104?", "What material is at outside processors?" — the lot, serial or custody asked about.
+        if (entry.Id == "stock-positions")
+        {
+            var search = LotRegex().Match(t) is { Success: true } lot ? lot.Groups[1].Value.TrimEnd('.', '/').ToUpperInvariant()
+                : t.Contains(" outside process", StringComparison.Ordinal) || t.Contains(" processor", StringComparison.Ordinal) ? "Outside processor"
+                : t.Contains(" in transit", StringComparison.Ordinal) ? "In transit"
+                : null;
+            if (search is not null)
+            {
+                parameters = parameters with { Search = search };
+                notes.Add($"Only positions matching \u201c{search}\u201d.");
+            }
         }
 
         _ = clock;
@@ -601,6 +616,9 @@ public static partial class QueryParser
 
         return (machine ?? part, machine is not null ? "machine" : part is not null ? "item" : null);
     }
+
+    [GeneratedRegex(@"\b(?:lot|serial|batch|roll)\s+([a-z0-9][a-z0-9\-_/.]*[0-9][a-z0-9\-_/.]*)")]
+    private static partial Regex LotRegex();
 
     [GeneratedRegex(@"\b(?:on|to|for|about|with|of)\s+(?:the\s+)?(?:(asset|machine|project|document|doc|change|eco|ecn|ecr|part|item)\s+)?((?=[A-Za-z0-9\-_./]*[A-Za-z])(?=[A-Za-z0-9\-_./]*[0-9\-])[A-Za-z0-9][A-Za-z0-9\-_./]*)", RegexOptions.IgnoreCase)]
     private static partial Regex SubjectRegex();

@@ -52,7 +52,7 @@ public sealed partial class InventoryService
             foreach (var (line, index) in c.Lines.Select((l, i) => (l, i)))
             {
                 var item = await ItemAsync(uow, BusinessCode.Require(line.PartNumber, "Part"), ct);
-                var location = await ActiveLocationAsync(uow, line.LocationCode, ct);
+                var location = await CompanyLocationAsync(uow, line.LocationCode, ct);
                 lines.Add(new ShipmentLineInfo(index + 1, item.PartNumber, RequireQuantity(item, line.Quantity), location.Code, RequireLot(item, line.LotNumber)));
             }
 
@@ -107,7 +107,7 @@ public sealed partial class InventoryService
             var transactions = new List<long>();
             foreach (var line in shipment.Lines)
             {
-                var txn = new NewTransaction(InventoryTransactionKind.Shipment, line.PartNumber, line.Quantity, line.LocationCode, StockStatus.Available, null, null, line.LotNumber,
+                var txn = new NewTransaction(InventoryTransactionKind.Shipment, line.PartNumber, line.Quantity, line.LocationCode, StockStatus.Released, null, null, line.LotNumber,
                     Reason: $"Shipment {shipment.ShipmentId} to {shipment.Customer}", ShipmentId: shipment.ShipmentId);
                 transactions.Add(await store.InsertTransactionAsync(txn, now, context.Actor, ct));
             }
@@ -128,12 +128,12 @@ public sealed partial class InventoryService
                 : throw new CommandRejectedException("not_cancellable", $"Shipment {shipment.ShipmentId} is {shipment.Status}.")), ct);
     }
 
-    /// <summary>Stock is there (Available, at the line's location and lot) and is not on an undecided nonconformance.</summary>
+    /// <summary>Stock is there (released, at the line's location and lot) and is not on an undecided nonconformance.</summary>
     private static async Task CheckShippableAsync(IKernelUnitOfWork uow, ShipmentInfo shipment, CancellationToken ct)
     {
         foreach (var group in shipment.Lines.GroupBy(l => (l.PartNumber, l.LocationCode, l.LotNumber)))
         {
-            await RequireStockAsync(uow, group.Key.PartNumber, group.Key.LocationCode, group.Key.LotNumber, StockStatus.Available, group.Sum(l => l.Quantity), ct);
+            await RequireStockAsync(uow, group.Key.PartNumber, group.Key.LocationCode, group.Key.LotNumber, StockStatus.Released, group.Sum(l => l.Quantity), ct);
         }
 
         var ncrs = (await uow.Store<IQualityLookup>().ListNcrsAsync(false, ct))

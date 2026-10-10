@@ -25,7 +25,7 @@ export async function shippingPage(page, ctx) {
   }
   const reload = async () => { await load(); render(); };
   const mine = actor => actor === `person:${me.personId}`;
-  const available = () => (data.stock.data ?? []).filter(b => b.status === 'Available' && b.quantity > 0);
+  const available = () => (data.stock.data ?? []).filter(b => b.status === 'Released' && b.quantity > 0);
 
   function render() {
     const list = data.shipments.data ?? [];

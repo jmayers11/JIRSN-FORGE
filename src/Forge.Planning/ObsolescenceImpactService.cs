@@ -49,8 +49,8 @@ public sealed class ObsolescenceImpactService(IKernelUnitOfWorkFactory unitOfWor
 
         var inventory = uow.Store<IInventoryLookup>();
         var balances = await inventory.ListBalancesAsync(part, ct);
-        var available = balances.Where(b => b.Status == StockStatus.Available).Sum(b => b.Quantity);
-        var held = balances.Where(b => b.Status != StockStatus.Available).Sum(b => b.Quantity);
+        var available = balances.Where(b => b.Status == StockStatus.Released).Sum(b => b.Quantity);
+        var held = balances.Where(b => b.Status != StockStatus.Released).Sum(b => b.Quantity);
 
         var received = (await inventory.ListPurchaseReceiptsAsync(ct)).ToDictionary(r => (r.PoNumber, r.LineNumber), r => r.Received);
         var purchases = (await uow.Store<IProcurementLookup>().ListPurchaseOrdersAsync(ct))

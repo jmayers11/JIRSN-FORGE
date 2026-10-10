@@ -94,8 +94,9 @@ public static class AssetEndpoints
                 await using var uow = await Snapshot(http);
                 var ct = http.RequestAborted;
                 var items = (await uow.Store<IEngineeringLookup>().ListItemsAsync(ct)).ToDictionary(i => i.PartNumber, StringComparer.Ordinal);
-                var stock = (await uow.Store<Forge.Inventory.Contracts.IInventoryLookup>().ListBalancesAsync(null, ct))
-                    .Where(b => b.Status == Forge.Inventory.Contracts.StockStatus.Available)
+                var inventoryLookup = uow.Store<Forge.Inventory.Contracts.IInventoryLookup>();
+                var stock = Forge.Inventory.Contracts.StockPosition.From(await inventoryLookup.ListBalancesAsync(null, ct), await inventoryLookup.ListLocationsAsync(ct))
+                    .Where(b => b.AvailableForPlanning)
                     .GroupBy(b => b.PartNumber, StringComparer.Ordinal)
                     .ToDictionary(g => g.Key, g => g.Sum(b => b.Quantity), StringComparer.Ordinal);
                 return (await uow.Store<IMroLookup>().ListMroPoliciesAsync(ct)).Select(p =>

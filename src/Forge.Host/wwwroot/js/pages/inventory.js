@@ -13,7 +13,11 @@ const KIND_LABEL = {
   ProductionReceipt: 'From production', Scrap: 'Scrap', CycleCount: 'Count variance', QualityHold: 'Hold', QualityRelease: 'Release', Shipment: 'Shipped',
   MaintenanceIssue: 'Issue to work order', MaintenanceReturn: 'Return from work order', ProjectIssue: 'Issue to project', ProjectReturn: 'Return from project',
 };
-const STATUS_TONE = { Available: 'ok', Inspection: 'info', Hold: 'warn' };
+const STATUS_TONE = { Released: 'ok', Inspection: 'info', Hold: 'warn' };
+const LOCATION_KINDS = ['Stores', 'Receiving', 'Inspection', 'Quarantine', 'Production', 'Shipping', 'Staging', 'MachineSide', 'WipStorage', 'ExternalProcessor', 'InTransit'];
+const KIND_NAME = { MachineSide: 'Machine side', WipStorage: 'WIP storage', ExternalProcessor: 'Outside processor', InTransit: 'In transit' };
+const LEVELS = ['Area', 'Zone', 'Rack', 'Shelf', 'Bin', 'Position'];
+const custodyText = l => l.custody === 'Supplier' ? `Outside processor ${l.custodianSupplier}` : l.custody === 'InTransit' ? 'In transit' : 'Company';
 
 export async function inventoryPage(page, ctx) {
   const me = ctx.me;
@@ -24,20 +28,42 @@ export async function inventoryPage(page, ctx) {
   let data = {};
 
   async function load() {
-    const [summary, locations, requests, ledger, items, orders, resources, mro] = await Promise.all([
+    const [summary, locations, requests, ledger, items, orders, resources, mro, suppliers] = await Promise.all([
       tryGet('/api/inventory/summary'), tryGet('/api/inventory/locations'), tryGet('/api/inventory/requests?pending=true'),
       tryGet('/api/inventory/transactions?take=200'), tryGet('/api/engineering/items'), tryGet('/api/orders/'), tryGet('/api/resources/'), tryGet('/api/inventory/mro'),
+      tryGet('/api/procurement/suppliers'),
     ]);
-    data = { summary, locations, requests, ledger, items, orders, mro, sites: resources.data?.sites ?? [] };
+    data = { summary, locations, requests, ledger, items, orders, mro, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
   }
 
-  const locs = (active = true) => (data.locations.data ?? []).filter(l => !active || l.active).map(l => [l.code, `${l.code} — ${l.name} (${l.kind})`]);
+  const locs = (active = true, ours = true) => (data.locations.data ?? []).filter(l => (!active || l.active) && (!ours || l.inCompanyCustody)).map(l => [l.code, `${l.code} — ${l.name} (${l.kind})`]);
   const parts = () => (data.items.data ?? []).map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]);
   const item = part => (data.items.data ?? []).find(i => i.partNumber === part);
   const released = () => (data.orders.data ?? []).filter(o => o.status === 'Released').map(o => [o.orderNumber, `#${o.orderNumber} — ${o.partNumber} × ${qty(o.quantity)}`]);
   const lotField = { name: 'lotNumber', label: 'Lot (lot-tracked parts only)', hint: 'Leave empty for parts that are not lot-tracked.' };
-  const statusField = (value = 'Available') => ({ name: 'status', label: 'Stock status', type: 'select', value, options: [['Available', 'Available'], ['Inspection', 'Inspection'], ['Hold', 'Hold']] });
+  const statusField = (value = 'Released') => ({ name: 'status', label: 'Quality status', type: 'select', value, options: [['Released', 'Released'], ['Inspection', 'Inspection'], ['Hold', 'Hold']] });
   const reload = async () => { await load(); render(); };
+
+  // V3.1: where a location sits, what it serves, and who holds stock there.
+  const placeFields = l => [
+    { name: 'parentCode', label: 'Sits in (optional)', type: 'select', value: l.parentCode ?? '', options: [['', '— top level —'], ...locs(true, false).filter(([c]) => c !== l.code)] },
+    { name: 'level', label: 'Level', type: 'select', value: l.level ?? '', options: [['', l.code ? l.level : 'One narrower than where it sits'], ...LEVELS.map(x => [x, x])] },
+    { name: 'workCenterCode', label: 'Serves work center (production, staging, WIP storage)', type: 'select', value: l.workCenterCode ?? '', options: [['', '—'], ...data.workCenters.map(w => [w.code, `${w.code} — ${w.name}`])] },
+    { name: 'machineCode', label: 'Beside machine (machine-side only)', type: 'select', value: l.machineCode ?? '', options: [['', '—'], ...data.machines.map(m => [m.code, `${m.code} — ${m.name}`])] },
+    { name: 'custodianSupplier', label: 'Outside processor (outside-processor locations only)', type: 'select', value: l.custodianSupplier ?? '', options: [['', '—'], ...data.suppliers.map(x => [x.code, `${x.code} — ${x.name}`])] },
+  ];
+  const locationBody = v => ({
+    ...v, parentCode: v.parentCode || null, level: v.level || null, workCenterCode: v.workCenterCode || null, machineCode: v.machineCode || null,
+    custodianSupplier: v.custodianSupplier || null, nettable: v.nettable === '' || v.nettable === undefined ? null : v.nettable === true || v.nettable === 'true',
+  });
+  const changeLocation = l => formModal({
+    title: `Change location ${l.code}`, detail: `${KIND_NAME[l.kind] ?? l.kind} at ${l.siteCode}. The kind and site never change; retire it and add another instead.`, confirmLabel: 'Save', reasonRequired: true,
+    fields: [
+      { name: 'name', label: 'Name', value: l.name, required: true },
+      ...placeFields(l),
+      { name: 'nettable', label: 'Counts for planning', type: 'select', value: String(l.nettable), options: [['true', 'Yes'], ['false', 'No']] },
+    ],
+  }, (v, reason) => { const b = locationBody(v); return command(`/api/inventory/locations/${encodeURIComponent(l.code)}`, { ...b, level: b.level ?? l.level, nettable: b.nettable ?? l.nettable }, reason); }, reload);
 
   const actions = {
     receive: () => formModal({
@@ -82,8 +108,8 @@ export async function inventoryPage(page, ctx) {
       fields: [
         { name: 'partNumber', label: 'Part', type: 'select', options: parts(), required: true },
         { name: 'quantity', label: 'Quantity', type: 'number', step: 'any', min: 0, required: true },
-        { name: 'fromLocation', label: 'From', type: 'select', options: locs(), required: true },
-        { name: 'toLocation', label: 'To', type: 'select', options: locs(), required: true },
+        { name: 'fromLocation', label: 'From', type: 'select', options: locs(true, false), required: true },
+        { name: 'toLocation', label: 'To', type: 'select', options: locs(true, false), required: true, hint: 'Moving stock to an outside processor or in transit puts it out of the company\'s custody until it is moved back.' },
         lotField, statusField(),
       ],
     }, (v, reason) => command('/api/inventory/transfers', v, reason), reload),
@@ -109,7 +135,7 @@ export async function inventoryPage(page, ctx) {
     }, (v, reason) => command('/api/inventory/holds', v, reason), reload),
 
     release: () => formModal({
-      title: 'Release stock to Available', detail: 'From quality hold or incoming inspection. You cannot release stock you put there yourself.', confirmLabel: 'Release', reasonRequired: true,
+      title: 'Release stock', detail: 'From quality hold or incoming inspection. You cannot release stock you put there yourself.', confirmLabel: 'Release', reasonRequired: true,
       fields: [
         { name: 'partNumber', label: 'Part', type: 'select', options: parts(), required: true },
         { name: 'quantity', label: 'Quantity', type: 'number', step: 'any', min: 0, required: true },
@@ -150,14 +176,16 @@ export async function inventoryPage(page, ctx) {
     }, (v, reason) => command('/api/inventory/counts', v, reason), reload),
 
     location: () => formModal({
-      title: 'Add a location', confirmLabel: 'Add',
+      title: 'Add a location', detail: 'Where it sits, what it serves and who has custody. Stock at an outside processor or in transit never counts for planning.', confirmLabel: 'Add',
       fields: [
         { name: 'code', label: 'Code (permanent)', code: true, required: true, placeholder: 'STORES-A' },
         { name: 'name', label: 'Name', required: true, placeholder: 'Main stores, aisle A' },
-        { name: 'kind', label: 'Kind', type: 'select', options: ['Stores', 'Receiving', 'Inspection', 'Quarantine', 'Production', 'Shipping'].map(k => [k, k]) },
+        { name: 'kind', label: 'Kind', type: 'select', options: LOCATION_KINDS.map(k => [k, KIND_NAME[k] ?? k]) },
         { name: 'siteCode', label: 'Site', type: 'select', options: data.sites.map(s => [s.code, s.name]), required: true },
+        ...placeFields({}),
+        { name: 'nettable', label: 'Counts for planning', type: 'select', options: [['', 'Default for the kind'], ['true', 'Yes'], ['false', 'No']] },
       ],
-    }, (v, reason) => command('/api/inventory/locations', v, reason), reload),
+    }, (v, reason) => command('/api/inventory/locations', locationBody(v), reason), reload),
   };
 
   function kpis() {
@@ -166,7 +194,7 @@ export async function inventoryPage(page, ctx) {
     const tile = (icon, title, value, why) => `<div class="kpi">${img(icon)}<div><div class="t">${esc(title)}</div><div class="v">${value}</div><div class="why">${esc(why)}</div></div></div>`;
     return `<div class="kpis kpis-4">
       ${tile('inventory', 'Items with stock or supply', s.length, 'Parts with stock, allocations, open supply or safety stock.')}
-      ${tile('alert', 'Below safety stock', s.filter(x => x.belowSafetyStock).length, 'Available (on hand less allocated) under safety stock.')}
+      ${tile('alert', 'Below safety stock', s.filter(x => x.belowSafetyStock).length, 'Available for planning (released, in a nettable location, less allocated) under safety stock.')}
       ${tile('quality', 'Inspection or hold', s.filter(x => x.inspection > 0 || x.hold > 0).length, 'Parts with stock that cannot be used yet.')}
       ${tile('complete', 'Waiting for approval', pending.length, 'Adjustments and count variances for a second person.')}
     </div>`;
@@ -176,15 +204,20 @@ export async function inventoryPage(page, ctx) {
     const s = data.summary;
     if (s.error) return errorBlock(s.error, 'stock');
     if (!s.data.length) return emptyBlock('No stock yet', 'Add a location, then receive material. Every quantity here will be explained by its receipts, issues and moves.');
-    return `<table class="table"><thead><tr><th>Part</th><th class="num">On hand</th><th class="num">Inspection</th><th class="num">Hold</th><th class="num">Allocated</th><th class="num">Available</th><th class="num">On order</th><th class="num">In production</th><th class="num">Safety stock</th></tr></thead><tbody>
+    return `<table class="table"><thead><tr><th>Part</th><th class="num">On hand</th><th class="num">Released</th><th class="num">Inspection</th><th class="num">Hold</th>
+      <th class="num" title="Released, but at an outside processor, in transit or in quarantine">Not counted</th><th class="num" title="Released stock at a work center's point of use">At point of use</th>
+      <th class="num">Allocated</th><th class="num">Available for planning</th><th class="num">On order</th><th class="num">In production</th><th class="num">Safety stock</th></tr></thead><tbody>
       ${s.data.map(x => `<tr class="click" data-part="${esc(x.partNumber)}">
         <td><b>${esc(x.partNumber)}</b> <span class="faint">${esc(x.unitOfMeasure)} · ${esc(x.makeBuy)}</span><br><span class="muted">${esc(x.description)}</span></td>
-        <td class="num">${qty(x.onHand)}</td><td class="num">${x.inspection ? `<span class="c-info">${qty(x.inspection)}</span>` : '—'}</td><td class="num">${x.hold ? `<span class="c-warn">${qty(x.hold)}</span>` : '—'}</td>
+        <td class="num">${qty(x.onHand)}</td><td class="num">${qty(x.released)}</td>
+        <td class="num">${x.inspection ? `<span class="c-info">${qty(x.inspection)}</span>` : '—'}</td><td class="num">${x.hold ? `<span class="c-warn">${qty(x.hold)}</span>` : '—'}</td>
+        <td class="num">${x.notNettable ? qty(x.notNettable) : '—'}</td><td class="num">${x.atPointOfUse ? qty(x.atPointOfUse) : '—'}</td>
         <td class="num" title="Required by released orders and not yet issued">${qty(x.allocated)}</td>
-        <td class="num ${x.available < 0 ? 'c-bad' : x.belowSafetyStock ? 'c-warn' : ''}"><b>${qty(x.available)}</b></td>
+        <td class="num ${x.availableForPlanning < 0 ? 'c-bad' : x.belowSafetyStock ? 'c-warn' : ''}"><b>${qty(x.availableForPlanning)}</b></td>
         <td class="num">${qty(x.onOrder)}</td><td class="num">${qty(x.inProduction)}</td>
         <td class="num">${x.safetyStock ? qty(x.safetyStock) : '—'}${x.belowSafetyStock ? ' <span class="pill warn">below</span>' : ''}</td></tr>`).join('')}
-      </tbody></table>`;
+      </tbody></table>
+      <div class="faint" style="margin-top:6px">On hand is everything in the ledger. Released is what quality has released. Available for planning is released stock in locations that count for planning, less what released orders still need. At point of use is released stock beside a machine or staged at its work center.</div>`;
   }
 
   const ledgerRow = t => `<tr>
@@ -223,10 +256,20 @@ export async function inventoryPage(page, ctx) {
   function locationsTab() {
     const l = data.locations;
     if (l.error) return errorBlock(l.error, 'locations');
-    if (!l.data.length) return emptyBlock('No locations yet', controller ? 'Add the places stock is kept: stores, receiving, inspection, quarantine.' : 'An inventory controller adds locations.');
-    return `<table class="table"><thead><tr><th>Code</th><th>Name</th><th>Kind</th><th>Site</th><th></th></tr></thead><tbody>
-      ${l.data.map(x => `<tr class="${x.active ? '' : 'retired'}"><td class="mono">${esc(x.code)}</td><td>${esc(x.name)}</td><td>${esc(x.kind)}</td><td>${esc(x.siteCode)}</td>
-        <td>${!x.active ? '<span class="pill none">Retired</span>' : controller ? `<button class="btn small ghost" data-retire="${esc(x.code)}">Retire</button>` : ''}</td></tr>`).join('')}
+    if (!l.data.length) return emptyBlock('No locations yet', controller ? 'Add the places stock is kept: stores, receiving, inspection, quarantine, staging, beside machines, outside processors.' : 'An inventory controller adds locations.');
+    const byParent = new Map();
+    for (const x of l.data) { const k = x.parentCode ?? ''; byParent.set(k, [...(byParent.get(k) ?? []), x]); }
+    const known = new Set(l.data.map(x => x.code));
+    const ordered = [];
+    const walk = (parent, depth) => (byParent.get(parent) ?? []).forEach(x => { ordered.push([x, depth]); if (depth < 8) walk(x.code, depth + 1); });
+    walk('', 0);
+    l.data.filter(x => x.parentCode && !known.has(x.parentCode)).forEach(x => ordered.push([x, 0]));
+    return `<table class="table"><thead><tr><th>Code</th><th>Name</th><th>Kind</th><th>Level</th><th>Counts for planning</th><th>Point of use</th><th>Custody</th><th>Site</th><th></th></tr></thead><tbody>
+      ${ordered.map(([x, depth]) => `<tr class="${x.active ? '' : 'retired'}"><td class="mono" style="padding-left:${8 + depth * 18}px">${depth ? '└ ' : ''}${esc(x.code)}</td><td>${esc(x.name)}</td><td>${esc(KIND_NAME[x.kind] ?? x.kind)}</td><td>${esc(x.level)}</td>
+        <td>${x.nettable ? 'Yes' : '<span class="pill none">No</span>'}</td>
+        <td>${x.pointOfUse ? `${esc(x.workCenterCode)}${x.machineCode ? ` · ${esc(x.machineCode)}` : ''}` : x.workCenterCode ? `<span class="faint">${esc(x.workCenterCode)}</span>` : '—'}</td>
+        <td>${x.custody === 'Company' ? 'Company' : `<span class="pill warn">${esc(custodyText(x))}</span>`}</td><td>${esc(x.siteCode)}</td>
+        <td class="nowrap">${!x.active ? '<span class="pill none">Retired</span>' : controller ? `<button class="btn small" data-change-loc="${esc(x.code)}">Change</button> <button class="btn small ghost" data-retire="${esc(x.code)}">Retire</button>` : ''}</td></tr>`).join('')}
       </tbody></table>`;
   }
 
@@ -301,6 +344,7 @@ export async function inventoryPage(page, ctx) {
     }));
     $$('[data-approve]', page).forEach(b => b.addEventListener('click', () => decide(b.dataset.approve, 'approve')));
     $$('[data-reject]', page).forEach(b => b.addEventListener('click', () => decide(b.dataset.reject, 'reject')));
+    $$('[data-change-loc]', page).forEach(b => b.addEventListener('click', () => changeLocation(data.locations.data.find(l => l.code === b.dataset.changeLoc))));
     $$('[data-retire]', page).forEach(b => b.addEventListener('click', async () => {
       const done = await confirmWithReason({ title: `Retire location ${b.dataset.retire}`, detail: 'Only an empty location can be retired.', confirmLabel: 'Retire' },
         reason => command(`/api/inventory/locations/${encodeURIComponent(b.dataset.retire)}/retire`, {}, reason));
@@ -316,11 +360,13 @@ export async function inventoryPage(page, ctx) {
 
   async function partDrawer(part) {
     const d = drawer(`${part}${item(part) ? ` — ${item(part).description}` : ''}`, '<div class="muted">Loading…</div>');
-    const [stock, ledger] = await Promise.all([tryGet(`/api/inventory/stock?part=${encodeURIComponent(part)}`), tryGet(`/api/inventory/transactions?part=${encodeURIComponent(part)}&take=100`)]);
+    const [stock, ledger] = await Promise.all([tryGet(`/api/inventory/positions?part=${encodeURIComponent(part)}`), tryGet(`/api/inventory/transactions?part=${encodeURIComponent(part)}&take=100`)]);
     d.element.innerHTML = `
       <h3 style="margin:0">Where it is</h3>
-      ${stock.error ? errorBlock(stock.error, 'stock') : stock.data.length ? `<table class="table"><thead><tr><th>Location</th><th>Lot</th><th>Status</th><th class="num">Qty</th></tr></thead><tbody>
-        ${stock.data.map(b => `<tr><td>${esc(b.locationCode)}</td><td>${esc(b.lotNumber ?? '—')}</td><td><span class="pill ${STATUS_TONE[b.status]}">${esc(b.status)}</span></td><td class="num">${qty(b.quantity)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None on hand.</div>'}
+      ${stock.error ? errorBlock(stock.error, 'stock') : stock.data.length ? `<table class="table"><thead><tr><th>Location</th><th>Lot</th><th>Quality</th><th>Custody</th><th>Point of use</th><th>Planning</th><th class="num">Qty</th></tr></thead><tbody>
+        ${stock.data.map(b => `<tr><td>${esc(b.locationPath)}</td><td>${esc(b.lotNumber ?? '—')}</td><td><span class="pill ${STATUS_TONE[b.qualityStatus]}">${esc(b.qualityStatus)}</span></td>
+          <td>${b.custody === 'Company' ? 'Company' : `<span class="pill warn">${esc(custodyText(b))}</span>`}</td><td>${esc(b.pointOfUseWorkCenter ? `${b.pointOfUseWorkCenter}${b.machineCode ? ` · ${b.machineCode}` : ''}` : '—')}</td>
+          <td>${b.availableForPlanning ? 'Counts' : '<span class="faint">Not counted</span>'}</td><td class="num">${qty(b.quantity)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None on hand.</div>'}
       <h3 style="margin:0">How it got there</h3>
       ${ledger.error ? errorBlock(ledger.error, 'ledger') : ledger.data.length ? ledgerTable(ledger.data) : '<div class="muted">No transactions.</div>'}
       <div class="faint"><a href="#/material-plan?part=${encodeURIComponent(part)}">Open the material plan for ${esc(part)} →</a></div>`;

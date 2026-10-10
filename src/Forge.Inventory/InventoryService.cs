@@ -13,7 +13,18 @@ using Forge.Resources.Contracts;
 
 namespace Forge.Inventory;
 
-public sealed record CreateLocation(string Code, string SiteCode, string Name, LocationKind Kind);
+/// <param name="Nettable">Whether released stock there counts for planning; null takes the kind's default (V3.1).</param>
+public sealed record CreateLocation(
+    string Code,
+    string SiteCode,
+    string Name,
+    LocationKind Kind,
+    string? ParentCode = null,
+    LocationLevel? Level = null,
+    bool? Nettable = null,
+    string? WorkCenterCode = null,
+    string? MachineCode = null,
+    string? CustodianSupplier = null);
 
 public sealed record RetireLocation(string Code);
 
@@ -35,7 +46,7 @@ public sealed record ScrapStock(string PartNumber, decimal Quantity, string Loca
 
 public sealed record HoldStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber);
 
-/// <summary>Releases stock from quality hold or incoming inspection to Available. Never by the person who put it there.</summary>
+/// <summary>Releases stock from quality hold or incoming inspection to Released. Never by the person who put it there.</summary>
 public sealed record ReleaseStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, StockStatus FromStatus);
 
 /// <summary>Finished goods from a production order, up to the good quantity reported on its last operation.</summary>
@@ -153,6 +164,8 @@ public interface IInventoryStore
 
     Task SetLocationActiveAsync(string code, bool active, CancellationToken ct);
 
+    Task UpdateLocationAsync(LocationInfo location, DateTimeOffset at, string actor, CancellationToken ct);
+
     Task<long> InsertRequestAsync(AdjustmentRequest request, CancellationToken ct);
 
     Task<AdjustmentRequest?> FindRequestAsync(long requestId, CancellationToken ct);
@@ -173,33 +186,6 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
     public const string SourceContext = "Inventory";
     private const string StockEntity = "Stock";
 
-    public Task<CommandResult> CreateLocationAsync(CreateLocation c, CommandContext context, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(c);
-        var code = BusinessCode.Require(c.Code, "Location");
-        var spec = new CommandSpec(SourceContext, nameof(CreateLocation), Permissions.InventoryManage, ResourceRef.Of("Location", code));
-        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
-        {
-            var site = BusinessCode.Require(c.SiteCode, "Site");
-            var name = BusinessCode.RequireName(c.Name, "Location");
-            if (!(await uow.Store<IResourcesLookup>().ListSitesAsync(ct)).Any(s => s.Code == site))
-            {
-                throw new CommandRejectedException("unknown_site", $"Site {site} does not exist.");
-            }
-
-            var location = new LocationInfo(code, site, name, c.Kind, true);
-            if (!await uow.Store<IInventoryStore>().InsertLocationAsync(location, now, context.Actor, ct))
-            {
-                throw new CommandRejectedException("code_exists", $"Location {code} already exists.");
-            }
-
-            return new CommandOutcome(
-                CommandResult.Ok(code, $"Location {code} ({c.Kind}) created."),
-                [pipeline.Event(new LocationChanged(code, "Created"), context, SourceContext, "Location", code)],
-                new AuditChange("Location", code, null, CanonicalJson.Serialize(location)));
-        }, ct);
-    }
-
     public Task<CommandResult> RetireLocationAsync(RetireLocation c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
@@ -213,6 +199,11 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             if (!location.Active)
             {
                 return CommandOutcome.NoChange(CommandResult.NoChange(code, "Already retired."));
+            }
+
+            if ((await lookup.ListLocationsAsync(ct)).FirstOrDefault(l => l.Active && l.ParentCode == code) is { } child)
+            {
+                throw new CommandRejectedException("location_has_children", $"{child.Code} sits in {code}; retire or move it first.");
             }
 
             var stock = (await lookup.ListBalancesAsync(null, ct)).Where(b => b.LocationCode == code).ToList();
@@ -280,7 +271,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         var reasonRequired = c.PoNumber is null;
         return PostAsync(nameof(ReceiveStock), c.PartNumber, c, context, Permissions.InventoryTransact, reasonRequired, async (uow, item, now) =>
         {
-            var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
+            var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
             var quantity = RequireQuantity(item, c.Quantity);
             int? line = null;
@@ -329,7 +320,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 await LotAsync(uow, item.PartNumber, lot, Optional(c.SupplierLot), revision, now, context.Actor, ct);
             }
 
-            var status = c.Inspect ? StockStatus.Inspection : StockStatus.Available;
+            var status = c.Inspect ? StockStatus.Inspection : StockStatus.Released;
             var txn = new NewTransaction(InventoryTransactionKind.Receipt, item.PartNumber, quantity, null, null, location.Code, status, lot, PoNumber: c.PoNumber, PoLine: line, Reason: context.Reason, PartRevision: revision,
                 ProjectCode: project?.Code, ProjectLine: project?.Line);
             return (txn, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber}{(revision is null ? string.Empty : " rev " + revision)} into {location.Code} ({status})" + (c.PoNumber is null ? "." : $" against PO {c.PoNumber} line {line}" + (project is { } alloc ? $", for project {alloc.Code} line {alloc.Line}." : ".")),
@@ -363,10 +354,10 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 throw new CommandRejectedException("over_issue", $"Order {order.OrderNumber} needs {required} {needed}; {issued} already issued, so at most {required - issued} more{(alternate is null ? string.Empty : $" ({(required - issued) * factor} {item.PartNumber} at {factor} per 1)")}. Over-issue is not allowed; scrap or adjust instead.");
             }
 
-            var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
+            var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
-            await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Available, quantity, ct);
-            var txn = new NewTransaction(InventoryTransactionKind.Issue, item.PartNumber, quantity, location.Code, StockStatus.Available, null, null, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
+            await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
+            var txn = new NewTransaction(InventoryTransactionKind.Issue, item.PartNumber, quantity, location.Code, StockStatus.Released, null, null, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
                 SubstitutesFor: alternate is null ? null : needed, AlternateId: alternate?.AlternateId, PrimaryQuantity: alternate is null ? null : primaryQuantity);
             (through, needs, issuedPrimary) = (alternate, needed, primaryQuantity);
             var message = alternate is null
@@ -405,12 +396,12 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 throw new CommandRejectedException("over_return", $"Only {issued} {item.PartNumber} is issued to order {order.OrderNumber}{(primary is null ? string.Empty : $" in place of {primary}")}.");
             }
 
-            var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
+            var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
             var issuedPrimary = mine.Sum(t => (t.Kind == InventoryTransactionKind.Issue ? 1 : -1) * (t.PrimaryQuantity ?? t.Quantity));
             var primaryQuantity = primary is null ? (decimal?)null : decimal.Round(issuedPrimary * quantity / issued, 6, MidpointRounding.AwayFromZero);
             var alternateId = primary is null ? null : mine.LastOrDefault(t => t.AlternateId is not null)?.AlternateId;
-            var txn = new NewTransaction(InventoryTransactionKind.Return, item.PartNumber, quantity, null, null, location.Code, StockStatus.Available, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
+            var txn = new NewTransaction(InventoryTransactionKind.Return, item.PartNumber, quantity, null, null, location.Code, StockStatus.Released, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
                 SubstitutesFor: primary, AlternateId: alternateId, PrimaryQuantity: primaryQuantity);
             return (txn, $"Returned {quantity} {item.UnitOfMeasure} {item.PartNumber} from order {order.OrderNumber} to {location.Code}.",
                 id => pipeline.Event(new InventoryMoved(id, nameof(InventoryTransactionKind.Return), item.PartNumber, quantity, null, location.Code), context, SourceContext, StockEntity, item.PartNumber));
@@ -478,7 +469,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         ArgumentNullException.ThrowIfNull(c);
         return PostAsync(nameof(ScrapStock), c.PartNumber, c, context, Permissions.InventoryTransact, true, async (uow, item, _) =>
         {
-            var location = await LocationAsync(uow, c.LocationCode, ct);
+            var location = InCustody(await LocationAsync(uow, c.LocationCode, ct));
             var lot = RequireLot(item, c.LotNumber);
             var quantity = RequireQuantity(item, c.Quantity);
             await RequireStockAsync(uow, item.PartNumber, location.Code, lot, c.Status, quantity, ct);
@@ -496,8 +487,8 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             var location = await LocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
             var quantity = RequireQuantity(item, c.Quantity);
-            await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Available, quantity, ct);
-            var txn = new NewTransaction(InventoryTransactionKind.QualityHold, item.PartNumber, quantity, location.Code, StockStatus.Available, location.Code, StockStatus.Hold, lot, Reason: context.Reason);
+            await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
+            var txn = new NewTransaction(InventoryTransactionKind.QualityHold, item.PartNumber, quantity, location.Code, StockStatus.Released, location.Code, StockStatus.Hold, lot, Reason: context.Reason);
             return (txn, $"{quantity} {item.UnitOfMeasure} {item.PartNumber} at {location.Code} placed on hold.",
                 id => pipeline.Event(new InventoryMoved(id, nameof(InventoryTransactionKind.QualityHold), item.PartNumber, quantity, location.Code, location.Code), context, SourceContext, StockEntity, item.PartNumber));
         }, ct);
@@ -508,7 +499,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         ArgumentNullException.ThrowIfNull(c);
         return PostAsync(nameof(ReleaseStock), c.PartNumber, c, context, Permissions.InventoryApprove, true, async (uow, item, _) =>
         {
-            if (c.FromStatus == StockStatus.Available)
+            if (c.FromStatus == StockStatus.Released)
             {
                 throw new CommandRejectedException("already_available", "Release stock from Hold or Inspection.");
             }
@@ -523,8 +514,8 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 throw new CommandRejectedException("separation_of_duties", $"You put this stock into {c.FromStatus}; a different person must release it.");
             }
 
-            var txn = new NewTransaction(InventoryTransactionKind.QualityRelease, item.PartNumber, quantity, location.Code, c.FromStatus, location.Code, StockStatus.Available, lot, Reason: context.Reason);
-            return (txn, $"{quantity} {item.UnitOfMeasure} {item.PartNumber} at {location.Code} released from {c.FromStatus} to Available.",
+            var txn = new NewTransaction(InventoryTransactionKind.QualityRelease, item.PartNumber, quantity, location.Code, c.FromStatus, location.Code, StockStatus.Released, lot, Reason: context.Reason);
+            return (txn, $"{quantity} {item.UnitOfMeasure} {item.PartNumber} at {location.Code} released from {c.FromStatus} to Released.",
                 id => pipeline.Event(new InventoryMoved(id, nameof(InventoryTransactionKind.QualityRelease), item.PartNumber, quantity, location.Code, location.Code), context, SourceContext, StockEntity, item.PartNumber));
         }, ct);
     }
@@ -575,7 +566,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                     throw new CommandRejectedException("ncr_open", $"Order {order.OrderNumber} has NCR {string.Join(", ", quality.OpenNcrs.Select(n => n.NcrId))} waiting for a disposition.");
                 }
 
-                var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
+                var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
                 if (item.Serialized)
                 {
                     return await ReceiveSerialsAsync(uow, store, item, order, quantity, location.Code, c.Serials, context, now, ct);
@@ -594,12 +585,12 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                     await LotAsync(uow, item.PartNumber, lot, null, order.Revision, now, context.Actor, ct);
                 }
 
-                var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, quantity, null, null, location.Code, StockStatus.Available, lot, OrderNumber: order.OrderNumber, Reason: context.Reason, PartRevision: order.Revision);
+                var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, quantity, null, null, location.Code, StockStatus.Released, lot, OrderNumber: order.OrderNumber, Reason: context.Reason, PartRevision: order.Revision);
                 var txnId = await store.InsertTransactionAsync(txn, now, context.Actor, ct);
                 var id = txnId.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 return new CommandOutcome(
                     CommandResult.Ok(id, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber} rev {order.Revision} from order {order.OrderNumber} into {location.Code}" + (lot is null ? "." : $", lot {lot}.")),
-                    [pipeline.Event(new InventoryReceived(txnId, item.PartNumber, quantity, location.Code, nameof(StockStatus.Available), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber)],
+                    [pipeline.Event(new InventoryReceived(txnId, item.PartNumber, quantity, location.Code, nameof(StockStatus.Released), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber)],
                     new AuditChange("InventoryTransaction", id, null, CanonicalJson.Serialize(txn)));
             },
             ct);
@@ -677,7 +668,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         return pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
         {
             var item = await ItemAsync(uow, part, ct);
-            var location = await LocationAsync(uow, rawLocation, ct);
+            var location = InCustody(await LocationAsync(uow, rawLocation, ct));
             var lot = RequireLot(item, rawLot);
             if (kind == AdjustmentKind.Adjustment && quantity == 0)
             {
@@ -808,6 +799,19 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         var location = await LocationAsync(uow, raw, ct);
         return location.Active ? location : throw new CommandRejectedException("location_retired", $"Location {location.Code} is retired.");
     }
+
+    /// <summary>
+    /// An active location where the company has custody (V3.1). Stock at an outside processor or in transit is
+    /// still the company's, but nobody here can issue, ship, receive, count or scrap it; it comes back by transfer.
+    /// </summary>
+    private static async Task<LocationInfo> CompanyLocationAsync(IKernelUnitOfWork uow, string raw, CancellationToken ct) =>
+        InCustody(await ActiveLocationAsync(uow, raw, ct));
+
+    private static LocationInfo InCustody(LocationInfo location) => location.InCompanyCustody
+        ? location
+        : throw new CommandRejectedException("not_in_custody", location.Custody == Custody.Supplier
+            ? $"Stock at {location.Code} is in the custody of {location.CustodianSupplier}; transfer it back before using it."
+            : $"Stock at {location.Code} is in transit; transfer it to a location here first.");
 
     private static async Task RequireStockAsync(IKernelUnitOfWork uow, string part, string location, string? lot, StockStatus status, decimal quantity, CancellationToken ct)
     {

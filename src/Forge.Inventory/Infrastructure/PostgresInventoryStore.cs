@@ -88,9 +88,27 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
     {
         ArgumentNullException.ThrowIfNull(location);
         await using var cmd = uow.Command(
-            "INSERT INTO inventory.location (code, site_code, name, kind, active, created_at, created_by) VALUES ($1, $2, $3, $4, true, $5, $6) ON CONFLICT DO NOTHING",
-            location.Code, location.SiteCode, location.Name, location.Kind.ToString(), at, actor);
+            """
+            INSERT INTO inventory.location (code, site_code, name, kind, active, created_at, created_by, parent_code, level, nettable, work_center_code, machine_code, custodian_supplier)
+            VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT DO NOTHING
+            """,
+            location.Code, location.SiteCode, location.Name, location.Kind.ToString(), at, actor, Text(location.ParentCode), location.Level.ToString(), location.Nettable,
+            Text(location.WorkCenterCode), Text(location.MachineCode), Text(location.CustodianSupplier));
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task UpdateLocationAsync(LocationInfo location, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(location);
+        await using var cmd = uow.Command(
+            """
+            UPDATE inventory.location SET name = $2, parent_code = $3, level = $4, nettable = $5, work_center_code = $6, machine_code = $7, custodian_supplier = $8,
+                changed_at = $9, changed_by = $10
+            WHERE code = $1
+            """,
+            location.Code, location.Name, Text(location.ParentCode), location.Level.ToString(), location.Nettable, Text(location.WorkCenterCode), Text(location.MachineCode),
+            Text(location.CustodianSupplier), at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task SetLocationActiveAsync(string code, bool active, CancellationToken ct)
@@ -135,8 +153,9 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
 
     public Task<IReadOnlyList<LocationInfo>> ListLocationsAsync(CancellationToken ct) =>
         ReadAsync(
-            "SELECT code, site_code, name, kind, active FROM inventory.location ORDER BY code",
-            r => new LocationInfo(r.GetString(0), r.GetString(1), r.GetString(2), Enum.Parse<LocationKind>(r.GetString(3)), r.GetBoolean(4)),
+            "SELECT code, site_code, name, kind, active, parent_code, level, nettable, work_center_code, machine_code, custodian_supplier FROM inventory.location ORDER BY code",
+            r => new LocationInfo(r.GetString(0), r.GetString(1), r.GetString(2), Enum.Parse<LocationKind>(r.GetString(3)), r.GetBoolean(4),
+                NullableText(r, 5), Enum.Parse<LocationLevel>(r.GetString(6)), r.GetBoolean(7), NullableText(r, 8), NullableText(r, 9), NullableText(r, 10)),
             ct);
 
     public Task<IReadOnlyList<StockBalance>> ListBalancesAsync(string? partNumber, CancellationToken ct) =>
@@ -340,6 +359,8 @@ internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventor
     private static decimal Normal(decimal value) => value / 1.000000000000000000000000000000000m;
 
     private static decimal Dec(NpgsqlDataReader r, int ordinal) => Normal(r.GetDecimal(ordinal));
+
+    private static string? NullableText(NpgsqlDataReader r, int ordinal) => r.IsDBNull(ordinal) ? null : r.GetString(ordinal);
 
     private static NpgsqlParameter Text(string? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text };
 

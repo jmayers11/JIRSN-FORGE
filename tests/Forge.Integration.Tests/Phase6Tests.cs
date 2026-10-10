@@ -97,8 +97,8 @@ public sealed class Phase6Tests(PostgresFixture postgres)
         await plant.Ok(ivy, $"/api/inventory/requests/{stale}/reject", new { reason = "Stock moved; count again" });
 
         var balances = await Get(mike, "/api/inventory/stock?part=COIL-AL");
-        Assert.Equal(1_000_090m, Stock(balances, "STORES", "Available"));
-        Assert.Equal(10m, Stock(balances, "RECV", "Available"));
+        Assert.Equal(1_000_090m, Stock(balances, "STORES", "Released"));
+        Assert.Equal(10m, Stock(balances, "RECV", "Released"));
 
         // Every balance is the sum of its ledger entries, and the ledger cannot be edited.
         var ledger = await Get(mike, "/api/inventory/transactions?part=COIL-AL&take=1000");
@@ -233,7 +233,7 @@ public sealed class Phase6Tests(PostgresFixture postgres)
         var summary = await Get(planner, "/api/inventory/summary");
         var coil = summary.EnumerateArray().Single(s => s.GetProperty("partNumber").GetString() == "COIL-AL");
         Assert.Equal(26m, coil.GetProperty("allocated").GetDecimal()); // 10 x 2.5 x 1.04, not yet issued
-        Assert.Equal(1_000_000m - 26m, coil.GetProperty("available").GetDecimal());
+        Assert.Equal(1_000_000m - 26m, coil.GetProperty("availableForPlanning").GetDecimal());
     }
 
     private static async Task<JsonElement> Proposed(SlittingPlant.Plant plant, HttpClient planner)

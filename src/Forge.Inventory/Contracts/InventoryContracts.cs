@@ -1,9 +1,15 @@
 namespace Forge.Inventory.Contracts;
 
-/// <summary>Whether stock may be used. Only Available stock can be issued or counts for MRP and readiness.</summary>
+/// <summary>
+/// The quality status of stock (V3.1: renamed from "Available" to "Released", because quality release is not
+/// availability for planning). Only Released stock can be issued, and only Released stock in a nettable
+/// location counts for MRP and readiness. Location, custody, nettability and point of use are separate
+/// dimensions, read from the location (<see cref="StockPosition"/>).
+/// </summary>
 public enum StockStatus
 {
-    Available,
+    /// <summary>Released by quality for use.</summary>
+    Released,
 
     /// <summary>Received and waiting for incoming inspection.</summary>
     Inspection,
@@ -20,6 +26,40 @@ public enum LocationKind
     Quarantine,
     Production,
     Shipping,
+
+    /// <summary>Material staged for a work center (V3.1): at the point of use.</summary>
+    Staging,
+
+    /// <summary>Beside one machine (V3.1): at the point of use.</summary>
+    MachineSide,
+
+    /// <summary>Work in progress waiting between operations, possibly for a long time (V3.1).</summary>
+    WipStorage,
+
+    /// <summary>At a supplier doing outside processing (V3.1): company-owned, in the supplier's custody, never nettable.</summary>
+    ExternalProcessor,
+
+    /// <summary>Between sites or on its way to or from a processor (V3.1): never nettable.</summary>
+    InTransit,
+}
+
+/// <summary>A location's place in its site's hierarchy, from the widest to the narrowest (V3.1).</summary>
+public enum LocationLevel
+{
+    Area,
+    Zone,
+    Rack,
+    Shelf,
+    Bin,
+    Position,
+}
+
+/// <summary>Who physically holds stock (V3.1). Ownership is not custody: stock at an outside processor is still the company's.</summary>
+public enum Custody
+{
+    Company,
+    Supplier,
+    InTransit,
 }
 
 public enum InventoryTransactionKind
@@ -51,7 +91,90 @@ public enum InventoryTransactionKind
     ProjectReturn,
 }
 
-public sealed record LocationInfo(string Code, string SiteCode, string Name, LocationKind Kind, bool Active);
+/// <param name="ParentCode">The location this one sits in (V3.1); null for a top-level area.</param>
+/// <param name="Nettable">Whether released stock here counts for planning (V3.1).</param>
+/// <param name="WorkCenterCode">The work center this location serves; stock here is at the point of use for Production, Staging and MachineSide locations (V3.1).</param>
+/// <param name="MachineCode">The machine a MachineSide location serves (V3.1).</param>
+/// <param name="CustodianSupplier">The outside processor holding stock at an ExternalProcessor location (V3.1).</param>
+public sealed record LocationInfo(
+    string Code,
+    string SiteCode,
+    string Name,
+    LocationKind Kind,
+    bool Active,
+    string? ParentCode = null,
+    LocationLevel Level = LocationLevel.Area,
+    bool Nettable = true,
+    string? WorkCenterCode = null,
+    string? MachineCode = null,
+    string? CustodianSupplier = null)
+{
+    public Custody Custody => Kind switch
+    {
+        LocationKind.ExternalProcessor => Custody.Supplier,
+        LocationKind.InTransit => Custody.InTransit,
+        _ => Custody.Company,
+    };
+
+    /// <summary>Stock here is at the point of use of <see cref="WorkCenterCode"/>.</summary>
+    public bool PointOfUse => WorkCenterCode is not null && Kind is LocationKind.Production or LocationKind.Staging or LocationKind.MachineSide;
+
+    /// <summary>Stock here may be issued, shipped or counted by the company; not when a supplier or carrier holds it.</summary>
+    public bool InCompanyCustody => Custody == Custody.Company;
+}
+
+/// <summary>
+/// One balance with every dimension the V3 brief keeps apart (H): quantity, quality status, location and its
+/// path, custody, whether it counts for planning, and the work center or machine it is at the point of use of.
+/// Allocation to orders is computed by material planning; reservation of physical stock arrives in V3.4.
+/// </summary>
+public sealed record StockPosition(
+    string PartNumber,
+    string? LotNumber,
+    string LocationCode,
+    string LocationPath,
+    LocationKind LocationKind,
+    StockStatus QualityStatus,
+    decimal Quantity,
+    Custody Custody,
+    string? CustodianSupplier,
+    bool Nettable,
+    string? PointOfUseWorkCenter,
+    string? MachineCode)
+{
+    /// <summary>Counts for planning: released by quality, in a nettable location.</summary>
+    public bool AvailableForPlanning => QualityStatus == StockStatus.Released && Nettable;
+
+    public static IReadOnlyList<StockPosition> From(IEnumerable<StockBalance> balances, IReadOnlyCollection<LocationInfo> locations)
+    {
+        ArgumentNullException.ThrowIfNull(balances);
+        ArgumentNullException.ThrowIfNull(locations);
+        var byCode = locations.ToDictionary(l => l.Code, StringComparer.Ordinal);
+        return balances.Select(b =>
+        {
+            var l = byCode.GetValueOrDefault(b.LocationCode);
+            return new StockPosition(
+                b.PartNumber, b.LotNumber, b.LocationCode, Path(b.LocationCode, byCode), l?.Kind ?? LocationKind.Stores, b.Status, b.Quantity,
+                l?.Custody ?? Custody.Company, l?.CustodianSupplier, l?.Nettable ?? true, l is { PointOfUse: true } ? l.WorkCenterCode : null, l?.MachineCode);
+        }).ToList();
+    }
+
+    /// <summary>"AREA-1 / RACK-4 / BIN-12": the location and the ones it sits in, widest first.</summary>
+    public static string Path(string code, IReadOnlyDictionary<string, LocationInfo> byCode)
+    {
+        ArgumentNullException.ThrowIfNull(byCode);
+        var parts = new List<string> { code };
+        var seen = new HashSet<string>(StringComparer.Ordinal) { code };
+        var current = byCode.GetValueOrDefault(code);
+        while (current?.ParentCode is { } parent && seen.Add(parent) && parts.Count < 10)
+        {
+            parts.Insert(0, parent);
+            current = byCode.GetValueOrDefault(parent);
+        }
+
+        return string.Join(" / ", parts);
+    }
+}
 
 /// <summary>Quantity of a part at a location, lot and status: always the sum of its ledger entries.</summary>
 public sealed record StockBalance(string PartNumber, string LocationCode, string? LotNumber, StockStatus Status, decimal Quantity);

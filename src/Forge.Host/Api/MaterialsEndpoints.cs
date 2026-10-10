@@ -17,7 +17,28 @@ namespace Forge.Host.Api;
 
 public sealed record ItemPlanningRequest(int LeadTimeDays, decimal SafetyStock, LotPolicy LotPolicy, decimal OrderQuantity, decimal OrderMultiple, string? Reason);
 
-public sealed record LocationRequest(string Code, string SiteCode, string Name, LocationKind Kind, string? Reason);
+public sealed record LocationRequest(
+    string Code,
+    string SiteCode,
+    string Name,
+    LocationKind Kind,
+    string? Reason,
+    string? ParentCode = null,
+    LocationLevel? Level = null,
+    bool? Nettable = null,
+    string? WorkCenterCode = null,
+    string? MachineCode = null,
+    string? CustodianSupplier = null);
+
+public sealed record LocationChangeRequest(
+    string Name,
+    string? ParentCode,
+    LocationLevel Level,
+    bool Nettable,
+    string? Reason,
+    string? WorkCenterCode = null,
+    string? MachineCode = null,
+    string? CustodianSupplier = null);
 
 public sealed record ReceiptRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? SupplierLot, long? PoNumber, int? PoLine, bool Inspect, string? Reason, string? Revision = null);
 
@@ -159,6 +180,15 @@ public static class MaterialsEndpoints
             ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListLocationsAsync(ct)));
         api.MapGet("/stock", (HttpContext http, string? part, CancellationToken _) =>
             ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListBalancesAsync(Part(part), ct)));
+        // V3.1: every balance with its dimensions kept apart: quality status, location path, custody, nettable, point of use.
+        api.MapGet("/positions", (HttpContext http, string? part, string? location, string? lot, CancellationToken _) =>
+            ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) =>
+            {
+                var positions = StockPosition.From(await l.ListBalancesAsync(Part(part), ct), await l.ListLocationsAsync(ct));
+                var at = string.IsNullOrWhiteSpace(location) ? null : location.Trim().ToUpperInvariant();
+                var lotCode = string.IsNullOrWhiteSpace(lot) ? null : lot.Trim().ToUpperInvariant();
+                return positions.Where(p => (at is null || p.LocationCode == at || p.LocationPath.Split(" / ").Contains(at)) && (lotCode is null || p.LotNumber == lotCode)).ToList();
+            }));
         api.MapGet("/summary", async (HttpContext http, MaterialPlanningService s, CancellationToken ct) =>
         {
             var principal = await PrincipalAsync(http);
@@ -184,7 +214,9 @@ public static class MaterialsEndpoints
             ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListRequestsAsync(pending ?? true, ct)));
 
         api.MapPost("/locations", (HttpContext http, LocationRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.CreateLocationAsync(new CreateLocation(b.Code, b.SiteCode, b.Name, b.Kind), c, ct)));
+            Command(http, b.Reason, c => s.CreateLocationAsync(new CreateLocation(b.Code, b.SiteCode, b.Name, b.Kind, b.ParentCode, b.Level, b.Nettable, b.WorkCenterCode, b.MachineCode, b.CustodianSupplier), c, ct)));
+        api.MapPost("/locations/{code}", (HttpContext http, string code, LocationChangeRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ChangeLocationAsync(new ChangeLocation(code, b.Name, b.ParentCode, b.Level, b.Nettable, b.WorkCenterCode, b.MachineCode, b.CustodianSupplier), c, ct)));
         api.MapPost("/locations/{code}/retire", (HttpContext http, string code, ReasonRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RetireLocationAsync(new RetireLocation(code), c, ct)));
         api.MapPost("/receipts", (HttpContext http, ReceiptRequest b, InventoryService s, CancellationToken ct) =>
@@ -194,9 +226,9 @@ public static class MaterialsEndpoints
         api.MapPost("/returns", (HttpContext http, OrderMaterialRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReturnFromOrderAsync(new ReturnFromOrder(b.OrderNumber, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.AlternateFor), c, ct)));
         api.MapPost("/transfers", (HttpContext http, TransferRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.TransferAsync(new TransferStock(b.PartNumber, b.Quantity, b.FromLocation, b.ToLocation, b.LotNumber, b.Status ?? StockStatus.Available), c, ct)));
+            Command(http, b.Reason, c => s.TransferAsync(new TransferStock(b.PartNumber, b.Quantity, b.FromLocation, b.ToLocation, b.LotNumber, b.Status ?? StockStatus.Released), c, ct)));
         api.MapPost("/scrap", (HttpContext http, StockRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ScrapAsync(new ScrapStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Available), c, ct)));
+            Command(http, b.Reason, c => s.ScrapAsync(new ScrapStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released), c, ct)));
         api.MapPost("/holds", (HttpContext http, StockRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.HoldAsync(new HoldStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber), c, ct)));
         api.MapPost("/releases", (HttpContext http, StockRequest b, InventoryService s, CancellationToken ct) =>
@@ -204,9 +236,9 @@ public static class MaterialsEndpoints
         api.MapPost("/production-receipts", (HttpContext http, ProductionReceiptRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReceiveFromProductionAsync(new ReceiveFromProduction(b.OrderNumber, b.Quantity, b.LocationCode, b.LotNumber, b.Serials), c, ct)));
         api.MapPost("/adjustments", (HttpContext http, AdjustmentRequestBody b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.RequestAdjustmentAsync(new RequestAdjustment(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Available, b.Change), c, ct)));
+            Command(http, b.Reason, c => s.RequestAdjustmentAsync(new RequestAdjustment(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released, b.Change), c, ct)));
         api.MapPost("/counts", (HttpContext http, CountRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.RecordCountAsync(new RecordCount(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Available, b.Counted), c, ct)));
+            Command(http, b.Reason, c => s.RecordCountAsync(new RecordCount(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released, b.Counted), c, ct)));
         api.MapPost("/requests/{id:long}/approve", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ApproveAdjustmentAsync(new ApproveAdjustment(id), c, ct)));
         api.MapPost("/requests/{id:long}/reject", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>

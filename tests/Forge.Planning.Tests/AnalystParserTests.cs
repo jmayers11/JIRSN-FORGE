@@ -77,6 +77,9 @@ public class AnalystParserTests
     [InlineData("Show project material", "project-material")]
     [InlineData("Show the as-built record", "as-built")]
     [InlineData("What is coming up in the next 30 days?", "dated-events")]
+    [InlineData("Where is lot L-104?", "stock-positions")]
+    [InlineData("What material is at outside processors?", "stock-positions")]
+    [InlineData("Show stock at the point of use", "stock-positions")]
     [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)
@@ -246,5 +249,14 @@ public class AnalystParserTests
         Assert.Null(Parse("What changed since yesterday?").Subject);
         Assert.Null(Parse("what changed since 6am").Subject);
         Assert.Null(Parse("what changed for 3 days").Subject);
+    }
+
+    [Fact]
+    public void Stock_position_questions_search_for_the_lot_or_the_custody_asked_about()
+    {
+        Assert.Equal("L-104", Parse("Where is lot L-104?").Report!.Parameters.Search);
+        Assert.Equal("Outside processor", Parse("What material is at outside processors?").Report!.Parameters.Search);
+        Assert.Equal("In transit", Parse("Show material in transit").Report!.Parameters.Search);
+        Assert.Null(Parse("Show stock at the point of use").Report!.Parameters.Search);
     }
 }

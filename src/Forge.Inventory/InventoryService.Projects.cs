@@ -22,7 +22,7 @@ public sealed record ProjectMaterialMoved(long TransactionId, string ProjectCode
 }
 
 /// <summary>
-/// Project material (V2.10) moves through the ledger like any stock: issued from Available stock to a line of an
+/// Project material (V2.10) moves through the ledger like any stock: issued from released stock to a line of an
 /// approved project — never more than the line still needs — and returned, never more than was issued to that
 /// line. Issues less returns is what the project has used.
 /// </summary>
@@ -34,7 +34,7 @@ public sealed partial class InventoryService
         return PostAsync(nameof(IssueToProject), c.PartNumber, c, context, Permissions.InventoryTransact, false, async (uow, item, _) =>
         {
             var (project, line) = await ProjectLineAsync(uow, c.ProjectCode, c.LineNumber, item.PartNumber, ct);
-            var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
+            var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
             var quantity = RequireQuantity(item, c.Quantity);
             var issued = await NetIssuedAsync(uow, project.Code, line.LineNumber, ct);
@@ -43,8 +43,8 @@ public sealed partial class InventoryService
                 throw new CommandRejectedException("over_issue", $"{project.Code} line {line.LineNumber} needs {Q(line.Quantity)} {item.PartNumber}; {Q(issued)} already issued, so at most {Q(line.Quantity - issued)} more.");
             }
 
-            await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Available, quantity, ct);
-            var txn = new NewTransaction(InventoryTransactionKind.ProjectIssue, item.PartNumber, quantity, location.Code, StockStatus.Available, null, null, lot,
+            await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
+            var txn = new NewTransaction(InventoryTransactionKind.ProjectIssue, item.PartNumber, quantity, location.Code, StockStatus.Released, null, null, lot,
                 Reason: $"Project {project.Code} line {line.LineNumber}: {project.Title}", ProjectCode: project.Code, ProjectLine: line.LineNumber);
             return (txn, $"Issued {Q(quantity)} {item.UnitOfMeasure} {item.PartNumber} to project {project.Code} line {line.LineNumber} ({Q(issued + quantity)} of {Q(line.Quantity)}).",
                 id => pipeline.Event(new ProjectMaterialMoved(id, project.Code, line.LineNumber, item.PartNumber, quantity, nameof(InventoryTransactionKind.ProjectIssue)), context, SourceContext, StockEntity, item.PartNumber));
@@ -72,9 +72,9 @@ public sealed partial class InventoryService
                 throw new CommandRejectedException("over_return", $"{code} line {line.LineNumber} has {Q(issued)} {item.PartNumber} issued; return at most that.");
             }
 
-            var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
+            var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
-            var txn = new NewTransaction(InventoryTransactionKind.ProjectReturn, item.PartNumber, quantity, null, null, location.Code, StockStatus.Available, lot,
+            var txn = new NewTransaction(InventoryTransactionKind.ProjectReturn, item.PartNumber, quantity, null, null, location.Code, StockStatus.Released, lot,
                 Reason: context.Reason, ProjectCode: code, ProjectLine: line.LineNumber);
             return (txn, $"Returned {Q(quantity)} {item.UnitOfMeasure} {item.PartNumber} from project {code} line {line.LineNumber} to {location.Code}.",
                 id => pipeline.Event(new ProjectMaterialMoved(id, code, line.LineNumber, item.PartNumber, quantity, nameof(InventoryTransactionKind.ProjectReturn)), context, SourceContext, StockEntity, item.PartNumber));

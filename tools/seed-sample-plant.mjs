@@ -67,7 +67,8 @@ async function main() {
       const outages = !(await get('mp', '/api/maintenance/outages?includeDecided=true')).length;
       const projects = !(await get('planner', '/api/projects/')).length;
       const horizon = !(await horizonWindow());
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const places = !(await get('ivy', '/api/inventory/locations')).some(l => l.code === 'SL-B-SIDE');
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -117,6 +118,10 @@ async function main() {
         console.log('Adding a planned maintenance window for Horizon\'s "Coming up".');
         await seedHorizon();
       }
+      if (places) {
+        console.log('Adding sample location hierarchy, point-of-use stock and an outside processor.');
+        await seedPlaces();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -142,6 +147,7 @@ async function main() {
     await seedProjects();
     await seedGenealogy();
     await seedHorizon();
+    await seedPlaces();
     return finish();
   }
 
@@ -294,6 +300,7 @@ async function main() {
   await seedProjects();
   await seedGenealogy();
   await seedHorizon();
+  await seedPlaces();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -342,7 +349,7 @@ async function seedMaterials() {
     const coil = first.materials.find(m => m.componentPartNumber === 'COIL-AL');
     if (coil) await post('stores', '/api/inventory/issues', { orderNumber: first.orderNumber, partNumber: 'COIL-AL', quantity: coil.requiredQuantity, locationCode: 'STORES' });
   }
-  const onHand = (await get('stores', '/api/inventory/stock?part=COIL-AL')).filter(b => b.locationCode === 'STORES' && b.status === 'Available').reduce((t, b) => t + b.quantity, 0);
+  const onHand = (await get('stores', '/api/inventory/stock?part=COIL-AL')).filter(b => b.locationCode === 'STORES' && b.status === 'Released').reduce((t, b) => t + b.quantity, 0);
   await post('stores', '/api/inventory/counts', { partNumber: 'COIL-AL', locationCode: 'STORES', counted: Math.max(0, Math.round(onHand) - 10) });
 
   step('Materials: customer demand and a forecast for MRP');
@@ -455,7 +462,7 @@ async function seedInsight() {
     tasks: ['Lock out laser', 'Replace resonator gas filter', 'Check beam alignment'], lockOutWhenOverdue: true, graceDays: 0, graceRunHours: 50 });
   const repair = (await get('mp', '/api/maintenance/work-orders')).map(v => v.order).find(o => o.kind === 'Corrective' && o.machineCode === 'CMM-1');
   const stock = await get('stores', '/api/inventory/stock').catch(() => []);
-  const spare = stock.find(s => s.status === 'Available' && s.quantity >= 1);
+  const spare = stock.find(s => s.status === 'Released' && s.quantity >= 1);
   if (repair && spare) await post('stores', `/api/maintenance/work-orders/${repair.workOrderId}/parts`, { partNumber: spare.partNumber, quantity: 1, locationCode: spare.locationCode, lotNumber: spare.lotNumber });
 
   step('Reports: saved report definitions');
@@ -692,7 +699,7 @@ async function seedGenealogy() {
       .filter(t => t.partNumber === 'COIL-AL').reduce((sum, t) => sum + (t.kind === 'Issue' ? t.quantity : t.kind === 'Return' ? -t.quantity : 0), 0);
     const left = coil.requiredQuantity - issued;
     if (left <= 0) continue;
-    const available = (await get('stores', '/api/inventory/stock?part=COIL-AL')).filter(b => b.locationCode === 'STORES' && b.status === 'Available').reduce((t, b) => t + b.quantity, 0);
+    const available = (await get('stores', '/api/inventory/stock?part=COIL-AL')).filter(b => b.locationCode === 'STORES' && b.status === 'Released').reduce((t, b) => t + b.quantity, 0);
     const quantity = Math.min(left, Math.floor(available));
     if (quantity > 0) await post('stores', '/api/inventory/issues', { orderNumber: number, partNumber: 'COIL-AL', quantity, locationCode: 'STORES' });
     return;
@@ -711,6 +718,19 @@ async function seedHorizon() {
   const start = new Date(Date.now() + 12 * 864e5);
   start.setUTCHours(6, 0, 0, 0);
   await post('tech', '/api/maintenance/machines/SLITTER-A/planned', { startsAt: start.toISOString(), endsAt: new Date(start.getTime() + 6 * 36e5).toISOString(), description: 'Sample: blade guard replacement' });
+}
+
+// V3.1: where stock is, who holds it, and whether it counts for planning.
+async function seedPlaces() {
+  step('Locations: a rack and bin in main stores, coil beside slitter B, and coil out for pre-coating — see Inventory → Locations and the part drawer for COIL-AL');
+  await post('ivy', '/api/inventory/locations', { code: 'STORES-R1', siteCode: 'PLANT1', name: 'Main stores, rack 1', kind: 'Stores', parentCode: 'STORES', level: 'Rack' });
+  await post('ivy', '/api/inventory/locations', { code: 'STORES-R1-B1', siteCode: 'PLANT1', name: 'Rack 1, bin 1', kind: 'Stores', parentCode: 'STORES-R1', level: 'Bin' });
+  await post('ivy', '/api/inventory/locations', { code: 'SL-B-SIDE', siteCode: 'PLANT1', name: 'Beside slitter B', kind: 'MachineSide', machineCode: 'SLITTER-B' });
+  const suppliers = (await get('bob', '/api/procurement/suppliers')).map(x => x.code);
+  if (!suppliers.includes('PRECOAT')) await post('bob', '/api/procurement/suppliers', { code: 'PRECOAT', name: 'Precoat Metals', notes: 'Sample: outside coil pre-coating' });
+  await post('ivy', '/api/inventory/locations', { code: 'PRECOAT-OP', siteCode: 'PLANT1', name: 'At Precoat Metals', kind: 'ExternalProcessor', custodianSupplier: 'PRECOAT' });
+  await post('stores', '/api/inventory/receipts', { partNumber: 'COIL-AL', quantity: 300, locationCode: 'SL-B-SIDE', reason: 'Sample: coil delivered straight to slitter B' });
+  await post('stores', '/api/inventory/transfers', { partNumber: 'COIL-AL', quantity: 100, fromLocation: 'SL-B-SIDE', toLocation: 'PRECOAT-OP', status: 'Released', reason: 'Sample: out for pre-coating' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

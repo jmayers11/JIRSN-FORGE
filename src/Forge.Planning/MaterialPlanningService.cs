@@ -7,9 +7,11 @@ using Forge.Planning.Engines;
 namespace Forge.Planning;
 
 /// <summary>
-/// Spec §11 figures for one item, each explained by records: on hand by status, allocated to released
-/// orders (required but not yet issued), available (on hand less allocated), on order from suppliers and
-/// in production.
+/// Spec §11 figures for one item, each explained by records, with the V3 brief's distinctions kept apart (V3.1):
+/// on hand (every quality status, every location) is not released, released is not available for planning
+/// (stock at an outside processor, in transit or in quarantine is not), and none of them is at the point of use.
+/// Allocated is what released orders still need (required, not yet issued); available for planning is
+/// released stock in nettable locations less that.
 /// </summary>
 public sealed record StockSummary(
     string PartNumber,
@@ -17,10 +19,13 @@ public sealed record StockSummary(
     string UnitOfMeasure,
     string MakeBuy,
     decimal OnHand,
+    decimal Released,
     decimal Inspection,
     decimal Hold,
+    decimal NotNettable,
+    decimal AtPointOfUse,
     decimal Allocated,
-    decimal Available,
+    decimal AvailableForPlanning,
     decimal OnOrder,
     decimal InProduction,
     decimal SafetyStock,
@@ -63,7 +68,8 @@ public sealed class MaterialPlanningService(IKernelUnitOfWorkFactory unitOfWork,
         Demand(principal, Permissions.InventoryRead, "Inventory");
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
         var items = await uow.Store<Forge.Engineering.Contracts.IEngineeringLookup>().ListItemsAsync(ct);
-        var balances = await uow.Store<Forge.Inventory.Contracts.IInventoryLookup>().ListBalancesAsync(null, ct);
+        var inventory = uow.Store<Forge.Inventory.Contracts.IInventoryLookup>();
+        var positions = Forge.Inventory.Contracts.StockPosition.From(await inventory.ListBalancesAsync(null, ct), await inventory.ListLocationsAsync(ct));
         var material = await MaterialData.MaterialSnapshotAsync(uow, time, ct);
         var supplies = await MaterialData.SuppliesAsync(uow, principal, ct);
         var allocated = material.Orders
@@ -74,16 +80,19 @@ public sealed class MaterialPlanningService(IKernelUnitOfWorkFactory unitOfWork,
         var result = new List<StockSummary>();
         foreach (var item in items)
         {
-            var mine = balances.Where(b => b.PartNumber == item.PartNumber).ToList();
-            decimal InStatus(Forge.Inventory.Contracts.StockStatus status) => mine.Where(b => b.Status == status).Sum(b => b.Quantity);
-            var onHand = InStatus(Forge.Inventory.Contracts.StockStatus.Available);
+            var mine = positions.Where(b => b.PartNumber == item.PartNumber).ToList();
+            decimal Sum(Func<Forge.Inventory.Contracts.StockPosition, bool> which) => mine.Where(which).Sum(b => b.Quantity);
+            var released = Sum(b => b.QualityStatus == Forge.Inventory.Contracts.StockStatus.Released);
+            var forPlanning = Sum(b => b.AvailableForPlanning);
             var alloc = allocated.GetValueOrDefault(item.PartNumber);
             var onOrder = supplies.Where(s => s.PartNumber == item.PartNumber && s.Kind == "PurchaseOrder").Sum(s => s.Quantity);
             var inProduction = supplies.Where(s => s.PartNumber == item.PartNumber && s.Kind == "ProductionOrder").Sum(s => s.Quantity);
             var summary = new StockSummary(
                 item.PartNumber, item.Description, item.UnitOfMeasure, item.MakeBuy.ToString(),
-                onHand, InStatus(Forge.Inventory.Contracts.StockStatus.Inspection), InStatus(Forge.Inventory.Contracts.StockStatus.Hold),
-                alloc, onHand - alloc, onOrder, inProduction, item.SafetyStock, onHand - alloc < item.SafetyStock);
+                Sum(_ => true), released,
+                Sum(b => b.QualityStatus == Forge.Inventory.Contracts.StockStatus.Inspection), Sum(b => b.QualityStatus == Forge.Inventory.Contracts.StockStatus.Hold),
+                released - forPlanning, Sum(b => b.QualityStatus == Forge.Inventory.Contracts.StockStatus.Released && b.PointOfUseWorkCenter is not null),
+                alloc, forPlanning - alloc, onOrder, inProduction, item.SafetyStock, forPlanning - alloc < item.SafetyStock);
             if (mine.Count > 0 || alloc > 0 || onOrder > 0 || inProduction > 0 || item.SafetyStock > 0)
             {
                 result.Add(summary);

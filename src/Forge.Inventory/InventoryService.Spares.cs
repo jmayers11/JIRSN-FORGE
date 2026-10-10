@@ -22,7 +22,7 @@ public sealed record SparesIssued(long TransactionId, long WorkOrderId, string P
 }
 
 /// <summary>
-/// Spare parts for maintenance (spec §47) move through the ledger like any stock: issued from Available
+/// Spare parts for maintenance (spec §47) move through the ledger like any stock: issued from released
 /// stock to an open work order, and unused parts returned (never more than was issued to that order).
 /// </summary>
 public sealed partial class InventoryService
@@ -33,14 +33,14 @@ public sealed partial class InventoryService
         return PostAsync(nameof(IssueToWorkOrder), c.PartNumber, c, context, Permissions.SparesIssue, false, async (uow, item, now) =>
         {
             var order = await OpenWorkOrderAsync(uow, c.WorkOrderId, ct);
-            var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
+            var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
             var quantity = RequireQuantity(item, c.Quantity);
-            await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Available, quantity, ct);
+            await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
             var (primary, alternate, factor) = await MaintenanceAlternateAsync(uow, order, item.PartNumber, c.AlternateFor, now, ct);
             var primaryQuantity = alternate is null ? (decimal?)null : decimal.Round(quantity / factor, 6, MidpointRounding.AwayFromZero);
             var revision = lot is null ? null : (await uow.Store<IInventoryLookup>().ListLotsAsync(item.PartNumber, ct)).FirstOrDefault(l => l.LotNumber == lot)?.PartRevision;
-            var txn = new NewTransaction(InventoryTransactionKind.MaintenanceIssue, item.PartNumber, quantity, location.Code, StockStatus.Available, null, null, lot,
+            var txn = new NewTransaction(InventoryTransactionKind.MaintenanceIssue, item.PartNumber, quantity, location.Code, StockStatus.Released, null, null, lot,
                 Reason: $"Work order {order.WorkOrderId} on {order.Target}", WorkOrderId: order.WorkOrderId,
                 SubstitutesFor: alternate is null ? null : primary, AlternateId: alternate?.AlternateId, PrimaryQuantity: primaryQuantity);
             var message = $"Issued {quantity} {item.UnitOfMeasure} {item.PartNumber} to work order {order.WorkOrderId} ({order.Target})"
@@ -67,7 +67,7 @@ public sealed partial class InventoryService
                 throw new CommandRejectedException("over_return", $"Work order {order.WorkOrderId} has {issued.ToString("0.###", CultureInfo.InvariantCulture)} {item.PartNumber} issued{(primary is null ? string.Empty : $" in place of {primary}")}; return at most that.");
             }
 
-            var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
+            var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
             decimal? primaryQuantity = null;
             long? alternateId = null;
@@ -79,7 +79,7 @@ public sealed partial class InventoryService
                     .FirstOrDefault(t => t.WorkOrderId == order.WorkOrderId && t.SubstitutesFor == primary && t.AlternateId is not null)?.AlternateId;
             }
 
-            var txn = new NewTransaction(InventoryTransactionKind.MaintenanceReturn, item.PartNumber, quantity, null, null, location.Code, StockStatus.Available, lot,
+            var txn = new NewTransaction(InventoryTransactionKind.MaintenanceReturn, item.PartNumber, quantity, null, null, location.Code, StockStatus.Released, lot,
                 Reason: context.Reason, WorkOrderId: order.WorkOrderId, SubstitutesFor: primary, AlternateId: alternateId, PrimaryQuantity: primaryQuantity);
             return (txn, $"Returned {quantity} {item.UnitOfMeasure} {item.PartNumber} from work order {order.WorkOrderId} to {location.Code}.",
                 id => pipeline.Event(new InventoryMoved(id, nameof(InventoryTransactionKind.MaintenanceReturn), item.PartNumber, quantity, null, location.Code), context, SourceContext, StockEntity, item.PartNumber));

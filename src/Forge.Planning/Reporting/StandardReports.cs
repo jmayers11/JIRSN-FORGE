@@ -182,6 +182,16 @@ internal static class StandardReports
                 "Stock as it stands now; the period does not apply."),
             Permissions.InventoryRead, null, StockByRevisionAsync),
         new(
+            new("stock-positions", "Stock positions", "Inventory",
+                "Where every lot is now, with its dimensions kept apart: quality status, location and the locations it sits in, custody (the company, an outside processor, in transit), whether it counts for planning, and the work center it is at the point of use of.",
+                [PartFilter, StatusFilter(Enum.GetNames<StockStatus>()), SearchFilter],
+                [C("part", "Part", ReportColumnKind.Text), C("lot", "Lot / serial", ReportColumnKind.Text), C("location", "Location", ReportColumnKind.Text), C("path", "Within", ReportColumnKind.Text),
+                 C("kind", "Kind", ReportColumnKind.Text), C("status", "Quality status", ReportColumnKind.Text), C("custody", "Custody", ReportColumnKind.Text),
+                 C("planning", "Counts for planning", ReportColumnKind.Text), C("pointOfUse", "Point of use", ReportColumnKind.Text), C("quantity", "Quantity", ReportColumnKind.Number)],
+                ["custody", "status", "kind", "location", "part", "pointOfUse"], "custody", 3660,
+                "Stock as it stands now; the period does not apply. Counts for planning = released by quality and in a nettable location."),
+            Permissions.InventoryRead, null, StockPositionsAsync),
+        new(
             new("engineering-changes", "Engineering changes", "Engineering",
                 "Every engineering change you may see: what it changes, which reviews it needs and has, who approved and released it, and when it takes effect.",
                 [StatusFilter(Enum.GetNames<ChangeStatus>()), SearchFilter],
@@ -517,6 +527,35 @@ internal static class StandardReports
 
         var open = rows.Count(r => r.Cells[4] is "Draft" or "InReview" or "Approved");
         return new ReportBody(rows, [$"{rows.Count} change(s); {open} open."], ["Engineering changes", "Change reviews"]);
+    }
+
+    private static async Task<ReportBody> StockPositionsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var inventory = run.Uow.Store<IInventoryLookup>();
+        var rows = new List<ReportRow>();
+        foreach (var x in StockPosition.From(await inventory.ListBalancesAsync(null, ct), await inventory.ListLocationsAsync(ct)))
+        {
+            var custody = x.Custody switch
+            {
+                Custody.Supplier => $"Outside processor {x.CustodianSupplier}",
+                Custody.InTransit => "In transit",
+                _ => "Company",
+            };
+            var pointOfUse = x.PointOfUseWorkCenter is { } wc ? (x.MachineCode is { } m ? $"{wc} / {m}" : wc) : null;
+            if (!ReportRun.Is(x.PartNumber, p.PartNumber) || !ReportRun.Is(x.QualityStatus.ToString(), p.Status)
+                || !run.Matches(x.PartNumber, x.LotNumber, x.LocationPath, custody, pointOfUse, x.LocationKind.ToString()))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [x.PartNumber, x.LotNumber, x.LocationCode, x.LocationPath, x.LocationKind.ToString(), x.QualityStatus.ToString(), custody, x.AvailableForPlanning ? "Yes" : "No", pointOfUse, x.Quantity],
+                ["item:" + x.PartNumber]));
+        }
+
+        var away = rows.Where(r => (string)r.Cells[6]! != "Company").Sum(r => (decimal)r.Cells[9]!);
+        return new ReportBody(rows, [$"{rows.Count} position(s); {away:0.###} not in the company's custody."], ["Inventory ledger", "Locations"]);
     }
 
     private static async Task<ReportBody> StockByRevisionAsync(ReportRun run, CancellationToken ct)
@@ -1157,7 +1196,7 @@ internal static class StandardReports
                 { RequestId: { } r } => ("Request " + Id(r), "request:" + Id(r)),
                 _ => ((string?)null, (string?)null),
             };
-            string? Place(string? location, StockStatus? status) => location is null ? null : status is { } s && s != StockStatus.Available ? $"{location} ({s})" : location;
+            string? Place(string? location, StockStatus? status) => location is null ? null : status is { } s && s != StockStatus.Released ? $"{location} ({s})" : location;
             if (!run.Matches(t.PartNumber, t.LotNumber, t.Reason, reference, t.FromLocation, t.ToLocation))
             {
                 continue;

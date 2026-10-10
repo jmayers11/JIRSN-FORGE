@@ -39,8 +39,8 @@ public sealed class ProjectPlanningService(IKernelUnitOfWorkFactory unitOfWork, 
         var lines = await projects.ListLinesAsync(code, ct);
         var inventory = uow.Store<IInventoryLookup>();
         var moved = await inventory.ListProjectMaterialAsync(code, ct);
-        var available = (await inventory.ListBalancesAsync(null, ct))
-            .Where(b => b.Status == StockStatus.Available)
+        var available = StockPosition.From(await inventory.ListBalancesAsync(null, ct), await inventory.ListLocationsAsync(ct))
+            .Where(b => b.AvailableForPlanning)
             .GroupBy(b => b.PartNumber, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.Sum(b => b.Quantity), StringComparer.Ordinal);
         var prefix = ProjectSource.Prefix + code + "/";

@@ -180,7 +180,7 @@ export async function mrpPage(page, ctx) {
       <table class="table"><thead><tr><th>Requirement</th><th>Needed</th><th class="num">Qty</th></tr></thead><tbody>
         ${p.pegging.map(g => `<tr><td>${esc(g.description)}</td><td>${esc(fmtDate(g.needDate))}</td><td class="num">${qty(g.quantity)}</td></tr>`).join('')}</tbody></table>
       ${i ? `<h3 style="margin:0">${esc(p.partNumber)} day by day</h3>${bucketsTable(i)}
-        <dl class="kv"><dt>Available now</dt><dd>${qty(i.available)}${i.inspection + i.hold ? ` (plus ${qty(i.inspection)} in inspection, ${qty(i.hold)} on hold — not counted)` : ''}</dd>
+        <dl class="kv"><dt>Available for planning now</dt><dd>${qty(i.available)}${i.inspection + i.hold ? ` (plus ${qty(i.inspection)} in inspection, ${qty(i.hold)} on hold — not counted)` : ''}</dd>
           <dt>Planning</dt><dd>${esc(policyText(i))}; safety stock ${qty(i.safetyStock)}; lead time ${i.leadTimeDays} days</dd></dl>` : ''}`);
   }
 
@@ -189,7 +189,7 @@ export async function mrpPage(page, ctx) {
     if (!i) return;
     drawer(`${part} — ${i.description}`, `
       <dl class="kv"><dt>Make or buy</dt><dd>${esc(i.makeBuy)} · level ${i.level}</dd><dt>Planning</dt><dd>${esc(policyText(i))}; safety stock ${qty(i.safetyStock)}; lead time ${i.leadTimeDays} days</dd>
-        <dt>Available now</dt><dd>${qty(i.available)} ${esc(i.unitOfMeasure)}${i.inspection + i.hold ? ` (${qty(i.inspection)} in inspection, ${qty(i.hold)} on hold — not counted)` : ''}</dd></dl>
+        <dt>Available for planning now</dt><dd>${qty(i.available)} ${esc(i.unitOfMeasure)}${i.inspection + i.hold ? ` (${qty(i.inspection)} in inspection, ${qty(i.hold)} on hold — not counted)` : ''}</dd></dl>
       <h3 style="margin:0">Day by day</h3>${bucketsTable(i)}
       <h3 style="margin:0">Requirements</h3>
       ${i.requirements.length ? `<table class="table"><tbody>${i.requirements.map(r => `<tr><td>${esc(r.description)}</td><td>${esc(fmtDate(r.needDate))}</td><td class="num">${qty(r.quantity)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None.</div>'}
