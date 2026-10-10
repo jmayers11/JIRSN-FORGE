@@ -83,6 +83,11 @@ public class AnalystParserTests
     [InlineData("What was roll R-100 split into?", "lot-lineage")]
     [InlineData("Show lot splits and merges", "lot-lineage")]
     [InlineData("What is the lineage of lot CU-1001-A?", "lot-lineage")]
+    [InlineData("Which machines were starved this week?", "stoppages")]
+    [InlineData("Show changeovers against expected", "stoppages")]
+    [InlineData("Which stoppages have no root cause?", "stoppages")]
+    [InlineData("How much of order 1042 is in rework?", "quantity-states")]
+    [InlineData("Show order quantity states", "quantity-states")]
     [InlineData("Trace roll R-100", "genealogy-trace")]
     [InlineData("What became of lot L-7?", "genealogy-trace")]
     [InlineData("Where did roll CU-1001-A come from?", "genealogy-trace")]
@@ -286,5 +291,14 @@ public class AnalystParserTests
     {
         Assert.Equal("R-100", Parse("Trace roll R-100").Report!.Parameters.Search);
         Assert.Equal("CU-1001-A", Parse("Where did roll CU-1001-A come from?").Report!.Parameters.Search);
+    }
+
+    [Fact]
+    public void Stoppage_and_quantity_questions_carry_the_category_or_order_asked_about()
+    {
+        Assert.Equal("Starved", Parse("Which machines were starved this week?").Report!.Parameters.Status);
+        Assert.Equal("Changeover", Parse("Show changeovers against expected").Report!.Parameters.Status);
+        Assert.Null(Parse("Which stoppages have no root cause?").Report!.Parameters.Status);
+        Assert.Equal("1042", Parse("How much of order 1042 is in rework?").Report!.Parameters.Search);
     }
 }

@@ -18,7 +18,7 @@ public sealed record PinRequest(string Badge, string? CurrentPin, string NewPin)
 
 public sealed record StartRequest(string Badge, long OrderNumber, int Sequence, string? MachineCode, string? TrainerBadge);
 
-public sealed record ReportRequest(string Badge, long OrderNumber, int Sequence, decimal Good, decimal Scrap, string? ScrapReason, bool Complete);
+public sealed record ReportRequest(string Badge, long OrderNumber, int Sequence, decimal Good, decimal Scrap, string? ScrapReason, bool Complete, string? ScrapReasonCode = null);
 
 public sealed record EvaluateRequest(string TrainerBadge, string Pin, TrainingEvaluation Evaluation, string? Notes);
 
@@ -87,7 +87,7 @@ internal static class ShopFloorEndpoints
 
         api.MapPost("/report", (HttpContext http, ReportRequest b, ShopFloorService s, CancellationToken ct) =>
             TrySecret(b.Badge, out var badge)
-                ? Command(http, null, null, CommandSource.Terminal, c => s.ReportAsync(new ReportProduction(badge, b.OrderNumber, b.Sequence, b.Good, b.Scrap, b.ScrapReason, b.Complete), c, ct))
+                ? Command(http, null, null, CommandSource.Terminal, c => s.ReportAsync(new ReportProduction(badge, b.OrderNumber, b.Sequence, b.Good, b.Scrap, b.ScrapReason, b.Complete, b.ScrapReasonCode), c, ct))
                 : Task.FromResult(BadBadge()));
 
         api.MapPost("/training/{sessionId:long}/evaluate", (HttpContext http, long sessionId, EvaluateRequest b, ShopFloorService s, CancellationToken ct) =>

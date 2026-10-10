@@ -26,7 +26,8 @@ public sealed record StartOperation(Secret Badge, long OrderNumber, int Sequence
 /// <summary>End the badged person's current direct labor.</summary>
 public sealed record StopWork(Secret Badge);
 
-public sealed record ReportProduction(Secret Badge, long OrderNumber, int Sequence, decimal GoodQuantity, decimal ScrapQuantity, string? ScrapReason, bool CompleteOperation);
+/// <param name="ScrapReasonCode">A scrap reason code (V3.5); the free-text reason defaults to its description.</param>
+public sealed record ReportProduction(Secret Badge, long OrderNumber, int Sequence, decimal GoodQuantity, decimal ScrapQuantity, string? ScrapReason, bool CompleteOperation, string? ScrapReasonCode = null);
 
 /// <summary>A trainer's evaluation, signed with badge and PIN.</summary>
 public sealed record EvaluateTraining(Secret TrainerBadge, Secret Pin, long SessionId, TrainingEvaluation Evaluation, string? Notes);
@@ -85,7 +86,7 @@ public interface IShopFloorStore
 
     Task MarkOperationStartedAsync(long orderNumber, int sequence, DateTimeOffset at, CancellationToken ct);
 
-    Task<long> InsertReportAsync(long orderNumber, int sequence, string workCenter, Guid person, decimal good, decimal scrap, string? reason, bool complete, bool final, DateTimeOffset at, string actor, CancellationToken ct);
+    Task<long> InsertReportAsync(long orderNumber, int sequence, string workCenter, Guid person, decimal good, decimal scrap, string? reason, string? reasonCode, bool complete, bool final, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task AddQuantitiesAsync(long orderNumber, int sequence, decimal good, decimal scrap, CancellationToken ct);
 
@@ -253,6 +254,19 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             }
 
             var reason = string.IsNullOrWhiteSpace(c.ScrapReason) ? null : c.ScrapReason.Trim();
+            string? reasonCode = null;
+            if (!string.IsNullOrWhiteSpace(c.ScrapReasonCode))
+            {
+                if (c.ScrapQuantity == 0)
+                {
+                    throw new CommandRejectedException("reason_code_without_scrap", "A scrap reason code goes with a scrap quantity.");
+                }
+
+                var code = await ProductionActualsService.ActiveReasonAsync(uow, c.ScrapReasonCode, ReasonKind.Scrap, ct);
+                reasonCode = code.Code;
+                reason ??= code.Description;
+            }
+
             if (c.ScrapQuantity > 0 && reason is null)
             {
                 throw new CommandRejectedException("scrap_reason_required", "Scrap needs a reason.");
@@ -285,7 +299,7 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             }
 
             var final = order.Operations.Max(o => o.Sequence) == c.Sequence;
-            var reportId = await store.InsertReportAsync(c.OrderNumber, c.Sequence, op.WorkCenterCode, worker.PersonId, c.GoodQuantity, c.ScrapQuantity, reason, c.CompleteOperation, final, now, context.Actor, ct);
+            var reportId = await store.InsertReportAsync(c.OrderNumber, c.Sequence, op.WorkCenterCode, worker.PersonId, c.GoodQuantity, c.ScrapQuantity, reason, reasonCode, c.CompleteOperation, final, now, context.Actor, ct);
             await store.AddQuantitiesAsync(c.OrderNumber, c.Sequence, c.GoodQuantity, c.ScrapQuantity, ct);
             var events = new List<EventEnvelope>
             {

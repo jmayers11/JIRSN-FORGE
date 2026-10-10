@@ -69,10 +69,20 @@ public enum NcrStatus
 
 public enum Disposition
 {
+    /// <summary>Accepted as it is, nonconforming; needs a second person's approval.</summary>
     UseAsIs,
+
+    /// <summary>Brought back to the drawing by more work; once reworked it conforms.</summary>
     Rework,
+
     Scrap,
     ReturnToSupplier,
+
+    /// <summary>
+    /// Made usable by an approved repair, but it will not conform to the drawing (V3.5). Distinct from rework;
+    /// like use-as-is, it needs a second person's approval.
+    /// </summary>
+    Repair,
 }
 
 public sealed record NcrInfo(
@@ -149,4 +159,51 @@ public interface IQualityLookup
 
     /// <summary>Inspection points of the order's part, operations with a passing inspection, and NCRs not yet dispositioned.</summary>
     Task<OrderQuality> GetOrderQualityAsync(long orderNumber, string partNumber, CancellationToken ct);
+}
+
+public enum ReworkKind
+{
+    /// <summary>More work brings it back to the drawing.</summary>
+    Rework,
+
+    /// <summary>An approved repair makes it usable, not conforming.</summary>
+    Repair,
+}
+
+/// <summary>
+/// Good output taken back from an order operation for rework or repair (V3.5). The production reports it came
+/// from are never changed; closing records how much came out good and how much was scrapped.
+/// </summary>
+public sealed record ReworkInfo(
+    long ReworkId,
+    ReworkKind Kind,
+    long OrderNumber,
+    int Sequence,
+    string PartNumber,
+    decimal Quantity,
+    long? NcrId,
+    string? ReasonCode,
+    string Instructions,
+    DateTimeOffset OpenedAt,
+    string OpenedBy,
+    DateTimeOffset? ClosedAt = null,
+    string? ClosedBy = null,
+    decimal? GoodQuantity = null,
+    decimal? ScrapQuantity = null,
+    string? CloseNote = null)
+{
+    public bool Open => ClosedAt is null;
+}
+
+public interface IReworkLookup
+{
+    /// <summary>Rework of one order (all orders when null), oldest first; only open ones when asked.</summary>
+    Task<IReadOnlyList<ReworkInfo>> ListReworkAsync(long? orderNumber, bool openOnly, CancellationToken ct);
+}
+
+public interface IReworkStore
+{
+    Task<long> InsertReworkAsync(ReworkInfo rework, CancellationToken ct);
+
+    Task CloseReworkAsync(long reworkId, decimal good, decimal scrap, string note, DateTimeOffset at, string actor, CancellationToken ct);
 }

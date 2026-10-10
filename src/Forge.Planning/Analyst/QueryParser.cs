@@ -225,6 +225,12 @@ public static partial class QueryParser
             return AnalystIntent.OrderDocumentation;
         }
 
+        // V3.5: "How much of order 1042 is in rework?" asks for the order's quantity states, not its status.
+        if (order is not null && ReportOf(t) == "quantity-states")
+        {
+            return AnalystIntent.Report;
+        }
+
         if (order is not null)
         {
             return AnalystIntent.OrderStatus;
@@ -276,6 +282,8 @@ public static partial class QueryParser
             : Has("lineage", "split from", "merged from", "merged into", "split into", "lot splits", "splits and merges", "was split", "were merged") ? "lot-lineage"
             : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
             : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
+            : Has("stoppage", "stopped", "changeover", "change over", "setup time", "setups", "starved", "blocked machine", "machines blocked", "were blocked", "root cause", "reason code", "downtime by category", "downtime category") ? "stoppages"
+            : Has("quantity state", "in rework", "rework", "in repair", "repaired", "in process", "pending inspection", "how much of order", "where is order") ? "quantity-states"
             : Has("where is lot", "where is serial", "where is the lot", "where is batch", "where is roll", "custody", "outside processor", "at outside", "in transit", "point of use", "stock position", "where is the material", "at the machine") ? "stock-positions"
             : Has("as built", "as-built", "genealogy", "where used lot", "which lot", "serial number") ? "as-built"
             : Has("coming up", "dated event", "upcoming date", "takes effect", "take effect", "due in the next", "what is ahead", "whats ahead") ? "dated-events"
@@ -378,6 +386,25 @@ public static partial class QueryParser
         if (t.Contains(" graph", StringComparison.Ordinal) || t.Contains(" chart", StringComparison.Ordinal))
         {
             notes.Add("Forge shows this as a table with totals; charts are not part of reports yet.");
+        }
+
+        // V3.5: "How much time did we lose to starved machines?" — the stoppage category asked about.
+        if (entry.Id == "stoppages")
+        {
+            var category = Enum.GetNames<Forge.Execution.Contracts.StoppageCategory>().FirstOrDefault(c => t.Contains(" " + c.ToLowerInvariant(), StringComparison.Ordinal))
+                ?? (t.Contains(" change over", StringComparison.Ordinal) ? "Changeover" : t.Contains(" setups", StringComparison.Ordinal) ? "Setup" : null);
+            if (category is not null)
+            {
+                parameters = parameters with { Status = category };
+                notes.Add($"Only {category.ToLowerInvariant()} stoppages.");
+            }
+        }
+
+        // V3.5: "Where is order 1042?" — the order asked about.
+        if (entry.Id == "quantity-states" && OrderNumberRegex().Match(t) is { Success: true } wanted)
+        {
+            parameters = parameters with { Search = wanted.Groups[1].Value };
+            notes.Add($"Only order {wanted.Groups[1].Value}.");
         }
 
         // V3.1: "Where is lot L-104?", "What material is at outside processors?" — the lot, serial or custody asked about.
@@ -629,6 +656,9 @@ public static partial class QueryParser
 
         return (machine ?? part, machine is not null ? "machine" : part is not null ? "item" : null);
     }
+
+    [GeneratedRegex(@"\border\s+#?(\d+)\b")]
+    private static partial Regex OrderNumberRegex();
 
     [GeneratedRegex(@"\b(?:lot|serial|batch|roll)\s+([a-z0-9][a-z0-9\-_/.]*[0-9][a-z0-9\-_/.]*)")]
     private static partial Regex LotRegex();

@@ -90,7 +90,8 @@ public sealed record ProductionReport(
     string? ScrapReason,
     bool CompletedOperation,
     bool FinalOperation,
-    DateTimeOffset ReportedAt);
+    DateTimeOffset ReportedAt,
+    string? ScrapReasonCode = null);
 
 /// <summary>A trainer's evaluation of a supervised session. It never grants a qualification.</summary>
 public enum TrainingEvaluation

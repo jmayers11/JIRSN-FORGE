@@ -73,7 +73,8 @@ async function main() {
       const itemList = await get('eng', '/api/engineering/items');
       const identity = !itemList.some(i => i.partNumber === 'FOIL-CU');
       const transformation = !itemList.some(i => i.partNumber === 'SHIELD-CU');
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const actuals = !(await get('eng', '/api/execution/reason-codes')).length;
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -139,6 +140,10 @@ async function main() {
         console.log('Adding slitting staging, material tasks and a cycle-count program.');
         await seedMaterialFlow();
       }
+      if (actuals) {
+        console.log('Adding reason codes, a starved slitter with a proven root cause, and a changeover against its expected time.');
+        await seedActuals();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -168,6 +173,7 @@ async function main() {
     await seedIdentity();
     await seedTransformation();
     await seedMaterialFlow();
+    await seedActuals();
     return finish();
   }
 
@@ -324,6 +330,7 @@ async function main() {
   await seedIdentity();
   await seedTransformation();
   await seedMaterialFlow();
+  await seedActuals();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -800,6 +807,24 @@ async function seedMaterialFlow() {
     if (released.length > 1) await post('stores', '/api/inventory/tasks', { kind: 'Stage', orderNumber: released[1], partNumber: 'COIL-AL', quantity: 60, toLocation: 'SL-STAGE', reason: 'Sample: next order' });
   }
   await post('ivy', '/api/inventory/count-programs', { programCode: 'CC-STORES', name: 'Main stores every 30 days', locationCode: 'STORES', frequencyDays: 30 });
+}
+
+async function seedActuals() {
+  step('Production actuals: reason codes, slitter B starved of coil with a proven root cause, and a knife changeover on slitter A against the routing\'s setup — see Work Centers → Slitting');
+  const codes = [['NO-COIL', 'Downtime', 'Starved', 'No coil staged at the slitter'], ['KNIFE', 'Downtime', 'Changeover', 'Knife change for a new width'], ['JAM', 'Downtime', 'Unplanned', 'Web jam'],
+    ['WAIT-QC', 'Downtime', 'Waiting', 'Waiting for first-piece inspection'], ['FULL-RACK', 'Downtime', 'Blocked', 'Outfeed rack full'], ['BREAK', 'Downtime', 'Planned', 'Scheduled break'],
+    ['EDGE', 'Scrap', null, 'Edge wave'], ['SURFACE', 'Scrap', null, 'Surface defect'], ['RESLIT', 'Rework', null, 'Re-slit to width']];
+  for (const [code, kind, category, description] of codes) await post('eng', '/api/execution/reason-codes', { code, kind, category, description });
+  const ago = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
+  const starved = await post('planner', '/api/execution/stoppages', { machineCode: 'SLITTER-B', category: 'Starved', reasonCode: 'NO-COIL', startedAt: ago(180), note: 'Sample: coil still at receiving' });
+  await post('planner', `/api/execution/stoppages/${starved.entityId}/end`, { endedAt: ago(130) });
+  const cause = await post('planner', `/api/execution/stoppages/${starved.entityId}/root-causes`, { cause: 'Receiving inspection backlog held the coil', evidence: 'Sample: coil sat in Inspection for 3 hours; the inspector was on another line' });
+  await post('eng', `/api/execution/root-causes/${cause.entityId}/confirm`, { reason: 'Sample: inspection log and receiving timestamps agree' });
+  const released = (await get('planner', '/api/orders/')).filter(o => o.status === 'Released' && o.partNumber === 'PANEL-500').map(o => o.orderNumber).sort((a, b) => a - b);
+  if (released.length) {
+    const knife = await post('planner', '/api/execution/stoppages', { machineCode: 'SLITTER-A', category: 'Changeover', reasonCode: 'KNIFE', orderNumber: released[0], sequence: 30, startedAt: ago(100) });
+    await post('planner', `/api/execution/stoppages/${knife.entityId}/end`, { endedAt: ago(55) });
+  }
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

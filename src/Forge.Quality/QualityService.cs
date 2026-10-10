@@ -358,8 +358,8 @@ public sealed class QualityService(CommandPipeline pipeline)
             }
 
             var note = BusinessCode.RequireName(c.Note, "Disposition note");
-            return c.Disposition == Disposition.UseAsIs
-                ? (ncr with { Status = NcrStatus.AwaitingApproval, Disposition = c.Disposition, DispositionNote = note, DispositionedBy = context.Actor }, "use as is proposed; a quality manager must approve it")
+            return c.Disposition is Disposition.UseAsIs or Disposition.Repair
+                ? (ncr with { Status = NcrStatus.AwaitingApproval, Disposition = c.Disposition, DispositionNote = note, DispositionedBy = context.Actor }, $"{Words(c.Disposition)} proposed; a quality manager must approve it")
                 : (ncr with { Status = NcrStatus.Dispositioned, Disposition = c.Disposition, DispositionNote = note, DispositionedBy = context.Actor }, $"dispositioned {Words(c.Disposition)}");
         }, ct);
     }
@@ -379,9 +379,10 @@ public sealed class QualityService(CommandPipeline pipeline)
                 throw new CommandRejectedException("separation_of_duties", "You proposed this disposition; a different person must approve it.");
             }
 
+            var words = Words(ncr.Disposition ?? Disposition.UseAsIs);
             return c.Approve
-                ? (ncr with { Status = NcrStatus.Dispositioned, ApprovedBy = context.Actor }, "use as is approved")
-                : (ncr with { Status = NcrStatus.Open, Disposition = null, DispositionNote = null, DispositionedBy = null }, "use as is rejected; disposition it again");
+                ? (ncr with { Status = NcrStatus.Dispositioned, ApprovedBy = context.Actor }, $"{words} approved")
+                : (ncr with { Status = NcrStatus.Open, Disposition = null, DispositionNote = null, DispositionedBy = null }, $"{words} rejected; disposition it again");
         }, ct);
     }
 
@@ -472,6 +473,7 @@ public sealed class QualityService(CommandPipeline pipeline)
         Disposition.UseAsIs => "use as is",
         Disposition.Rework => "rework",
         Disposition.Scrap => "scrap",
+        Disposition.Repair => "repair",
         _ => "return to supplier",
     };
 

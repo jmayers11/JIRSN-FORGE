@@ -183,13 +183,13 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         (await Read(LaborSql + " WHERE person_id = $1 AND ended_at IS NULL", ReadLabor, ct, person)).SingleOrDefault();
 
     private const string ReportSql =
-        "SELECT report_id, order_number, sequence, work_center_code, person_id, good_quantity, scrap_quantity, scrap_reason, completed_operation, final_operation, reported_at FROM execution.production_report";
+        "SELECT report_id, order_number, sequence, work_center_code, person_id, good_quantity, scrap_quantity, scrap_reason, completed_operation, final_operation, reported_at, scrap_reason_code FROM execution.production_report";
 
     public Task<IReadOnlyList<ProductionReport>> ListReportsAsync(DateTimeOffset from, DateTimeOffset to, long? orderNumber, CancellationToken ct)
     {
         static ProductionReport Map(NpgsqlDataReader r) => new(
             r.GetInt64(0), r.GetInt64(1), r.GetInt32(2), r.GetString(3), r.GetGuid(4), r.GetDecimal(5), r.GetDecimal(6), r.IsDBNull(7) ? null : r.GetString(7),
-            r.GetBoolean(8), r.GetBoolean(9), r.GetFieldValue<DateTimeOffset>(10));
+            r.GetBoolean(8), r.GetBoolean(9), r.GetFieldValue<DateTimeOffset>(10), r.IsDBNull(11) ? null : r.GetString(11));
         return orderNumber is { } n
             ? Read(ReportSql + " WHERE order_number = $1 ORDER BY report_id", Map, ct, n)
             : Read(ReportSql + " WHERE reported_at >= $1 AND reported_at < $2 ORDER BY report_id", Map, ct, from, to);
@@ -243,14 +243,14 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<long> InsertReportAsync(long orderNumber, int sequence, string workCenter, Guid person, decimal good, decimal scrap, string? reason, bool complete, bool final, DateTimeOffset at, string actor, CancellationToken ct)
+    public async Task<long> InsertReportAsync(long orderNumber, int sequence, string workCenter, Guid person, decimal good, decimal scrap, string? reason, string? reasonCode, bool complete, bool final, DateTimeOffset at, string actor, CancellationToken ct)
     {
         await using var cmd = uow.Command(
             """
-            INSERT INTO execution.production_report (order_number, sequence, work_center_code, person_id, good_quantity, scrap_quantity, scrap_reason, completed_operation, final_operation, reported_at, recorded_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING report_id
+            INSERT INTO execution.production_report (order_number, sequence, work_center_code, person_id, good_quantity, scrap_quantity, scrap_reason, completed_operation, final_operation, reported_at, recorded_by, scrap_reason_code)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING report_id
             """,
-            orderNumber, sequence, workCenter, person, good, scrap, Text(reason), complete, final, at, actor);
+            orderNumber, sequence, workCenter, person, good, scrap, Text(reason), complete, final, at, actor, Text(reasonCode));
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -418,6 +418,9 @@ public static class ExecutionRegistration
         services.AddSingleton<ProductionOrderService>();
         services.AddSingleton<Engines.OperatorAuthorizationEngine>();
         services.AddSingleton<ShopFloorService>();
+        services.AddForgeStore<IProductionActualsLookup>(uow => new PostgresProductionActualsStore(uow));
+        services.AddForgeStore<IProductionActualsStore>(uow => new PostgresProductionActualsStore(uow));
+        services.AddSingleton<ProductionActualsService>();
         return services;
     }
 }

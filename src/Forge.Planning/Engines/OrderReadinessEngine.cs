@@ -174,7 +174,7 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
 
         if (quality.OpenNcrs.Count > 0)
         {
-            problems.Add(string.Join(" ", quality.OpenNcrs.Select(n => $"NCR {n.NcrId} ({n.Defect}) is {(n.Status == NcrStatus.AwaitingApproval ? "waiting for use-as-is approval" : "not dispositioned")}.")));
+            problems.Add(string.Join(" ", quality.OpenNcrs.Select(n => $"NCR {n.NcrId} ({n.Defect}) is {(n.Status == NcrStatus.AwaitingApproval ? $"waiting for {(n.Disposition == Disposition.Repair ? "repair" : "use-as-is")} approval" : "not dispositioned")}.")));
         }
 
         if (problems.Count > 0)

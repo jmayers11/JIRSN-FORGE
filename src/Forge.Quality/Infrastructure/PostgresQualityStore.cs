@@ -262,7 +262,7 @@ internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualitySto
     {
         var quality = await GetOrderQualityAsync(orderNumber, partNumber, ct);
         var holds = quality.OpenNcrs
-            .Select(n => new WorkHold("Quality", $"NCR {n.NcrId}", null, $"NCR {n.NcrId} ({n.Defect}) is {(n.Status == NcrStatus.AwaitingApproval ? "waiting for use-as-is approval" : "waiting for a disposition")}."))
+            .Select(n => new WorkHold("Quality", $"NCR {n.NcrId}", null, $"NCR {n.NcrId} ({n.Defect}) is {(n.Status == NcrStatus.AwaitingApproval ? $"waiting for {(n.Disposition == Disposition.Repair ? "repair" : "use-as-is")} approval" : "waiting for a disposition")}."))
             .ToList();
         holds.AddRange(quality.PlannedSequences
             .Where(s => !quality.PassedSequences.Contains(s))
@@ -342,6 +342,9 @@ public static class QualityRegistration
         services.AddForgeStore<IQualityLookup>(uow => new PostgresQualityStore(uow));
         services.AddForgeStore<IWorkHoldLookup>(uow => new PostgresQualityStore(uow));
         services.AddSingleton<QualityService>();
+        services.AddForgeStore<IReworkLookup>(uow => new PostgresReworkStore(uow));
+        services.AddForgeStore<IReworkStore>(uow => new PostgresReworkStore(uow));
+        services.AddSingleton<ReworkService>();
         return services;
     }
 }

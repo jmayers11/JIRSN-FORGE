@@ -346,6 +346,19 @@ See `docs/adr/0027-v3-3-transformation-and-genealogy-graph.md`.
 
 See `docs/adr/0028-v3-4-movement-and-point-of-use.md`.
 
+## What V3.5 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Reason codes | `execution.reason_code`, Work Centers page | The plant's words for downtime (each in one stoppage category), scrap and rework; retired, never deleted |
+| Stoppages | `execution.stoppage`, `stoppages` report | Planned, unplanned, setup, changeover, maintenance, waiting, starved, blocked; one reason each; setups and changeovers against the routing's setup minutes |
+| Root causes | `execution.root_cause` | Proposed with evidence; proven only when a different person confirms; never the same thing as a reason code |
+| Scrap reason codes | `execution.production_report.scrap_reason_code`, shop-floor terminal | Scrap can name a scrap reason code |
+| Rework and repair | `quality.rework`, NCR disposition `Repair` | Take good output back from an operation without changing its reports; repair only on an approved NCR; closing records good and scrap |
+| Quantity states | `OrderQuantityStates`, order page, `quantity-states` report | Started, produced, accepted, received, shipped so far; in process, rework, repair, pending inspection, released, hold, staged now; scrapped |
+
+See `docs/adr/0029-v3-5-production-actuals-and-quantity-states.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -734,3 +747,17 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | GET | `/api/inventory/orders/{order}/material-flow` | `inventory.read` |
 | GET | `/api/inventory/count-programs`, `/api/inventory/counts-due` | `inventory.read` |
 | POST | `/api/inventory/count-programs`, `/api/inventory/count-programs/{code}/retire` (reason required) | `inventory.manage` |
+
+## V3.5 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/execution/reason-codes` | `execution.shopfloor.read` |
+| POST | `/api/execution/reason-codes`, `/api/execution/reason-codes/{code}` (change or retire, reason required) | `execution.reasons.manage` |
+| GET | `/api/execution/stoppages[?open=&machine=&days=]` | `execution.shopfloor.read` |
+| POST | `/api/execution/stoppages` (`startedAt` up to 7 days back), `/stoppages/{id}/end`, `/stoppages/{id}/root-causes` | `maintenance.downtime.report` |
+| POST | `/api/execution/root-causes/{id}/confirm` (reason required, not the proposer) | `execution.rootcause.confirm` |
+| POST | `/api/shopfloor/report` takes `scrapReasonCode` | `execution.shopfloor.record` |
+| GET | `/api/quality/rework[?order=&open=]` | `execution.shopfloor.read` |
+| POST | `/api/quality/rework` (reason required), `/api/quality/rework/{id}/close` | `execution.shopfloor.record` |
+| GET | `/api/orders/{order}/quantity-states` | `execution.orders.read` |

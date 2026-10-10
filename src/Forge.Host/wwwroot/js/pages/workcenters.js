@@ -2,6 +2,7 @@ import { tryGet } from '../api.js';
 import { icon } from '../icons.js';
 import { esc, $$, fmtNumber, fmtDateTime, errorBlock, emptyBlock } from '../ui.js';
 import { isDownAt } from '../model.js';
+import { appendStoppages, appendReasonCodes } from '../actuals.js';
 
 const DAY = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -66,4 +67,9 @@ export async function workCentersPage(page, ctx) {
   }
 
   $$('[data-wc]', page).forEach(row => row.addEventListener('click', () => { location.hash = `#/work-centers/${encodeURIComponent(row.dataset.wc)}`; }));
+
+  // V3.5: stoppages on the selected work center's machines (or all machines), and the plant's reason codes.
+  const chosen = selected ? rows.find(x => x.wc.code === selected) : null;
+  await appendStoppages(page, chosen ? chosen.ms : r.machines, ctx.me);
+  await appendReasonCodes(page, ctx.me);
 }

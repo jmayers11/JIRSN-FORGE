@@ -10,7 +10,7 @@ import { formModal, qty, can, plusDays, today } from '../forms.js';
 
 const NCR_TONE = { Open: 'bad', AwaitingApproval: 'warn', Dispositioned: 'info', Closed: 'ok' };
 const NCR_LABEL = { Open: 'Open', AwaitingApproval: 'Awaiting approval', Dispositioned: 'Dispositioned', Closed: 'Closed' };
-const DISPOSITION = [['Rework', 'Rework'], ['Scrap', 'Scrap'], ['ReturnToSupplier', 'Return to supplier'], ['UseAsIs', 'Use as is (needs approval)']];
+const DISPOSITION = [['Rework', 'Rework'], ['Scrap', 'Scrap'], ['ReturnToSupplier', 'Return to supplier'], ['UseAsIs', 'Use as is (needs approval)'], ['Repair', 'Repair — usable, not to drawing (needs approval)']];
 const CAPA_TONE = { Open: 'warn', Implemented: 'info', Verified: 'ok' };
 
 const limits = c => c.kind === 'Attribute' ? 'Accept / reject'
@@ -103,7 +103,7 @@ export async function qualityPage(page, ctx) {
       </div>
       <div class="nowrap">
         ${n.status === 'Open' && engineer ? `<button class="btn primary small" data-dispose="${n.ncrId}">Disposition</button>` : ''}
-        ${n.status === 'AwaitingApproval' && manager && !mine(n.dispositionedBy) ? `<button class="btn primary small" data-approve="${n.ncrId}">Approve use as is</button> <button class="btn small" data-reject="${n.ncrId}">Reject</button>` : ''}
+        ${n.status === 'AwaitingApproval' && manager && !mine(n.dispositionedBy) ? `<button class="btn primary small" data-approve="${n.ncrId}">Approve ${n.disposition === 'Repair' ? 'repair' : 'use as is'}</button> <button class="btn small" data-reject="${n.ncrId}">Reject</button>` : ''}
         ${n.status === 'AwaitingApproval' && mine(n.dispositionedBy) ? '<span class="faint">You proposed it — someone else approves</span>' : ''}
         ${n.status === 'Dispositioned' && engineer ? `<button class="btn small" data-close="${n.ncrId}">Close</button> <button class="btn small ghost" data-capa-for="${n.ncrId}">Corrective action</button>` : ''}
         <button class="btn small ghost" data-docs-ncr="${n.ncrId}">Documents</button>
@@ -205,7 +205,7 @@ export async function qualityPage(page, ctx) {
   }
 
   function dispose(id) {
-    return formModal({ title: `Disposition NCR ${id}`, detail: 'Use as is accepts nonconforming material and needs a quality manager other than you to approve it.', confirmLabel: 'Record disposition', reasonRequired: true,
+    return formModal({ title: `Disposition NCR ${id}`, detail: 'Use as is accepts nonconforming material; repair makes it usable but not to the drawing. Both need a quality manager other than you to approve. Rework brings it back to the drawing.', confirmLabel: 'Record disposition', reasonRequired: true,
       fields: [
         { name: 'disposition', label: 'Disposition', type: 'select', options: DISPOSITION, required: true },
         { name: 'note', label: 'Disposition instructions', type: 'textarea', required: true },

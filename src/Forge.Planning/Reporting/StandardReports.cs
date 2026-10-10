@@ -73,6 +73,29 @@ internal static class StandardReports
             Permissions.MaintenanceRead, null, DowntimeAsync),
 
         new(
+            new("stoppages", "Stoppages and changeovers", "Production",
+                "Every period a machine did not run, as reported on the floor: its category (planned, unplanned, setup, changeover, maintenance, waiting, starved, blocked), reason code, minutes, the minutes the routing expected for setups and changeovers, and whether a root cause is proven or only proposed.",
+                [FromFilter, ToFilter, MachineFilter, StatusFilter(Enum.GetNames<StoppageCategory>()), SearchFilter],
+                [C("startedAt", "Started", ReportColumnKind.DateTime), C("machine", "Machine", ReportColumnKind.Text), C("workCenter", "Work center", ReportColumnKind.Text), C("status", "Category", ReportColumnKind.Text),
+                 C("reason", "Reason code", ReportColumnKind.Text), C("operation", "Order operation", ReportColumnKind.Text), C("minutes", "Minutes", ReportColumnKind.Number), C("expected", "Expected min", ReportColumnKind.Number),
+                 C("variance", "Over expected", ReportColumnKind.Number), C("rootCause", "Root cause", ReportColumnKind.Text)],
+                ["status", "machine", "workCenter", "reason"], "status", 92,
+                "Stoppages overlapping the period; open ones run to now. A reason code is what was reported; a root cause is proven only once a second person confirms it."),
+            Permissions.ShopFloorRead, null, StoppagesAsync),
+
+        new(
+            new("quantity-states", "Order quantity states", "Production",
+                "Released orders, and orders released in the period, with their quantity through every state: started, produced, accepted, received and shipped so far; in process, in rework, in repair, pending inspection, released, on hold and staged now; and scrapped.",
+                [FromFilter, ToFilter, ProgramFilter, PartFilter, StatusFilter("Released", "Held", "Completed"), SearchFilter],
+                [C("order", "Order", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("status", "Status", ReportColumnKind.Text), C("ordered", "Ordered", ReportColumnKind.Number),
+                 C("started", "Started", ReportColumnKind.Number), C("produced", "Produced", ReportColumnKind.Number), C("accepted", "Accepted", ReportColumnKind.Number), C("inProcess", "In process", ReportColumnKind.Number),
+                 C("rework", "Rework", ReportColumnKind.Number), C("repair", "Repair", ReportColumnKind.Number), C("pending", "Pending inspection", ReportColumnKind.Number), C("released", "Released", ReportColumnKind.Number),
+                 C("hold", "Hold", ReportColumnKind.Number), C("staged", "Staged", ReportColumnKind.Number), C("shipped", "Shipped", ReportColumnKind.Number), C("scrapped", "Scrapped", ReportColumnKind.Number)],
+                ["status", "part"], "status", 92,
+                "Derived from production reports, rework records, inspections, NCRs and the inventory ledger; nothing is rewritten. Packed is recorded from V3.14."),
+            Permissions.OrdersRead, null, QuantityStatesAsync),
+
+        new(
             new("delivery-performance", "Delivery performance", "Delivery",
                 "Demand due in the period: how much shipped by the need date, how much shipped at all, and how late the rest is.",
                 [FromFilter, ToFilter, ProgramFilter, PartFilter, StatusFilter("On time", "Late", "Overdue", "Open", "Closed", "Cancelled"), SearchFilter],
@@ -1025,6 +1048,98 @@ internal static class StandardReports
     }
 
     // ------------------------------------------------------------------ maintenance
+
+    private static async Task<ReportBody> StoppagesAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var orders = run.Uow.Store<IExecutionLookup>();
+        var visible = new Dictionary<long, bool>();
+        var rows = new List<ReportRow>();
+        foreach (var v in await ProductionActualsQueries.ViewsAsync(run.Uow, false, run.From, run.To, run.Now, p.Machine, ct))
+        {
+            var s = v.Stoppage;
+            string? operation = null;
+            if (s.OrderNumber is { } n)
+            {
+                if (!visible.TryGetValue(n, out var see))
+                {
+                    see = await orders.FindOrderAsync(n, ct) is { } o && run.Visible(o.ProgramId);
+                    visible[n] = see;
+                }
+
+                operation = see ? $"{Id(n)}/{s.Sequence?.ToString(CultureInfo.InvariantCulture)}" : "(another program)";
+            }
+
+            var proven = v.RootCauses.FirstOrDefault(r => r.Proven);
+            var rootCause = proven is not null ? $"Proven: {proven.Cause}" : v.RootCauses.Count > 0 ? $"Proposed: {v.RootCauses[^1].Cause}" : null;
+            if (!ReportRun.Is(s.Category.ToString(), p.Status) || !run.Matches(s.MachineCode, s.ReasonCode, v.ReasonDescription, s.Note, rootCause, operation))
+            {
+                continue;
+            }
+
+            List<string> trace = ["machine:" + s.MachineCode, "stoppage:" + Id(s.StoppageId)];
+            if (operation is not null && visible[s.OrderNumber!.Value])
+            {
+                trace.Add("order:" + Id(s.OrderNumber.Value));
+            }
+
+            rows.Add(new ReportRow(
+                [s.StartedAt, s.MachineCode, s.WorkCenterCode, s.Category.ToString(), $"{s.ReasonCode} — {v.ReasonDescription}", operation, v.Minutes, s.ExpectedMinutes, v.Variance, rootCause],
+                trace));
+        }
+
+        var summary = rows.GroupBy(r => (string)r.Cells[3]!, StringComparer.Ordinal).OrderByDescending(g => g.Sum(r => (decimal)r.Cells[6]!))
+            .Select(g => $"{g.Key}: {g.Count()} stoppage(s), {Fmt(g.Sum(r => (decimal)r.Cells[6]!))} min.")
+            .ToList();
+        var changeovers = rows.Where(r => r.Cells[8] is decimal).ToList();
+        if (changeovers.Count > 0)
+        {
+            summary.Add($"Setups and changeovers: {Fmt(changeovers.Sum(r => (decimal)r.Cells[6]!))} min actual against {Fmt(changeovers.Sum(r => (decimal)r.Cells[7]!))} min expected.");
+        }
+
+        var unproven = rows.Count(r => r.Cells[9] is not string text || !text.StartsWith("Proven", StringComparison.Ordinal));
+        summary.Add(rows.Count == 0 ? "No stoppages in the period." : $"{unproven} of {rows.Count} without a proven root cause.");
+        return new ReportBody(rows, summary, ["Stoppages", "Reason codes", "Root causes", "Routing setup minutes"]);
+    }
+
+    private static async Task<ReportBody> QuantityStatesAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var execution = run.Uow.Store<IExecutionLookup>();
+        var orders = new List<OrderInfo>();
+        foreach (var summary in await execution.ListOrdersAsync(ct))
+        {
+            var current = summary.Status == OrderStatus.Released || (summary.Status is OrderStatus.Held or OrderStatus.Completed && summary.ReleasedAt is { } at && run.InPeriod(at));
+            if (!current || !run.Visible(summary.ProgramId) || !ReportRun.Is(summary.PartNumber, p.PartNumber) || !ReportRun.Is(summary.Status.ToString(), p.Status))
+            {
+                continue;
+            }
+
+            if (await execution.FindOrderAsync(summary.OrderNumber, ct) is { } order)
+            {
+                orders.Add(order);
+            }
+        }
+
+        var rows = new List<ReportRow>();
+        foreach (var q in await ProductionActualsQueries.StatesAsync(run.Uow, orders, ct))
+        {
+            if (!run.Matches(Id(q.OrderNumber), q.PartNumber, q.Status))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [Id(q.OrderNumber), q.PartNumber, q.Status, q.Of("Ordered"), q.Of("Started"), q.Of("Produced"), q.Of("Accepted"), q.Of("In process"), q.Of("Rework"), q.Of("Repair"),
+                 q.Of("Pending inspection"), q.Of("Released"), q.Of("Hold"), q.Of("Staged"), q.Of("Shipped"), q.Of("Scrapped")],
+                ["order:" + Id(q.OrderNumber), "item:" + q.PartNumber]));
+        }
+
+        decimal Sum(int cell) => rows.Sum(r => (decimal)r.Cells[cell]!);
+        return new ReportBody(rows,
+            [$"{rows.Count} order(s): {Fmt(Sum(5))} produced, {Fmt(Sum(7))} in process, {Fmt(Sum(8) + Sum(9))} in rework or repair, {Fmt(Sum(15))} scrapped."],
+            ["Production reports", "Rework records", "Inspections", "NCRs", "Inventory ledger"]);
+    }
 
     private static async Task<ReportBody> DowntimeAsync(ReportRun run, CancellationToken ct)
     {

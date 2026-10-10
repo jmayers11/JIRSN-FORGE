@@ -565,7 +565,16 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                     ?? throw new CommandRejectedException("item_not_found", $"Part {order.PartNumber} does not exist.");
                 var store = uow.Store<IInventoryStore>();
                 await store.LockPartAsync(item.PartNumber, ct);
-                var good = order.Operations.Count == 0 ? 0 : order.Operations.OrderBy(o => o.Sequence).Last().GoodQuantity;
+                var last = order.Operations.Count == 0 ? null : order.Operations.OrderBy(o => o.Sequence).Last();
+                var good = last?.GoodQuantity ?? 0;
+
+                // V3.5: good taken back from the last operation for rework or repair is not there to receive until it comes back.
+                if (last is not null)
+                {
+                    good -= (await uow.Store<IReworkLookup>().ListReworkAsync(order.OrderNumber, false, ct))
+                        .Where(r => r.Sequence == last.Sequence).Sum(r => r.Open ? r.Quantity : r.ScrapQuantity ?? 0);
+                }
+
                 var received = (await uow.Store<IInventoryLookup>().ListProductionReceiptsAsync(ct)).FirstOrDefault(r => r.OrderNumber == order.OrderNumber)?.Received ?? 0;
                 var quantity = item.Serialized ? c.Quantity : RequireQuantity(item, c.Quantity);
                 if (item.Serialized && (quantity <= 0 || quantity != decimal.Truncate(quantity)))

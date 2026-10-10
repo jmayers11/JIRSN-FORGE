@@ -1,4 +1,4 @@
-import { command } from '../api.js';
+import { command, tryGet } from '../api.js';
 import { img } from '../icons.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, relative, toast, emptyBlock } from '../ui.js';
 import { who } from '../people.js';
@@ -11,6 +11,8 @@ const IDLE_MS = 60_000;
 const SCRAP_REASONS = ['Edge wave', 'Surface defect', 'Out of tolerance', 'Setup', 'Material defect', 'Damaged in handling'];
 
 export async function shopFloorPage(page, ctx) {
+  // V3.5: the plant's scrap reason codes come first; the fixed words remain for plants without codes.
+  const scrapCodes = ((await tryGet('/api/execution/reason-codes')).data ?? []).filter(r => r.kind === 'Scrap' && r.active);
   let badge = null;
   let person = null;
   let idle = null;
@@ -99,7 +101,7 @@ export async function shopFloorPage(page, ctx) {
           <div class="field"><label for="good">Good</label><input id="good" class="input big-num" type="number" min="0" step="any" value="0"></div>
           <div class="field"><label for="scrap">Scrap</label><input id="scrap" class="input big-num" type="number" min="0" step="any" value="0"></div>
           <div class="field"><label for="reason">Scrap reason</label>
-            <select id="reason" class="select"><option value="">—</option>${SCRAP_REASONS.map(r => `<option>${esc(r)}</option>`).join('')}</select></div>
+            <select id="reason" class="select"><option value="">—</option>${scrapCodes.map(r => `<option value="code:${esc(r.code)}">${esc(r.code)} — ${esc(r.description)}</option>`).join('')}${scrapCodes.length ? '' : SCRAP_REASONS.map(r => `<option>${esc(r)}</option>`).join('')}</select></div>
           <label class="check"><input id="complete" type="checkbox"> Operation complete</label>
           <button class="btn primary big" type="submit">Report</button>
         </form>`}
@@ -139,7 +141,8 @@ export async function shopFloorPage(page, ctx) {
       const good = Number($('#good', page).value || 0), scrap = Number($('#scrap', page).value || 0);
       await act('/api/shopfloor/report', {
         badge, orderNumber: labor.orderNumber, sequence: labor.sequence, good, scrap,
-        scrapReason: $('#reason', page).value || null, complete: $('#complete', page).checked,
+        scrapReason: $('#reason', page).value.startsWith('code:') ? null : $('#reason', page).value || null,
+        scrapReasonCode: $('#reason', page).value.startsWith('code:') ? $('#reason', page).value.slice(5) : null, complete: $('#complete', page).checked,
       });
     });
     $$('[data-start]', page).forEach(b => b.addEventListener('click', () => {
