@@ -166,11 +166,12 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         r => new OpenOperation(r.GetInt64(0), r.GetString(1), r.GetDecimal(2), r.GetFieldValue<DateOnly>(3), r.GetInt32(4), r.IsDBNull(5) ? null : r.GetGuid(5), ReadOperation(r, 6)),
         ct);
 
-    private const string LaborSql = "SELECT labor_id, person_id, order_number, sequence, work_center_code, machine_code, role, started_at, ended_at, training_session_id FROM execution.labor";
+    private const string LaborSql = "SELECT labor_id, person_id, order_number, sequence, work_center_code, machine_code, role, started_at, ended_at, training_session_id, qualifications FROM execution.labor";
 
     private static LaborEntry ReadLabor(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetGuid(1), r.GetInt64(2), r.GetInt32(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), Enum.Parse<LaborRole>(r.GetString(6)),
-        r.GetFieldValue<DateTimeOffset>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateTimeOffset>(8), r.IsDBNull(9) ? null : r.GetInt64(9));
+        r.GetFieldValue<DateTimeOffset>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateTimeOffset>(8), r.IsDBNull(9) ? null : r.GetInt64(9),
+        r.IsDBNull(10) ? null : r.GetFieldValue<string[]>(10));
 
     public Task<IReadOnlyList<LaborEntry>> ListOpenLaborAsync(CancellationToken ct) => Read(LaborSql + " WHERE ended_at IS NULL ORDER BY labor_id", ReadLabor, ct);
 
@@ -209,15 +210,16 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         ? Read(SessionSql + " WHERE order_number = $1 ORDER BY session_id", ReadSession, ct, n)
         : Read(SessionSql + " WHERE started_at < $2 AND (ended_at IS NULL OR ended_at > $1) ORDER BY session_id", ReadSession, ct, from, to);
 
-    public async Task<long> InsertLaborAsync(Guid person, long orderNumber, int sequence, string workCenter, string? machine, LaborRole role, long? sessionId, DateTimeOffset at, string actor, CancellationToken ct)
+    public async Task<long> InsertLaborAsync(Guid person, long orderNumber, int sequence, string workCenter, string? machine, LaborRole role, long? sessionId, IReadOnlyList<string> qualifications, DateTimeOffset at, string actor, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(qualifications);
         await using var cmd = uow.Command(
             """
-            INSERT INTO execution.labor (person_id, order_number, sequence, work_center_code, machine_code, role, started_at, training_session_id, recorded_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING labor_id
+            INSERT INTO execution.labor (person_id, order_number, sequence, work_center_code, machine_code, role, started_at, training_session_id, recorded_by, qualifications)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING labor_id
             """,
             person, orderNumber, sequence, workCenter, Text(machine), role.ToString(), at,
-            new NpgsqlParameter { Value = (object?)sessionId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint }, actor);
+            new NpgsqlParameter { Value = (object?)sessionId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint }, actor, qualifications.Distinct(StringComparer.Ordinal).ToArray());
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -229,7 +231,7 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         }
 
         return await Read(
-            "UPDATE execution.labor SET ended_at = $2 WHERE labor_id = ANY($1) AND ended_at IS NULL RETURNING labor_id, person_id, order_number, sequence, work_center_code, machine_code, role, started_at, ended_at, training_session_id",
+            "UPDATE execution.labor SET ended_at = $2 WHERE labor_id = ANY($1) AND ended_at IS NULL RETURNING labor_id, person_id, order_number, sequence, work_center_code, machine_code, role, started_at, ended_at, training_session_id, qualifications",
             ReadLabor, ct, laborIds.ToArray(), at);
     }
 
@@ -342,6 +344,67 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
     }
 }
 
+/// <summary>The as-built record (V2.11): append-only lines, read by order or by component lot or serial.</summary>
+internal sealed class PostgresAsBuiltRecord(PostgresUnitOfWork uow) : IAsBuiltRecord
+{
+    private const string Sql =
+        """
+        SELECT as_built_id, order_number, transaction_id, kind, component_part, component_revision, lot_number, serial, quantity, substitutes_for, primary_quantity,
+               alternate_id, alternate_kind, alternate_approved_by, alternate_approved_at, alternate_conditions, supplier_code, supplier_name, po_number, po_line,
+               received_at, recorded_at, recorded_by
+        FROM execution.as_built
+        """;
+
+    public async Task AppendAsync(AsBuiltLine line, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO execution.as_built (order_number, transaction_id, kind, component_part, component_revision, lot_number, serial, quantity, substitutes_for, primary_quantity,
+                alternate_id, alternate_kind, alternate_approved_by, alternate_approved_at, alternate_conditions, supplier_code, supplier_name, po_number, po_line, received_at,
+                recorded_at, recorded_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            """,
+            line.OrderNumber, line.TransactionId, line.Kind.ToString(), line.ComponentPart, T(line.ComponentRevision), T(line.LotNumber), line.Serial, line.Quantity,
+            T(line.SubstitutesFor), N(line.PrimaryQuantity), L(line.AlternateId), T(line.AlternateKind), T(line.AlternateApprovedBy), Ts(line.AlternateApprovedAt), T(line.AlternateConditions),
+            T(line.SupplierCode), T(line.SupplierName), L(line.PoNumber), I(line.PoLine), Ts(line.ReceivedAt), line.RecordedAt, line.RecordedBy);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<AsBuiltLine>> ListAsync(long? orderNumber, string? componentPart, string? lotNumber, CancellationToken ct)
+    {
+        var list = new List<AsBuiltLine>();
+        await using var cmd = uow.Command(
+            Sql + " WHERE ($1::bigint IS NULL OR order_number = $1) AND ($2::text IS NULL OR component_part = $2) AND ($3::text IS NULL OR lot_number = $3) ORDER BY as_built_id",
+            L(orderNumber), T(componentPart), T(lotNumber));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            list.Add(new AsBuiltLine(
+                r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), Enum.Parse<AsBuiltKind>(r.GetString(3)), r.GetString(4), S(r, 5), S(r, 6), r.GetBoolean(7), D(r.GetDecimal(8)),
+                S(r, 9), r.IsDBNull(10) ? null : D(r.GetDecimal(10)), r.IsDBNull(11) ? null : r.GetInt64(11), S(r, 12), S(r, 13), r.IsDBNull(14) ? null : r.GetFieldValue<DateTimeOffset>(14), S(r, 15),
+                S(r, 16), S(r, 17), r.IsDBNull(18) ? null : r.GetInt64(18), r.IsDBNull(19) ? null : r.GetInt32(19), r.IsDBNull(20) ? null : r.GetFieldValue<DateTimeOffset>(20),
+                r.GetFieldValue<DateTimeOffset>(21), r.GetString(22)));
+        }
+
+        return list;
+    }
+
+    private static decimal D(decimal value) => value / 1.000000000000000000000000000000000m;
+
+    private static string? S(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
+
+    private static NpgsqlParameter T(string? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text };
+
+    private static NpgsqlParameter N(decimal? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric };
+
+    private static NpgsqlParameter L(long? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint };
+
+    private static NpgsqlParameter I(int? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer };
+
+    private static NpgsqlParameter Ts(DateTimeOffset? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.TimestampTz };
+}
+
 public static class ExecutionRegistration
 {
     public static IServiceCollection AddForgeExecution(this IServiceCollection services)
@@ -350,6 +413,7 @@ public static class ExecutionRegistration
         services.AddForgeStore<IExecutionStore>(uow => new PostgresExecutionStore(uow));
         services.AddForgeStore<IExecutionLookup>(uow => new PostgresExecutionStore(uow));
         services.AddForgeStore<IShopFloorStore>(uow => new PostgresExecutionStore(uow));
+        services.AddForgeStore<IAsBuiltRecord>(uow => new PostgresAsBuiltRecord(uow));
         services.AddForgeStore<Forge.Maintenance.Contracts.IMachineUsageLookup>(uow => new MachineUsage(uow));
         services.AddSingleton<ProductionOrderService>();
         services.AddSingleton<Engines.OperatorAuthorizationEngine>();

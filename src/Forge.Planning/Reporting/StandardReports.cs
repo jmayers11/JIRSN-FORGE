@@ -261,7 +261,48 @@ internal static class StandardReports
                 ["status", "project"], "needDate", 92,
                 "Material lines of every project."),
             Permissions.ProjectsRead, null, ProjectMaterialAsync),
+        new(
+            new("as-built", "As-built record", "Production",
+                "Every component issued to (or returned from) a production order in the period, as recorded at that moment: revision, lot or serial, approved alternate and its approval, supplier and purchase order.",
+                [FromFilter, ToFilter, PartFilter, StatusFilter("Issued", "Returned"), SearchFilter],
+                [C("recorded", "Recorded", ReportColumnKind.DateTime), C("order", "Order", ReportColumnKind.Text), C("component", "Component", ReportColumnKind.Text), C("revision", "Revision", ReportColumnKind.Text),
+                 C("lot", "Lot / serial", ReportColumnKind.Text), C("quantity", "Quantity", ReportColumnKind.Number), C("inPlaceOf", "In place of", ReportColumnKind.Text), C("alternate", "Alternate approval", ReportColumnKind.Text),
+                 C("supplier", "Supplier", ReportColumnKind.Text), C("po", "PO", ReportColumnKind.Text), C("status", "Kind", ReportColumnKind.Text)],
+                ["status", "component"], "recorded", 92,
+                "As-built lines recorded in the period."),
+            Permissions.OrdersRead, null, AsBuiltAsync),
     ];
+
+    private static async Task<ReportBody> AsBuiltAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var orders = run.Uow.Store<Forge.Execution.Contracts.IExecutionLookup>();
+        var visible = new Dictionary<long, bool>();
+        var rows = new List<ReportRow>();
+        foreach (var l in (await run.Uow.Store<Forge.Execution.Contracts.IAsBuiltRecord>().ListAsync(null, null, null, ct)).Where(l => run.InPeriod(l.RecordedAt)))
+        {
+            if (!visible.TryGetValue(l.OrderNumber, out var see))
+            {
+                var order = await orders.FindOrderAsync(l.OrderNumber, ct);
+                see = order is not null && run.Visible(order.ProgramId);
+                visible[l.OrderNumber] = see;
+            }
+
+            if (!see || (p.PartNumber is { } part && l.ComponentPart != part && l.SubstitutesFor != part) || !ReportRun.Is(l.Kind.ToString(), p.Status)
+                || !run.Matches(l.ComponentPart, l.LotNumber, l.SupplierName, l.SubstitutesFor))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [l.RecordedAt, l.OrderNumber.ToString(CultureInfo.InvariantCulture), l.ComponentPart, l.ComponentRevision, l.LotNumber, l.Quantity, l.SubstitutesFor,
+                 l.AlternateId is { } a ? $"{l.AlternateKind} {a.ToString(CultureInfo.InvariantCulture)}, approved by {l.AlternateApprovedBy} {l.AlternateApprovedAt:yyyy-MM-dd}" : null,
+                 l.SupplierName, l.PoNumber is { } po ? $"{po.ToString(CultureInfo.InvariantCulture)}/{l.PoLine?.ToString(CultureInfo.InvariantCulture)}" : null, l.Kind.ToString()],
+                ["order:" + l.OrderNumber.ToString(CultureInfo.InvariantCulture), "item:" + l.ComponentPart]));
+        }
+
+        return new ReportBody(rows, [$"{rows.Count} as-built line(s); {rows.Count(r => r.Cells[6] is not null)} through an approved alternate."], ["As-built record"]);
+    }
 
     private static async Task<ReportBody> ProjectMaterialAsync(ReportRun run, CancellationToken ct)
     {

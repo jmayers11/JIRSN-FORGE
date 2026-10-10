@@ -108,8 +108,9 @@ async function main() {
         await seedMaintenanceReadiness();
       }
       if (projects) {
-        console.log('Adding a sample facility project.');
+        console.log('Adding a sample facility project and as-built records.');
         await seedProjects();
+        await seedGenealogy();
       }
       return finish();
     }
@@ -134,6 +135,7 @@ async function main() {
     await seedAssets();
     await seedMaintenanceReadiness();
     await seedProjects();
+    await seedGenealogy();
     return finish();
   }
 
@@ -284,6 +286,7 @@ async function main() {
   await seedAssets();
   await seedMaintenanceReadiness();
   await seedProjects();
+  await seedGenealogy();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -668,6 +671,24 @@ async function seedProjects() {
   if (open.length) {
     const po = await post('bob', '/api/procurement/purchase-orders', { supplier: 'FERGUSON', lines: open.map(r => ({ partNumber: r.partNumber, quantity: r.quantity, promisedDate: day(14), requisitionId: r.requisitionId })) });
     await post('pat', `/api/procurement/purchase-orders/${po.entityId}/approve`, { reason: 'Sample: within the project budget' });
+  }
+}
+
+async function seedGenealogy() {
+  step('As-built: coil issued to an open order is recorded as built (revision, lot, supplier, PO) — see the order page and Reports → As-built record');
+  const released = (await get('planner', '/api/orders/')).filter(o => o.status === 'Released').map(o => o.orderNumber).sort((a, b) => a - b);
+  for (const number of released) {
+    const order = await get('planner', `/api/orders/${number}`);
+    const coil = order.materials?.find(m => m.componentPartNumber === 'COIL-AL');
+    if (!coil) continue;
+    const issued = (await get('stores', `/api/inventory/transactions?order=${number}&take=200`))
+      .filter(t => t.partNumber === 'COIL-AL').reduce((sum, t) => sum + (t.kind === 'Issue' ? t.quantity : t.kind === 'Return' ? -t.quantity : 0), 0);
+    const left = coil.requiredQuantity - issued;
+    if (left <= 0) continue;
+    const available = (await get('stores', '/api/inventory/stock?part=COIL-AL')).filter(b => b.locationCode === 'STORES' && b.status === 'Available').reduce((t, b) => t + b.quantity, 0);
+    const quantity = Math.min(left, Math.floor(available));
+    if (quantity > 0) await post('stores', '/api/inventory/issues', { orderNumber: number, partNumber: 'COIL-AL', quantity, locationCode: 'STORES' });
+    return;
   }
 }
 

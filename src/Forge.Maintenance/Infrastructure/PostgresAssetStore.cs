@@ -17,7 +17,7 @@ internal sealed class PostgresAssetStore(PostgresUnitOfWork uow) : IAssetStore, 
     private const string ComponentSql =
         """
         SELECT component_id, asset_code, part_number, revision, position, quantity, installed_work_order, installed_by, installed_at,
-               removed_work_order, removed_by, removed_at, removal_reason
+               removed_work_order, removed_by, removed_at, removal_reason, source_transaction_id
         FROM maintenance.asset_component
         """;
 
@@ -63,10 +63,10 @@ internal sealed class PostgresAssetStore(PostgresUnitOfWork uow) : IAssetStore, 
         ArgumentNullException.ThrowIfNull(c);
         await using var cmd = uow.Command(
             """
-            INSERT INTO maintenance.asset_component (asset_code, part_number, revision, position, quantity, installed_work_order, installed_by, installed_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING component_id
+            INSERT INTO maintenance.asset_component (asset_code, part_number, revision, position, quantity, installed_work_order, installed_by, installed_at, source_transaction_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING component_id
             """,
-            c.AssetCode, c.PartNumber, Text(c.Revision), c.Position, c.Quantity, Long(c.InstalledByWorkOrder), c.InstalledBy, c.InstalledAt);
+            c.AssetCode, c.PartNumber, Text(c.Revision), c.Position, c.Quantity, Long(c.InstalledByWorkOrder), c.InstalledBy, c.InstalledAt, Long(c.SourceTransactionId));
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -96,7 +96,7 @@ internal sealed class PostgresAssetStore(PostgresUnitOfWork uow) : IAssetStore, 
             ComponentSql + " WHERE ($1::text IS NULL OR asset_code = $1) AND ($2::text IS NULL OR part_number = $2) AND ($3 OR removed_at IS NULL) ORDER BY asset_code, component_id",
             r => new AssetComponentInfo(r.GetInt64(0), r.GetString(1), r.GetString(2), Opt(r, 3), r.GetString(4), r.GetDecimal(5) / 1.000000000000000000000000000000000m,
                 r.IsDBNull(6) ? null : r.GetInt64(6), r.GetString(7), r.GetFieldValue<DateTimeOffset>(8), r.IsDBNull(9) ? null : r.GetInt64(9), Opt(r, 10),
-                r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11), Opt(r, 12)),
+                r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11), Opt(r, 12), r.IsDBNull(13) ? null : r.GetInt64(13)),
             ct,
             Text(assetCode),
             Text(partNumber),

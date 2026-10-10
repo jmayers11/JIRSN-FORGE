@@ -202,7 +202,9 @@ public sealed class V28Tests(PostgresFixture postgres)
         var mrp = (await Get(planner, "/api/planning/mrp")).GetProperty("output");
         var filter = Assert.Single(mrp.GetProperty("plannedOrders").EnumerateArray(), p => p.GetProperty("partNumber").GetString() == "FILTER-10");
         Assert.Equal((9m, false), (filter.GetProperty("quantity").GetDecimal(), filter.GetProperty("pastDue").GetBoolean()));
-        Assert.Equal(DateTime.UtcNow.AddDays(5).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), filter.GetProperty("dueDate").GetString());
+        // MRP plans in site dates (the sample site is in New York), not UTC dates.
+        var siteDue = NodaTime.Instant.FromDateTimeOffset(DateTimeOffset.UtcNow).InZone(NodaTime.DateTimeZoneProviders.Tzdb["America/New_York"]).Date.PlusDays(5);
+        Assert.Equal(siteDue.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), filter.GetProperty("dueDate").GetString());
         Assert.Equal("MroReplenishment", Assert.Single(filter.GetProperty("pegging").EnumerateArray()).GetProperty("kind").GetString());
         var belt = Assert.Single(mrp.GetProperty("plannedOrders").EnumerateArray(), p => p.GetProperty("partNumber").GetString() == "BELT-7");
         Assert.Equal(5m, belt.GetProperty("quantity").GetDecimal());

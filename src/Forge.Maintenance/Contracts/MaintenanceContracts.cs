@@ -267,7 +267,8 @@ public sealed record AssetComponentInfo(
     long? RemovedByWorkOrder,
     string? RemovedBy,
     DateTimeOffset? RemovedAt,
-    string? RemovalReason)
+    string? RemovalReason,
+    long? SourceTransactionId = null)
 {
     public bool Installed => RemovedAt is null;
 }

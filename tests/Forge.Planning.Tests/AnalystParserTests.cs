@@ -75,6 +75,7 @@ public class AnalystParserTests
     [InlineData("Show proposed outages", "outages")]
     [InlineData("Show facility project lines", "project-material")]
     [InlineData("Show project material", "project-material")]
+    [InlineData("Show the as-built record", "as-built")]
     [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)

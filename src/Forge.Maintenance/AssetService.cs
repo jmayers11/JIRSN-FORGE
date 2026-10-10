@@ -329,7 +329,7 @@ public sealed class AssetService(CommandPipeline pipeline)
                 await store.InsertEventAsync(Event(asset, "ComponentRemoved", asset.Status, $"{Q(old.Quantity)} {old.PartNumber} removed from {old.Position} by work order {order.WorkOrderId} (replaced)", context, now), ct);
             }
 
-            var component = new AssetComponentInfo(0, asset.AssetCode, c.PartNumber, c.Revision, position, c.Quantity, order.WorkOrderId, context.Actor, now, null, null, null, null);
+            var component = new AssetComponentInfo(0, asset.AssetCode, c.PartNumber, c.Revision, position, c.Quantity, order.WorkOrderId, context.Actor, now, null, null, null, null, c.TransactionId);
             var id = await store.InsertComponentAsync(component, ct);
             var detail = $"{Q(c.Quantity)} {c.PartNumber}{(c.Revision is null ? string.Empty : " rev " + c.Revision)} installed at {position} by work order {order.WorkOrderId}"
                 + (c.AlternateFor is null ? string.Empty : $", in place of {c.AlternateFor} (approved alternate {c.AlternateId})")

@@ -163,6 +163,7 @@ app.MapMaterialsEndpoints();
 app.MapQualityEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();
+app.MapGenealogyEndpoints();
 app.MapReportsEndpoints();
 app.MapAnalystEndpoints();
 

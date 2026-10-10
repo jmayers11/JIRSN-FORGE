@@ -27,7 +27,7 @@ public sealed record TransferRequest(string PartNumber, decimal Quantity, string
 
 public sealed record StockRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, StockStatus? Status, string? Reason);
 
-public sealed record ProductionReceiptRequest(long OrderNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason);
+public sealed record ProductionReceiptRequest(long OrderNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason, string[]? Serials = null);
 
 public sealed record AdjustmentRequestBody(string PartNumber, string LocationCode, string? LotNumber, StockStatus? Status, decimal Change, string? Reason);
 
@@ -202,7 +202,7 @@ public static class MaterialsEndpoints
         api.MapPost("/releases", (HttpContext http, StockRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReleaseAsync(new ReleaseStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Hold), c, ct)));
         api.MapPost("/production-receipts", (HttpContext http, ProductionReceiptRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ReceiveFromProductionAsync(new ReceiveFromProduction(b.OrderNumber, b.Quantity, b.LocationCode, b.LotNumber), c, ct)));
+            Command(http, b.Reason, c => s.ReceiveFromProductionAsync(new ReceiveFromProduction(b.OrderNumber, b.Quantity, b.LocationCode, b.LotNumber, b.Serials), c, ct)));
         api.MapPost("/adjustments", (HttpContext http, AdjustmentRequestBody b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RequestAdjustmentAsync(new RequestAdjustment(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Available, b.Change), c, ct)));
         api.MapPost("/counts", (HttpContext http, CountRequest b, InventoryService s, CancellationToken ct) =>

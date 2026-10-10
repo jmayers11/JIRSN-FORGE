@@ -3,6 +3,7 @@ import { img } from '../icons.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from '../ui.js';
 import { formModal, qty, can } from '../forms.js';
+import { serialDrawer } from '../genealogy.js';
 
 // Inventory (spec §11, §49): every quantity is the sum of ledger entries, and every entry says who,
 // when, why and what it relates to. Adjustments, count variances and quality releases need a second person.
@@ -118,14 +119,15 @@ export async function inventoryPage(page, ctx) {
     }, (v, reason) => command('/api/inventory/releases', v, reason), reload),
 
     produced: () => formModal({
-      title: 'Receive finished goods from production', detail: 'Up to the good quantity reported on the order\'s last operation. Lot-tracked parts take the order number as their lot unless you give one.', confirmLabel: 'Receive',
+      title: 'Receive finished goods from production', detail: 'Up to the good quantity reported on the order\'s last operation. Lot-tracked parts take the order number as their lot unless you give one. Serialized parts get one new serial number per unit here.', confirmLabel: 'Receive',
       fields: [
         { name: 'orderNumber', label: 'Order number', type: 'number', required: true },
         { name: 'quantity', label: 'Quantity', type: 'number', step: 'any', min: 0, required: true },
         { name: 'locationCode', label: 'Into location', type: 'select', options: locs(), required: true },
         lotField,
+        { name: 'serials', label: 'Serial numbers (serialized parts)', placeholder: '000481, 000482', hint: 'One per unit, separated by commas or spaces. Never reused.' },
       ],
-    }, (v, reason) => command('/api/inventory/production-receipts', v, reason), reload),
+    }, (v, reason) => command('/api/inventory/production-receipts', { ...v, serials: v.serials ? v.serials.split(/[\s,;]+/).filter(Boolean) : null }, reason), reload),
 
     adjust: () => formModal({
       title: 'Request an adjustment', detail: 'Nothing changes until a different person approves it.', confirmLabel: 'Request', reasonRequired: true,
@@ -269,6 +271,7 @@ export async function inventoryPage(page, ctx) {
     page.innerHTML = `
       <div class="page-head">
         <div><h1>Inventory</h1><div class="sub">Every quantity is the sum of its ledger entries. Adjustments, count variances and quality releases need a second person.</div></div>
+        <div class="spacer"></div><form id="serial-find" class="inline"><input class="input mono" id="serial-q" placeholder="Serial or lot" style="width:160px"> <button class="btn">Genealogy</button></form>
       </div>
       ${buttons.length ? `<div class="toolbar">${buttons.map(([k, l]) => `<button class="btn ${k === 'receive' ? 'primary' : ''}" data-act="${k}">${esc(l)}</button>`).join('')}</div>` : '<div class="notice">You can look at stock. Material handlers move it; inventory controllers approve changes.</div>'}
       ${kpis()}
@@ -276,6 +279,7 @@ export async function inventoryPage(page, ctx) {
         <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
         ${tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : stockTab()}
       </section>`;
+    $('#serial-find', page)?.addEventListener('submit', ev => { ev.preventDefault(); const q = $('#serial-q', page).value.trim(); if (q) serialDrawer(q.toUpperCase()); });
 
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
     $$('[data-act]', page).forEach(b => b.addEventListener('click', () => {

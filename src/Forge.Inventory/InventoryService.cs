@@ -39,7 +39,8 @@ public sealed record HoldStock(string PartNumber, decimal Quantity, string Locat
 public sealed record ReleaseStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, StockStatus FromStatus);
 
 /// <summary>Finished goods from a production order, up to the good quantity reported on its last operation.</summary>
-public sealed record ReceiveFromProduction(long OrderNumber, decimal Quantity, string LocationCode, string? LotNumber);
+/// <param name="Serials">For a serialized part (V2.11): one new serial number per unit, assigned here.</param>
+public sealed record ReceiveFromProduction(long OrderNumber, decimal Quantity, string LocationCode, string? LotNumber, IReadOnlyList<string>? Serials = null);
 
 public sealed record RequestAdjustment(string PartNumber, string LocationCode, string? LotNumber, StockStatus Status, decimal Change);
 
@@ -318,6 +319,11 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             }
 
             var revision = await ReceivedRevisionAsync(uow, item.PartNumber, c.Revision, ct);
+            if (item.Serialized && lot is not null)
+            {
+                await RequireNewSerialAsync(uow, item.PartNumber, lot, ct);
+            }
+
             if (lot is not null)
             {
                 await LotAsync(uow, item.PartNumber, lot, Optional(c.SupplierLot), revision, now, context.Actor, ct);
@@ -334,9 +340,14 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
     public Task<CommandResult> IssueToOrderAsync(IssueToOrder c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
+        OrderInfo? built = null;
+        AlternateInfo? through = null;
+        string? needs = null;
+        decimal issuedPrimary = 0;
         return PostAsync(nameof(IssueToOrder), c.PartNumber, c, context, Permissions.InventoryTransact, false, async (uow, item, now) =>
         {
             var order = await ReleasedOrderAsync(uow, c.OrderNumber, context, ct);
+            built = order;
             var (needed, alternate, factor) = await NeededPartAsync(uow, order, item.PartNumber, c.AlternateFor, now, ct);
             var required = order.Materials.Where(m => m.ComponentPartNumber == needed).Sum(m => m.RequiredQuantity);
             if (required == 0)
@@ -357,18 +368,22 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Available, quantity, ct);
             var txn = new NewTransaction(InventoryTransactionKind.Issue, item.PartNumber, quantity, location.Code, StockStatus.Available, null, null, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
                 SubstitutesFor: alternate is null ? null : needed, AlternateId: alternate?.AlternateId, PrimaryQuantity: alternate is null ? null : primaryQuantity);
+            (through, needs, issuedPrimary) = (alternate, needed, primaryQuantity);
             var message = alternate is null
                 ? $"Issued {quantity} {item.UnitOfMeasure} {item.PartNumber} from {location.Code} to order {order.OrderNumber}."
                 : $"Issued {quantity} {item.UnitOfMeasure} {item.PartNumber} from {location.Code} to order {order.OrderNumber} in place of {primaryQuantity} {needed} (approved alternate {alternate.AlternateId}).";
             return (txn, message, id => alternate is null
                 ? pipeline.Event(new InventoryIssued(id, item.PartNumber, quantity, location.Code, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber)
                 : pipeline.Event(new AlternateUsed(id, alternate.AlternateId, needed, item.PartNumber, quantity, primaryQuantity, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber));
-        }, ct);
+        },
+        (uow, item, txn, id, now) => AppendAsBuiltAsync(uow, built!, item, txn, id, AsBuiltKind.Issued, through, through is null ? null : needs, through is null ? null : issuedPrimary, context.Actor, now, ct),
+        ct);
     }
 
     public Task<CommandResult> ReturnFromOrderAsync(ReturnFromOrder c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
+        OrderInfo? built = null;
         return PostAsync(nameof(ReturnFromOrder), c.PartNumber, c, context, Permissions.InventoryTransact, true, async (uow, item, _) =>
         {
             var order = await uow.Store<IExecutionLookup>().FindOrderAsync(c.OrderNumber, ct);
@@ -376,6 +391,8 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             {
                 throw new CommandRejectedException("order_not_found", $"Order {c.OrderNumber} does not exist.");
             }
+
+            built = order;
 
             var quantity = RequireQuantity(item, c.Quantity);
             var transactions = (await uow.Store<IInventoryLookup>().ListTransactionsAsync(item.PartNumber, order.OrderNumber, 1000, ct))
@@ -397,7 +414,13 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 SubstitutesFor: primary, AlternateId: alternateId, PrimaryQuantity: primaryQuantity);
             return (txn, $"Returned {quantity} {item.UnitOfMeasure} {item.PartNumber} from order {order.OrderNumber} to {location.Code}.",
                 id => pipeline.Event(new InventoryMoved(id, nameof(InventoryTransactionKind.Return), item.PartNumber, quantity, null, location.Code), context, SourceContext, StockEntity, item.PartNumber));
-        }, ct);
+        },
+        async (uow, item, txn, id, now) =>
+        {
+            var alternate = txn.AlternateId is { } a ? (await uow.Store<IAlternateLookup>().ListAlternatesAsync(ct)).FirstOrDefault(x => x.AlternateId == a) : null;
+            await AppendAsBuiltAsync(uow, built!, item, txn, id, AsBuiltKind.Returned, alternate, txn.SubstitutesFor, txn.PrimaryQuantity, context.Actor, now, ct);
+        },
+        ct);
     }
 
     /// <summary>
@@ -527,7 +550,12 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 await store.LockPartAsync(item.PartNumber, ct);
                 var good = order.Operations.Count == 0 ? 0 : order.Operations.OrderBy(o => o.Sequence).Last().GoodQuantity;
                 var received = (await uow.Store<IInventoryLookup>().ListProductionReceiptsAsync(ct)).FirstOrDefault(r => r.OrderNumber == order.OrderNumber)?.Received ?? 0;
-                var quantity = RequireQuantity(item, c.Quantity);
+                var quantity = item.Serialized ? c.Quantity : RequireQuantity(item, c.Quantity);
+                if (item.Serialized && (quantity <= 0 || quantity != decimal.Truncate(quantity)))
+                {
+                    throw new CommandRejectedException("invalid_quantity", $"{item.PartNumber} is serialized; receive whole units, one serial number each.");
+                }
+
                 if (received + quantity > good)
                 {
                     throw new CommandRejectedException("over_receipt", $"Order {order.OrderNumber} has {good} good from its last operation; {received} already received, so at most {good - received} more.");
@@ -548,6 +576,16 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 }
 
                 var location = await ActiveLocationAsync(uow, c.LocationCode, ct);
+                if (item.Serialized)
+                {
+                    return await ReceiveSerialsAsync(uow, store, item, order, quantity, location.Code, c.Serials, context, now, ct);
+                }
+
+                if (c.Serials is { Count: > 0 })
+                {
+                    throw new CommandRejectedException("not_serialized", $"{item.PartNumber} is not serialized; leave the serial numbers empty.");
+                }
+
                 // A made, lot-tracked part takes the order number as its lot unless one is given.
                 var lot = RequireLot(item, item.LotTracked ? Optional(c.LotNumber) ?? $"WO{order.OrderNumber}" : c.LotNumber);
                 // The order's revision is what was built (V2.3).
@@ -720,6 +758,19 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         string permission,
         bool reasonRequired,
         Func<IKernelUnitOfWork, ItemInfo, DateTimeOffset, Task<(NewTransaction Transaction, string Message, Func<long, EventEnvelope> Event)>> build,
+        CancellationToken ct) =>
+        PostAsync(commandType, rawPart, command, context, permission, reasonRequired, build, null, ct);
+
+    /// <param name="recorded">Runs in the same transaction once the ledger entry has its id (the as-built record, V2.11).</param>
+    private Task<CommandResult> PostAsync<TCommand>(
+        string commandType,
+        string rawPart,
+        TCommand command,
+        CommandContext context,
+        string permission,
+        bool reasonRequired,
+        Func<IKernelUnitOfWork, ItemInfo, DateTimeOffset, Task<(NewTransaction Transaction, string Message, Func<long, EventEnvelope> Event)>> build,
+        Func<IKernelUnitOfWork, ItemInfo, NewTransaction, long, DateTimeOffset, Task>? recorded,
         CancellationToken ct)
     {
         var part = BusinessCode.Require(rawPart, "Part");
@@ -731,6 +782,11 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             await store.LockPartAsync(part, ct);
             var (txn, message, makeEvent) = await build(uow, item, now);
             var txnId = await store.InsertTransactionAsync(txn, now, context.Actor, ct);
+            if (recorded is not null)
+            {
+                await recorded(uow, item, txn, txnId, now);
+            }
+
             var id = txnId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             return new CommandOutcome(CommandResult.Ok(id, message), [makeEvent(txnId)], new AuditChange("InventoryTransaction", id, null, CanonicalJson.Serialize(txn)));
         }, ct);
@@ -781,12 +837,17 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
     private static string? RequireLot(ItemInfo item, string? raw)
     {
         var lot = Optional(raw)?.ToUpperInvariant();
+        if (item.Serialized && lot is null)
+        {
+            throw new CommandRejectedException("serial_required", $"{item.PartNumber} is serialized; give the serial number.");
+        }
+
         if (item.LotTracked && lot is null)
         {
             throw new CommandRejectedException("lot_required", $"{item.PartNumber} is lot-tracked; give the lot number.");
         }
 
-        if (!item.LotTracked && lot is not null)
+        if (!item.LotTracked && !item.Serialized && lot is not null)
         {
             throw new CommandRejectedException("not_lot_tracked", $"{item.PartNumber} is not lot-tracked; leave the lot empty.");
         }
@@ -806,9 +867,9 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             throw new CommandRejectedException("invalid_quantity", "Quantity must be above zero.");
         }
 
-        if (item.Serialized && quantity != decimal.Truncate(quantity))
+        if (item.Serialized && quantity != 1)
         {
-            throw new CommandRejectedException("invalid_quantity", $"{item.PartNumber} is serialized; quantities are whole units.");
+            throw new CommandRejectedException("serial_quantity", $"{item.PartNumber} is serialized; each serial number is one unit, moved one at a time.");
         }
 
         return quantity;

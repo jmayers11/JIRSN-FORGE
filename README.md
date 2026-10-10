@@ -280,6 +280,18 @@ See `docs/adr/0021-v2-9-maintenance-readiness-and-outages.md`.
 
 See `docs/adr/0022-v2-10-facility-and-capital-projects.md`.
 
+## What V2.11 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Serial numbers | `InventoryService` | Serialized parts move one serial at a time; serials assigned at production receipt, never reused |
+| As-built record | `execution.as_built`, `IAsBuiltRecord` | Written at every issue/return to an order: revision, lot/serial, alternate and approval, supplier, PO; append-only |
+| Qualifications on labor | `execution.labor.qualifications` | Recorded when an operation is started, never changed |
+| Genealogy | `src/Forge.Planning/GenealogyService.cs` | Serial, order and asset genealogy from records only |
+| UI and report | Order page (As built), Inventory (Genealogy lookup), Maintenance asset (Genealogy); `as-built` | |
+
+See `docs/adr/0023-v2-11-serial-genealogy.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -612,3 +624,11 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/projects/{code}/request-material` `{reason?}` | `projects.read`, `planning.demand.manage`, `procurement.requisition.raise` |
 | POST | `/api/projects/{code}/issues`, `/returns` `{lineNumber, partNumber, quantity, locationCode, lotNumber?}` | `inventory.transact` |
 | POST | `/api/projects/{code}/outages` `{machineCode, startsAt, endsAt, description}` | `projects.manage` |
+
+## V2.11 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/inventory/production-receipts` takes `serials[]` for serialized parts | `inventory.transact` |
+| GET | `/api/execution/serials/{serial}/genealogy[?part=]`, `/api/orders/{n}/genealogy` | `execution.orders.read` (program access applies) |
+| GET | `/api/maintenance/assets/{code}/genealogy` | `maintenance.read` |

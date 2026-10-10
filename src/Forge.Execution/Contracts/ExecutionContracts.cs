@@ -75,7 +75,8 @@ public sealed record LaborEntry(
     LaborRole Role,
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
-    long? TrainingSessionId);
+    long? TrainingSessionId,
+    IReadOnlyList<string>? Qualifications = null);
 
 /// <summary>Quantity reported against an operation. Scrap always carries a reason.</summary>
 public sealed record ProductionReport(
@@ -153,4 +154,51 @@ public interface IExecutionLookup
 
     /// <summary>Orders without their operations and materials, newest first.</summary>
     Task<IReadOnlyList<OrderInfo>> ListOrdersAsync(CancellationToken ct);
+}
+
+public enum AsBuiltKind
+{
+    Issued,
+    Returned,
+}
+
+/// <summary>
+/// One line of an order's as-built record (V2.11), written when a component is issued to (or returned from) the
+/// order, with what was true then: the component revision, lot or serial, the approved alternate it was issued
+/// through and who approved it, the supplier and purchase order it was bought on. Never changed afterwards.
+/// </summary>
+/// <param name="Serial">The lot number is the component's serial number.</param>
+/// <param name="AlternateConditions">The conditions the alternate was approved under, as they read at issue.</param>
+public sealed record AsBuiltLine(
+    long AsBuiltId,
+    long OrderNumber,
+    long TransactionId,
+    AsBuiltKind Kind,
+    string ComponentPart,
+    string? ComponentRevision,
+    string? LotNumber,
+    bool Serial,
+    decimal Quantity,
+    string? SubstitutesFor,
+    decimal? PrimaryQuantity,
+    long? AlternateId,
+    string? AlternateKind,
+    string? AlternateApprovedBy,
+    DateTimeOffset? AlternateApprovedAt,
+    string? AlternateConditions,
+    string? SupplierCode,
+    string? SupplierName,
+    long? PoNumber,
+    int? PoLine,
+    DateTimeOffset? ReceivedAt,
+    DateTimeOffset RecordedAt,
+    string RecordedBy);
+
+/// <summary>The as-built record (V2.11). Execution owns it; Inventory appends to it in the same transaction as the issue.</summary>
+public interface IAsBuiltRecord
+{
+    Task AppendAsync(AsBuiltLine line, CancellationToken ct);
+
+    /// <summary>Lines of one order, or the lines that used one lot or serial of a component (where-used).</summary>
+    Task<IReadOnlyList<AsBuiltLine>> ListAsync(long? orderNumber, string? componentPart, string? lotNumber, CancellationToken ct);
 }
