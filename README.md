@@ -325,6 +325,17 @@ See `docs/adr/0025-v3-1-stock-dimensions-and-locations.md`.
 
 See `docs/adr/0026-v3-2-material-identity-and-quantity.md`.
 
+## What V3.3 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Transformation records | `inventory.transformation`, `POST /api/inventory/transformations` | Consumed, scrap, loss, remaining, remnant (new instance of the issued part) and byproduct per order; never changed |
+| Reconciliation | `MaterialReconciliation`, order page, `material-reconciliation` report | Issued = consumed + returned + scrap + loss + remnant + remaining ± yield tolerance; unexplained is flagged, never scrapped |
+| Yield tolerance | `inventory.yield_tolerance` | Percent of what is issued, per part; set with a reason by inventory approval authority |
+| Genealogy graph | `GenealogyGraph`, `GET /api/genealogy/trace`, `genealogy-trace` report | Thirteen relations read from records; back, forward or both; moves are never links |
+
+See `docs/adr/0027-v3-3-transformation-and-genealogy-graph.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -692,3 +703,13 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | GET | `/api/inventory/merge-policy/{part}` | `inventory.read` |
 | POST | `/api/inventory/merge-policy/{part}` (reason required) | `inventory.approve` |
 | GET | `/api/inventory/lots/{part}/{lot}/lineage` | `inventory.read` |
+
+## V3.3 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/api/inventory/transformations` (reason required for scrap or loss) | `inventory.transact` |
+| GET | `/api/inventory/orders/{order}/reconciliation` | `inventory.read` |
+| GET | `/api/inventory/yield-tolerances` | `inventory.read` |
+| POST | `/api/inventory/yield-tolerance/{part}` (reason required) | `inventory.approve` |
+| GET | `/api/genealogy/trace?part=&lot=` or `?order=` or `?shipment=`, `&direction=Back\|Forward\|Both` | `inventory.read` |

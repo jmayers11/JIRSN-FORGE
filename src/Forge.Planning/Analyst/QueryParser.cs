@@ -260,7 +260,7 @@ public static partial class QueryParser
             return AnalystIntent.AffectedOrders;
         }
 
-        return ReportOf(t) is not null && Has("show", "list", "find", "how many", "how much", "what", "which") ? AnalystIntent.Report : AnalystIntent.Unsupported;
+        return ReportOf(t) is not null && Has("show", "list", "find", "how many", "how much", "what", "which", "trace", "where did") ? AnalystIntent.Report : AnalystIntent.Unsupported;
     }
 
     // ------------------------------------------------------------------ reports
@@ -271,7 +271,9 @@ public static partial class QueryParser
         bool Has(params string[] words) => words.Any(w => t.Contains(" " + w, StringComparison.Ordinal));
         return Has("obsolete", "obsolescence", "end of life", "end of support", "last time buy", "last-time buy") ? "obsolescence"
             : Has("maintenance readiness", "blocked work order", "work orders blocked", "work orders are blocked", "maintenance blocked", "not ready for maintenance", "ready for maintenance") ? "maintenance-readiness"
-            : Has("lineage", "split from", "merged from", "merged into", "split into", "came from lot", "where did lot", "where did roll", "where did batch", "lot splits", "splits and merges", "was split", "were merged") ? "lot-lineage"
+            : Has("trace lot", "trace roll", "trace batch", "trace serial", "trace the", "genealogy of lot", "genealogy of roll", "genealogy of batch", "what did lot", "what did roll", "what did batch", "what became of lot", "what became of roll", "what became of batch", "what became of serial", "came from lot", "where did lot", "where did roll", "where did batch") ? "genealogy-trace"
+            : Has("unexplained", "reconcil", "what became of the material", "material accounting", "remnant", "byproduct", "by-product", "yield tolerance", "scrap and loss", "material issued to order") ? "material-reconciliation"
+            : Has("lineage", "split from", "merged from", "merged into", "split into", "lot splits", "splits and merges", "was split", "were merged") ? "lot-lineage"
             : Has("where is lot", "where is serial", "where is the lot", "where is batch", "where is roll", "custody", "outside processor", "at outside", "in transit", "point of use", "stock position", "where is the material", "at the machine") ? "stock-positions"
             : Has("as built", "as-built", "genealogy", "where used lot", "which lot", "serial number") ? "as-built"
             : Has("coming up", "dated event", "upcoming date", "takes effect", "take effect", "due in the next", "what is ahead", "whats ahead") ? "dated-events"
@@ -377,12 +379,12 @@ public static partial class QueryParser
         }
 
         // V3.1: "Where is lot L-104?", "What material is at outside processors?" — the lot, serial or custody asked about.
-        // V3.2: "What was roll R-100 split into?" — the instance asked about.
-        if (entry.Id == "lot-lineage" && LotRegex().Match(t) is { Success: true } instance)
+        // V3.2, V3.3: "What was roll R-100 split into?", "Trace roll R-100" — the instance asked about.
+        if (entry.Id is "lot-lineage" or "genealogy-trace" && LotRegex().Match(t) is { Success: true } instance)
         {
             var search = instance.Groups[1].Value.TrimEnd('.', '/', '?').ToUpperInvariant();
             parameters = parameters with { Search = search };
-            notes.Add($"Only splits and merges involving \u201c{search}\u201d.");
+            notes.Add(entry.Id == "genealogy-trace" ? $"Traced from \u201c{search}\u201d, back and forward." : $"Only splits and merges involving \u201c{search}\u201d.");
         }
 
         if (entry.Id == "stock-positions")

@@ -95,6 +95,12 @@ public enum InventoryTransactionKind
 
     /// <summary>Instances combined into one where policy allows (V3.2): one entry out of each source, one into the result.</summary>
     Merge,
+
+    /// <summary>A new instance cut from material issued to a production order and put back into stock (V3.3).</summary>
+    Remnant,
+
+    /// <summary>A new instance of another part a production order made alongside its output (V3.3).</summary>
+    Byproduct,
 }
 
 /// <summary>What kind of physical instance a lot row is (V3.2). The quantity is always the ledger sum; the kind never changes.</summary>
@@ -178,6 +184,129 @@ public sealed record InstanceLineage(string PartNumber, string LotNumber, IReadO
             into[(partNumber, lotNumber)].ToList(),
             links.Where(l => l.SourcePart == partNumber && l.SourceLot == lotNumber).ToList(),
             origins.ToList());
+    }
+}
+
+/// <summary>What a transformation line accounts for (V3.3).</summary>
+public enum TransformationRole
+{
+    /// <summary>Issued material that went into the order's output.</summary>
+    Consumed,
+
+    /// <summary>Issued material scrapped at the work center.</summary>
+    Scrap,
+
+    /// <summary>Issued material lost in the process (evaporation, trim, swarf), not separately scrapped.</summary>
+    Loss,
+
+    /// <summary>Issued material still at the work center; the latest figure replaces earlier ones.</summary>
+    Remaining,
+
+    /// <summary>A new instance cut from an issued lot and put back into stock.</summary>
+    Remnant,
+
+    /// <summary>A new instance of another part the order made alongside its output.</summary>
+    Byproduct,
+}
+
+/// <param name="SourcePart">For a remnant, the issued part (the same part); for a byproduct, null.</param>
+/// <param name="SourceLot">For a remnant, the issued lot it was cut from.</param>
+public sealed record TransformationLine(
+    int LineNumber,
+    TransformationRole Role,
+    string PartNumber,
+    string? LotNumber,
+    decimal Quantity,
+    string? SourcePart = null,
+    string? SourceLot = null,
+    string? LocationCode = null,
+    long? TransactionId = null);
+
+/// <summary>What became of material issued to a production order, as recorded at one moment (V3.3). Never changed.</summary>
+public sealed record TransformationInfo(long TransformationId, long OrderNumber, int? OperationSequence, string? Reason, DateTimeOffset RecordedAt, string Actor, IReadOnlyList<TransformationLine> Lines);
+
+/// <summary>How far issued and accounted may differ, as a percent of what was issued (V3.3). Absent = 0.</summary>
+public sealed record YieldTolerance(string PartNumber, decimal Percent, string Reason, string SetBy, DateTimeOffset SetAt);
+
+public enum ReconciliationStatus
+{
+    /// <summary>Nothing has been recorded for this issued material yet.</summary>
+    NotRecorded,
+
+    /// <summary>Issued = consumed + scrap + loss + remnant + remaining, exactly.</summary>
+    Balanced,
+
+    /// <summary>The difference is within the part's yield tolerance.</summary>
+    WithinTolerance,
+
+    /// <summary>The difference is beyond tolerance: flagged until a later record explains it. Never scrapped automatically.</summary>
+    Unexplained,
+}
+
+/// <summary>One issued part and lot on a production order, accounted for (V3.3).</summary>
+public sealed record MaterialReconciliation(
+    long OrderNumber,
+    string PartNumber,
+    string? LotNumber,
+    decimal Issued,
+    decimal Returned,
+    decimal Consumed,
+    decimal Scrap,
+    decimal Loss,
+    decimal Remnant,
+    decimal Remaining,
+    decimal TolerancePercent,
+    ReconciliationStatus Status)
+{
+    public decimal NetIssued => Issued - Returned;
+
+    public decimal Accounted => Consumed + Scrap + Loss + Remnant + Remaining;
+
+    /// <summary>Net issued less everything accounted for: positive is material nobody has explained, negative is more accounted than issued.</summary>
+    public decimal Unexplained => NetIssued - Accounted;
+
+    /// <summary>
+    /// Issued = consumed + returned + scrap + loss + remnant + remaining ± tolerance, per issued part and lot. Issues
+    /// and returns come from the ledger; the rest from transformation records, where the latest remaining figure
+    /// replaces earlier ones and everything else adds up.
+    /// </summary>
+    public static IReadOnlyList<MaterialReconciliation> For(
+        long orderNumber,
+        IEnumerable<InventoryTransaction> orderTransactions,
+        IEnumerable<TransformationInfo> transformations,
+        Func<string, decimal> tolerancePercent)
+    {
+        ArgumentNullException.ThrowIfNull(orderTransactions);
+        ArgumentNullException.ThrowIfNull(transformations);
+        ArgumentNullException.ThrowIfNull(tolerancePercent);
+        var issued = new Dictionary<(string Part, string? Lot), (decimal Issued, decimal Returned)>();
+        foreach (var t in orderTransactions.Where(t => t.OrderNumber == orderNumber && t.Kind is InventoryTransactionKind.Issue or InventoryTransactionKind.Return))
+        {
+            var key = (t.PartNumber, t.LotNumber);
+            var (i, r) = issued.GetValueOrDefault(key);
+            issued[key] = t.Kind == InventoryTransactionKind.Issue ? (i + t.Quantity, r) : (i, r + t.Quantity);
+        }
+
+        var records = transformations.Where(x => x.OrderNumber == orderNumber).OrderBy(x => x.TransformationId).ToList();
+        var result = new List<MaterialReconciliation>();
+        foreach (var ((part, lot), (i, r)) in issued.OrderBy(x => x.Key.Part, StringComparer.Ordinal).ThenBy(x => x.Key.Lot, StringComparer.Ordinal))
+        {
+            var lines = records.SelectMany(x => x.Lines.Select(l => (x.TransformationId, Line: l))).ToList();
+            decimal Sum(TransformationRole role) => lines.Where(l => l.Line.Role == role && l.Line.PartNumber == part && l.Line.LotNumber == lot).Sum(l => l.Line.Quantity);
+            var remnant = lines.Where(l => l.Line.Role == TransformationRole.Remnant && l.Line.SourcePart == part && l.Line.SourceLot == lot).Sum(l => l.Line.Quantity);
+            var remaining = lines.LastOrDefault(l => l.Line.Role == TransformationRole.Remaining && l.Line.PartNumber == part && l.Line.LotNumber == lot).Line?.Quantity ?? 0;
+            var recorded = lines.Any(l => (l.Line.PartNumber == part && l.Line.LotNumber == lot && l.Line.Role != TransformationRole.Remnant && l.Line.Role != TransformationRole.Byproduct)
+                || (l.Line.Role == TransformationRole.Remnant && l.Line.SourcePart == part && l.Line.SourceLot == lot));
+            var tolerance = tolerancePercent(part);
+            var row = new MaterialReconciliation(orderNumber, part, lot, i, r, Sum(TransformationRole.Consumed), Sum(TransformationRole.Scrap), Sum(TransformationRole.Loss), remnant, remaining, tolerance, ReconciliationStatus.NotRecorded);
+            var status = !recorded ? (row.NetIssued == 0 ? ReconciliationStatus.Balanced : ReconciliationStatus.NotRecorded)
+                : row.Unexplained == 0 ? ReconciliationStatus.Balanced
+                : Math.Abs(row.Unexplained) <= row.NetIssued * tolerance / 100m ? ReconciliationStatus.WithinTolerance
+                : ReconciliationStatus.Unexplained;
+            result.Add(row with { Status = status });
+        }
+
+        return result;
     }
 }
 
@@ -446,4 +575,13 @@ public interface IInventoryLookup
 
     /// <summary>The merge policy in force for a part, or null (never merged).</summary>
     Task<MergePolicy?> FindMergePolicyAsync(string partNumber, CancellationToken ct);
+
+    /// <summary>Transformation records, oldest first: for one order, or touching one part (and lot), or all (V3.3).</summary>
+    Task<IReadOnlyList<TransformationInfo>> ListTransformationsAsync(long? orderNumber, string? partNumber, string? lotNumber, CancellationToken ct);
+
+    /// <summary>The yield tolerance in force for each part that has one (V3.3).</summary>
+    Task<IReadOnlyList<YieldTolerance>> ListYieldTolerancesAsync(CancellationToken ct);
+
+    /// <summary>The ledger entries genealogy reads (V3.3): receipts, issues and returns to production orders, production receipts, remnants, byproducts, shipments and maintenance issues (installs). Never moves.</summary>
+    Task<IReadOnlyList<InventoryTransaction>> ListGenealogyTransactionsAsync(CancellationToken ct);
 }

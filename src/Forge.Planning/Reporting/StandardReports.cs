@@ -201,6 +201,25 @@ internal static class StandardReports
                 "Splits and merges recorded in the period."),
             Permissions.InventoryRead, null, LotLineageAsync),
         new(
+            new("material-reconciliation", "Material reconciliation", "Production",
+                "What became of the material issued to each production order, per part and lot: issued = consumed + returned + scrap + loss + remnant + remaining, within the part's yield tolerance. Unexplained material stays flagged until a later record explains it; nothing is scrapped to make it add up.",
+                [PartFilter, StatusFilter(Enum.GetNames<ReconciliationStatus>()), SearchFilter],
+                [C("order", "Order", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("lot", "Lot / serial", ReportColumnKind.Text), C("issued", "Issued", ReportColumnKind.Number),
+                 C("returned", "Returned", ReportColumnKind.Number), C("consumed", "Consumed", ReportColumnKind.Number), C("scrap", "Scrap", ReportColumnKind.Number), C("loss", "Loss", ReportColumnKind.Number),
+                 C("remnant", "Remnant", ReportColumnKind.Number), C("remaining", "Remaining", ReportColumnKind.Number), C("unexplained", "Unexplained", ReportColumnKind.Number), C("status", "Status", ReportColumnKind.Text)],
+                ["status", "part", "order"], "status", 3660,
+                "Every order with material issued to it, as it stands now; the period does not apply."),
+            Permissions.InventoryRead, null, MaterialReconciliationAsync),
+        new(
+            new("genealogy-trace", "Genealogy trace", "Inventory",
+                "Where a lot, roll, batch or serial came from and what it became: receipts, splits, merges, issues, returns, consumption, scrap, loss, remnants, production, byproducts, shipments and installs, each as recorded. Moves are not genealogy. Name the lot or serial in Contains.",
+                [PartFilter, StatusFilter("Came from", "Became"), SearchFilter],
+                [C("direction", "Direction", ReportColumnKind.Text), C("relation", "Relation", ReportColumnKind.Text), C("from", "From", ReportColumnKind.Text), C("to", "To", ReportColumnKind.Text),
+                 C("quantity", "Quantity", ReportColumnKind.Number), C("at", "When", ReportColumnKind.DateTime), C("note", "Note", ReportColumnKind.Text)],
+                ["direction", "relation"], "direction", 3660,
+                "Everything recorded, whatever the period."),
+            Permissions.InventoryRead, null, GenealogyTraceAsync),
+        new(
             new("engineering-changes", "Engineering changes", "Engineering",
                 "Every engineering change you may see: what it changes, which reviews it needs and has, who approved and released it, and when it takes effect.",
                 [StatusFilter(Enum.GetNames<ChangeStatus>()), SearchFilter],
@@ -536,6 +555,71 @@ internal static class StandardReports
 
         var open = rows.Count(r => r.Cells[4] is "Draft" or "InReview" or "Approved");
         return new ReportBody(rows, [$"{rows.Count} change(s); {open} open."], ["Engineering changes", "Change reviews"]);
+    }
+
+    private static async Task<ReportBody> MaterialReconciliationAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var inventory = run.Uow.Store<IInventoryLookup>();
+        var orders = (await run.Uow.Store<Forge.Execution.Contracts.IExecutionLookup>().ListOrdersAsync(ct)).ToDictionary(o => o.OrderNumber);
+        var tolerances = (await inventory.ListYieldTolerancesAsync(ct)).ToDictionary(t => t.PartNumber, t => t.Percent, StringComparer.Ordinal);
+        var transformations = (await inventory.ListTransformationsAsync(null, null, null, ct)).ToLookup(t => t.OrderNumber);
+        var byOrder = (await inventory.ListGenealogyTransactionsAsync(ct)).Where(t => t.OrderNumber is not null && t.Kind is InventoryTransactionKind.Issue or InventoryTransactionKind.Return).ToLookup(t => t.OrderNumber!.Value);
+        var rows = new List<ReportRow>();
+        foreach (var group in byOrder.OrderBy(g => g.Key))
+        {
+            if (!orders.TryGetValue(group.Key, out var order) || !run.Visible(order.ProgramId))
+            {
+                continue;
+            }
+
+            foreach (var r in MaterialReconciliation.For(group.Key, group, transformations[group.Key], part => tolerances.GetValueOrDefault(part)))
+            {
+                if (!ReportRun.Is(r.PartNumber, p.PartNumber) || !ReportRun.Is(r.Status.ToString(), p.Status) || !run.Matches(r.PartNumber, r.LotNumber, ReportRun.Id(r.OrderNumber)))
+                {
+                    continue;
+                }
+
+                rows.Add(new ReportRow(
+                    [ReportRun.Id(r.OrderNumber), r.PartNumber, r.LotNumber, r.Issued, r.Returned, r.Consumed, r.Scrap, r.Loss, r.Remnant, r.Remaining, r.Unexplained, r.Status.ToString()],
+                    ["order:" + ReportRun.Id(r.OrderNumber), "item:" + r.PartNumber]));
+            }
+        }
+
+        var flagged = rows.Count(r => (string)r.Cells[11]! == nameof(ReconciliationStatus.Unexplained));
+        return new ReportBody(rows, [$"{rows.Count} issued part/lot line(s); {flagged} unexplained."], ["Inventory ledger", "Transformation records", "Yield tolerances"]);
+    }
+
+    private static async Task<ReportBody> GenealogyTraceAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        if (string.IsNullOrWhiteSpace(p.Search))
+        {
+            return new ReportBody([], ["Name a lot, roll, batch or serial in Contains to trace it."], ["Genealogy graph"]);
+        }
+
+        var graph = await GenealogyGraphService.BuildAsync(run.Uow, run.Principal, ct);
+        var lot = p.Search.Trim().ToUpperInvariant();
+        var starts = graph.Nodes.Where(n => n.Kind == GenealogyNodeKind.Instance && n.LotNumber == lot && ReportRun.Is(n.PartNumber, p.PartNumber)).ToList();
+        var rows = new List<ReportRow>();
+        foreach (var start in starts)
+        {
+            foreach (var (direction, trace) in new[] { ("Came from", graph.Trace(start.Id, TraceDirection.Back)), ("Became", graph.Trace(start.Id, TraceDirection.Forward)) })
+            {
+                if (!ReportRun.Is(direction, p.Status))
+                {
+                    continue;
+                }
+
+                var names = trace.Nodes.ToDictionary(n => n.Id, n => n.Label, StringComparer.Ordinal);
+                foreach (var e in trace.Edges.OrderBy(e => e.At))
+                {
+                    rows.Add(new ReportRow([direction, e.Relation.ToString(), names[e.From], names[e.To], e.Quantity, e.At, e.Note], ["item:" + start.PartNumber]));
+                }
+            }
+        }
+
+        return new ReportBody(rows, [starts.Count == 0 ? $"Nothing is recorded for {lot}." : $"{rows.Count} link(s) from {string.Join(", ", starts.Select(s => s.Label))}."], ["Genealogy graph"]);
     }
 
     private static async Task<ReportBody> LotLineageAsync(ReportRun run, CancellationToken ct)

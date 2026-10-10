@@ -83,6 +83,12 @@ public class AnalystParserTests
     [InlineData("What was roll R-100 split into?", "lot-lineage")]
     [InlineData("Show lot splits and merges", "lot-lineage")]
     [InlineData("What is the lineage of lot CU-1001-A?", "lot-lineage")]
+    [InlineData("Trace roll R-100", "genealogy-trace")]
+    [InlineData("What became of lot L-7?", "genealogy-trace")]
+    [InlineData("Where did roll CU-1001-A come from?", "genealogy-trace")]
+    [InlineData("Show unexplained material", "material-reconciliation")]
+    [InlineData("Show material reconciliation", "material-reconciliation")]
+    [InlineData("Show remnants", "material-reconciliation")]
     [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)
@@ -269,5 +275,12 @@ public class AnalystParserTests
         Assert.Equal("R-100", Parse("What was roll R-100 split into?").Report!.Parameters.Search);
         Assert.Equal("CU-1001-A", Parse("What is the lineage of lot CU-1001-A?").Report!.Parameters.Search);
         Assert.Null(Parse("Show lot splits and merges").Report!.Parameters.Search);
+    }
+
+    [Fact]
+    public void Trace_questions_name_the_instance_to_trace_from()
+    {
+        Assert.Equal("R-100", Parse("Trace roll R-100").Report!.Parameters.Search);
+        Assert.Equal("CU-1001-A", Parse("Where did roll CU-1001-A come from?").Report!.Parameters.Search);
     }
 }

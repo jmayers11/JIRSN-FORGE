@@ -46,6 +46,13 @@ public sealed record SplitRequest(string PartNumber, string LotNumber, string Lo
 
 public sealed record MergeRequest(string PartNumber, InstanceShare[] Sources, string ResultLot, string LocationCode, StockStatus? Status, string? Reason);
 
+public sealed record TransformationRequest(long OrderNumber, int? OperationSequence, TransformationEntry[] Entries, string? Reason);
+
+public sealed record YieldToleranceRequest(decimal Percent, string? Reason);
+
+/// <summary>What became of the material issued to an order (V3.3): one row per issued part and lot, and every record.</summary>
+public sealed record OrderReconciliationView(long OrderNumber, string PartNumber, IReadOnlyList<MaterialReconciliation> Rows, IReadOnlyList<TransformationInfo> Transformations);
+
 public sealed record MergePolicyRequest(bool Allowed, bool SameRevisionRequired, bool SameSupplierLotRequired, string? Reason);
 
 public sealed record OrderMaterialRequest(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason, string? AlternateFor = null);
@@ -232,6 +239,25 @@ public static class MaterialsEndpoints
         api.MapGet("/merge-policy/{part}", (HttpContext http, string part, CancellationToken _) =>
             ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) =>
                 await l.FindMergePolicyAsync(part.Trim().ToUpperInvariant(), ct) ?? new MergePolicy(part.Trim().ToUpperInvariant(), false, true, true, "No policy set: lots are never merged.", "system", DateTimeOffset.MinValue)));
+        // V3.3: what became of material issued to an order, and the yield tolerances in force.
+        api.MapGet("/orders/{order:long}/reconciliation", (HttpContext http, long order, CancellationToken _) =>
+            Read(http, Permissions.InventoryRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var info = await uow.Store<IExecutionLookup>().FindOrderAsync(order, http.RequestAborted);
+                if (info is null || (await HiddenOrdersAsync(uow, principal, http.RequestAborted)).Contains(order))
+                {
+                    throw new CommandRejectedException("order_not_found", $"Order {order} does not exist.");
+                }
+
+                var inventory = uow.Store<IInventoryLookup>();
+                var tolerances = (await inventory.ListYieldTolerancesAsync(http.RequestAborted)).ToDictionary(t => t.PartNumber, t => t.Percent, StringComparer.Ordinal);
+                var transformations = await inventory.ListTransformationsAsync(order, null, null, http.RequestAborted);
+                var rows = MaterialReconciliation.For(order, await inventory.ListTransactionsAsync(null, order, 100_000, http.RequestAborted), transformations, p => tolerances.GetValueOrDefault(p));
+                return new OrderReconciliationView(order, info.PartNumber, rows, transformations);
+            }));
+        api.MapGet("/yield-tolerances", (HttpContext http, CancellationToken _) =>
+            ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListYieldTolerancesAsync(ct)));
         api.MapGet("/requests", (HttpContext http, bool? pending, CancellationToken _) =>
             ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListRequestsAsync(pending ?? true, ct)));
 
@@ -261,6 +287,10 @@ public static class MaterialsEndpoints
             Command(http, b.Reason, c => s.RequestAdjustmentAsync(new RequestAdjustment(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released, b.Change), c, ct)));
         api.MapPost("/counts", (HttpContext http, CountRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordCountAsync(new RecordCount(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released, b.Counted), c, ct)));
+        api.MapPost("/transformations", (HttpContext http, TransformationRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RecordTransformationAsync(new RecordTransformation(b.OrderNumber, b.OperationSequence, b.Entries ?? []), c, ct)));
+        api.MapPost("/yield-tolerance/{part}", (HttpContext http, string part, YieldToleranceRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SetYieldToleranceAsync(new SetYieldTolerance(part, b.Percent), c, ct)));
         api.MapPost("/splits", (HttpContext http, SplitRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.SplitAsync(new SplitInstance(b.PartNumber, b.LotNumber, b.LocationCode, b.Status ?? StockStatus.Released, b.Results ?? []), c, ct)));
         api.MapPost("/merges", (HttpContext http, MergeRequest b, InventoryService s, CancellationToken ct) =>

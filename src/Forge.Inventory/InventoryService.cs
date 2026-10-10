@@ -163,6 +163,11 @@ public interface IInventoryStore
 
     Task InsertMergePolicyAsync(MergePolicy policy, CancellationToken ct);
 
+    /// <summary>Stores a transformation record and its lines (V3.3); returns its id.</summary>
+    Task<long> InsertTransformationAsync(TransformationInfo transformation, CancellationToken ct);
+
+    Task InsertYieldToleranceAsync(YieldTolerance tolerance, CancellationToken ct);
+
     Task SetLotRevisionAsync(string partNumber, string lotNumber, string revision, CancellationToken ct);
 
     Task<bool> InsertLocationAsync(LocationInfo location, DateTimeOffset at, string actor, CancellationToken ct);

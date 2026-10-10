@@ -3,7 +3,7 @@ import { img } from '../icons.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from '../ui.js';
 import { formModal, qty, can } from '../forms.js';
-import { serialDrawer } from '../genealogy.js';
+import { serialDrawer, traceDrawer } from '../genealogy.js';
 
 // Inventory (spec §11, §49): every quantity is the sum of ledger entries, and every entry says who,
 // when, why and what it relates to. Adjustments, count variances and quality releases need a second person.
@@ -11,7 +11,7 @@ import { serialDrawer } from '../genealogy.js';
 const KIND_LABEL = {
   Receipt: 'Receipt', Issue: 'Issue to order', Return: 'Return from order', Transfer: 'Move', Adjustment: 'Adjustment',
   ProductionReceipt: 'From production', Scrap: 'Scrap', CycleCount: 'Count variance', QualityHold: 'Hold', QualityRelease: 'Release', Shipment: 'Shipped',
-  MaintenanceIssue: 'Issue to work order', MaintenanceReturn: 'Return from work order', ProjectIssue: 'Issue to project', ProjectReturn: 'Return from project', Split: 'Split', Merge: 'Merge',
+  MaintenanceIssue: 'Issue to work order', MaintenanceReturn: 'Return from work order', ProjectIssue: 'Issue to project', ProjectReturn: 'Return from project', Split: 'Split', Merge: 'Merge', Remnant: 'Remnant from order', Byproduct: 'Byproduct from order',
 };
 const IDENTITY_KINDS = ['Lot', 'Batch', 'Roll', 'Reel', 'Sheet', 'Piece'];
 const STATUS_TONE = { Released: 'ok', Inspection: 'info', Hold: 'warn' };
@@ -340,7 +340,7 @@ export async function inventoryPage(page, ctx) {
     page.innerHTML = `
       <div class="page-head">
         <div><h1>Inventory</h1><div class="sub">Every quantity is the sum of its ledger entries. Adjustments, count variances and quality releases need a second person.</div></div>
-        <div class="spacer"></div><form id="serial-find" class="inline"><input class="input mono" id="serial-q" placeholder="Serial or lot" style="width:160px"> <button class="btn">Genealogy</button></form>
+        <div class="spacer"></div><form id="serial-find" class="inline"><input class="input mono" id="serial-q" placeholder="Serial or lot" style="width:160px"> <button class="btn">Genealogy</button> <button class="btn" type="button" id="trace-q">Trace</button></form>
       </div>
       ${buttons.length ? `<div class="toolbar">${buttons.map(([k, l]) => `<button class="btn ${k === 'receive' ? 'primary' : ''}" data-act="${k}">${esc(l)}</button>`).join('')}</div>` : '<div class="notice">You can look at stock. Material handlers move it; inventory controllers approve changes.</div>'}
       ${kpis()}
@@ -348,6 +348,7 @@ export async function inventoryPage(page, ctx) {
         <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
         ${tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : stockTab()}
       </section>`;
+    $('#trace-q', page)?.addEventListener('click', () => { const q = $('#serial-q', page).value.trim(); if (q) traceDrawer({ lot: q.toUpperCase() }); });
     $('#serial-find', page)?.addEventListener('submit', ev => { ev.preventDefault(); const q = $('#serial-q', page).value.trim(); if (q) serialDrawer(q.toUpperCase()); });
 
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
@@ -388,21 +389,25 @@ export async function inventoryPage(page, ctx) {
     const d = drawer(`${part}${item(part) ? ` — ${item(part).description}` : ''}`, '<div class="muted">Loading…</div>');
     const [stock, ledger, lots, policy] = await Promise.all([tryGet(`/api/inventory/positions?part=${encodeURIComponent(part)}`), tryGet(`/api/inventory/transactions?part=${encodeURIComponent(part)}&take=100`),
       tryGet(`/api/inventory/lots?part=${encodeURIComponent(part)}`), tryGet(`/api/inventory/merge-policy/${encodeURIComponent(part)}`)]);
+    const tolerance = ((await tryGet('/api/inventory/yield-tolerances')).data ?? []).find(t => t.partNumber === part);
     const kindOf = lot => (lots.data ?? []).find(l => l.lotNumber === lot)?.identityKind;
     const divisible = item(part)?.lotTracked && !item(part)?.serialized;
     const p = policy.data;
     d.element.innerHTML = `
       <h3 style="margin:0">Where it is</h3>
       ${stock.error ? errorBlock(stock.error, 'stock') : stock.data.length ? `<table class="table"><thead><tr><th>Location</th><th>Instance</th><th>Quality</th><th>Custody</th><th>Point of use</th><th>Planning</th><th class="num">Qty</th></tr></thead><tbody>
-        ${stock.data.map(b => `<tr><td>${esc(b.locationPath)}</td><td>${b.lotNumber ? `${esc(b.lotNumber)} <span class="faint">${esc(kindOf(b.lotNumber) ?? '')}</span> <button class="btn small ghost" data-lineage="${esc(b.lotNumber)}">Lineage</button>${handler && divisible && b.custody === 'Company' ? ` <button class="btn small ghost" data-split='${esc(JSON.stringify({ partNumber: part, lotNumber: b.lotNumber, locationCode: b.locationCode, status: b.qualityStatus }))}'>Split</button>` : ''}` : '—'}</td><td><span class="pill ${STATUS_TONE[b.qualityStatus]}">${esc(b.qualityStatus)}</span></td>
+        ${stock.data.map(b => `<tr><td>${esc(b.locationPath)}</td><td>${b.lotNumber ? `${esc(b.lotNumber)} <span class="faint">${esc(kindOf(b.lotNumber) ?? '')}</span> <button class="btn small ghost" data-trace="${esc(b.lotNumber)}">Trace</button> <button class="btn small ghost" data-lineage="${esc(b.lotNumber)}">Splits</button>${handler && divisible && b.custody === 'Company' ? ` <button class="btn small ghost" data-split='${esc(JSON.stringify({ partNumber: part, lotNumber: b.lotNumber, locationCode: b.locationCode, status: b.qualityStatus }))}'>Split</button>` : ''}` : '—'}</td><td><span class="pill ${STATUS_TONE[b.qualityStatus]}">${esc(b.qualityStatus)}</span></td>
           <td>${b.custody === 'Company' ? 'Company' : `<span class="pill warn">${esc(custodyText(b))}</span>`}</td><td>${esc(b.pointOfUseWorkCenter ? `${b.pointOfUseWorkCenter}${b.machineCode ? ` · ${b.machineCode}` : ''}` : '—')}</td>
           <td>${b.availableForPlanning ? 'Counts' : '<span class="faint">Not counted</span>'}</td><td class="num">${qty(b.quantity)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None on hand.</div>'}
       ${divisible ? `<div class="notice" style="margin-top:8px">Merging lots: ${p?.allowed ? `allowed${p.sameRevisionRequired ? ', within one revision' : ''}${p.sameSupplierLotRequired ? ', within one supplier lot' : ''}` : 'never'}${p?.setBy && p.setBy !== 'system' ? ` <span class="faint">· set by ${esc(who(p.setBy))}: ${esc(p.reason)}</span>` : ''}
         ${controller ? ' <button class="btn small" data-merge-policy>Change</button>' : ''}</div>` : ''}
+      <div class="notice" style="margin-top:8px">Yield tolerance: ${tolerance ? `±${qty(tolerance.percent)}% of what is issued <span class="faint">· set by ${esc(who(tolerance.setBy))}: ${esc(tolerance.reason)}</span>` : 'none — issued and accounted must match exactly'}
+        ${controller ? ' <button class="btn small" data-yield>Change</button>' : ''}</div>
       <div id="lineage"></div>
       <h3 style="margin:0">How it got there</h3>
       ${ledger.error ? errorBlock(ledger.error, 'ledger') : ledger.data.length ? ledgerTable(ledger.data) : '<div class="muted">No transactions.</div>'}
       <div class="faint"><a href="#/material-plan?part=${encodeURIComponent(part)}">Open the material plan for ${esc(part)} →</a></div>`;
+    $$('[data-trace]', d.element).forEach(b => b.addEventListener('click', () => traceDrawer({ part, lot: b.dataset.trace })));
     $$('[data-split]', d.element).forEach(b => b.addEventListener('click', () => actions.split(JSON.parse(b.dataset.split))));
     $$('[data-lineage]', d.element).forEach(b => b.addEventListener('click', async () => {
       const { data: g, error } = await tryGet(`/api/inventory/lots/${encodeURIComponent(part)}/${encodeURIComponent(b.dataset.lineage)}/lineage`);
@@ -412,6 +417,10 @@ export async function inventoryPage(page, ctx) {
         ${g.results.length ? `<div>Became:</div><ul>${g.results.map(l => link(l, `into ${l.resultLot}`)).join('')}</ul>` : ''}
         ${g.origins.length ? `<div class="faint">First instances: ${g.origins.map(esc).join(', ')}</div>` : ''}`;
     }));
+    $('[data-yield]', d.element)?.addEventListener('click', () => formModal({
+      title: `Yield tolerance for ${part}`, detail: 'How far issued and accounted for (consumed, returned, scrap, loss, remnant, remaining) may differ before the difference is unexplained. Every setting is kept.', confirmLabel: 'Save', reasonRequired: true,
+      fields: [{ name: 'percent', label: 'Percent of what is issued (0 to 50)', type: 'number', min: 0, max: 50, step: 'any', value: tolerance?.percent ?? 0, required: true }],
+    }, (v, reason) => command(`/api/inventory/yield-tolerance/${encodeURIComponent(part)}`, { percent: Number(v.percent) }, reason), async () => { await reload(); partDrawer(part); }));
     $('[data-merge-policy]', d.element)?.addEventListener('click', () => formModal({
       title: `Merge policy for ${part}`, detail: 'Merged lots stop being separately traceable. Every setting is kept with who set it and why.', confirmLabel: 'Save', reasonRequired: true,
       fields: [

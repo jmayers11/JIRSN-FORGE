@@ -1,6 +1,6 @@
-import { tryGet } from './api.js';
+import { tryGet, command } from './api.js';
 import { who } from './people.js';
-import { esc, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, drawer } from './ui.js';
+import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from './ui.js';
 import { qty } from './forms.js';
 
 // Genealogy (V2.11): read from the as-built record and the other records as they were written — component
@@ -64,4 +64,115 @@ export async function appendOrderGenealogy(page, orderNumber) {
   section.innerHTML = `<header><h2>As built and genealogy</h2><span class="spacer"></span><span class="muted">as recorded at issue, never rewritten</span></header>${orderGenealogyHtml(res.data)}`;
   page.append(section);
   bindSerialLinks(section);
+}
+
+// ---------------------------------------------------------------- V3.3: the genealogy graph and material accounting
+
+const RELATION_TEXT = {
+  Received: 'received', Split: 'split', Merged: 'merged', Issued: 'issued', Returned: 'returned', Consumed: 'consumed', Scrapped: 'scrapped',
+  Lost: 'lost', Remnant: 'remnant cut', Produced: 'produced', Byproduct: 'byproduct', Shipped: 'shipped', Installed: 'installed',
+};
+
+/** Opens a trace drawer: where something came from and what it became, each link as recorded. Moves are not genealogy. */
+export async function traceDrawer({ part, lot, order, shipment }) {
+  const q = new URLSearchParams({ direction: 'Both' });
+  if (part) q.set('part', part);
+  if (lot) q.set('lot', lot);
+  if (order) q.set('order', order);
+  if (shipment) q.set('shipment', shipment);
+  const d = drawer(`Trace · ${order ? `order ${order}` : shipment ? `shipment ${shipment}` : `${part ? part + ' ' : ''}${lot}`}`, '<div class="muted">Loading…</div>');
+  const res = await tryGet(`/api/genealogy/trace?${q}`);
+  if (res.error) { d.element.innerHTML = errorBlock(res.error, 'the trace'); return; }
+  const t = res.data;
+  const byId = new Map(t.nodes.map(n => [n.id, n]));
+  const label = id => {
+    const n = byId.get(id);
+    if (!n) return esc(id);
+    if (n.kind === 'Instance') return `<a href="#" data-trace-part="${esc(n.partNumber)}" data-trace-lot="${esc(n.lotNumber)}">${esc(n.label)}</a>`;
+    if (n.kind === 'Order') return `<a href="#/orders/${n.orderNumber}">${esc(n.label)}</a>`;
+    return esc(n.label);
+  };
+  const tree = (id, forward, depth, seen) => {
+    const links = t.edges.filter(e => (forward ? e.from : e.to) === id);
+    if (!links.length || depth > 12) return '';
+    return `<ul class="trace">${links.map(e => {
+      const other = forward ? e.to : e.from;
+      const again = seen.has(other);
+      const next = new Set(seen).add(other);
+      return `<li><span class="pill none">${esc(RELATION_TEXT[e.relation] ?? e.relation)}</span> ${qty(e.quantity)} · ${label(other)} <span class="faint">${esc(fmtDateTime(e.at))}${e.note ? ` · ${esc(e.note)}` : ''}</span>${again ? ' <span class="faint">(shown above)</span>' : tree(other, forward, depth + 1, next)}</li>`;
+    }).join('')}</ul>`;
+  };
+  const start = t.start.id;
+  const back = tree(start, false, 0, new Set([start]));
+  const forward = tree(start, true, 0, new Set([start]));
+  d.element.innerHTML = `
+    <p><b>${esc(t.start.label)}</b></p>
+    <h3>Came from</h3>${back || '<p class="muted">Nothing recorded before it.</p>'}
+    <h3>Became</h3>${forward || '<p class="muted">Nothing recorded after it yet.</p>'}
+    ${t.notes.length ? `<div class="faint">${t.notes.map(esc).join('<br>')}</div>` : ''}
+    <div class="faint">Each link is read from a record written when it happened: receipts, splits and merges, issues and returns, transformation records, production receipts, shipments and installs. Moving stock is never a link.</div>`;
+  $$('[data-trace-lot]', d.element).forEach(a => a.addEventListener('click', ev => { ev.preventDefault(); traceDrawer({ part: a.dataset.tracePart, lot: a.dataset.traceLot }); }));
+}
+
+const STATUS_PILL = { Balanced: 'ok', WithinTolerance: 'ok', Unexplained: 'bad', NotRecorded: 'none' };
+const STATUS_TEXT = { Balanced: 'Balanced', WithinTolerance: 'Within tolerance', Unexplained: 'Unexplained', NotRecorded: 'Not recorded' };
+
+/** The material accounting panel on an order page (V3.3): issued = consumed + returned + scrap + loss + remnant + remaining. */
+export async function appendOrderReconciliation(page, orderNumber, canRecord) {
+  const res = await tryGet(`/api/inventory/orders/${orderNumber}/reconciliation`);
+  if (res.error || !res.data.rows.length) return;
+  const section = document.createElement('section');
+  section.className = 'panel';
+  const render = v => {
+    section.innerHTML = `<header><h2>What became of the material</h2><span class="spacer"></span>${canRecord ? '<button class="btn small" data-record>Record</button>' : ''}</header>
+      <table class="table"><thead><tr><th>Part</th><th>Lot / serial</th><th class="num">Issued</th><th class="num">Returned</th><th class="num">Consumed</th><th class="num">Scrap</th><th class="num">Loss</th><th class="num">Remnant</th><th class="num">Remaining</th><th class="num">Unexplained</th><th></th></tr></thead><tbody>
+      ${v.rows.map(r => `<tr><td class="mono">${esc(r.partNumber)}</td><td>${r.lotNumber ? `<a href="#" data-trace-part="${esc(r.partNumber)}" data-trace-lot="${esc(r.lotNumber)}">${esc(r.lotNumber)}</a>` : '—'}</td>
+        <td class="num">${qty(r.issued)}</td><td class="num">${qty(r.returned)}</td><td class="num">${qty(r.consumed)}</td><td class="num">${qty(r.scrap)}</td><td class="num">${qty(r.loss)}</td><td class="num">${qty(r.remnant)}</td><td class="num">${qty(r.remaining)}</td>
+        <td class="num ${r.status === 'Unexplained' ? 'c-bad' : ''}"><b>${qty(r.unexplained)}</b>${r.tolerancePercent ? ` <span class="faint">±${qty(r.tolerancePercent)}%</span>` : ''}</td>
+        <td><span class="pill ${STATUS_PILL[r.status]}">${esc(STATUS_TEXT[r.status] ?? r.status)}</span></td></tr>`).join('')}</tbody></table>
+      <div class="faint" style="margin-top:6px">Issued = consumed + returned + scrap + loss + remnant + remaining, within the part's yield tolerance. Unexplained material stays flagged until a later record explains it; nothing is scrapped to make it add up. ${v.transformations.length} record(s), never changed.</div>`;
+    $$('[data-trace-lot]', section).forEach(a => a.addEventListener('click', ev => { ev.preventDefault(); traceDrawer({ part: a.dataset.tracePart, lot: a.dataset.traceLot }); }));
+    $('[data-record]', section)?.addEventListener('click', () => recordTransformation(v));
+  };
+  const recordTransformation = async v => {
+    const issued = v.rows.filter(r => r.issued - r.returned > 0);
+    const input = (i, role) => `<input class="input num" type="number" step="any" min="0" data-row="${i}" data-role="${role}" style="width:90px">`;
+    const extraHtml = `
+      <table class="table"><thead><tr><th>Issued</th><th>Consumed</th><th>Scrap</th><th>Loss</th><th>Still at the work center</th></tr></thead><tbody>
+      ${issued.map((r, i) => `<tr><td class="mono">${esc(r.partNumber)} ${esc(r.lotNumber ?? '')} <span class="faint">${qty(r.unexplained)} open</span></td><td>${input(i, 'Consumed')}</td><td>${input(i, 'Scrap')}</td><td>${input(i, 'Loss')}</td><td>${input(i, 'Remaining')}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="form-grid">
+        <label>Remnant: cut from lot <input class="input mono" data-x="remnantSource" placeholder="${esc(issued.find(r => r.lotNumber)?.lotNumber ?? '')}"></label>
+        <label>New remnant number <input class="input mono" data-x="remnantLot"></label>
+        <label>Remnant quantity <input class="input" type="number" step="any" min="0" data-x="remnantQty"></label>
+        <label>Remnant into location <input class="input mono" data-x="remnantLocation"></label>
+        <label>Byproduct part <input class="input mono" data-x="byPart"></label>
+        <label>Byproduct number <input class="input mono" data-x="byLot"></label>
+        <label>Byproduct quantity <input class="input" type="number" step="any" min="0" data-x="byQty"></label>
+        <label>Byproduct into location <input class="input mono" data-x="byLocation"></label>
+      </div>`;
+    const done = await confirmWithReason({ title: `What became of the material on order ${orderNumber}`, detail: 'Leave a box empty for nothing. Scrap or loss needs a reason.', confirmLabel: 'Record', reasonRequired: false, extraHtml },
+      (reason, m) => {
+        const entries = [];
+        $$('[data-row]', m).forEach(el => {
+          if (el.value === '') return;
+          const r = issued[Number(el.dataset.row)];
+          entries.push({ role: el.dataset.role, partNumber: r.partNumber, lotNumber: r.lotNumber, quantity: Number(el.value) });
+        });
+        const x = k => $(`[data-x="${k}"]`, m).value.trim();
+        if (x('remnantQty')) {
+          const source = issued.find(r => r.lotNumber === x('remnantSource').toUpperCase()) ?? issued.find(r => r.lotNumber);
+          entries.push({ role: 'Remnant', partNumber: source?.partNumber ?? '', lotNumber: x('remnantLot'), quantity: Number(x('remnantQty')), sourceLot: x('remnantSource') || source?.lotNumber, locationCode: x('remnantLocation') });
+        }
+        if (x('byQty')) entries.push({ role: 'Byproduct', partNumber: x('byPart'), lotNumber: x('byLot') || null, quantity: Number(x('byQty')), locationCode: x('byLocation') });
+        return command('/api/inventory/transformations', { orderNumber, entries }, reason);
+      });
+    if (done) {
+      toast(done.message);
+      const again = await tryGet(`/api/inventory/orders/${orderNumber}/reconciliation`);
+      if (!again.error) render(again.data);
+    }
+  };
+  render(res.data);
+  page.append(section);
 }

@@ -5,7 +5,7 @@ using Npgsql;
 
 namespace Forge.Inventory.Infrastructure;
 
-internal sealed class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventoryStore, IInventoryLookup
+internal sealed partial class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventoryStore, IInventoryLookup
 {
     private const string TransactionSql =
         "SELECT transaction_id, kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number, order_number, po_number, po_line, reason, at, actor, approved_by, request_id, shipment_id, work_order_id, part_revision, substitutes_for, alternate_id, primary_quantity, project_code, project_line FROM inventory.transaction";

@@ -68,8 +68,10 @@ async function main() {
       const projects = !(await get('planner', '/api/projects/')).length;
       const horizon = !(await horizonWindow());
       const places = !(await get('ivy', '/api/inventory/locations')).some(l => l.code === 'SL-B-SIDE');
-      const identity = !(await get('eng', '/api/engineering/items')).some(i => i.partNumber === 'FOIL-CU');
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const itemList = await get('eng', '/api/engineering/items');
+      const identity = !itemList.some(i => i.partNumber === 'FOIL-CU');
+      const transformation = !itemList.some(i => i.partNumber === 'SHIELD-CU');
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -127,6 +129,10 @@ async function main() {
         console.log('Adding a sample copper foil roll split to width and a merge policy.');
         await seedIdentity();
       }
+      if (transformation) {
+        console.log('Adding a sample order that slits copper foil, with a remnant, a loss and material still to explain.');
+        await seedTransformation();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -154,6 +160,7 @@ async function main() {
     await seedHorizon();
     await seedPlaces();
     await seedIdentity();
+    await seedTransformation();
     return finish();
   }
 
@@ -308,6 +315,7 @@ async function main() {
   await seedHorizon();
   await seedPlaces();
   await seedIdentity();
+  await seedTransformation();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -750,6 +758,27 @@ async function seedIdentity() {
   await post('stores', '/api/inventory/transfers', { partNumber: 'FOIL-CU', quantity: 1000, fromLocation: 'STORES', toLocation: 'SL-B-SIDE', lotNumber: 'CU-1001', status: 'Released', reason: 'Sample: to slitter B' });
   await post('stores', '/api/inventory/splits', { partNumber: 'FOIL-CU', lotNumber: 'CU-1001', locationCode: 'SL-B-SIDE', status: 'Released', results: [{ lotNumber: 'CU-1001-A', quantity: 900 }, { lotNumber: 'CU-1001-B', quantity: 70 }, { lotNumber: 'CU-1001-C', quantity: 30 }], reason: 'Sample: slit to three widths' });
   await post('ivy', '/api/inventory/merge-policy/FOIL-CU', { allowed: true, sameRevisionRequired: true, sameSupplierLotRequired: true, reason: 'Sample: short rolls of one mill lot may be combined' });
+}
+
+async function seedTransformation() {
+  step('Transformation: an order slits foil roll CU-1001-A into shield strip, cuts a remnant and loses edge trim; 20 m is still unexplained — see the order page and Trace on CU-1001-A-R');
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  await post('eng', '/api/engineering/items', { partNumber: 'SHIELD-CU', description: 'Copper shield strip', unitOfMeasure: 'M', makeBuy: 'Make', leadTimeDays: 3, lotTracked: true });
+  await post('eng', '/api/engineering/items/SHIELD-CU/revisions', { revision: 'A' });
+  await post('eng', '/api/engineering/items/SHIELD-CU/revisions/A/bom', { lineNumber: 1, componentPartNumber: 'FOIL-CU', quantityPer: 1, scrapPercent: 0 });
+  await post('eng', '/api/engineering/items/SHIELD-CU/revisions/A/routing', { sequence: 10, description: 'Slit to shield width', workCenterCode: 'SLIT-WC', activityCode: 'RUN_SLITTER', eligibleMachines: ['SLITTER-A', 'SLITTER-B'], requiredQualifications: [], setupMinutes: 15, runMinutesPerUnit: 0.02, crewSize: 1 });
+  await post('approver', '/api/engineering/items/SHIELD-CU/revisions/A/release', { reason: 'Sample: shield strip baseline' });
+  const o = await post('eng', '/api/orders/', { partNumber: 'SHIELD-CU', quantity: 900, dueDate: day(4), priority: 3 });
+  const order = Number(o.entityId);
+  await post('planner', `/api/orders/${order}/release`, { reason: 'Sample: shield strip for stock' });
+  await post('stores', '/api/inventory/issues', { orderNumber: order, partNumber: 'FOIL-CU', quantity: 900, locationCode: 'SL-B-SIDE', lotNumber: 'CU-1001-A' });
+  await post('ivy', '/api/inventory/yield-tolerance/FOIL-CU', { percent: 1, reason: 'Sample: slitting edge trim varies by about 1%' });
+  await post('stores', '/api/inventory/transformations', { orderNumber: order, operationSequence: 10, reason: 'Sample: edge trim to the chopper',
+    entries: [
+      { role: 'Consumed', partNumber: 'FOIL-CU', lotNumber: 'CU-1001-A', quantity: 700 },
+      { role: 'Remnant', partNumber: 'FOIL-CU', lotNumber: 'CU-1001-A-R', quantity: 150, sourceLot: 'CU-1001-A', locationCode: 'STORES' },
+      { role: 'Loss', partNumber: 'FOIL-CU', lotNumber: 'CU-1001-A', quantity: 30 },
+    ] });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });
