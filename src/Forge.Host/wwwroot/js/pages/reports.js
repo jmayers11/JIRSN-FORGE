@@ -21,7 +21,7 @@ export function traceLink(t) {
   const route = {
     order: `#/orders/${id}`, item: `#/engineering/${encodeURIComponent(id)}`, document: `#/engineering/documents/${encodeURIComponent(id)}`, change: `#/engineering/changes/${encodeURIComponent(id)}`, supplier: '#/procurement?tab=suppliers', schedule: '#/scheduling', constraint: '#/scheduling?closed=1', report: `#/orders`,
     machine: '#/maintenance', asset: '#/maintenance?tab=assets', requisition: '#/procurement?tab=requisitions', downtime: '#/maintenance?tab=log', 'work-order': '#/maintenance?tab=orders',
-    demand: '#/material-plan?tab=demand', delivery: '#/programs', contract: '#/programs', program: `#/programs/${id}`,
+    demand: '#/material-plan?tab=demand', delivery: '#/programs', contract: '#/programs', program: `#/programs/${id}`, project: `#/projects/${encodeURIComponent(id)}`, part: `#/engineering/${encodeURIComponent(id)}`,
     shipment: '#/shipping', ncr: '#/quality?tab=ncr', inspection: '#/quality', transaction: '#/inventory?tab=ledger',
     po: '#/procurement', request: '#/inventory', audit: '#/settings', person: '#/workforce', qualification: '#/workforce',
   }[kind];

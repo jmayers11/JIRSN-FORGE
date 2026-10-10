@@ -65,7 +65,8 @@ async function main() {
       const requisitions = !(await get('planner', '/api/procurement/requisitions?open=false')).length;
       const assets = !(await get('mp', '/api/maintenance/assets')).length;
       const outages = !(await get('mp', '/api/maintenance/outages?includeDecided=true')).length;
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const projects = !(await get('planner', '/api/projects/')).length;
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -106,6 +107,10 @@ async function main() {
         console.log('Adding sample maintenance readiness and a proposed outage.');
         await seedMaintenanceReadiness();
       }
+      if (projects) {
+        console.log('Adding a sample facility project.');
+        await seedProjects();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -128,6 +133,7 @@ async function main() {
     await seedRequisitions();
     await seedAssets();
     await seedMaintenanceReadiness();
+    await seedProjects();
     return finish();
   }
 
@@ -277,6 +283,7 @@ async function main() {
   await seedRequisitions();
   await seedAssets();
   await seedMaintenanceReadiness();
+  await seedProjects();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -631,6 +638,36 @@ async function seedMaintenanceReadiness() {
     const start = new Date(Date.now() + 3 * 864e5);
     start.setUTCHours(6, 0, 0, 0);
     await post('mp', `/api/maintenance/work-orders/${cal.entityId}/schedule`, { startsAt: start.toISOString(), endsAt: new Date(start.getTime() + 3 * 36e5).toISOString(), reason: 'Sample: early shift before the customer run' });
+  }
+}
+
+async function seedProjects() {
+  step('Projects: FAC-2027-014, a gas line for the new slitter — approved by the facilities manager, shortages requested, pipe and valves on order');
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  const people = (await get(adminSubject, '/api/kernel/people')).map(p => p.idpSubject);
+  if (!people.includes('fm')) await person('fm', 'Frances Facilities', 'FacilitiesManager');
+  const items = (await get('eng', '/api/engineering/items')).map(i => i.partNumber);
+  for (const [part, description] of [['PIPE-SCH40-2', 'Black steel pipe, schedule 40, 2 in (per ft)'], ['VALVE-BALL-2', 'Ball valve, gas rated, 2 in'], ['REG-GAS-2', 'Gas pressure regulator, 2 in']]) {
+    if (items.includes(part)) continue;
+    await post('eng', '/api/engineering/items', { partNumber: part, description, unitOfMeasure: 'EA', makeBuy: 'Buy', leadTimeDays: 10 });
+    await post('eng', `/api/engineering/items/${part}/revisions`, { revision: 'A' });
+    await post('approver', `/api/engineering/items/${part}/revisions/A/release`, { reason: 'Sample: catalogue part' });
+  }
+  await post('stores', '/api/inventory/receipts', { partNumber: 'PIPE-SCH40-2', quantity: 60, locationCode: 'STORES', reason: 'Sample: pipe left from the 2024 compressor job' });
+  await post('mp', '/api/projects/', { code: 'FAC-2027-014', title: 'Gas line for slitter 3', type: 'Facility', funding: 'Capital', budget: 120000, startDate: day(7), endDate: day(97), financialReference: 'CAPEX-2027-014', owner: 'Frances Facilities', description: 'Sample: natural gas supply from the main header to the new slitter dryer' });
+  for (const [part, quantity, need, what] of [['PIPE-SCH40-2', 140, 21, 'Header to slitter 3 run'], ['VALVE-BALL-2', 6, 21, 'Isolation valves'], ['REG-GAS-2', 2, 28, 'Regulator station']]) {
+    await post('mp', '/api/projects/FAC-2027-014/lines', { partNumber: part, quantity, needDate: day(need), description: what });
+  }
+  await post('mp', '/api/projects/FAC-2027-014/tasks', { title: 'Permit approved by the city', dueDate: day(14), milestone: true });
+  await post('mp', '/api/projects/FAC-2027-014/tasks', { title: 'Pressure test and gas utility sign-off', dueDate: day(60), milestone: true });
+  await post('fm', '/api/projects/FAC-2027-014/approve', { reason: 'Sample: capital committee approval CAPEX-2027-014' });
+  await post('fm', '/api/projects/FAC-2027-014/request-material', { reason: 'Sample: order the gas line material' });
+  const suppliers = (await get('bob', '/api/procurement/suppliers')).map(x => x.code);
+  if (!suppliers.includes('FERGUSON')) await post('bob', '/api/procurement/suppliers', { code: 'FERGUSON', name: 'Ferguson', notes: 'Pipe, valves and fittings' });
+  const open = (await get('bob', '/api/procurement/requisitions')).filter(r => r.sourceKey === 'project:FAC-2027-014/1' || r.sourceKey === 'project:FAC-2027-014/2');
+  if (open.length) {
+    const po = await post('bob', '/api/procurement/purchase-orders', { supplier: 'FERGUSON', lines: open.map(r => ({ partNumber: r.partNumber, quantity: r.quantity, promisedDate: day(14), requisitionId: r.requisitionId })) });
+    await post('pat', `/api/procurement/purchase-orders/${po.entityId}/approve`, { reason: 'Sample: within the project budget' });
   }
 }
 

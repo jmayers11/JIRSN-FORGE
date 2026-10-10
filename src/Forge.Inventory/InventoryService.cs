@@ -127,7 +127,9 @@ public sealed record NewTransaction(
     string? PartRevision = null,
     string? SubstitutesFor = null,
     long? AlternateId = null,
-    decimal? PrimaryQuantity = null);
+    decimal? PrimaryQuantity = null,
+    string? ProjectCode = null,
+    int? ProjectLine = null);
 
 public interface IInventoryStore
 {
@@ -281,6 +283,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             var lot = RequireLot(item, c.LotNumber);
             var quantity = RequireQuantity(item, c.Quantity);
             int? line = null;
+            (string Code, int Line)? project = null;
             if (c.PoNumber is { } poNumber)
             {
                 var po = await uow.Store<IProcurementLookup>().FindPurchaseOrderAsync(poNumber, ct)
@@ -305,6 +308,13 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 }
 
                 line = poLine.LineNumber;
+
+                // Bought for a project line (V2.10): the receipt records the allocation to that line.
+                if (Forge.Projects.Contracts.ProjectSource.TryParse(poLine.SourceKey, out var projectCode, out var projectLine)
+                    && (await uow.Store<Forge.Projects.Contracts.IProjectLookup>().ListLinesAsync(projectCode, ct)).Any(l => l.LineNumber == projectLine))
+                {
+                    project = (projectCode, projectLine);
+                }
             }
 
             var revision = await ReceivedRevisionAsync(uow, item.PartNumber, c.Revision, ct);
@@ -314,8 +324,9 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             }
 
             var status = c.Inspect ? StockStatus.Inspection : StockStatus.Available;
-            var txn = new NewTransaction(InventoryTransactionKind.Receipt, item.PartNumber, quantity, null, null, location.Code, status, lot, PoNumber: c.PoNumber, PoLine: line, Reason: context.Reason, PartRevision: revision);
-            return (txn, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber}{(revision is null ? string.Empty : " rev " + revision)} into {location.Code} ({status})" + (c.PoNumber is null ? "." : $" against PO {c.PoNumber} line {line}."),
+            var txn = new NewTransaction(InventoryTransactionKind.Receipt, item.PartNumber, quantity, null, null, location.Code, status, lot, PoNumber: c.PoNumber, PoLine: line, Reason: context.Reason, PartRevision: revision,
+                ProjectCode: project?.Code, ProjectLine: project?.Line);
+            return (txn, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber}{(revision is null ? string.Empty : " rev " + revision)} into {location.Code} ({status})" + (c.PoNumber is null ? "." : $" against PO {c.PoNumber} line {line}" + (project is { } alloc ? $", for project {alloc.Code} line {alloc.Line}." : ".")),
                 id => pipeline.Event(new InventoryReceived(id, item.PartNumber, quantity, location.Code, status.ToString(), c.PoNumber, null), context, SourceContext, StockEntity, item.PartNumber));
         }, ct);
     }

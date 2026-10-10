@@ -165,7 +165,8 @@ public sealed record OutageInfo(
     DateTimeOffset? DecidedAt,
     string? DecisionReason,
     string? Impact,
-    long? DowntimeId);
+    long? DowntimeId,
+    string? ProjectCode = null);
 
 public interface IMaintenanceLookup
 {

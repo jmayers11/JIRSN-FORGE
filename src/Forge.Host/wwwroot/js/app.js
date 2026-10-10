@@ -17,6 +17,7 @@ import { procurementPage } from './pages/procurement.js';
 import { qualityPage } from './pages/quality.js';
 import { shippingPage } from './pages/shipping.js';
 import { programsPage } from './pages/programs.js';
+import { projectsPage } from './pages/projects.js';
 import { reportsPage } from './pages/reports.js';
 import { engineeringPage } from './pages/engineering.js';
 import { analystPage } from './pages/analyst.js';
@@ -26,6 +27,7 @@ const NAV = [
   { route: 'home', label: 'Home', icon: 'dashboard', page: horizonPage },
   { route: 'horizon', label: 'Horizon', icon: 'analytics', page: timelinePage },
   { route: 'programs', label: 'Programs', icon: 'trend', page: programsPage },
+  { route: 'projects', label: 'Projects', icon: 'calendar', page: projectsPage },
   { route: 'orders', label: 'Production Orders', icon: 'orders', page: ordersPage },
   { route: 'engineering', label: 'Engineering', icon: 'blade', page: engineeringPage },
   { route: 'scheduling', label: 'Scheduling', icon: 'planning', page: schedulingPage },
@@ -51,7 +53,8 @@ const ROLE_TITLES = {
   Auditor: 'Auditor', MaterialHandler: 'Material Handler', InventoryController: 'Inventory Controller', Buyer: 'Buyer',
   PurchasingManager: 'Purchasing Manager', ShopFloorTerminal: 'Shop Floor Terminal', Inspector: 'Inspector',
   QualityEngineer: 'Quality Engineer', QualityManager: 'Quality Manager', Shipper: 'Shipper',
-  ProgramManager: 'Program Manager', MaintenancePlanner: 'Maintenance Planner',
+  ProgramManager: 'Program Manager', MaintenancePlanner: 'Maintenance Planner', FacilitiesManager: 'Facilities Manager',
+  DocumentController: 'Document Controller', ChangeBoard: 'Change Board',
 };
 export const roleTitle = r => ROLE_TITLES[r] ?? r;
 

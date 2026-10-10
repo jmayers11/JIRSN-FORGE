@@ -201,7 +201,7 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
             Long(workOrderId));
 
     private const string OutageSql =
-        "SELECT outage_id, machine_code, starts_at, ends_at, reason, work_order_id, status, proposed_by, proposed_at, decided_by, decided_at, decision_reason, impact, downtime_id FROM maintenance.outage";
+        "SELECT outage_id, machine_code, starts_at, ends_at, reason, work_order_id, status, proposed_by, proposed_at, decided_by, decided_at, decision_reason, impact, downtime_id, project_code FROM maintenance.outage";
 
     public Task<IReadOnlyList<OutageInfo>> ListOutagesAsync(bool includeDecided, CancellationToken ct) =>
         ReadRowsAsync(
@@ -216,8 +216,8 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
     {
         ArgumentNullException.ThrowIfNull(outage);
         await using var cmd = uow.Command(
-            "INSERT INTO maintenance.outage (machine_code, starts_at, ends_at, reason, work_order_id, status, proposed_by, proposed_at) VALUES ($1, $2, $3, $4, $5, 'Proposed', $6, $7) RETURNING outage_id",
-            outage.MachineCode, outage.StartsAt, outage.EndsAt, outage.Reason, Long(outage.WorkOrderId), outage.ProposedBy, outage.ProposedAt);
+            "INSERT INTO maintenance.outage (machine_code, starts_at, ends_at, reason, work_order_id, status, proposed_by, proposed_at, project_code) VALUES ($1, $2, $3, $4, $5, 'Proposed', $6, $7, $8) RETURNING outage_id",
+            outage.MachineCode, outage.StartsAt, outage.EndsAt, outage.Reason, Long(outage.WorkOrderId), outage.ProposedBy, outage.ProposedAt, Text(outage.ProjectCode));
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -232,7 +232,7 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
 
     private static OutageInfo ReadOutage(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetString(1), r.GetFieldValue<DateTimeOffset>(2), r.GetFieldValue<DateTimeOffset>(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetInt64(5),
-        Enum.Parse<OutageStatus>(r.GetString(6)), r.GetString(7), r.GetFieldValue<DateTimeOffset>(8), NText(r, 9), NTime(r, 10), NText(r, 11), NText(r, 12), r.IsDBNull(13) ? null : r.GetInt64(13));
+        Enum.Parse<OutageStatus>(r.GetString(6)), r.GetString(7), r.GetFieldValue<DateTimeOffset>(8), NText(r, 9), NTime(r, 10), NText(r, 11), NText(r, 12), r.IsDBNull(13) ? null : r.GetInt64(13), NText(r, 14));
 
     public async Task SetPlannedWindowAsync(long downtimeId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
     {

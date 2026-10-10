@@ -270,6 +270,7 @@ public static partial class QueryParser
         bool Has(params string[] words) => words.Any(w => t.Contains(" " + w, StringComparison.Ordinal));
         return Has("obsolete", "obsolescence", "end of life", "end of support", "last time buy", "last-time buy") ? "obsolescence"
             : Has("maintenance readiness", "blocked work order", "work orders blocked", "work orders are blocked", "maintenance blocked", "not ready for maintenance", "ready for maintenance") ? "maintenance-readiness"
+            : Has("project material", "facility project", "capital project", "projects short", "short for project", "project short", "project line") ? "project-material"
             : Has("proposed outage", "planned outage", "outages waiting", "outage approval", "outages proposed", "outages are proposed") ? "outages"
             : Has("asset", "decommission") ? "assets"
             : Has("alternate", "substitute", "equivalent part", "interchangeable") ? "alternates"

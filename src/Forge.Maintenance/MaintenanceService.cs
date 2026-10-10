@@ -31,6 +31,9 @@ public sealed record RequiredPart(string PartNumber, decimal Quantity, string? P
 public sealed record SetWorkOrderRequirements(long WorkOrderId, string? AssetCode, string? ProcedureDocument, string? ProcedureRevision, IReadOnlyList<string>? Qualifications, IReadOnlyList<RequiredPart>? Parts);
 
 /// <summary>Approve or reject a proposed outage. <paramref name="Impact"/> is the schedule preview the approver saw (required to approve).</summary>
+/// <summary>A machine a facility or capital project needs stopped (V2.10), proposed like any outage.</summary>
+public sealed record ProposeProjectOutage(string ProjectCode, string MachineCode, DateTimeOffset StartsAt, DateTimeOffset EndsAt, string Description);
+
 public sealed record DecideOutage(long OutageId, bool Approve, string? Impact);
 
 public sealed record WithdrawOutage(long OutageId);
@@ -210,9 +213,38 @@ public sealed partial class MaintenanceService(CommandPipeline pipeline)
         }, ct);
     }
 
-    private async Task<CommandOutcome> ProposeAsync(Kernel.Access.IKernelUnitOfWork uow, CommandContext context, string machine, DateTimeOffset start, DateTimeOffset end, string reason, long? workOrderId, DateTimeOffset now, CancellationToken ct)
+    /// <summary>
+    /// Proposes an outage a facility or capital project needs (V2.10): the project must be approved, and the
+    /// outage is decided like any other — by a different person, after the schedule preview.
+    /// </summary>
+    public Task<CommandResult> ProposeProjectOutageAsync(ProposeProjectOutage c, CommandContext context, CancellationToken ct)
     {
-        var outage = new OutageInfo(0, machine, start, end, reason, workOrderId, OutageStatus.Proposed, context.Actor, now, null, null, null, null, null);
+        ArgumentNullException.ThrowIfNull(c);
+        var machine = BusinessCode.Require(c.MachineCode, "Machine");
+        var code = BusinessCode.Require(c.ProjectCode, "Project");
+        var spec = new CommandSpec(SourceContext, nameof(ProposeProjectOutage), Permissions.ProjectsManage, ResourceRef.Of(MachineEntity, machine));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var project = await uow.Store<Forge.Projects.Contracts.IProjectLookup>().FindProjectAsync(code, ct)
+                ?? throw new CommandRejectedException("project_not_found", $"Project {code} does not exist.");
+            if (!project.IsOpen)
+            {
+                throw new CommandRejectedException("project_not_open", $"Project {code} is {project.Status}; outages are proposed for approved projects.");
+            }
+
+            var description = BusinessCode.RequireName(c.Description, "Outage description");
+            var (start, end) = Window(c.StartsAt, c.EndsAt, now);
+            await RequireMachineAsync(uow.Store<IResourcesLookup>(), machine, ct);
+            return await ProposeCoreAsync(uow, context, machine, start, end, $"Project {code}: {description}", null, code, now, ct);
+        }, ct);
+    }
+
+    private Task<CommandOutcome> ProposeAsync(Kernel.Access.IKernelUnitOfWork uow, CommandContext context, string machine, DateTimeOffset start, DateTimeOffset end, string reason, long? workOrderId, DateTimeOffset now, CancellationToken ct) =>
+        ProposeCoreAsync(uow, context, machine, start, end, reason, workOrderId, null, now, ct);
+
+    private async Task<CommandOutcome> ProposeCoreAsync(Kernel.Access.IKernelUnitOfWork uow, CommandContext context, string machine, DateTimeOffset start, DateTimeOffset end, string reason, long? workOrderId, string? projectCode, DateTimeOffset now, CancellationToken ct)
+    {
+        var outage = new OutageInfo(0, machine, start, end, reason, workOrderId, OutageStatus.Proposed, context.Actor, now, null, null, null, null, null, projectCode);
         var id = await uow.Store<IMaintenanceStore>().InsertOutageAsync(outage, ct);
         var key = Key(id);
         return new CommandOutcome(

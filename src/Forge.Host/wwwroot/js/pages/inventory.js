@@ -10,7 +10,7 @@ import { formModal, qty, can } from '../forms.js';
 const KIND_LABEL = {
   Receipt: 'Receipt', Issue: 'Issue to order', Return: 'Return from order', Transfer: 'Move', Adjustment: 'Adjustment',
   ProductionReceipt: 'From production', Scrap: 'Scrap', CycleCount: 'Count variance', QualityHold: 'Hold', QualityRelease: 'Release', Shipment: 'Shipped',
-  MaintenanceIssue: 'Issue to work order', MaintenanceReturn: 'Return from work order',
+  MaintenanceIssue: 'Issue to work order', MaintenanceReturn: 'Return from work order', ProjectIssue: 'Issue to project', ProjectReturn: 'Return from project',
 };
 const STATUS_TONE = { Available: 'ok', Inspection: 'info', Hold: 'warn' };
 
@@ -189,7 +189,7 @@ export async function inventoryPage(page, ctx) {
     <td class="nowrap">${esc(fmtDateTime(t.at))}</td><td>${esc(KIND_LABEL[t.kind] ?? t.kind)}</td><td>${esc(t.partNumber)}${t.partRevision ? ` <span class="faint">rev ${esc(t.partRevision)}</span>` : ''}${t.lotNumber ? ` <span class="faint">lot ${esc(t.lotNumber)}</span>` : ''}</td>
     <td class="num">${qty(t.quantity)}</td>
     <td>${t.fromLocation ? `${esc(t.fromLocation)} <span class="faint">${esc(t.fromStatus)}</span>` : '<span class="faint">—</span>'} → ${t.toLocation ? `${esc(t.toLocation)} <span class="faint">${esc(t.toStatus)}</span>` : '<span class="faint">out</span>'}</td>
-    <td>${t.orderNumber ? `<a href="#/orders/${t.orderNumber}">#${t.orderNumber}</a>` : ''}${t.poNumber ? `PO ${t.poNumber}/${t.poLine}` : ''}${t.substitutesFor ? ` <span class="faint">for ${esc(t.substitutesFor)}</span>` : ''}
+    <td>${t.orderNumber ? `<a href="#/orders/${t.orderNumber}">#${t.orderNumber}</a>` : ''}${t.poNumber ? `PO ${t.poNumber}/${t.poLine}` : ''}${t.substitutesFor ? ` <span class="faint">for ${esc(t.substitutesFor)}</span>` : ''}${t.workOrderId ? ` WO ${t.workOrderId}` : ''}${t.projectCode ? ` <a href="#/projects/${encodeURIComponent(t.projectCode)}">${esc(t.projectCode)}</a> line ${t.projectLine}` : ''}
       ${t.poNumber || t.lotNumber ? ` <button class="btn small ghost" data-why-txn="${t.transactionId}|${esc(t.partNumber)}" title="Why was this stock purchased?">Why bought?</button>` : ''}</td>
     <td class="muted">${esc(t.reason ?? '')}</td>
     <td>${esc(who(t.actor))}${t.approvedBy ? `<br><span class="faint">approved by ${esc(who(t.approvedBy))}</span>` : ''}</td></tr>`;

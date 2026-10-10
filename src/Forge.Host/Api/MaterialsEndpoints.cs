@@ -50,7 +50,7 @@ public sealed record DemandRequest(string PartNumber, decimal Quantity, DateOnly
 public sealed record DemandChangeRequest(decimal Quantity, DateOnly NeedDate, int Priority, string? Reason);
 
 /// <summary>A demand with what has shipped against it.</summary>
-public sealed record DemandView(long DemandId, string PartNumber, decimal Quantity, decimal Shipped, decimal Remaining, DateOnly NeedDate, int Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId, DemandStatus Status, string CreatedBy, DateTimeOffset CreatedAt, long? DeliveryId = null, string? ContractNote = null);
+public sealed record DemandView(long DemandId, string PartNumber, decimal Quantity, decimal Shipped, decimal Remaining, DateOnly NeedDate, int Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId, DemandStatus Status, string CreatedBy, DateTimeOffset CreatedAt, long? DeliveryId = null, string? ContractNote = null, string? SourceKey = null);
 
 /// <summary>A purchase order line with what Inventory has received against it.</summary>
 public sealed record PurchaseLineView(int LineNumber, string PartNumber, decimal Quantity, string UnitOfMeasure, DateOnly PromisedDate, PurchaseLineStatus Status, decimal Received, decimal Open, long? RequisitionId = null, PurchaseSourceKind? SourceKind = null, string? SourceKey = null, string? SourceLabel = null);
@@ -95,7 +95,7 @@ public static class MaterialsEndpoints
                                 : null;
                     }
 
-                    views.Add(new DemandView(d.DemandId, d.PartNumber, d.Quantity, got, Math.Max(0, d.Quantity - got), d.NeedDate, d.Priority, d.Kind, d.Customer, d.Reference, d.ProgramId, d.Status, d.CreatedBy, d.CreatedAt, deliveryId, note));
+                    views.Add(new DemandView(d.DemandId, d.PartNumber, d.Quantity, got, Math.Max(0, d.Quantity - got), d.NeedDate, d.Priority, d.Kind, d.Customer, d.Reference, d.ProgramId, d.Status, d.CreatedBy, d.CreatedAt, deliveryId, note, d.SourceKey));
                 }
 
                 return views;

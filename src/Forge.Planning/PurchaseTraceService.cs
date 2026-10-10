@@ -190,6 +190,8 @@ public sealed class PurchaseTraceService(IKernelUnitOfWorkFactory unitOfWork)
     {
         InventoryTransactionKind.Issue when t.OrderNumber is { } o => $"{Q(t.Quantity)} issued to order {o}",
         InventoryTransactionKind.MaintenanceIssue => $"{Q(t.Quantity)} issued to work order {t.WorkOrderId}",
+        InventoryTransactionKind.ProjectIssue => $"{Q(t.Quantity)} issued to project {t.ProjectCode} line {t.ProjectLine}",
+        InventoryTransactionKind.ProjectReturn => $"{Q(t.Quantity)} returned from project {t.ProjectCode} line {t.ProjectLine}",
         InventoryTransactionKind.MaintenanceReturn => $"{Q(t.Quantity)} returned from work order {t.WorkOrderId}",
         InventoryTransactionKind.Return => $"{Q(t.Quantity)} returned",
         InventoryTransactionKind.Shipment => $"{Q(t.Quantity)} shipped",

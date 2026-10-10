@@ -250,7 +250,42 @@ internal static class StandardReports
                 ["status", "machine"], "starts", 92,
                 "Outages proposed in the period."),
             Permissions.MaintenanceRead, null, OutagesAsync),
+        new(
+            new("project-material", "Project material", "Projects",
+                "Every material line of every facility and capital project: what it needs, what is issued, what stock, purchases and requisitions cover, and what is short.",
+                [StatusFilter("Issued", "In stock", "On order", "Requested", "Short", "Cancelled"), SearchFilter],
+                [C("project", "Project", ReportColumnKind.Text), C("type", "Type", ReportColumnKind.Text), C("funding", "Funding", ReportColumnKind.Text), C("reference", "Financial reference", ReportColumnKind.Text),
+                 C("projectStatus", "Project status", ReportColumnKind.Text), C("line", "Line", ReportColumnKind.Number), C("part", "Part", ReportColumnKind.Text), C("needDate", "Need date", ReportColumnKind.Date),
+                 C("required", "Required", ReportColumnKind.Number), C("issued", "Issued", ReportColumnKind.Number), C("onOrder", "On order", ReportColumnKind.Number),
+                 C("requested", "Requested", ReportColumnKind.Number), C("short", "Short", ReportColumnKind.Number), C("status", "Status", ReportColumnKind.Text)],
+                ["status", "project"], "needDate", 92,
+                "Material lines of every project."),
+            Permissions.ProjectsRead, null, ProjectMaterialAsync),
     ];
+
+    private static async Task<ReportBody> ProjectMaterialAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var project in await run.Uow.Store<Forge.Projects.Contracts.IProjectLookup>().ListProjectsAsync(ct))
+        {
+            var view = await ProjectPlanningService.MaterialAsync(run.Uow, project.Code, ct);
+            foreach (var l in view.Material.Lines)
+            {
+                if (!ReportRun.Is(l.Status, p.Status) || !run.Matches(project.Code, project.Title, l.PartNumber, l.Description, project.FinancialReference))
+                {
+                    continue;
+                }
+
+                rows.Add(new ReportRow(
+                    [project.Code, project.Type.ToString(), project.Funding.ToString(), project.FinancialReference, project.Status.ToString(), l.LineNumber, l.PartNumber, l.NeedDate,
+                     l.Required, l.Issued, l.OnOrder, l.Requested, l.Shortage, l.Status],
+                    ["project:" + project.Code, "part:" + l.PartNumber]));
+            }
+        }
+
+        return new ReportBody(rows, [$"{rows.Count} line(s) across {rows.Select(r => r.Cells[0]).Distinct().Count()} project(s); {rows.Count(r => r.Cells[13] is "Short")} short."], ["Projects", "Inventory", "Procurement"]);
+    }
 
     private sealed class FixedTime(DateTimeOffset now) : TimeProvider
     {

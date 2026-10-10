@@ -73,6 +73,8 @@ public class AnalystParserTests
     [InlineData("Which work orders are blocked?", "maintenance-readiness")]
     [InlineData("Show maintenance readiness", "maintenance-readiness")]
     [InlineData("Show proposed outages", "outages")]
+    [InlineData("Show facility project lines", "project-material")]
+    [InlineData("Show project material", "project-material")]
     [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)

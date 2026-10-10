@@ -138,10 +138,15 @@ internal static class MaterialData
 
         var requirements = new List<MrpRequirement>();
         var shipped = (await uow.Store<IInventoryLookup>().ListShippedByDemandAsync(ct)).ToDictionary(d => (d.DemandId, d.PartNumber), d => d.Shipped);
+        var toProjects = (await uow.Store<IInventoryLookup>().ListProjectMaterialAsync(null, ct))
+            .GroupBy(m => Forge.Projects.Contracts.ProjectSource.Key(m.ProjectCode, m.LineNumber), StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Sum(m => m.NetIssued), StringComparer.Ordinal);
         foreach (var listed in await uow.Store<IDemandStore>().ListAsync(false, ct))
         {
-            // Only what has not shipped yet is still demand.
-            var demand = listed with { Quantity = listed.Quantity - shipped.GetValueOrDefault((listed.DemandId, listed.PartNumber)) };
+            // Only what has not shipped yet is still demand; project demand is met by what is issued to its line (V2.10).
+            var met = shipped.GetValueOrDefault((listed.DemandId, listed.PartNumber))
+                + (listed.SourceKey is { } source && toProjects.TryGetValue(source, out var issuedToProject) ? issuedToProject : 0);
+            var demand = listed with { Quantity = listed.Quantity - met };
             if (demand.Quantity <= 0)
             {
                 continue;

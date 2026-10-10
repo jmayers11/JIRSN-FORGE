@@ -43,6 +43,12 @@ public enum InventoryTransactionKind
 
     /// <summary>Unused spare parts returned from a maintenance work order.</summary>
     MaintenanceReturn,
+
+    /// <summary>Material issued to a facility or capital project line (V2.10).</summary>
+    ProjectIssue,
+
+    /// <summary>Unused material returned from a project line (V2.10).</summary>
+    ProjectReturn,
 }
 
 public sealed record LocationInfo(string Code, string SiteCode, string Name, LocationKind Kind, bool Active);
@@ -77,7 +83,9 @@ public sealed record InventoryTransaction(
     string? PartRevision = null,
     string? SubstitutesFor = null,
     long? AlternateId = null,
-    decimal? PrimaryQuantity = null);
+    decimal? PrimaryQuantity = null,
+    string? ProjectCode = null,
+    int? ProjectLine = null);
 
 /// <param name="PartRevision">The part revision received into the lot; null when it was not recorded (stock received before V2.3).</param>
 public sealed record LotInfo(string PartNumber, string LotNumber, string? SupplierLot, DateTimeOffset FirstReceivedAt, string? PartRevision = null);
@@ -168,6 +176,9 @@ public sealed record ShipmentInfo(
 
 /// <summary>Spare parts used on a maintenance work order (issues less returns), by part.</summary>
 /// <param name="SubstitutesFor">Issued in place of this part through an approved alternate (V2.9); <paramref name="PrimaryNetIssued"/> is how much of it that covers.</param>
+/// <summary>Material for a project line (V2.10): received against purchases for it, and issued to it (issues less returns).</summary>
+public sealed record ProjectMaterial(string ProjectCode, int LineNumber, string PartNumber, decimal Received, decimal NetIssued);
+
 public sealed record WorkOrderPart(long WorkOrderId, string PartNumber, decimal NetIssued, string? SubstitutesFor = null, decimal? PrimaryNetIssued = null);
 
 /// <summary>What has shipped against a demand, by part.</summary>
@@ -193,6 +204,9 @@ public interface IInventoryLookup
     Task<IReadOnlyList<LotInfo>> ListLotsAsync(string? partNumber, CancellationToken ct);
 
     Task<IReadOnlyList<OrderIssue>> ListOrderIssuesAsync(CancellationToken ct);
+
+    /// <summary>Material received for and issued to project lines, for one project or all (V2.10).</summary>
+    Task<IReadOnlyList<ProjectMaterial>> ListProjectMaterialAsync(string? projectCode, CancellationToken ct);
 
     Task<IReadOnlyList<PurchaseReceipt>> ListPurchaseReceiptsAsync(CancellationToken ct);
 

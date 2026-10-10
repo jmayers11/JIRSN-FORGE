@@ -22,6 +22,7 @@ public static class PlanningRegistration
         services.AddSingleton<ObsolescenceImpactService>();
         services.AddSingleton<PurchaseTraceService>();
         services.AddSingleton<MaintenancePlanningService>();
+        services.AddSingleton<ProjectPlanningService>();
         services.AddSingleton<ScheduleService>();
         services.AddSingleton<ProgramHorizonService>();
         services.AddSingleton<Reporting.ReportService>();

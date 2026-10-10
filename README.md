@@ -266,6 +266,20 @@ See `docs/adr/0019-v2-8-assets-mro-obsolescence.md`.
 
 See `docs/adr/0021-v2-9-maintenance-readiness-and-outages.md`.
 
+## What V2.10 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Projects context | `src/Forge.Projects` (schema `projects`) | Facility or capital; operating or capital funding; budget, dates, financial reference |
+| Approval and change | `ProjectService` | Draft edited directly; approved by a different person (Facilities Manager); later changes need a reason and a second person |
+| Material check | `src/Forge.Planning/Engines/ProjectMaterialEngine.cs` | Issued, from stock, on order, requested, short — per line |
+| Shortages | `POST /api/projects/{code}/request-material` | Project demand (MRP) and requisitions sourced `project:CODE/LINE` |
+| Issues and returns | `InventoryService.Projects.cs` | Against a line of an approved project; never over the line, never more back than issued |
+| Outages | `ProposeProjectOutage` | Decided like any outage, after the schedule preview |
+| UI and report | Projects page; `project-material` | |
+
+See `docs/adr/0022-v2-10-facility-and-capital-projects.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -583,3 +597,18 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/maintenance/outages/{id}/approve`, `/reject` `{reason}` | `maintenance.outage.approve` (not the proposer) |
 | POST | `/api/maintenance/outages/{id}/withdraw` `{reason}` | proposer, or `maintenance.outage.approve` |
 | POST | `/api/maintenance/work-orders/{id}/parts` takes `alternateFor` | `inventory.spares.issue` |
+
+## V2.10 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/projects/`, `/api/projects/{code}` (lines, tasks, changes, material check, movements, purchases, requisitions, outages) | `projects.read` |
+| POST | `/api/projects/` `{code, title, type, funding, budget?, startDate, endDate, financialReference?, owner?, description?}` | `projects.manage` |
+| POST | `/api/projects/{code}` (header), `/{code}/lines` `{partNumber, quantity, needDate, description?}`, `/{code}/lines/{n}` `{quantity, needDate}`, `/{code}/lines/{n}/cancel` — a change request with `reason` once approved | `projects.manage` |
+| POST | `/api/projects/{code}/approve`, `/api/projects/changes/{id}/approve`, `/reject` `{reason}` | `projects.approve` (not the creator / requester) |
+| POST | `/api/projects/{code}/complete` `{reason}` | `projects.manage` |
+| POST | `/api/projects/{code}/cancel` `{reason}` | `projects.approve` |
+| POST | `/api/projects/{code}/tasks` `{title, dueDate, milestone}`, `/api/projects/tasks/{id}/complete` `{completedOn}` | `projects.manage` |
+| POST | `/api/projects/{code}/request-material` `{reason?}` | `projects.read`, `planning.demand.manage`, `procurement.requisition.raise` |
+| POST | `/api/projects/{code}/issues`, `/returns` `{lineNumber, partNumber, quantity, locationCode, lotNumber?}` | `inventory.transact` |
+| POST | `/api/projects/{code}/outages` `{machineCode, startsAt, endsAt, description}` | `projects.manage` |
