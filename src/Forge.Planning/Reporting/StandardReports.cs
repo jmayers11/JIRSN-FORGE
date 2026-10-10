@@ -271,7 +271,27 @@ internal static class StandardReports
                 ["status", "component"], "recorded", 92,
                 "As-built lines recorded in the period."),
             Permissions.OrdersRead, null, AsBuiltAsync),
+        new(
+            new("dated-events", "Dated events ahead", "Planning",
+                "What the records say will happen in the period (by default the next 90 days): item and document revisions taking effect, document reviews, engineering changes, alternates starting or ending, obsolescence dates, outages, work-order due dates and project tasks.",
+                [FromFilter, ToFilter, StatusFilter("Item revision", "Document revision", "Document review", "Engineering change", "Alternate", "Obsolescence", "Outage", "Planned downtime", "Work order due", "Project", "Project task", "Milestone"), SearchFilter],
+                [C("at", "Date", ReportColumnKind.DateTime), C("status", "What", ReportColumnKind.Text), C("title", "Detail", ReportColumnKind.Text), C("source", "Record", ReportColumnKind.Text)],
+                ["status", "source"], "status", 366,
+                "Only dates stored on records you may read: each kind needs its read permission (engineering, maintenance, projects) and program access. Nothing is projected or estimated.",
+                Forward: true),
+            Permissions.AnalystUse, null, DatedEventsAsync),
     ];
+
+    private static async Task<ReportBody> DatedEventsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var start = run.From > run.Now ? run.From : run.Now;
+        var rows = (await HistoryService.CollectFutureAsync(run.Uow, run.Principal, start, run.To, ct))
+            .Where(e => ReportRun.Is(e.Kind, p.Status) && run.Matches(e.Title, e.Link))
+            .Select(e => new ReportRow([e.At, e.Kind, e.Title, e.Source], [e.Link]))
+            .ToList();
+        return new ReportBody(rows, [$"{rows.Count} dated event(s) from now to the end of the period."], rows.Select(r => (string)r.Cells[3]!).Distinct(StringComparer.Ordinal).ToList());
+    }
 
     private static async Task<ReportBody> AsBuiltAsync(ReportRun run, CancellationToken ct)
     {

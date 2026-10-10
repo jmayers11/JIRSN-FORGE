@@ -76,6 +76,7 @@ public class AnalystParserTests
     [InlineData("Show facility project lines", "project-material")]
     [InlineData("Show project material", "project-material")]
     [InlineData("Show the as-built record", "as-built")]
+    [InlineData("What is coming up in the next 30 days?", "dated-events")]
     [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)
@@ -220,5 +221,30 @@ public class AnalystParserTests
         var i = Parse("Write me a poem about the ocean");
         Assert.Equal(AnalystIntent.Unsupported, i.Intent);
         Assert.Equal(AnalystConfidence.Low, i.Confidence);
+    }
+
+    [Fact]
+    public void What_changed_on_a_code_names_the_subject()
+    {
+        var i = Parse("What changed on SL-02?");
+        Assert.Equal(AnalystIntent.WhatChanged, i.Intent);
+        Assert.Equal("SL-02", i.Subject);
+        Assert.Null(i.SubjectKind);
+        Assert.StartsWith("What changed on SL-02", i.Understood, StringComparison.Ordinal);
+
+        var project = Parse("What changed on project prj-7 this month?");
+        Assert.Equal(("PRJ-7", "project"), (project.Subject, project.SubjectKind));
+        Assert.NotNull(project.Period);
+
+        Assert.Equal(("ECO-12", "change"), (Parse("what has changed with ECO ECO-12").Subject, Parse("what has changed with ECO ECO-12").SubjectKind));
+    }
+
+    [Fact]
+    public void What_changed_falls_back_to_a_recognized_machine_and_never_takes_times_for_codes()
+    {
+        Assert.Equal(("SLITTER-A", "machine"), (Parse("what changed on slitter a").Subject, Parse("what changed on slitter a").SubjectKind));
+        Assert.Null(Parse("What changed since yesterday?").Subject);
+        Assert.Null(Parse("what changed since 6am").Subject);
+        Assert.Null(Parse("what changed for 3 days").Subject);
     }
 }

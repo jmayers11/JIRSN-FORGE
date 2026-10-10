@@ -62,6 +62,8 @@ public sealed record AnalystReportRequest(string ReportId, string Title, ReportP
 /// What Forge understood. Shown to the person with every answer, so a wrong reading is visible rather
 /// than silently guessed. Entities are business codes (order numbers, machine and work-center codes).
 /// </summary>
+/// <param name="Subject">What a "What changed?" question is about (V2.12): an asset, machine, project, document, change or part code.</param>
+/// <param name="SubjectKind">The kind of record the question named for the subject, when it named one.</param>
 public sealed record Interpretation(
     string Question,
     AnalystIntent Intent,
@@ -79,7 +81,9 @@ public sealed record Interpretation(
     DateTimeOffset? At,
     decimal? Hours,
     AnalystReportRequest? Report,
-    IReadOnlyList<string> Ambiguities)
+    IReadOnlyList<string> Ambiguities,
+    string? Subject = null,
+    string? SubjectKind = null)
 {
     public bool NeedsConfirmation => Intent == AnalystIntent.Report || Ambiguities.Count > 0;
 }

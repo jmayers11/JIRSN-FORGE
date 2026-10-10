@@ -1,5 +1,6 @@
 import { tryGet } from '../api.js';
 import { esc, $$, fmtDateTime, timeZone, errorBlock, emptyBlock } from '../ui.js';
+import { futureEventsHtml } from '../history.js';
 
 const H = 36e5;
 const TONE = { OnTime: '#22C55E', AtRisk: '#F97316', Late: '#EF4444', Unschedulable: '#EF4444' };
@@ -7,13 +8,25 @@ const TONE = { OnTime: '#22C55E', AtRisk: '#F97316', Late: '#EF4444', Unschedula
 export async function timelinePage(page, ctx) {
   let span = Number(ctx.query.get('days') ?? 3);
   let which = 'approved';
+  let farAhead = false;
   const now = Date.now();
   const iso = ms => new Date(ms).toISOString();
-  const [approved, proposed, downtime, resources] = await Promise.all([
+  const [approved, proposed, downtime, resources, future] = await Promise.all([
     tryGet('/api/planning/schedules/approved'), tryGet('/api/planning/schedules/proposed'),
     tryGet(`/api/maintenance/downtime?from=${encodeURIComponent(iso(now - 864e5))}&to=${encodeURIComponent(iso(now + 15 * 864e5))}`),
     tryGet('/api/resources/'),
+    tryGet('/api/horizon/events?days=90'),
   ]);
+
+  // V2.12: what the records say lies ahead — effective dates, reviews, outages, due dates, milestones.
+  function comingUp() {
+    const days = farAhead ? 90 : span;
+    const events = (future.data ?? []).filter(e => new Date(e.at).getTime() < now + days * 24 * H);
+    return `<section class="panel"><header><h2>Coming up</h2><span class="spacer"></span>
+        <div class="seg"><button data-far="0" class="${farAhead ? '' : 'on'}">This window</button><button data-far="1" class="${farAhead ? 'on' : ''}">90 days</button></div></header>
+      ${future.error ? errorBlock(future.error, 'future events') : futureEventsHtml(events, days)}
+      <div class="faint" style="font-size:12px">Only dates recorded in Forge: item and document effective dates and reviews, engineering changes, alternates, obsolescence dates, outages, work-order due dates and project tasks.</div></section>`;
+  }
 
   function render() {
     const s = (which === 'approved' ? approved : proposed).data;
@@ -28,7 +41,7 @@ export async function timelinePage(page, ctx) {
       </div>`;
     if (!s) {
       const r = which === 'approved' ? approved : proposed;
-      page.innerHTML = head + (r.error && r.error.status !== 404 ? errorBlock(r.error, 'the schedule') : emptyBlock(which === 'approved' ? 'No approved schedule' : 'No proposal', 'A planner proposes a schedule under Scheduling; another approves it.'));
+      page.innerHTML = head + (r.error && r.error.status !== 404 ? errorBlock(r.error, 'the schedule') : emptyBlock(which === 'approved' ? 'No approved schedule' : 'No proposal', 'A planner proposes a schedule under Scheduling; another approves it.')) + comingUp();
       wire();
       return;
     }
@@ -38,7 +51,7 @@ export async function timelinePage(page, ctx) {
     const rows = [...new Set(ops.map(o => o.machineCode ?? `${o.workCenterCode} (no machine)`))]
       .sort((a, b) => a.localeCompare(b));
     for (const m of resources.data?.machines ?? []) if (!rows.includes(m.code)) rows.push(m.code);
-    if (!rows.length) { page.innerHTML = head + emptyBlock('Nothing scheduled', 'This schedule has no scheduled operations.'); wire(); return; }
+    if (!rows.length) { page.innerHTML = head + emptyBlock('Nothing scheduled', 'This schedule has no scheduled operations.') + comingUp(); wire(); return; }
 
     const W = 1100, L = 130, RH = 30, T = 28, Hh = T + rows.length * RH + 8;
     const x = ms => L + ((ms - from) / (to - from)) * (W - L - 8);
@@ -65,22 +78,31 @@ export async function timelinePage(page, ctx) {
       return `<g><rect x="${x(a)}" y="${T + i * RH + 6}" width="${Math.max(2, w)}" height="${RH - 12}" rx="2" fill="${TONE[orderStatus.get(o.orderNumber)] ?? '#6B7280'}" fill-opacity=".85"><title>${esc(tip)}</title></rect>
         ${w > 74 ? `<text x="${x(a) + 4}" y="${T + i * RH + 19}" fill="#0F1419" style="fill:#0F1419;font-weight:600">#${o.orderNumber}/${o.sequence}</text>` : ''}</g>`;
     })).join('');
+    const marks = (future.data ?? []).filter(e => e.link.startsWith('machine:') && rows.includes(e.link.slice(8))).map(e => {
+      const t = new Date(e.at).getTime();
+      if (t < from || t > to) return '';
+      const i = rows.indexOf(e.link.slice(8));
+      const cx = x(t), cy = T + i * RH + RH / 2;
+      return `<path d="M${cx} ${cy - 7} L${cx + 7} ${cy} L${cx} ${cy + 7} L${cx - 7} ${cy} Z" fill="#60A5FA" stroke="#0F1419"><title>${esc(fmtDateTime(e.at))} ${esc(e.kind)}: ${esc(e.title)}</title></path>`;
+    }).join('');
     const nowLine = `<line x1="${x(now)}" x2="${x(now)}" y1="${T - 6}" y2="${Hh}" stroke="#F97316" stroke-width="2"/><text x="${x(now) + 4}" y="${Hh - 4}" style="fill:#F97316">now</text>`;
 
     page.innerHTML = `${head}
       <section class="panel">
-        <div class="legend" style="justify-content:flex-start"><span><i style="background:#22C55E"></i>On time</span><span><i style="background:#F97316"></i>At risk</span><span><i style="background:#EF4444"></i>Late</span><span><i style="background:repeating-linear-gradient(45deg,#EF4444 0 2px,transparent 2px 5px)"></i>Downtime</span>
+        <div class="legend" style="justify-content:flex-start"><span><i style="background:#22C55E"></i>On time</span><span><i style="background:#F97316"></i>At risk</span><span><i style="background:#EF4444"></i>Late</span><span><i style="background:repeating-linear-gradient(45deg,#EF4444 0 2px,transparent 2px 5px)"></i>Downtime</span><span><i style="background:#60A5FA;transform:rotate(45deg)"></i>Recorded future event</span>
           <span class="faint">Schedule #${s.versionId} · ${esc(s.status)} · hover a bar for why it starts then</span></div>
         <div class="gantt"><svg viewBox="0 0 ${W} ${Hh}" width="${W}" style="min-width:${W}px" role="img" aria-label="Schedule timeline">
           <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="rgba(239,68,68,.12)"/><line x1="0" y1="0" x2="0" y2="6" stroke="#EF4444" stroke-width="1.5"/></pattern></defs>
-          ${lanes}${grid}${downs}${bars}${nowLine}</svg></div>
-      </section>`;
+          ${lanes}${grid}${downs}${bars}${marks}${nowLine}</svg></div>
+      </section>
+      ${comingUp()}`;
     wire();
   }
 
   function wire() {
     $$('[data-days]', page).forEach(b => b.addEventListener('click', () => { span = Number(b.dataset.days); render(); }));
     $$('[data-which]', page).forEach(b => b.addEventListener('click', () => { which = b.dataset.which; render(); }));
+    $$('[data-far]', page).forEach(b => b.addEventListener('click', () => { farAhead = b.dataset.far === '1'; render(); }));
   }
 
   if (!approved.data && proposed.data) which = 'proposed';

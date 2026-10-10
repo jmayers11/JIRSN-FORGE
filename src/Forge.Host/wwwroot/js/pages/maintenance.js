@@ -5,6 +5,7 @@ import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, co
 import { formModal, can, today, plusDays, qty } from '../forms.js';
 import { isDownAt } from '../model.js';
 import { serialDrawer } from '../genealogy.js';
+import { historyDrawer } from '../history.js';
 
 // Maintenance (spec §47): machine status, preventive-maintenance plans and work orders. Work occupies
 // planned downtime, so capacity and the schedule see it. A technician does the work and confirms the
@@ -430,7 +431,7 @@ export async function maintenancePage(page, ctx) {
       </dl>
       ${a.decommissionRequestedBy ? `<div class="notice warn">Decommissioning requested by ${esc(who(a.decommissionRequestedBy))}: ${esc(a.decommissionReason ?? '')}. A different person approves it.</div>` : ''}
       ${flagged.length ? `<div class="notice bad">Obsolescence: ${flagged.map(o => `${esc(o.partNumber)} ${esc(o.status)}${o.endOfSupport ? `, end of support ${esc(fmtDate(o.endOfSupport))}` : ''} — replacement ${o.replacementPart && o.replacement === 'Proposed' ? `${esc(o.replacementPart)} proposed` : 'none approved'}`).join('; ')}.</div>` : ''}
-      <div class="row-actions">${actions} <button class="btn small ghost" data-genealogy>Genealogy</button></div>
+      <div class="row-actions">${actions} <button class="btn small ghost" data-genealogy>Genealogy</button> <button class="btn small ghost" data-history>What changed?</button></div>
       <h3>Installed components</h3>
       ${installed.length ? `<table class="table"><thead><tr><th>Part</th><th>Position</th><th>Qty</th><th>Installed</th><th></th></tr></thead><tbody>${installed.map(c => `<tr><td><b>${esc(c.partNumber)}</b>${c.revision ? ` rev ${esc(c.revision)}` : ''}</td><td>${esc(c.position)}</td><td>${qty(c.quantity)}</td>
         <td class="faint">${c.installedByWorkOrder ? `WO ${c.installedByWorkOrder}` : 'as delivered'} · ${esc(who(c.installedBy))} ${esc(fmtDate(c.installedAt))}</td>
@@ -465,6 +466,7 @@ export async function maintenancePage(page, ctx) {
     };
     $$('[data-a]', d.element).forEach(b => b.addEventListener('click', () => handlers[b.dataset.a]()));
     $('[data-genealogy]', d.element)?.addEventListener('click', () => assetGenealogy(code));
+    $('[data-history]', d.element)?.addEventListener('click', () => historyDrawer(code, 'asset'));
     $$('[data-remove]', d.element).forEach(b => b.addEventListener('click', () => formModal({ title: `Remove component ${b.dataset.remove}`, detail: 'The installation stays in the history; removal is recorded with its work order and reason.', confirmLabel: 'Remove', reasonRequired: true,
       fields: a.status === 'Planned' ? [] : [{ name: 'workOrderId', label: 'Work order', type: 'select', options: woOptions, required: true }] },
     (v, reason) => command(`/api/maintenance/components/${b.dataset.remove}/remove`, { workOrderId: v.workOrderId ? Number(v.workOrderId) : null }, reason), after)));

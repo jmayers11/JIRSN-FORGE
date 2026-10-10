@@ -2,6 +2,7 @@ import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, confirmWithReason } from '../ui.js';
 import { formModal, qty, can, today, plusDays } from '../forms.js';
+import { historyDrawer } from '../history.js';
 
 // Facility and capital projects (V2.10): approved by a second person; after approval every change to the
 // budget, dates, financial reference or material is requested with a reason and approved by someone else.
@@ -79,7 +80,8 @@ async function projectDetail(page, ctx, code) {
       ${editable ? '<button class="btn" id="edit">Change</button>' : ''}
       ${approve && draft && p.createdBy !== `person:${me.personId}` ? '<button class="btn primary" id="approve">Approve</button>' : ''}
       ${manage && open ? '<button class="btn" id="complete">Complete</button>' : ''}
-      ${approve && (draft || open) ? '<button class="btn ghost" id="cancel">Cancel project</button>' : ''}</div>
+      ${approve && (draft || open) ? '<button class="btn ghost" id="cancel">Cancel project</button>' : ''}
+      <button class="btn ghost" id="history">What changed?</button></div>
     ${p.description ? `<p class="muted">${esc(p.description)}</p>` : ''}
     <section class="kpis">
       ${kpi('Budget', money(p.budget), p.funding === 'Capital' ? 'capital' : 'operating')}
@@ -151,6 +153,7 @@ async function projectDetail(page, ctx, code) {
   };
   const base = `/api/projects/${encodeURIComponent(p.code)}`;
 
+  $('#history', page)?.addEventListener('click', () => historyDrawer(p.code, 'project'));
   $('#edit', page)?.addEventListener('click', () => formModal({
     title: `Change ${p.code}`, detail: 'Title, description, budget, dates and financial reference.' + reasonNote, confirmLabel: open ? 'Request change' : 'Save', reasonRequired: open,
     fields: [

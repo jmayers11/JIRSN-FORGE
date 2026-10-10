@@ -66,7 +66,8 @@ async function main() {
       const assets = !(await get('mp', '/api/maintenance/assets')).length;
       const outages = !(await get('mp', '/api/maintenance/outages?includeDecided=true')).length;
       const projects = !(await get('planner', '/api/projects/')).length;
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const horizon = !(await horizonWindow());
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -112,6 +113,10 @@ async function main() {
         await seedProjects();
         await seedGenealogy();
       }
+      if (horizon) {
+        console.log('Adding a planned maintenance window for Horizon\'s "Coming up".');
+        await seedHorizon();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -136,6 +141,7 @@ async function main() {
     await seedMaintenanceReadiness();
     await seedProjects();
     await seedGenealogy();
+    await seedHorizon();
     return finish();
   }
 
@@ -287,6 +293,7 @@ async function main() {
   await seedMaintenanceReadiness();
   await seedProjects();
   await seedGenealogy();
+  await seedHorizon();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -690,6 +697,20 @@ async function seedGenealogy() {
     if (quantity > 0) await post('stores', '/api/inventory/issues', { orderNumber: number, partNumber: 'COIL-AL', quantity, locationCode: 'STORES' });
     return;
   }
+}
+
+// V2.12: a planned window ahead, so Horizon's "Coming up" and "What changed?" have something recorded to show.
+async function horizonWindow() {
+  const from = new Date(Date.now() - 864e5).toISOString(), to = new Date(Date.now() + 60 * 864e5).toISOString();
+  return (await get('mp', `/api/maintenance/downtime?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`))
+    .find(w => w.machineCode === 'SLITTER-A' && w.reason.startsWith('Sample: blade guard'));
+}
+
+async function seedHorizon() {
+  step('Horizon: a planned window on SLITTER-A in 12 days — see Horizon → Coming up, and "What changed on SL-02?" in Forge Analyst');
+  const start = new Date(Date.now() + 12 * 864e5);
+  start.setUTCHours(6, 0, 0, 0);
+  await post('tech', '/api/maintenance/machines/SLITTER-A/planned', { startsAt: start.toISOString(), endsAt: new Date(start.getTime() + 6 * 36e5).toISOString(), description: 'Sample: blade guard replacement' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

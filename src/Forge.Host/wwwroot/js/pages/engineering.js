@@ -2,6 +2,7 @@ import { tryGet, command, upload, download } from '../api.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, drawer, confirmWithReason } from '../ui.js';
 import { formModal, can, today } from '../forms.js';
+import { historyButton } from '../history.js';
 import { appendAttachments, TYPE_LABEL, MARKING_LABEL, markings, markingPills, fileSize, fileUrl } from '../attachments.js';
 
 // Engineering (V2.1): what each item is. The class decides how it is bought, documented, inspected and
@@ -81,7 +82,7 @@ async function itemDetail(page, ctx, partNumber) {
   const reload = () => itemDetail(page, ctx, partNumber);
 
   page.innerHTML = `
-    <div class="page-head"><div><a href="#/engineering" class="faint">← Items</a><h1>${esc(item.partNumber)}</h1><div class="sub">${esc(item.description)} · ${esc(item.makeBuy)} · ${esc(item.unitOfMeasure)} · lead time ${item.leadTimeDays} days</div></div>
+    <div class="page-head"><div><a href="#/engineering" class="faint">← Items</a><h1>${esc(item.partNumber)} ${historyButton(item.partNumber, 'item')}</h1><div class="sub">${esc(item.description)} · ${esc(item.makeBuy)} · ${esc(item.unitOfMeasure)} · lead time ${item.leadTimeDays} days</div></div>
       <div class="spacer"></div>${engineer ? '<button class="btn" id="classify">Classify</button>' : ''}</div>
     <section class="panel"><header><h2>Class</h2></header>
       <p><span class="pill ${item.class === 'Unclassified' ? 'warn' : 'info'}">${esc(CLASS_LABEL[item.class] ?? item.class)}</span>
@@ -244,7 +245,7 @@ async function documentDetail(page, ctx, number) {
   };
 
   page.innerHTML = `
-    <div class="page-head"><div><a href="#/engineering/documents" class="faint">← Documents</a><h1>${esc(d.number)} ${markingPills(d.markings)}</h1>
+    <div class="page-head"><div><a href="#/engineering/documents" class="faint">← Documents</a><h1>${esc(d.number)} ${markingPills(d.markings)} ${historyButton(d.number, 'document')}</h1>
       <div class="sub">${esc(d.title)} · ${esc(TYPE_LABEL[d.type] ?? d.type)} · ${d.authority === 'External' ? `External, controlled by ${esc(d.externalAuthority)}${d.externalNumber ? ` (${esc(d.externalNumber)})` : ''}` : esc(d.authority)}${d.programId ? ' · program document' : ''}</div></div>
       <div class="spacer"></div>
       ${manager ? '<button class="btn" id="change-doc">Change</button>' : ''}${canAdd ? '<button class="btn primary" id="add-rev">Add a revision</button>' : ''}</div>
@@ -609,7 +610,7 @@ async function changeDetail(page, ctx, number) {
   if (['Draft', 'InReview', 'Approved'].includes(c.status) && manager) actions.push(['cancel', 'Cancel', 'ghost']);
 
   page.innerHTML = `
-    <div class="page-head"><div><a href="#/engineering/changes" class="faint">← Changes</a><h1>${esc(c.number)} ${changePill(c)}</h1>
+    <div class="page-head"><div><a href="#/engineering/changes" class="faint">← Changes</a><h1>${esc(c.number)} ${changePill(c)} ${historyButton(c.number, 'change')}</h1>
       <div class="sub">${esc(c.title)} · ${esc(c.class)} ${esc(c.type)} change · ${esc(c.priority)} · originated by ${esc(who(c.originator))} ${esc(fmtDateTime(c.createdAt))}</div></div>
       <div class="spacer"></div><div class="head-controls">${actions.map(([k, l, tone]) => `<button class="btn ${tone}" data-act="${k}">${esc(l)}</button>`).join('')}</div></div>
     <section class="panel"><header><h2>Why</h2></header><p>${esc(c.reason)}</p>${c.description ? `<p class="muted">${esc(c.description)}</p>` : ''}

@@ -292,6 +292,17 @@ See `docs/adr/0022-v2-10-facility-and-capital-projects.md`.
 
 See `docs/adr/0023-v2-11-serial-genealogy.md`.
 
+## What V2.12 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| "What changed?" for one subject | `src/Forge.Planning/HistoryService.cs` | Asset, machine, project, document, engineering change or part; recorded events only, newest first, each linked to its record |
+| Future events | `HistoryService.CollectFutureAsync` | Dates stored on records: revisions taking effect, reviews, changes, alternates, obsolescence dates, outages, planned downtime, work-order due dates, project tasks |
+| UI | Horizon → Coming up (and markers on machine rows); "What changed?" on assets, projects, items, documents and changes | |
+| Analyst and report | "What changed on SL-02?"; `dated-events` ("What is coming up?") | |
+
+See `docs/adr/0024-v2-12-horizon-and-what-changed.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -632,3 +643,11 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/inventory/production-receipts` takes `serials[]` for serialized parts | `inventory.transact` |
 | GET | `/api/execution/serials/{serial}/genealogy[?part=]`, `/api/orders/{n}/genealogy` | `execution.orders.read` (program access applies) |
 | GET | `/api/maintenance/assets/{code}/genealogy` | `maintenance.read` |
+
+## V2.12 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/history/{subject}[?kind=asset\|machine\|project\|document\|change\|item&days=]` | read permission of the subject's context (program access applies) |
+| GET | `/api/horizon/events[?days=90]` | any; each kind of event only with its context's read permission |
+| GET | `/api/reports/dated-events` | `planning.analyst.use` |

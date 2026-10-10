@@ -172,9 +172,10 @@ public static partial class QueryParser
             ambiguities.Add("Affected by what? Name a machine, a work center or a kind of constraint (capacity, labor, material, maintenance).");
         }
 
+        var (subject, subjectKind) = intent == AnalystIntent.WhatChanged ? SubjectOf(original, machine, part) : (null, null);
         var interpretation = new Interpretation(
             original, intent, string.Empty, confidence, order, machine, workCenter, part, program?.ProgramId, person?.PersonId,
-            category, shift?.Code, period, at, hours, report, ambiguities);
+            category, shift?.Code, period, at, hours, report, ambiguities, subject, subjectKind);
         return interpretation with { Understood = Describe(interpretation, vocabulary) };
     }
 
@@ -271,6 +272,7 @@ public static partial class QueryParser
         return Has("obsolete", "obsolescence", "end of life", "end of support", "last time buy", "last-time buy") ? "obsolescence"
             : Has("maintenance readiness", "blocked work order", "work orders blocked", "work orders are blocked", "maintenance blocked", "not ready for maintenance", "ready for maintenance") ? "maintenance-readiness"
             : Has("as built", "as-built", "genealogy", "where used lot", "which lot", "serial number") ? "as-built"
+            : Has("coming up", "dated event", "upcoming date", "takes effect", "take effect", "due in the next", "what is ahead", "whats ahead") ? "dated-events"
             : Has("project material", "facility project", "capital project", "projects short", "short for project", "project short", "project line") ? "project-material"
             : Has("proposed outage", "planned outage", "outages waiting", "outage approval", "outages proposed", "outages are proposed") ? "outages"
             : Has("asset", "decommission") ? "assets"
@@ -578,6 +580,31 @@ public static partial class QueryParser
         return hits.Count == 1 ? hits[0] : null;
     }
 
+    /// <summary>
+    /// What a "What changed?" question is about (V2.12): a code after "on", "to", "for", "about" or "with" —
+    /// optionally preceded by the kind of record — or else a machine or part the vocabulary recognized.
+    /// A code has a letter and a digit or dash, so "since 6am" or "for 3 days" are never taken for one.
+    /// </summary>
+    public static (string? Subject, string? Kind) SubjectOf(string question, string? machine, string? part)
+    {
+        if (SubjectRegex().Match(question ?? string.Empty) is { Success: true } m)
+        {
+            var kind = m.Groups[1].Success ? m.Groups[1].Value.ToLowerInvariant() switch
+            {
+                "doc" => "document",
+                "eco" or "ecn" or "ecr" => "change",
+                "part" => "item",
+                var k => k,
+            } : null;
+            return (m.Groups[2].Value.TrimEnd('.', '/').ToUpperInvariant(), kind);
+        }
+
+        return (machine ?? part, machine is not null ? "machine" : part is not null ? "item" : null);
+    }
+
+    [GeneratedRegex(@"\b(?:on|to|for|about|with|of)\s+(?:the\s+)?(?:(asset|machine|project|document|doc|change|eco|ecn|ecr|part|item)\s+)?((?=[A-Za-z0-9\-_./]*[A-Za-z])(?=[A-Za-z0-9\-_./]*[0-9\-])[A-Za-z0-9][A-Za-z0-9\-_./]*)", RegexOptions.IgnoreCase)]
+    private static partial Regex SubjectRegex();
+
     private static string Describe(Interpretation i, AnalystVocabulary v)
     {
         var parts = new List<string>();
@@ -591,7 +618,7 @@ public static partial class QueryParser
             AnalystIntent.UnavailableMachines => "Machines unavailable",
             AnalystIntent.MachineBlockers => $"What prevents {i.Machine ?? "a machine"} from running",
             AnalystIntent.QualifiedPeople => $"People qualified for {i.Machine ?? i.WorkCenter ?? "work"}",
-            AnalystIntent.WhatChanged => "Changes to the approved schedule",
+            AnalystIntent.WhatChanged => i.Subject is { } subject ? $"What changed on {(i.SubjectKind is { } k ? k + " " : string.Empty)}{subject}" : "Changes to the approved schedule",
             AnalystIntent.AffectedOrders => $"Orders affected by {i.Machine ?? i.WorkCenter ?? Person() ?? (i.Category is { } c ? c.ToLowerInvariant() + " constraints" : "…")}",
             AnalystIntent.PersonImpact => $"Orders that depend on {Person()} being available",
             AnalystIntent.Simulate => $"Scenario: {i.Machine ?? Person() ?? "…"} unavailable" + (i.Hours is { } h ? $" for {h:0.#} h" : string.Empty),

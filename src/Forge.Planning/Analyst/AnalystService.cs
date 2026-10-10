@@ -33,7 +33,8 @@ public sealed class AnalystService(
     ReadinessService readiness,
     DocumentationService documentation,
     BriefService briefs,
-    IAnalystNarrator narrator)
+    IAnalystNarrator narrator,
+    HistoryService entities)
 {
     public const int MaxRows = 200;
 
@@ -390,8 +391,43 @@ public sealed class AnalystService(
 
     // ------------------------------------------------------------------ history and constraints
 
+    /// <summary>
+    /// "What changed on SL-02?" (V2.12): the recorded events for that subject, newest first, each linked to its
+    /// record. Only the period the question gave is used; without one, everything recorded is listed.
+    /// </summary>
+    private async Task<AnalystAnswer> SubjectChangedAsync(ForgePrincipal principal, Interpretation i, string subject, AnalystClock clock, DateTimeZone zone, CancellationToken ct)
+    {
+        DateTimeOffset? since = i.At is { } a && a < clock.Now ? a : i.Period is { } p ? clock.ToInstant(p.From, TimeOnly.MinValue) : null;
+        EntityHistory h;
+        try
+        {
+            h = await entities.WhatChangedAsync(principal, subject, i.SubjectKind, since, ct);
+        }
+        catch (CommandRejectedException e)
+        {
+            return new AnalystAnswer(i, e.Message, [], null, null, ["Name an asset, machine, project, document, change or part by its code."], false, []);
+        }
+
+        var facts = h.Events.Take(40).Select(e => new AnalystFact($"{Local(e.At, zone)} {e.Kind}: {e.Title}{(e.Actor is null ? string.Empty : " — " + e.Actor)}", e.Link)).ToList();
+        var headline = h.Events.Count == 0
+            ? $"Nothing is recorded for {h.Title}{(since is { } s0 ? " since " + Local(s0, zone) : string.Empty)}."
+            : $"{h.Events.Count} recorded event{(h.Events.Count == 1 ? string.Empty : "s")} for {h.Title}{(since is { } s1 ? " since " + Local(s1, zone) : string.Empty)}.";
+        var notes = h.Notes.ToList();
+        if (h.Events.Count > facts.Count)
+        {
+            notes.Add($"Showing the newest {facts.Count}; the history drawer lists all {h.Events.Count}.");
+        }
+
+        return new AnalystAnswer(i, headline, facts, null, null, notes, false, h.Events.Select(e => e.Source).Distinct(StringComparer.Ordinal).ToList());
+    }
+
     private async Task<AnalystAnswer> ChangedAsync(ForgePrincipal principal, Interpretation i, AnalystClock clock, DateTimeZone zone, CancellationToken ct)
     {
+        if (i.Subject is { } subject)
+        {
+            return await SubjectChangedAsync(principal, i, subject, clock, zone, ct);
+        }
+
         var since = i.At is { } a && a < clock.Now ? a : clock.Now.AddDays(-1);
         var comparison = await history.CompareAsync(principal, since, clock.Now, false, ct);
         var facts = comparison.Orders.Take(15).Select(o => new AnalystFact($"Order {o.OrderNumber} ({o.Change}): {o.Explanation}", "order:" + Id(o.OrderNumber), o.Change switch { "Later" => "bad", "Status changed" => "warn", "Earlier" => "ok", _ => null })).ToList();
