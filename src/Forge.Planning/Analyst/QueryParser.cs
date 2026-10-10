@@ -274,6 +274,8 @@ public static partial class QueryParser
             : Has("trace lot", "trace roll", "trace batch", "trace serial", "trace the", "genealogy of lot", "genealogy of roll", "genealogy of batch", "what did lot", "what did roll", "what did batch", "what became of lot", "what became of roll", "what became of batch", "what became of serial", "came from lot", "where did lot", "where did roll", "where did batch") ? "genealogy-trace"
             : Has("unexplained", "reconcil", "what became of the material", "material accounting", "remnant", "byproduct", "by-product", "yield tolerance", "scrap and loss", "material issued to order") ? "material-reconciliation"
             : Has("lineage", "split from", "merged from", "merged into", "split into", "lot splits", "splits and merges", "was split", "were merged") ? "lot-lineage"
+            : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
+            : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
             : Has("where is lot", "where is serial", "where is the lot", "where is batch", "where is roll", "custody", "outside processor", "at outside", "in transit", "point of use", "stock position", "where is the material", "at the machine") ? "stock-positions"
             : Has("as built", "as-built", "genealogy", "where used lot", "which lot", "serial number") ? "as-built"
             : Has("coming up", "dated event", "upcoming date", "takes effect", "take effect", "due in the next", "what is ahead", "whats ahead") ? "dated-events"

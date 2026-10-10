@@ -29,12 +29,12 @@ export async function inventoryPage(page, ctx) {
   let data = {};
 
   async function load() {
-    const [summary, locations, requests, ledger, items, orders, resources, mro, suppliers] = await Promise.all([
+    const [summary, locations, requests, ledger, items, orders, resources, mro, suppliers, tasks, programs, due] = await Promise.all([
       tryGet('/api/inventory/summary'), tryGet('/api/inventory/locations'), tryGet('/api/inventory/requests?pending=true'),
       tryGet('/api/inventory/transactions?take=200'), tryGet('/api/engineering/items'), tryGet('/api/orders/'), tryGet('/api/resources/'), tryGet('/api/inventory/mro'),
-      tryGet('/api/procurement/suppliers'),
+      tryGet('/api/procurement/suppliers'), tryGet('/api/inventory/tasks?open=true'), tryGet('/api/inventory/count-programs'), tryGet('/api/inventory/counts-due'),
     ]);
-    data = { summary, locations, requests, ledger, items, orders, mro, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
+    data = { summary, locations, requests, ledger, items, orders, mro, tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
   }
 
   const locs = (active = true, ours = true) => (data.locations.data ?? []).filter(l => (!active || l.active) && (!ours || l.inCompanyCustody)).map(l => [l.code, `${l.code} — ${l.name} (${l.kind})`]);
@@ -201,6 +201,32 @@ export async function inventoryPage(page, ctx) {
       ],
     }, (v, reason) => command('/api/inventory/counts', v, reason), reload),
 
+    // V3.4: material to the machine, as tasks: requested, allocated, picked (scanned), delivered (scanned).
+    request: (preset = {}) => formModal({
+      title: 'Request material', detail: 'Staging and kitting are for a released order and go to its staging or point of use. Put-away goes to stores; replenishment tops up a point of use. Give a source to allocate it now.', confirmLabel: 'Request',
+      fields: [
+        { name: 'kind', label: 'Task', type: 'select', value: preset.kind ?? 'Stage', options: [['Stage', 'Stage for an order'], ['Kit', 'Kit for an order'], ['PutAway', 'Put away'], ['Replenish', 'Replenish a point of use']] },
+        { name: 'orderNumber', label: 'Order (staging and kitting)', type: 'number', value: preset.orderNumber },
+        { name: 'kitCode', label: 'Kit code (kitting)', code: true },
+        { name: 'partNumber', label: 'Part', type: 'select', options: parts(), value: preset.partNumber, required: true },
+        { name: 'quantity', label: 'Quantity', type: 'number', step: 'any', min: 0, value: preset.quantity, required: true },
+        { name: 'toLocation', label: 'To', type: 'select', options: locs(), value: preset.toLocation, required: true },
+        { name: 'fromLocation', label: 'From (optional: allocates now)', type: 'select', options: [['', '— allocate later —'], ...locs()] },
+        lotField,
+      ],
+    }, (v, reason) => command('/api/inventory/tasks', { ...v, orderNumber: v.orderNumber ? Number(v.orderNumber) : null, fromLocation: v.fromLocation || null, kitCode: v.kitCode || null, lotNumber: v.lotNumber || null }, reason), reload),
+
+    program: () => formModal({
+      title: 'Add a cycle-count program', detail: 'Every balance in the location (and the locations in it), of the part, or both, is due for counting this often.', confirmLabel: 'Add',
+      fields: [
+        { name: 'programCode', label: 'Code', code: true, required: true, placeholder: 'CC-STORES' },
+        { name: 'name', label: 'Name', required: true, placeholder: 'Main stores every 30 days' },
+        { name: 'locationCode', label: 'Location (optional)', type: 'select', options: [['', '— every location —'], ...locs(true, false)] },
+        { name: 'partNumber', label: 'Part (optional)', type: 'select', options: [['', '— every part —'], ...parts()] },
+        { name: 'frequencyDays', label: 'Every (days)', type: 'number', min: 1, max: 366, value: 30, required: true },
+      ],
+    }, (v, reason) => command('/api/inventory/count-programs', { ...v, locationCode: v.locationCode || null, partNumber: v.partNumber || null, frequencyDays: Number(v.frequencyDays) }, reason), reload),
+
     location: () => formModal({
       title: 'Add a location', detail: 'Where it sits, what it serves and who has custody. Stock at an outside processor or in transit never counts for planning.', confirmLabel: 'Add',
       fields: [
@@ -299,6 +325,39 @@ export async function inventoryPage(page, ctx) {
       </tbody></table>`;
   }
 
+  const TASK_NAME = { Stage: 'Stage', Kit: 'Kit', PutAway: 'Put away', Replenish: 'Replenish' };
+  function tasksTab() {
+    const t = data.tasks;
+    if (t.error) return errorBlock(t.error, 'tasks');
+    if (!t.data.length) return emptyBlock('No open tasks', 'Request material for an order (or from the order page) and it appears here to allocate, pick and deliver.');
+    const step = x => x.status === 'Requested' ? `<button class="btn small primary" data-task-allocate="${x.taskId}">Allocate</button>`
+      : x.status === 'Allocated' ? `<button class="btn small primary" data-task-pick="${x.taskId}">Pick (scan)</button>`
+      : x.status === 'Picked' ? `<button class="btn small primary" data-task-deliver="${x.taskId}">Deliver (scan)</button>` : '';
+    return `<table class="table"><thead><tr><th>#</th><th>Task</th><th>For</th><th>Part</th><th class="num">Qty</th><th>From → To</th><th>Status</th><th>Requested</th><th></th></tr></thead><tbody>
+      ${t.data.map(x => `<tr><td>${x.taskId}</td><td>${esc(TASK_NAME[x.kind] ?? x.kind)}${x.kitCode ? ` <span class="faint">kit ${esc(x.kitCode)}</span>` : ''}</td>
+        <td>${x.orderNumber ? `<a href="#/orders/${x.orderNumber}">#${x.orderNumber}</a>` : '—'}</td><td>${esc(x.partNumber)}${x.lotNumber ? ` <span class="faint">lot ${esc(x.lotNumber)}</span>` : ''}</td>
+        <td class="num">${qty(x.quantity)}${x.pickedQuantity != null && x.pickedQuantity < x.quantity ? ` <span class="c-warn">picked ${qty(x.pickedQuantity)}</span>` : ''}</td>
+        <td>${esc(x.fromLocation ?? '?')} → ${esc(x.toLocation)}</td><td><span class="pill info">${esc(x.status)}</span></td>
+        <td>${esc(who(x.requestedBy))}<br><span class="faint">${esc(fmtDateTime(x.requestedAt))}</span></td>
+        <td class="nowrap">${handler ? `${step(x)} <button class="btn small ghost" data-task-cancel="${x.taskId}">Cancel</button>` : ''}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="faint" style="margin-top:6px">Allocated stock is held back from other tasks. Picking and delivering are confirmed by scanning the location (and lot); only delivery moves stock in the ledger.</div>`;
+  }
+
+  function countsTab() {
+    const p = data.programs, d = data.due;
+    if (p.error) return errorBlock(p.error, 'count programs');
+    const add = controller ? '<div class="toolbar"><button class="btn small" data-act="program">+ Count program</button></div>' : '';
+    const programs = p.data.length ? `<table class="table"><thead><tr><th>Program</th><th>Location</th><th>Part</th><th class="num">Every (days)</th><th>Set up by</th><th></th></tr></thead><tbody>
+      ${p.data.map(x => `<tr class="${x.active ? '' : 'retired'}"><td><b>${esc(x.programCode)}</b> ${esc(x.name)}</td><td>${esc(x.locationCode ?? 'every')}</td><td>${esc(x.partNumber ?? 'every')}</td><td class="num">${x.frequencyDays}</td>
+        <td class="faint">${esc(who(x.createdBy))} · ${esc(fmtDateTime(x.createdAt))}</td><td>${!x.active ? '<span class="pill none">Retired</span>' : controller ? `<button class="btn small ghost" data-retire-program="${esc(x.programCode)}">Retire</button>` : ''}</td></tr>`).join('')}</tbody></table>`
+      : emptyBlock('No count programs', 'Say what is counted how often; due counts then appear here.');
+    const dueRows = d.error ? errorBlock(d.error, 'counts due') : !d.data.length ? '<p class="muted">Nothing is due for counting.</p>' : `<table class="table"><thead><tr><th>Due</th><th>Program</th><th>Location</th><th>Part</th><th>Lot</th><th>Status</th><th class="num">On record</th><th>Last counted</th><th></th></tr></thead><tbody>
+      ${d.data.map((x, i) => `<tr><td>${esc(x.dueOn)}</td><td>${esc(x.programCode)}</td><td>${esc(x.locationCode)}</td><td>${esc(x.partNumber)}</td><td>${esc(x.lotNumber ?? '—')}</td><td>${esc(x.status)}</td><td class="num">${qty(x.quantity)}</td>
+        <td>${x.lastCountedAt ? esc(fmtDateTime(x.lastCountedAt)) : '<span class="faint">never</span>'}</td><td>${handler ? `<button class="btn small" data-count-due="${i}">Count</button>` : ''}</td></tr>`).join('')}</tbody></table>`;
+    return `${add}${programs}<h3>Due for counting</h3>${dueRows}`;
+  }
+
   // MRO stocking levels (V2.8): at or below the reorder point MRP plans a purchase up to the maximum.
   function mroTab() {
     if (data.mro.error) return errorBlock(data.mro.error, 'MRO levels');
@@ -334,7 +393,7 @@ export async function inventoryPage(page, ctx) {
     const pending = data.requests.data?.length ?? 0;
     const buttons = [
       handler && ['receive', 'Receive'], handler && ['issue', 'Issue to order'], handler && ['return', 'Return'], handler && ['move', 'Move'],
-      handler && ['produced', 'From production'], handler && ['split', 'Split'], handler && ['merge', 'Merge'], handler && ['hold', 'Hold'], controller && ['release', 'Release'], handler && ['scrap', 'Scrap'],
+      handler && ['produced', 'From production'], handler && ['split', 'Split'], handler && ['merge', 'Merge'], handler && ['request', 'Request material'], handler && ['hold', 'Hold'], controller && ['release', 'Release'], handler && ['scrap', 'Scrap'],
       handler && ['count', 'Count'], handler && ['adjust', 'Adjust'], controller && ['location', '+ Location'],
     ].filter(Boolean);
     page.innerHTML = `
@@ -345,8 +404,8 @@ export async function inventoryPage(page, ctx) {
       ${buttons.length ? `<div class="toolbar">${buttons.map(([k, l]) => `<button class="btn ${k === 'receive' ? 'primary' : ''}" data-act="${k}">${esc(l)}</button>`).join('')}</div>` : '<div class="notice">You can look at stock. Material handlers move it; inventory controllers approve changes.</div>'}
       ${kpis()}
       <section class="panel">
-        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : stockTab()}
+        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        ${tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : stockTab()}
       </section>`;
     $('#trace-q', page)?.addEventListener('click', () => { const q = $('#serial-q', page).value.trim(); if (q) traceDrawer({ lot: q.toUpperCase() }); });
     $('#serial-find', page)?.addEventListener('submit', ev => { ev.preventDefault(); const q = $('#serial-q', page).value.trim(); if (q) serialDrawer(q.toUpperCase()); });
@@ -369,6 +428,34 @@ export async function inventoryPage(page, ctx) {
       drawer(`Why was this ${part} purchased?`, error ? errorBlock(error, 'the purchase') : `<p>${esc(w.answer)}</p>
         ${w.purchases.map(p => `<div class="notice" style="margin-top:8px">PO ${p.poNumber} line ${p.lineNumber} · ${esc(p.supplier)}${p.sourceKey ? ` · for <b>${esc(p.sourceKey)}</b>` : ''}</div>`).join('')}`);
     }));
+    const task = id => data.tasks.data.find(x => x.taskId === Number(id));
+    $$('[data-task-allocate]', page).forEach(b => b.addEventListener('click', () => { const x = task(b.dataset.taskAllocate); formModal({
+      title: `Allocate task ${x.taskId}`, detail: `${qty(x.quantity)} ${x.partNumber} to ${x.toLocation}. The stock is held for this task until it is delivered or cancelled.`, confirmLabel: 'Allocate',
+      fields: [{ name: 'fromLocation', label: 'From', type: 'select', options: locs(), required: true }, { ...lotField, value: x.lotNumber ?? '' }],
+    }, (v, reason) => command(`/api/inventory/tasks/${x.taskId}/allocate`, { ...v, lotNumber: v.lotNumber || null }, reason), reload); }));
+    $$('[data-task-pick]', page).forEach(b => b.addEventListener('click', () => { const x = task(b.dataset.taskPick); formModal({
+      title: `Pick task ${x.taskId}`, detail: `Go to ${x.fromLocation} and scan it${x.lotNumber ? `, then scan lot ${x.lotNumber}` : ''}. Pick less if the location is short.`, confirmLabel: 'Picked',
+      fields: [{ name: 'scannedLocation', label: 'Scan the location', code: true, required: true }, ...(x.lotNumber ? [{ name: 'scannedLot', label: 'Scan the lot', code: true, required: true }] : []),
+        { name: 'quantity', label: 'Quantity picked', type: 'number', step: 'any', min: 0, value: x.quantity, required: true }],
+    }, (v, reason) => command(`/api/inventory/tasks/${x.taskId}/pick`, { ...v, quantity: Number(v.quantity) }, reason), reload); }));
+    $$('[data-task-deliver]', page).forEach(b => b.addEventListener('click', () => { const x = task(b.dataset.taskDeliver); formModal({
+      title: `Deliver task ${x.taskId}`, detail: `Take ${qty(x.pickedQuantity)} ${x.partNumber} to ${x.toLocation} and scan it there.`, confirmLabel: 'Delivered',
+      fields: [{ name: 'scannedLocation', label: 'Scan the destination', code: true, required: true }],
+    }, (v, reason) => command(`/api/inventory/tasks/${x.taskId}/deliver`, v, reason), reload); }));
+    $$('[data-task-cancel]', page).forEach(b => b.addEventListener('click', async () => {
+      const done = await confirmWithReason({ title: `Cancel task ${b.dataset.taskCancel}`, detail: 'Anything allocated is free again. Nothing moves.', confirmLabel: 'Cancel task' },
+        reason => command(`/api/inventory/tasks/${b.dataset.taskCancel}/cancel`, {}, reason));
+      if (done) { toast(done.message); await reload(); }
+    }));
+    $$('[data-retire-program]', page).forEach(b => b.addEventListener('click', async () => {
+      const done = await confirmWithReason({ title: `Retire count program ${b.dataset.retireProgram}`, detail: 'Its balances are no longer due under it. Counts already recorded stay.', confirmLabel: 'Retire' },
+        reason => command(`/api/inventory/count-programs/${encodeURIComponent(b.dataset.retireProgram)}/retire`, {}, reason));
+      if (done) { toast(done.message); await reload(); }
+    }));
+    $$('[data-count-due]', page).forEach(b => b.addEventListener('click', () => { const x = data.due.data[Number(b.dataset.countDue)]; formModal({
+      title: `Count ${x.partNumber} at ${x.locationCode}`, detail: 'Count what is physically there. A variance waits for a second person.', confirmLabel: 'Record count',
+      fields: [{ name: 'counted', label: 'Counted quantity', type: 'number', step: 'any', min: 0, required: true }],
+    }, (v, reason) => command('/api/inventory/counts', { partNumber: x.partNumber, locationCode: x.locationCode, lotNumber: x.lotNumber, status: x.status, counted: Number(v.counted) }, reason), reload); }));
     $$('[data-approve]', page).forEach(b => b.addEventListener('click', () => decide(b.dataset.approve, 'approve')));
     $$('[data-reject]', page).forEach(b => b.addEventListener('click', () => decide(b.dataset.reject, 'reject')));
     $$('[data-change-loc]', page).forEach(b => b.addEventListener('click', () => changeLocation(data.locations.data.find(l => l.code === b.dataset.changeLoc))));

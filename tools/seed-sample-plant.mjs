@@ -67,11 +67,13 @@ async function main() {
       const outages = !(await get('mp', '/api/maintenance/outages?includeDecided=true')).length;
       const projects = !(await get('planner', '/api/projects/')).length;
       const horizon = !(await horizonWindow());
-      const places = !(await get('ivy', '/api/inventory/locations')).some(l => l.code === 'SL-B-SIDE');
+      const locationList = await get('ivy', '/api/inventory/locations');
+      const places = !locationList.some(l => l.code === 'SL-B-SIDE');
+      const flow = !locationList.some(l => l.code === 'SL-STAGE');
       const itemList = await get('eng', '/api/engineering/items');
       const identity = !itemList.some(i => i.partNumber === 'FOIL-CU');
       const transformation = !itemList.some(i => i.partNumber === 'SHIELD-CU');
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -133,6 +135,10 @@ async function main() {
         console.log('Adding a sample order that slits copper foil, with a remnant, a loss and material still to explain.');
         await seedTransformation();
       }
+      if (flow) {
+        console.log('Adding slitting staging, material tasks and a cycle-count program.');
+        await seedMaterialFlow();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -161,6 +167,7 @@ async function main() {
     await seedPlaces();
     await seedIdentity();
     await seedTransformation();
+    await seedMaterialFlow();
     return finish();
   }
 
@@ -316,6 +323,7 @@ async function main() {
   await seedPlaces();
   await seedIdentity();
   await seedTransformation();
+  await seedMaterialFlow();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -779,6 +787,19 @@ async function seedTransformation() {
       { role: 'Remnant', partNumber: 'FOIL-CU', lotNumber: 'CU-1001-A-R', quantity: 150, sourceLot: 'CU-1001-A', locationCode: 'STORES' },
       { role: 'Loss', partNumber: 'FOIL-CU', lotNumber: 'CU-1001-A', quantity: 30 },
     ] });
+}
+
+async function seedMaterialFlow() {
+  step('Material flow: coil staged for slitting on a released panel order (picked and delivered by scan), one more request waiting, and stores counted every 30 days — see Inventory → Tasks and Counts, and the order page');
+  await post('ivy', '/api/inventory/locations', { code: 'SL-STAGE', siteCode: 'PLANT1', name: 'Slitting staging', kind: 'Staging', workCenterCode: 'SLIT-WC' });
+  const released = (await get('planner', '/api/orders/')).filter(o => o.status === 'Released' && o.partNumber === 'PANEL-500').map(o => o.orderNumber).sort((a, b) => a - b);
+  if (released.length) {
+    const t = await post('stores', '/api/inventory/tasks', { kind: 'Stage', orderNumber: released[0], partNumber: 'COIL-AL', quantity: 40, toLocation: 'SL-STAGE', fromLocation: 'STORES', reason: 'Sample: coil for slitting' });
+    await post('stores', `/api/inventory/tasks/${t.entityId}/pick`, { scannedLocation: 'STORES', quantity: 40 });
+    await post('stores', `/api/inventory/tasks/${t.entityId}/deliver`, { scannedLocation: 'SL-STAGE' });
+    if (released.length > 1) await post('stores', '/api/inventory/tasks', { kind: 'Stage', orderNumber: released[1], partNumber: 'COIL-AL', quantity: 60, toLocation: 'SL-STAGE', reason: 'Sample: next order' });
+  }
+  await post('ivy', '/api/inventory/count-programs', { programCode: 'CC-STORES', name: 'Main stores every 30 days', locationCode: 'STORES', frequencyDays: 30 });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

@@ -168,6 +168,15 @@ public interface IInventoryStore
 
     Task InsertYieldToleranceAsync(YieldTolerance tolerance, CancellationToken ct);
 
+    Task<long> InsertMaterialTaskAsync(MaterialTask task, CancellationToken ct);
+
+    /// <summary>Writes a task's new state; false when it was no longer in the expected status (someone else moved it).</summary>
+    Task<bool> UpdateMaterialTaskAsync(MaterialTask task, MaterialTaskStatus expected, CancellationToken ct);
+
+    Task<bool> InsertCountProgramAsync(CycleCountProgram program, CancellationToken ct);
+
+    Task RetireCountProgramAsync(string programCode, string actor, DateTimeOffset at, CancellationToken ct);
+
     Task SetLotRevisionAsync(string partNumber, string lotNumber, string revision, CancellationToken ct);
 
     Task<bool> InsertLocationAsync(LocationInfo location, DateTimeOffset at, string actor, CancellationToken ct);

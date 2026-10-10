@@ -46,6 +46,16 @@ public sealed record SplitRequest(string PartNumber, string LotNumber, string Lo
 
 public sealed record MergeRequest(string PartNumber, InstanceShare[] Sources, string ResultLot, string LocationCode, StockStatus? Status, string? Reason);
 
+public sealed record MaterialTaskRequest(MaterialTaskKind Kind, long? OrderNumber, string PartNumber, decimal Quantity, string ToLocation, string? LotNumber, string? FromLocation, string? KitCode, string? Reason);
+
+public sealed record AllocateRequest(string FromLocation, string? LotNumber, string? Reason);
+
+public sealed record PickRequest(string ScannedLocation, string? ScannedLot, decimal? Quantity, string? Reason);
+
+public sealed record DeliverRequest(string ScannedLocation, string? Reason);
+
+public sealed record CountProgramRequest(string ProgramCode, string Name, string? LocationCode, string? PartNumber, int FrequencyDays, string? Reason);
+
 public sealed record TransformationRequest(long OrderNumber, int? OperationSequence, TransformationEntry[] Entries, string? Reason);
 
 public sealed record YieldToleranceRequest(decimal Percent, string? Reason);
@@ -256,6 +266,28 @@ public static class MaterialsEndpoints
                 var rows = MaterialReconciliation.For(order, await inventory.ListTransactionsAsync(null, order, 100_000, http.RequestAborted), transformations, p => tolerances.GetValueOrDefault(p));
                 return new OrderReconciliationView(order, info.PartNumber, rows, transformations);
             }));
+        // V3.4: material tasks, an order's material flow, cycle-count programs and counts due.
+        api.MapGet("/tasks", (HttpContext http, bool? open, long? order, CancellationToken _) =>
+            Read(http, Permissions.InventoryRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var hidden = await HiddenOrdersAsync(uow, principal, http.RequestAborted);
+                return (await uow.Store<IInventoryLookup>().ListMaterialTasksAsync(open ?? true, order, http.RequestAborted))
+                    .Where(t => t.OrderNumber is not { } n || !hidden.Contains(n))
+                    .ToList();
+            }));
+        api.MapGet("/orders/{order:long}/material-flow", async (HttpContext http, long order, MaterialFlowService s, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            return principal is null ? NotRegistered() : Results.Ok(await s.OrderAsync(principal, order, ct));
+        });
+        api.MapGet("/count-programs", (HttpContext http, CancellationToken _) =>
+            ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListCountProgramsAsync(ct)));
+        api.MapGet("/counts-due", async (HttpContext http, MaterialFlowService s, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            return principal is null ? NotRegistered() : Results.Ok(await s.CountsDueAsync(principal, ct));
+        });
         api.MapGet("/yield-tolerances", (HttpContext http, CancellationToken _) =>
             ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListYieldTolerancesAsync(ct)));
         api.MapGet("/requests", (HttpContext http, bool? pending, CancellationToken _) =>
@@ -287,6 +319,20 @@ public static class MaterialsEndpoints
             Command(http, b.Reason, c => s.RequestAdjustmentAsync(new RequestAdjustment(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released, b.Change), c, ct)));
         api.MapPost("/counts", (HttpContext http, CountRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordCountAsync(new RecordCount(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released, b.Counted), c, ct)));
+        api.MapPost("/tasks", (HttpContext http, MaterialTaskRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RequestMaterialAsync(new RequestMaterial(b.Kind, b.OrderNumber, b.PartNumber, b.Quantity, b.ToLocation, b.LotNumber, b.FromLocation, b.KitCode), c, ct)));
+        api.MapPost("/tasks/{id:long}/allocate", (HttpContext http, long id, AllocateRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AllocateMaterialAsync(new AllocateMaterial(id, b.FromLocation, b.LotNumber), c, ct)));
+        api.MapPost("/tasks/{id:long}/pick", (HttpContext http, long id, PickRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.PickMaterialAsync(new PickMaterial(id, b.ScannedLocation, b.ScannedLot, b.Quantity), c, ct)));
+        api.MapPost("/tasks/{id:long}/deliver", (HttpContext http, long id, DeliverRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.DeliverMaterialAsync(new DeliverMaterial(id, b.ScannedLocation), c, ct)));
+        api.MapPost("/tasks/{id:long}/cancel", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CancelMaterialTaskAsync(new CancelMaterialTask(id), c, ct)));
+        api.MapPost("/count-programs", (HttpContext http, CountProgramRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CreateCountProgramAsync(new CreateCountProgram(b.ProgramCode, b.Name, b.LocationCode, b.PartNumber, b.FrequencyDays), c, ct)));
+        api.MapPost("/count-programs/{code}/retire", (HttpContext http, string code, ReasonRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RetireCountProgramAsync(new RetireCountProgram(code), c, ct)));
         api.MapPost("/transformations", (HttpContext http, TransformationRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordTransformationAsync(new RecordTransformation(b.OrderNumber, b.OperationSequence, b.Entries ?? []), c, ct)));
         api.MapPost("/yield-tolerance/{part}", (HttpContext http, string part, YieldToleranceRequest b, InventoryService s, CancellationToken ct) =>

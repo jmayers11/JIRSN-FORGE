@@ -220,6 +220,26 @@ internal static class StandardReports
                 "Everything recorded, whatever the period."),
             Permissions.InventoryRead, null, GenealogyTraceAsync),
         new(
+            new("material-flow", "Material flow to the machine", "Production",
+                "Every component of every released order, through each separate state: required, requested, allocated, picked, delivered, issued and consumed. In the warehouse is a material-flow constraint (the stock exists but is not at the machine), kept apart from a shortage.",
+                [PartFilter, StatusFilter(Enum.GetNames<MaterialFlowState>()), SearchFilter],
+                [C("order", "Order", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("workCenter", "Work center", ReportColumnKind.Text), C("required", "Required", ReportColumnKind.Number),
+                 C("requested", "Requested", ReportColumnKind.Number), C("allocated", "Allocated", ReportColumnKind.Number), C("picked", "Picked", ReportColumnKind.Number), C("delivered", "Delivered", ReportColumnKind.Number),
+                 C("issued", "Issued", ReportColumnKind.Number), C("consumed", "Consumed", ReportColumnKind.Number), C("atPointOfUse", "At the machine", ReportColumnKind.Number), C("elsewhere", "Elsewhere", ReportColumnKind.Number),
+                 C("status", "State", ReportColumnKind.Text), C("why", "Why", ReportColumnKind.Text)],
+                ["status", "workCenter", "part", "order"], "status", 3660,
+                "Released orders as they stand now; the period does not apply."),
+            Permissions.InventoryRead, null, MaterialFlowAsync),
+        new(
+            new("counts-due", "Cycle counts due", "Inventory",
+                "Balances a cycle-count program says are due: never counted, or last counted longer ago than the program's frequency. Stock at an outside processor or in transit is not counted here.",
+                [PartFilter, SearchFilter],
+                [C("dueOn", "Due", ReportColumnKind.Date), C("program", "Program", ReportColumnKind.Text), C("location", "Location", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text),
+                 C("lot", "Lot / serial", ReportColumnKind.Text), C("status", "Quality status", ReportColumnKind.Text), C("quantity", "On record", ReportColumnKind.Number), C("lastCounted", "Last counted", ReportColumnKind.DateTime)],
+                ["program", "location", "part"], "program", 3660,
+                "As it stands today; the period does not apply."),
+            Permissions.InventoryRead, null, CountsDueAsync),
+        new(
             new("engineering-changes", "Engineering changes", "Engineering",
                 "Every engineering change you may see: what it changes, which reviews it needs and has, who approved and released it, and when it takes effect.",
                 [StatusFilter(Enum.GetNames<ChangeStatus>()), SearchFilter],
@@ -555,6 +575,38 @@ internal static class StandardReports
 
         var open = rows.Count(r => r.Cells[4] is "Draft" or "InReview" or "Approved");
         return new ReportBody(rows, [$"{rows.Count} change(s); {open} open."], ["Engineering changes", "Change reviews"]);
+    }
+
+    private static async Task<ReportBody> MaterialFlowAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var l in await MaterialFlowService.ReleasedAsync(run.Uow, run.Visible, ct))
+        {
+            if (!ReportRun.Is(l.PartNumber, p.PartNumber) || !ReportRun.Is(l.State.ToString(), p.Status) || !run.Matches(l.PartNumber, l.WorkCenterCode, ReportRun.Id(l.OrderNumber), l.Explanation))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [ReportRun.Id(l.OrderNumber), l.PartNumber, l.WorkCenterCode, l.Required, l.Requested, l.Allocated, l.Picked, l.Delivered, l.Issued, l.Consumed, l.AtPointOfUse, l.Elsewhere, l.State.ToString(), l.Explanation],
+                ["order:" + ReportRun.Id(l.OrderNumber), "item:" + l.PartNumber]));
+        }
+
+        var flow = rows.Count(r => (string)r.Cells[12]! == nameof(MaterialFlowState.InWarehouse));
+        var shortRows = rows.Count(r => (string)r.Cells[12]! == nameof(MaterialFlowState.Shortage));
+        return new ReportBody(rows, [$"{rows.Count} component line(s); {flow} in the warehouse but not at the machine, {shortRows} short."], ["Material tasks", "Inventory ledger", "Stock positions"]);
+    }
+
+    private static async Task<ReportBody> CountsDueAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var inventory = run.Uow.Store<IInventoryLookup>();
+        var due = CountDue.For(await inventory.ListCountProgramsAsync(ct), await inventory.ListBalancesAsync(null, ct), await inventory.ListLocationsAsync(ct), await inventory.ListLastCountsAsync(ct), run.Today, run.Local);
+        var rows = due.Where(d => ReportRun.Is(d.PartNumber, p.PartNumber) && run.Matches(d.PartNumber, d.LocationCode, d.LotNumber, d.ProgramCode))
+            .Select(d => new ReportRow([d.DueOn, d.ProgramCode, d.LocationCode, d.PartNumber, d.LotNumber, d.Status.ToString(), d.Quantity, d.LastCountedAt], ["item:" + d.PartNumber]))
+            .ToList();
+        return new ReportBody(rows, [$"{rows.Count} balance(s) due for counting."], ["Cycle-count programs", "Counts", "Inventory ledger"]);
     }
 
     private static async Task<ReportBody> MaterialReconciliationAsync(ReportRun run, CancellationToken ct)

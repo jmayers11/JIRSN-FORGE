@@ -336,6 +336,16 @@ See `docs/adr/0026-v3-2-material-identity-and-quantity.md`.
 
 See `docs/adr/0027-v3-3-transformation-and-genealogy-graph.md`.
 
+## What V3.4 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Material tasks | `inventory.material_task`, `/api/inventory/tasks` | Stage, kit, put-away and replenish: requested, allocated (holds stock), picked (location and lot scanned), delivered (destination scanned, the only ledger move) |
+| Material flow | `MaterialFlowLine`, order page, `material-flow` report | Required, requested, allocated, picked, delivered, issued, consumed; in the warehouse is a flow constraint, not a shortage |
+| Cycle-count programs | `inventory.cycle_count_program`, `/api/inventory/counts-due`, `counts-due` report | A location tree, a part or both, every N days; due until counted |
+
+See `docs/adr/0028-v3-4-movement-and-point-of-use.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -713,3 +723,14 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | GET | `/api/inventory/yield-tolerances` | `inventory.read` |
 | POST | `/api/inventory/yield-tolerance/{part}` (reason required) | `inventory.approve` |
 | GET | `/api/genealogy/trace?part=&lot=` or `?order=` or `?shipment=`, `&direction=Back\|Forward\|Both` | `inventory.read` |
+
+## V3.4 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/inventory/tasks[?open=&order=]` | `inventory.read` |
+| POST | `/api/inventory/tasks` (stage, kit, put-away, replenish; `fromLocation` allocates at once) | `inventory.transact` |
+| POST | `/api/inventory/tasks/{id}/allocate`, `/pick` (scans), `/deliver` (scan), `/cancel` (reason required) | `inventory.transact` |
+| GET | `/api/inventory/orders/{order}/material-flow` | `inventory.read` |
+| GET | `/api/inventory/count-programs`, `/api/inventory/counts-due` | `inventory.read` |
+| POST | `/api/inventory/count-programs`, `/api/inventory/count-programs/{code}/retire` (reason required) | `inventory.manage` |

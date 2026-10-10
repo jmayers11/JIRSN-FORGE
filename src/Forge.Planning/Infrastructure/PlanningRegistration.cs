@@ -25,6 +25,7 @@ public static class PlanningRegistration
         services.AddSingleton<ProjectPlanningService>();
         services.AddSingleton<GenealogyService>();
         services.AddSingleton<GenealogyGraphService>();
+        services.AddSingleton<MaterialFlowService>();
         services.AddSingleton<HistoryService>();
         services.AddSingleton<ScheduleService>();
         services.AddSingleton<ProgramHorizonService>();

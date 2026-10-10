@@ -89,6 +89,10 @@ public class AnalystParserTests
     [InlineData("Show unexplained material", "material-reconciliation")]
     [InlineData("Show material reconciliation", "material-reconciliation")]
     [InlineData("Show remnants", "material-reconciliation")]
+    [InlineData("Show material flow", "material-flow")]
+    [InlineData("Show what is in the warehouse", "material-flow")]
+    [InlineData("What is staged for slitting?", "material-flow")]
+    [InlineData("Which cycle counts are due?", "counts-due")]
     [InlineData("Which training acknowledgments are open?", "change-actions")]
     [InlineData("Show orders with drawing mismatches", "documentation-status")]
     public void V2_questions_map_to_their_reports(string question, string report)

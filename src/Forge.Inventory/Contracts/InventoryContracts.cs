@@ -584,4 +584,14 @@ public interface IInventoryLookup
 
     /// <summary>The ledger entries genealogy reads (V3.3): receipts, issues and returns to production orders, production receipts, remnants, byproducts, shipments and maintenance issues (installs). Never moves.</summary>
     Task<IReadOnlyList<InventoryTransaction>> ListGenealogyTransactionsAsync(CancellationToken ct);
+
+    /// <summary>Material tasks (V3.4): open ones (requested, allocated, picked) or all, optionally for one order.</summary>
+    Task<IReadOnlyList<MaterialTask>> ListMaterialTasksAsync(bool openOnly, long? orderNumber, CancellationToken ct);
+
+    Task<MaterialTask?> FindMaterialTaskAsync(long taskId, CancellationToken ct);
+
+    Task<IReadOnlyList<CycleCountProgram>> ListCountProgramsAsync(CancellationToken ct);
+
+    /// <summary>The last count of every balance ever counted, with or without a variance (V3.4).</summary>
+    Task<IReadOnlyList<LastCount>> ListLastCountsAsync(CancellationToken ct);
 }
