@@ -186,6 +186,7 @@ app.MapMaintenanceReadinessEndpoints();
 app.MapPlanningEndpoints();
 app.MapShopFloorEndpoints();
 app.MapProductionActualsEndpoints();
+app.MapShiftContinuityEndpoints();
 app.MapShelfLifeEndpoints();
 app.MapGoalEndpoints();
 app.MapToolEndpoints();

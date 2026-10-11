@@ -32,6 +32,7 @@ public static class PlanningRegistration
         services.AddSingleton<HistoryService>();
         services.AddSingleton<ScheduleService>();
         services.AddSingleton<IPriorityImpactProvider, PriorityImpactProvider>();
+        services.AddSingleton<IShiftFactsProvider, ShiftFactsProvider>();
         services.AddSingleton<GoalService>();
         services.AddSingleton<ProgramHorizonService>();
         services.AddSingleton<Reporting.ReportService>();

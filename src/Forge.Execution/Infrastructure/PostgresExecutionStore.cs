@@ -423,9 +423,11 @@ public static class ExecutionRegistration
         services.AddForgeStore<IExecutionLookup>(uow => new PostgresExecutionStore(uow));
         services.AddForgeStore<IShopFloorStore>(uow => new PostgresExecutionStore(uow));
         services.AddForgeStore<IAsBuiltRecord>(uow => new PostgresAsBuiltRecord(uow));
+        services.AddForgeStore<IShiftContinuityStore>(uow => new PostgresShiftContinuityStore(uow));
         services.AddForgeStore<Forge.Maintenance.Contracts.IMachineUsageLookup>(uow => new MachineUsage(uow));
         services.AddSingleton<ProductionOrderService>();
         services.AddSingleton<PriorityGovernanceService>();
+        services.AddSingleton<ShiftContinuityService>();
         services.AddSingleton<Engines.OperatorAuthorizationEngine>();
         services.AddSingleton<ShopFloorService>();
         services.AddForgeStore<IProductionActualsLookup>(uow => new PostgresProductionActualsStore(uow));

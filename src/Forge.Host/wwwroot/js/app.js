@@ -21,6 +21,7 @@ import { projectsPage } from './pages/projects.js';
 import { reportsPage } from './pages/reports.js';
 import { engineeringPage } from './pages/engineering.js';
 import { analystPage } from './pages/analyst.js';
+import { shiftContinuityPage } from './pages/shift-continuity.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
@@ -36,6 +37,7 @@ const NAV = [
   { route: 'shop-floor', label: 'Shop Floor', icon: 'operator', page: shopFloorPage },
   { route: 'plant-setup', label: 'Plant Setup', icon: 'workorder', page: plantSetupPage },
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
+  { route: 'shift-continuity', label: 'Shift Continuity', icon: 'timeline', page: shiftContinuityPage },
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
