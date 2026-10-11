@@ -11,6 +11,7 @@ using Forge.Maintenance.Contracts;
 using Forge.Planning.Engines;
 using Forge.Planning.Reporting;
 using Forge.Programs.Contracts;
+using Forge.Quality.Contracts;
 using Forge.Resources.Contracts;
 using Forge.Workforce.Contracts;
 using NodaTime;
@@ -502,6 +503,7 @@ public sealed class AnalystService(
         SiteSnapshot snapshot;
         List<OrderInfo> orders;
         IReadOnlyList<OrderMaterialStatus> material;
+        IReadOnlyDictionary<long, OrderQuality> quality;
         await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
         {
             snapshot = await SnapshotLoader.LoadAsync(read, time, ct);
@@ -513,6 +515,7 @@ public sealed class AnalystService(
             }
 
             material = (await MaterialPlanningService.RunMaterialAsync(read, time, ct)).Output;
+            quality = await ScheduleQuality.LoadAsync(read, orders, ct);
         }
 
         var now = snapshot.AsOf;
@@ -545,7 +548,7 @@ public sealed class AnalystService(
             change = $"{personName} available throughout (no recorded absence)";
         }
 
-        var request = new ScheduleRequest(now, now.AddDays(14), orders, material);
+        var request = new ScheduleRequest(now, now.AddDays(14), orders, material, quality);
         var baseline = EngineRunner.Run(new SchedulingEngine(), snapshot, request, now).Output;
         var scenario = EngineRunner.Run(new SchedulingEngine(), changed, request, now).Output;
 

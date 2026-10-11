@@ -76,7 +76,8 @@ public sealed class ScheduleService(CommandPipeline pipeline, IKernelUnitOfWorkF
             }
 
             var material = (await MaterialPlanningService.RunMaterialAsync(read, time, ct)).Output;
-            var request = new ScheduleRequest(snapshot.AsOf, snapshot.AsOf.AddDays(c.HorizonDays), orders, material);
+            var quality = await ScheduleQuality.LoadAsync(read, orders, ct);
+            var request = new ScheduleRequest(snapshot.AsOf, snapshot.AsOf.AddDays(c.HorizonDays), orders, material, quality);
             run = EngineRunner.Run(new SchedulingEngine(), snapshot, request, snapshot.AsOf);
             findings = new ConstraintEngine().Evaluate(snapshot, new ConstraintRequest(run.Output), snapshot.AsOf).Output;
         }

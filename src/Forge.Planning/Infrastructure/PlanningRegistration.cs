@@ -1,4 +1,5 @@
 using Forge.Kernel.Postgres;
+using Forge.Execution.Contracts;
 using Forge.Resources.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -30,6 +31,7 @@ public static class PlanningRegistration
         services.AddSingleton<ProductionActualsQueries>();
         services.AddSingleton<HistoryService>();
         services.AddSingleton<ScheduleService>();
+        services.AddSingleton<IPriorityImpactProvider, PriorityImpactProvider>();
         services.AddSingleton<GoalService>();
         services.AddSingleton<ProgramHorizonService>();
         services.AddSingleton<Reporting.ReportService>();

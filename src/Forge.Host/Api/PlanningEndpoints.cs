@@ -25,6 +25,8 @@ public sealed record MaintenanceWindowRequest(DateTimeOffset StartsAt, DateTimeO
 
 public sealed record ProposeScheduleRequest(int? HorizonDays, string? Reason);
 
+public sealed record OrderPriorityPreviewRequest(int Priority);
+
 public sealed record ResolveRequest(string Resolution, string? Reason);
 
 /// <summary>Phase 4 endpoints: calendars, downtime, capacity, scheduling, constraints and drop-dead dates.</summary>

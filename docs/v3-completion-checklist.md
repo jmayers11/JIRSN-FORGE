@@ -17,7 +17,8 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | V3.14 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 95; focused PostgreSQL API 1/1; zero build warnings/errors; commit `2d83b5a` | Complete |
 | V3.15 | Full verify PASS: Planning 266, Architecture 32, Kernel 33, Integration 100; zero build warnings/errors; all V3.15 PostgreSQL acceptance tests passed | Complete (commit recorded in AI handoff) |
 | V3.16 | Full `verify.cmd` PASS: Planning 266, Architecture 32, Kernel 33, Integration 104; zero Release build warnings/errors; focused PostgreSQL gate 6/6 | Complete; production Nexus/Sentinel configuration and physical terminal exercise remain deployment validation |
-| V3.17–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
+| V3.17 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 266, Architecture 32, Kernel 33, Integration 106; focused PostgreSQL 2/2 | Complete; evidence `.forge-logs/verify-v317.*` |
+| V3.18–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
 
 ## Governance expansion validation
 

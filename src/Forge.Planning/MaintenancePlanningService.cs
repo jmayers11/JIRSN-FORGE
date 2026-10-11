@@ -95,9 +95,10 @@ public sealed class MaintenancePlanningService(IKernelUnitOfWorkFactory unitOfWo
         }
 
         var material = (await MaterialPlanningService.RunMaterialAsync(uow, time, ct)).Output;
+        var quality = await ScheduleQuality.LoadAsync(uow, orders, ct);
         var horizonEnd = end + TimeSpan.FromDays(14);
         var limit = snapshot.AsOf.AddDays(62);
-        var request = new ScheduleRequest(snapshot.AsOf, horizonEnd > limit ? limit : horizonEnd < snapshot.AsOf.AddDays(14) ? snapshot.AsOf.AddDays(14) : horizonEnd, orders, material);
+        var request = new ScheduleRequest(snapshot.AsOf, horizonEnd > limit ? limit : horizonEnd < snapshot.AsOf.AddDays(14) ? snapshot.AsOf.AddDays(14) : horizonEnd, orders, material, quality);
         var without = new SchedulingEngine().Evaluate(snapshot, request, snapshot.AsOf).Output;
         var outage = new DowntimeWindow(long.MinValue, machine, DowntimeKind.Planned, start, end, "Proposed outage (preview)");
         var withOutage = snapshot with { Downtime = snapshot.Downtime.Append(outage).OrderBy(d => d.MachineCode, StringComparer.Ordinal).ThenBy(d => d.StartsAt).ThenBy(d => d.Id).ToList() };

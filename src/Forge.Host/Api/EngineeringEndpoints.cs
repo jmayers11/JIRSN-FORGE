@@ -40,6 +40,8 @@ public sealed record ReleaseRevisionRequest(DateTimeOffset? EffectiveFrom, strin
 
 public sealed record OrderRequest(string PartNumber, decimal Quantity, DateOnly DueDate, int Priority, Guid? ProgramId, string? Reason);
 
+public sealed record OrderPriorityRequest(int Priority, int ExpectedPriority, DateTimeOffset PreviewAsOf, string PreviewFingerprint, string? Reason);
+
 /// <summary>Phase 3 endpoints: engineering definitions, production orders and order readiness.</summary>
 public static class EngineeringEndpoints
 {
@@ -106,6 +108,10 @@ public static class EngineeringEndpoints
 
         orders.MapPost("/", (HttpContext http, OrderRequest b, ProductionOrderService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CreateAsync(new CreateProductionOrder(b.PartNumber, b.Quantity, b.DueDate, b.Priority, b.ProgramId), c, ct)));
+        orders.MapPost("/{orderNumber:long}/priority-preview", (HttpContext http, long orderNumber, OrderPriorityPreviewRequest b, PriorityGovernanceService s, CancellationToken ct) =>
+            Read(http, Permissions.OrdersRead, async principal => await s.PreviewAsync(orderNumber, b.Priority, principal, ct)));
+        orders.MapPost("/{orderNumber:long}/priority", (HttpContext http, long orderNumber, OrderPriorityRequest b, PriorityGovernanceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ChangeAsync(new ChangeOrderPriority(orderNumber, b.Priority, b.ExpectedPriority, b.PreviewAsOf, b.PreviewFingerprint), c, ct)));
         orders.MapPost("/{orderNumber:long}/firm", (HttpContext http, long orderNumber, ReasonRequest b, ProductionOrderService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.FirmAsync(new FirmProductionOrder(orderNumber), c, ct)));
         orders.MapPost("/{orderNumber:long}/release", (HttpContext http, long orderNumber, ReasonRequest b, ProductionOrderService s, CancellationToken ct) =>

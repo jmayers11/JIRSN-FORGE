@@ -1,5 +1,6 @@
 using Forge.Execution.Contracts;
 using Forge.Kernel.Engines;
+using Forge.Quality.Contracts;
 
 namespace Forge.Planning.Engines;
 
@@ -8,7 +9,12 @@ namespace Forge.Planning.Engines;
 /// not started waits for its material: short or overdue material leaves it unscheduled, expected
 /// material holds its first operation until the receipt's date.
 /// </summary>
-public sealed record ScheduleRequest(DateTimeOffset From, DateTimeOffset To, IReadOnlyList<OrderInfo> Orders, IReadOnlyList<OrderMaterialStatus>? Material = null);
+public sealed record ScheduleRequest(
+    DateTimeOffset From,
+    DateTimeOffset To,
+    IReadOnlyList<OrderInfo> Orders,
+    IReadOnlyList<OrderMaterialStatus>? Material = null,
+    IReadOnlyDictionary<long, OrderQuality>? Quality = null);
 
 public sealed record ScheduledSegment(DateTimeOffset Start, DateTimeOffset End, IReadOnlyList<Guid> Operators);
 
@@ -98,6 +104,8 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             var predecessorSequence = (int?)null;
             var orderOps = new List<ScheduledOperation>();
             var (materialStart, materialBlock) = MaterialGate(snapshot, horizon, order, parameters.Material);
+            OrderQuality? quality = null;
+            parameters.Quality?.TryGetValue(order.OrderNumber, out quality);
             foreach (var op in order.Operations.Where(o => o.Status != OperationStatus.Complete).OrderBy(o => o.Sequence))
             {
                 (string Limiting, string Detail)? waited = null;
@@ -107,7 +115,10 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
                     waited = ("Material", materialBlock ?? "Waiting for material.");
                 }
 
-                var scheduled = (predecessorSequence is null && materialStart is null && materialBlock is not null
+                var qualityCheck = quality is null ? null : OrderReadinessEngine.QualityCheck(quality, op.Sequence);
+                var scheduled = (qualityCheck is { Outcome: EvidenceOutcome.Fail or EvidenceOutcome.Indeterminate }
+                    ? Unscheduled(order, op, "Quality", qualityCheck.Detail)
+                    : predecessorSequence is null && materialStart is null && materialBlock is not null
                     ? Unscheduled(order, op, "Material", materialBlock)
                     : predecessorEnd is { } earliest
                         ? Schedule(timeline, state, order, op, earliest, predecessorSequence, waited)
@@ -164,10 +175,16 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
         var snapshot = timeline.Snapshot;
         var minutes = TimeSpan.FromMinutes((double)RemainingMinutes(order, op));
         var options = new List<(WorkRequirement Requirement, Placement Placement)>();
+        var holdBlocks = new List<string>();
 
         if (op.EligibleMachines.Count == 0)
         {
             var requirement = new WorkRequirement(op.WorkCenterCode, null, op.ActivityCode, [], op.RequiredQualifications, op.CrewSize);
+            if (IsHeld(null))
+            {
+                return Unscheduled(order, op, "Holds", holdBlocks[^1]);
+            }
+
             options.Add((requirement, Place(timeline, state, requirement, minutes, earliest)));
         }
         else
@@ -180,6 +197,11 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
                     continue;
                 }
 
+                if (IsHeld(machine))
+                {
+                    continue;
+                }
+
                 var requirement = new WorkRequirement(op.WorkCenterCode, machine, op.ActivityCode, profile.OperatorQualifications, op.RequiredQualifications, op.CrewSize);
                 options.Add((requirement, Place(timeline, state, requirement, minutes, earliest)));
             }
@@ -187,6 +209,11 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
 
         if (options.Count == 0)
         {
+            if (holdBlocks.Count > 0)
+            {
+                return Unscheduled(order, op, "Holds", string.Join(" ", holdBlocks.Distinct(StringComparer.Ordinal)));
+            }
+
             return Unscheduled(order, op, "RequirementProfile", $"None of {string.Join(", ", op.EligibleMachines)} is defined for {op.ActivityCode}.");
         }
 
@@ -239,6 +266,18 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             placement.Segments,
             placement.Interruptions,
             names);
+
+        bool IsHeld(string? machine)
+        {
+            var readiness = ExecutableChecks.Holds(snapshot, order.OrderNumber, order.PartNumber, op.Sequence, op.WorkCenterCode, machine, order.ProgramId);
+            if (readiness.Outcome != EvidenceOutcome.Fail)
+            {
+                return false;
+            }
+
+            holdBlocks.Add(readiness.Detail);
+            return true;
+        }
     }
 
     /// <summary>

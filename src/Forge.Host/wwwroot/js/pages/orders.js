@@ -89,7 +89,8 @@ async function orderDetail(page, ctx, number) {
       <div><h1>Order #${o.orderNumber}</h1><div class="sub">${esc(o.partNumber)} rev ${esc(o.revision)} × ${fmtNumber(o.quantity, 3)} · due ${esc(fmtDate(o.dueDate))} · priority ${o.priority}</div></div>
       <div class="spacer"></div>
       <span class="pill ${STATUS_TONE[o.status]}" style="font-size:13px">${esc(o.status)}</span>
-      <div class="head-controls">${actions.map(([k, label]) => `<button class="btn ${k === 'release' ? 'primary' : k === 'cancel' ? 'danger' : ''}" data-act="${k}">${esc(label)}</button>`).join('')}</div>
+      <div class="head-controls">${actions.map(([k, label]) => `<button class="btn ${k === 'release' ? 'primary' : k === 'cancel' ? 'danger' : ''}" data-act="${k}">${esc(label)}</button>`).join('')}
+        ${can(me, 'Planner', 'ManufacturingEngineer') && !['Cancelled', 'Completed'].includes(o.status) ? '<button class="btn outline" id="change-priority">Change priority</button>' : ''}</div>
     </div>
     <div class="notice">Created by ${esc(who(o.createdBy))}${o.releasedBy ? ` · released by ${esc(who(o.releasedBy))} at ${esc(fmtDateTime(o.releasedAt))}` : ''}. The person who sets up an order cannot release it.</div>
     <section class="grid-2">
@@ -180,6 +181,91 @@ async function orderDetail(page, ctx, number) {
       reason => command(`/api/orders/${number}/${act}`, {}, reason));
     if (done) { toast(`Order #${number}: ${b.textContent.toLowerCase()} recorded.`); await orderDetail(page, ctx, number); }
   }));
+  $('#change-priority', page)?.addEventListener('click', () => changePriority(number, o, page, ctx));
+}
+
+async function changePriority(number, order, page, ctx) {
+  const scrim = document.createElement('div');
+  scrim.className = 'scrim';
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.setAttribute('role', 'dialog');
+  modal.innerHTML = `
+    <h2>Change priority for order #${number}</h2>
+    <div class="muted">Priority 1 is highest and 9 is lowest. Review which released orders move or finish later before committing.</div>
+    <div class="field"><label for="priority-value">New priority</label><select id="priority-value" class="select">${Array.from({ length: 9 }, (_, i) => i + 1).map(n => `<option value="${n}" ${n === order.priority ? 'selected' : ''}>${n}${n === order.priority ? ' · current' : ''}</option>`).join('')}</select></div>
+    <div data-impact class="panel" aria-live="polite"><span class="muted">Calculating impact…</span></div>
+    <div class="field"><label for="priority-reason">Reason (recorded in the audit trail)</label><textarea id="priority-reason" class="input" rows="3"></textarea></div>
+    <div class="notice bad hidden" data-error></div>
+    <div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-ok disabled>Commit priority</button></div>`;
+  const close = () => { scrim.remove(); modal.remove(); };
+  scrim.onclick = close;
+  modal.querySelector('[data-cancel]').onclick = close;
+  document.body.append(scrim, modal);
+
+  const select = $('#priority-value', modal);
+  select.focus();
+  const impactBox = $('[data-impact]', modal);
+  const errorBox = $('[data-error]', modal);
+  const confirm = $('[data-ok]', modal);
+  let preview = null;
+  let generation = 0;
+  const renderImpact = data => {
+    const changes = data.orders ?? [];
+    const target = changes.find(x => x.orderNumber === number);
+    const delayed = changes.filter(x => x.orderNumber !== number && x.delayMinutes != null).sort((a, b) => b.delayMinutes - a.delayMinutes);
+    impactBox.innerHTML = `
+      <div><b>Order #${number}</b>: ${esc(target?.statusBefore ?? 'not scheduled')} → ${esc(target?.statusAfter ?? 'not scheduled')}
+        ${target?.completionAfter ? `<div class="muted">Projected completion ${esc(fmtDateTime(target.completionAfter))}</div>` : ''}
+        ${target?.explanationAfter ? `<div class="muted">${esc(target.explanationAfter)}</div>` : ''}</div>
+      ${delayed.length ? `<div style="margin-top:10px"><b>Orders delayed by this change</b><ul class="evidence">${delayed.map(x => `<li>Order #${x.orderNumber} · ${fmtNumber(x.delayMinutes, 0)} min later${x.completionAfter ? ` · ${esc(fmtDateTime(x.completionAfter))}` : ''}</li>`).join('')}</ul></div>` : '<div class="muted" style="margin-top:8px">No released order is projected to finish later.</div>'}
+      <div class="faint" style="margin-top:8px">Preview expires after five minutes. Any changed planning input requires a new review.</div>`;
+  };
+  const refresh = async () => {
+    const sequence = ++generation;
+    preview = null;
+    confirm.disabled = true;
+    impactBox.innerHTML = '<span class="muted">Recalculating schedule impact…</span>';
+    try {
+      const data = await command(`/api/orders/${number}/priority-preview`, { priority: Number(select.value) });
+      if (sequence !== generation) return;
+      preview = data;
+      renderImpact(data);
+      confirm.disabled = Number(select.value) === order.priority;
+      errorBox.classList.add('hidden');
+    } catch (error) {
+      if (sequence !== generation) return;
+      impactBox.innerHTML = `<span class="c-bad">${esc(error.message)}</span>`;
+    }
+  };
+  select.addEventListener('change', refresh);
+  confirm.onclick = async () => {
+    const reason = $('#priority-reason', modal).value.trim();
+    if (!reason) {
+      errorBox.textContent = 'Give a reason; it is kept with the change.';
+      errorBox.classList.remove('hidden');
+      return;
+    }
+    if (!preview) return;
+    confirm.disabled = true;
+    try {
+      const result = await command(`/api/orders/${number}/priority`, {
+        priority: preview.proposedPriority,
+        expectedPriority: preview.currentPriority,
+        previewAsOf: preview.asOf,
+        previewFingerprint: preview.fingerprint,
+      }, reason);
+      close();
+      toast(result.message ?? `Order #${number} priority changed.`);
+      await orderDetail(page, ctx, number);
+    } catch (error) {
+      confirm.disabled = false;
+      errorBox.textContent = error.message;
+      errorBox.classList.remove('hidden');
+      if (error.problem?.code === 'stale_priority_preview') await refresh();
+    }
+  };
+  await refresh();
 }
 
 

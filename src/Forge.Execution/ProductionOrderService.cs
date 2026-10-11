@@ -67,6 +67,8 @@ public interface IExecutionStore
 
     Task SetWbsAsync(long orderNumber, string? wbsCode, DateTimeOffset at, string actor, CancellationToken ct);
 
+    Task<bool> SetPriorityAsync(long orderNumber, int expectedPriority, int newPriority, DateTimeOffset at, string actor, CancellationToken ct);
+
     Task SaveReleaseAsync(long orderNumber, IReadOnlyList<OrderOperationInfo> operations, IReadOnlyList<OrderMaterialInfo> materials, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task SetRevisionAsync(long orderNumber, string revision, DateTimeOffset at, string actor, CancellationToken ct);

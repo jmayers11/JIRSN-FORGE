@@ -144,6 +144,14 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<bool> SetPriorityAsync(long orderNumber, int expectedPriority, int newPriority, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE execution.production_order SET priority = $3, updated_at = $4, updated_by = $5 WHERE order_number = $1 AND priority = $2 AND status NOT IN ('Cancelled', 'Completed')",
+            orderNumber, expectedPriority, newPriority, at, actor);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
     public Task<IReadOnlyList<OrderInfo>> ListOrdersAsync(CancellationToken ct) => Read(OrderSql + " ORDER BY order_number DESC", ReadOrder, ct);
 
     private const string OperationColumns =
@@ -417,6 +425,7 @@ public static class ExecutionRegistration
         services.AddForgeStore<IAsBuiltRecord>(uow => new PostgresAsBuiltRecord(uow));
         services.AddForgeStore<Forge.Maintenance.Contracts.IMachineUsageLookup>(uow => new MachineUsage(uow));
         services.AddSingleton<ProductionOrderService>();
+        services.AddSingleton<PriorityGovernanceService>();
         services.AddSingleton<Engines.OperatorAuthorizationEngine>();
         services.AddSingleton<ShopFloorService>();
         services.AddForgeStore<IProductionActualsLookup>(uow => new PostgresProductionActualsStore(uow));
