@@ -13,8 +13,9 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | V3.10 | Full PASS: Planning 262, architecture 32, kernel 33, integration 85; zero warnings/errors; selected API 14/14; commit `f01f611` | Complete |
 | V3.11 | Full PASS: Planning 266, architecture 32, kernel 33, integration 90; zero warnings/errors; commit `4f18d85` | Complete |
 | V3.12 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 92; commit `5db186c` | Complete |
-| V3.13 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 94; focused API 17/17; zero warnings/errors | Commit verified V3.13 checkpoint; then implement and verify V3.14 |
-| V3.14–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
+| V3.13 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 94; focused API 17/17; zero warnings/errors; commit `20bfd9f` | Complete |
+| V3.14 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 95; focused PostgreSQL API 1/1; zero build warnings/errors | Commit checkpoint; start V3.15 |
+| V3.15–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
 
 ## Governance expansion validation
 
@@ -40,3 +41,5 @@ Do not mark V3 done until the reconciled requirements are implemented, required 
 
 
 
+
+| V3.14 | In progress; outside-processing dispatch/partial-return slice implemented, Release build PASS (0 warnings/errors), focused API PASS (1/1) in ignored review checkout. Remaining: processor certificates/evidence, containers and pallets, packaging classes and readiness block, explicit partial-shipment/correction coverage, then root full verify. | Continue V3.14; no commit until full increment gates pass |

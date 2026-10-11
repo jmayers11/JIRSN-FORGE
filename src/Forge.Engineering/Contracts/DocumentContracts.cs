@@ -69,6 +69,7 @@ public enum DocumentTargetType
     ReceivingInspection,
     Inspection,
     Shipment,
+    OutsideProcess,
     Fai,
     Rfq,
     SupplierQuote,
@@ -236,7 +237,7 @@ public static class DocumentAccess
         DocumentTargetType.ProductionOrder => Permissions.OrdersRead,
         DocumentTargetType.WorkOrder => Permissions.MaintenanceRead,
         DocumentTargetType.Ncr or DocumentTargetType.ReceivingInspection or DocumentTargetType.Inspection or DocumentTargetType.Fai => Permissions.QualityRead,
-        DocumentTargetType.Receipt or DocumentTargetType.Shipment => Permissions.InventoryRead,
+        DocumentTargetType.Receipt or DocumentTargetType.Shipment or DocumentTargetType.OutsideProcess => Permissions.InventoryRead,
         DocumentTargetType.WorkCenter => Permissions.ResourcesRead,
         _ => Permissions.EngineeringRead,
     };

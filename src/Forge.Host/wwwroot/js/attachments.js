@@ -29,7 +29,7 @@ export async function attachmentsPanel(section, { type, id, me, title = 'Documen
   let history = false;
   const base = `/api/engineering/attachments/${type}/${encodeURIComponent(id)}`;
   const mayAttach = can(me, ...ATTACHERS);
-  const evidence = ['Receipt', 'ReceivingInspection', 'Inspection', 'Shipment', 'Fai', 'SupplierQuote'].includes(type);
+  const evidence = ['Receipt', 'ReceivingInspection', 'Inspection', 'Shipment', 'OutsideProcess', 'Fai', 'SupplierQuote'].includes(type);
 
   async function render() {
     const res = await tryGet(`${base}${history ? '?history=true' : ''}`);

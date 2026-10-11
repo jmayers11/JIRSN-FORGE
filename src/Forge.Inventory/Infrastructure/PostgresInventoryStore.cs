@@ -1,4 +1,5 @@
 using Forge.Inventory.Contracts;
+using Forge.Kernel.Commands;
 using Forge.Kernel.Postgres;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -7,11 +8,68 @@ namespace Forge.Inventory.Infrastructure;
 
 internal sealed partial class PostgresInventoryStore(PostgresUnitOfWork uow) : IInventoryStore, IInventoryLookup
 {
+    public async Task<bool> InsertContainerAsync(ContainerInfo container, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "INSERT INTO inventory.container (code, kind, status, created_by, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+            container.Code, container.Kind.ToString(), container.Status.ToString(), container.CreatedBy, container.CreatedAt);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task AddContainerContentAsync(string code, ContainerContentInfo content, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "INSERT INTO inventory.container_content (container_code, line_number, part_number, quantity, location_code, lot_number, status) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            code, content.LineNumber, content.PartNumber, content.Quantity, content.LocationCode, Text(content.LotNumber), content.Status.ToString());
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task SealContainerAsync(string code, DateTimeOffset at, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE inventory.container SET status = 'Sealed', sealed_at = $2 WHERE code = $1 AND status = 'Open'", code, at);
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1)
+            throw new InvalidOperationException($"Container {code} changed state before it could be sealed.");
+    }
+
+    public async Task ShipContainerAsync(string code, long shipmentId, DateTimeOffset at, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE inventory.container SET status = 'Shipped', shipment_id = $2, shipped_at = $3 WHERE code = $1 AND status = 'Sealed' AND shipment_id IS NULL", code, shipmentId, at);
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1)
+            throw new CommandRejectedException("container_not_sealed", $"Container {code} is no longer sealed and available for shipment.");
+    }
+
+    public async Task<decimal> PackedQuantityAsync(string partNumber, string locationCode, string? lotNumber, StockStatus status, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "SELECT COALESCE(sum(quantity), 0) FROM inventory.container_content c JOIN inventory.container h ON h.code = c.container_code WHERE h.status IN ('Open', 'Sealed') AND c.part_number = $1 AND c.location_code = $2 AND c.lot_number IS NOT DISTINCT FROM $3 AND c.status = $4",
+            partNumber, locationCode, Text(lotNumber), status.ToString());
+        return Normal((decimal)(await cmd.ExecuteScalarAsync(ct))!);
+    }
+
+    public async Task<ContainerInfo?> FindContainerAsync(string code, CancellationToken ct) =>
+        (await ReadContainersAsync("WHERE code = $1", ct, code)).SingleOrDefault();
+
+    public Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct) =>
+        ReadContainersAsync("ORDER BY created_at DESC, code LIMIT 500", ct);
+
+    private async Task<IReadOnlyList<ContainerInfo>> ReadContainersAsync(string suffix, CancellationToken ct, params object?[] args)
+    {
+        var heads = await ReadAsync("SELECT code, kind, status, created_by, created_at, shipment_id, shipped_at FROM inventory.container " + suffix,
+            r => new ContainerInfo(r.GetString(0), Enum.Parse<ContainerKind>(r.GetString(1)), Enum.Parse<ContainerStatus>(r.GetString(2)), r.GetString(3), r.GetFieldValue<DateTimeOffset>(4), [], r.IsDBNull(5) ? null : r.GetInt64(5), r.IsDBNull(6) ? null : r.GetFieldValue<DateTimeOffset>(6)), ct, args);
+        if (heads.Count == 0) return heads;
+        var contents = await ReadAsync(
+            "SELECT container_code, line_number, part_number, quantity, location_code, lot_number, status FROM inventory.container_content WHERE container_code = ANY($1) ORDER BY container_code, line_number",
+            r => (Code: r.GetString(0), Content: new ContainerContentInfo(r.GetInt32(1), r.GetString(2), Dec(r, 3), r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), Enum.Parse<StockStatus>(r.GetString(6)))),
+            ct, (object)heads.Select(h => h.Code).ToArray());
+        var byCode = contents.ToLookup(x => x.Code, x => x.Content);
+        return heads.Select(h => h with { Contents = byCode[h.Code].ToList() }).ToList();
+    }
+
     private const string TransactionSql =
         "SELECT transaction_id, kind, part_number, quantity, from_location, from_status, to_location, to_status, lot_number, order_number, po_number, po_line, reason, at, actor, approved_by, request_id, shipment_id, work_order_id, part_revision, substitutes_for, alternate_id, primary_quantity, project_code, project_line FROM inventory.transaction";
 
     private const string ShipmentSql =
-        "SELECT shipment_id, customer, reference, demand_id, ship_to, status, created_by, created_at, packed_by, packed_at, shipped_by, shipped_at, carrier, tracking, cancel_reason FROM inventory.shipment";
+        "SELECT shipment_id, customer, reference, demand_id, ship_to, status, created_by, created_at, packed_by, packed_at, shipped_by, shipped_at, carrier, tracking, cancel_reason, packaging_required, container_code FROM inventory.shipment";
 
     private const string RequestSql =
         "SELECT request_id, kind, part_number, location_code, lot_number, status, quantity, system_quantity, reason, requested_by, requested_at, state, decided_by, decided_at, transaction_id FROM inventory.adjustment_request";
@@ -272,8 +330,8 @@ internal sealed partial class PostgresInventoryStore(PostgresUnitOfWork uow) : I
         ArgumentNullException.ThrowIfNull(shipment);
         long id;
         await using (var cmd = uow.Command(
-            "INSERT INTO inventory.shipment (customer, reference, demand_id, ship_to, status, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING shipment_id",
-            shipment.Customer, Text(shipment.Reference), Long(shipment.DemandId), Text(shipment.ShipTo), shipment.Status.ToString(), shipment.CreatedBy, shipment.CreatedAt))
+            "INSERT INTO inventory.shipment (customer, reference, demand_id, ship_to, status, created_by, created_at, packaging_required, container_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING shipment_id",
+            shipment.Customer, Text(shipment.Reference), Long(shipment.DemandId), Text(shipment.ShipTo), shipment.Status.ToString(), shipment.CreatedBy, shipment.CreatedAt, shipment.PackagingRequired, Text(shipment.ContainerCode)))
         {
             id = (long)(await cmd.ExecuteScalarAsync(ct))!;
         }
@@ -293,9 +351,9 @@ internal sealed partial class PostgresInventoryStore(PostgresUnitOfWork uow) : I
     {
         ArgumentNullException.ThrowIfNull(shipment);
         await using var cmd = uow.Command(
-            "UPDATE inventory.shipment SET status = $2, packed_by = $3, packed_at = $4, shipped_by = $5, shipped_at = $6, carrier = $7, tracking = $8, cancel_reason = $9 WHERE shipment_id = $1",
+            "UPDATE inventory.shipment SET status = $2, packed_by = $3, packed_at = $4, shipped_by = $5, shipped_at = $6, carrier = $7, tracking = $8, cancel_reason = $9, packaging_required = $10 WHERE shipment_id = $1",
             shipment.ShipmentId, shipment.Status.ToString(), Text(shipment.PackedBy), Time(shipment.PackedAt), Text(shipment.ShippedBy), Time(shipment.ShippedAt),
-            Text(shipment.Carrier), Text(shipment.Tracking), Text(shipment.CancelReason));
+            Text(shipment.Carrier), Text(shipment.Tracking), Text(shipment.CancelReason), shipment.PackagingRequired);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -350,7 +408,7 @@ internal sealed partial class PostgresInventoryStore(PostgresUnitOfWork uow) : I
                 Enum.Parse<ShipmentStatus>(r.GetString(5)), r.GetString(6), r.GetFieldValue<DateTimeOffset>(7),
                 r.IsDBNull(8) ? null : r.GetString(8), r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9),
                 r.IsDBNull(10) ? null : r.GetString(10), r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11),
-                r.IsDBNull(12) ? null : r.GetString(12), r.IsDBNull(13) ? null : r.GetString(13), r.IsDBNull(14) ? null : r.GetString(14), []),
+                r.IsDBNull(12) ? null : r.GetString(12), r.IsDBNull(13) ? null : r.GetString(13), r.IsDBNull(14) ? null : r.GetString(14), [], r.GetBoolean(15), r.IsDBNull(16) ? null : r.GetString(16)),
             ct,
             args);
         if (heads.Count == 0)

@@ -45,6 +45,12 @@ public sealed record ReturnFromOrder(long OrderNumber, string PartNumber, decima
 
 public sealed record TransferStock(string PartNumber, decimal Quantity, string FromLocation, string ToLocation, string? LotNumber, StockStatus Status);
 
+/// <summary>Send company-owned material to an approved outside processor without losing its identity.</summary>
+public sealed record DispatchOutsideProcess(string PartNumber, decimal Quantity, string FromLocation, string ProcessorLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine);
+
+/// <summary>Return processed material under the same lot identity; the returned quantity awaits inspection.</summary>
+public sealed record ReturnFromOutsideProcess(string PartNumber, decimal Quantity, string ProcessorLocation, string ToLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine);
+
 public sealed record ScrapStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, StockStatus Status);
 
 public sealed record HoldStock(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber);
@@ -148,6 +154,16 @@ public sealed record NewTransaction(
 
 public interface IInventoryStore
 {
+    Task<bool> InsertContainerAsync(ContainerInfo container, CancellationToken ct);
+
+    Task AddContainerContentAsync(string code, ContainerContentInfo content, CancellationToken ct);
+
+    Task SealContainerAsync(string code, DateTimeOffset at, CancellationToken ct);
+
+    Task ShipContainerAsync(string code, long shipmentId, DateTimeOffset at, CancellationToken ct);
+
+    Task<decimal> PackedQuantityAsync(string partNumber, string locationCode, string? lotNumber, StockStatus status, CancellationToken ct);
+
     Task<long> InsertShipmentAsync(ShipmentInfo shipment, CancellationToken ct);
 
     Task UpdateShipmentAsync(ShipmentInfo shipment, CancellationToken ct);

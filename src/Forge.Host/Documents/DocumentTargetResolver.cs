@@ -141,6 +141,14 @@ public sealed class DocumentTargetResolver : IDocumentTargetResolver
                     return shipment is null ? null : new DocumentTarget(type, Text(number), $"Shipment {number} ({shipment.Customer})", null, Permissions.InventoryRead);
                 }
 
+            case DocumentTargetType.OutsideProcess:
+                {
+                    var transactions = await uow.Store<IInventoryLookup>().ListTransactionsAsync(null, null, 100_000, ct);
+                    var matched = transactions.FirstOrDefault(t => t.Kind == InventoryTransactionKind.Transfer && t.PoNumber is not null && t.PoLine is not null &&
+                        t.Reason?.StartsWith("Outside processing ", StringComparison.Ordinal) == true && $"{t.PartNumber}:{t.LotNumber}:PO{t.PoNumber}-L{t.PoLine}" == key);
+                    return matched is null ? null : new DocumentTarget(type, key, $"Outside processing {matched.PartNumber} lot {matched.LotNumber} PO {matched.PoNumber}/{matched.PoLine}", null, Permissions.InventoryRead);
+                }
+
             case DocumentTargetType.Fai:
                 {
                     if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return null;

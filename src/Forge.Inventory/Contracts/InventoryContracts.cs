@@ -543,7 +543,18 @@ public sealed record ShipmentInfo(
     string? Carrier,
     string? Tracking,
     string? CancelReason,
-    IReadOnlyList<ShipmentLineInfo> Lines);
+    IReadOnlyList<ShipmentLineInfo> Lines,
+    bool PackagingRequired = false,
+    string? ContainerCode = null);
+
+public enum ContainerKind { Carton, Crate, Pallet }
+
+public enum ContainerStatus { Open, Sealed, Shipped }
+
+public sealed record ContainerContentInfo(int LineNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, StockStatus Status);
+
+/// <summary>A physical carton, crate or pallet and the stock identities inside it (V3.14).</summary>
+public sealed record ContainerInfo(string Code, ContainerKind Kind, ContainerStatus Status, string CreatedBy, DateTimeOffset CreatedAt, IReadOnlyList<ContainerContentInfo> Contents, long? ShipmentId = null, DateTimeOffset? ShippedAt = null);
 
 /// <summary>Spare parts used on a maintenance work order (issues less returns), by part.</summary>
 /// <param name="SubstitutesFor">Issued in place of this part through an approved alternate (V2.9); <paramref name="PrimaryNetIssued"/> is how much of it that covers.</param>
@@ -558,6 +569,10 @@ public sealed record DemandShipped(long DemandId, string PartNumber, decimal Shi
 /// <summary>What other contexts may ask Inventory.</summary>
 public interface IInventoryLookup
 {
+    Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct);
+
+    Task<ContainerInfo?> FindContainerAsync(string code, CancellationToken ct);
+
     Task<IReadOnlyList<LocationInfo>> ListLocationsAsync(CancellationToken ct);
 
     /// <summary>Non-zero balances, optionally for one part, by part, location, lot and status.</summary>

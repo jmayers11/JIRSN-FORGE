@@ -68,6 +68,10 @@ public sealed record MergePolicyRequest(bool Allowed, bool SameRevisionRequired,
 public sealed record OrderMaterialRequest(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason, string? AlternateFor = null);
 
 public sealed record TransferRequest(string PartNumber, decimal Quantity, string FromLocation, string ToLocation, string? LotNumber, StockStatus? Status, string? Reason);
+public sealed record OutsideProcessDispatchRequest(string PartNumber, decimal Quantity, string FromLocation, string ProcessorLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine, string? Reason);
+public sealed record OutsideProcessReturnRequest(string PartNumber, decimal Quantity, string ProcessorLocation, string ToLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine, string? Reason);
+public sealed record ContainerRequest(string Code, ContainerKind Kind, string? Reason);
+public sealed record ContainerContentRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, StockStatus? Status, string? Reason);
 
 public sealed record StockRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, StockStatus? Status, string? Reason);
 
@@ -308,6 +312,18 @@ public static class MaterialsEndpoints
             Command(http, b.Reason, c => s.ReturnFromOrderAsync(new ReturnFromOrder(b.OrderNumber, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.AlternateFor), c, ct)));
         api.MapPost("/transfers", (HttpContext http, TransferRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.TransferAsync(new TransferStock(b.PartNumber, b.Quantity, b.FromLocation, b.ToLocation, b.LotNumber, b.Status ?? StockStatus.Released), c, ct)));
+        api.MapPost("/outside-processing/dispatch", (HttpContext http, OutsideProcessDispatchRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.DispatchOutsideProcessAsync(new DispatchOutsideProcess(b.PartNumber, b.Quantity, b.FromLocation, b.ProcessorLocation, b.LotNumber, b.PurchaseOrder, b.PurchaseOrderLine), c, ct)));
+        api.MapPost("/outside-processing/return", (HttpContext http, OutsideProcessReturnRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReturnFromOutsideProcessAsync(new ReturnFromOutsideProcess(b.PartNumber, b.Quantity, b.ProcessorLocation, b.ToLocation, b.LotNumber, b.PurchaseOrder, b.PurchaseOrderLine), c, ct)));
+        api.MapGet("/containers", (HttpContext http, CancellationToken _) =>
+            ReadStore<IInventoryLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListContainersAsync(ct)));
+        api.MapPost("/containers", (HttpContext http, ContainerRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CreateContainerAsync(new CreateContainer(b.Code, b.Kind), c, ct)));
+        api.MapPost("/containers/{code}/contents", (HttpContext http, string code, ContainerContentRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.PackContainerContentAsync(new PackContainerContent(code, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released), c, ct)));
+        api.MapPost("/containers/{code}/seal", (HttpContext http, string code, ReasonRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SealContainerAsync(new SealContainer(code), c, ct)));
         api.MapPost("/scrap", (HttpContext http, StockRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ScrapAsync(new ScrapStock(b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released), c, ct)));
         api.MapPost("/holds", (HttpContext http, StockRequest b, InventoryService s, CancellationToken ct) =>

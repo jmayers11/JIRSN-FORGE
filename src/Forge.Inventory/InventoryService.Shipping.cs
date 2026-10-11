@@ -12,7 +12,7 @@ namespace Forge.Inventory;
 
 public sealed record NewShipmentLine(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber);
 
-public sealed record CreateShipment(string Customer, string? Reference, long? DemandId, string? ShipTo, IReadOnlyList<NewShipmentLine> Lines);
+public sealed record CreateShipment(string Customer, string? Reference, long? DemandId, string? ShipTo, IReadOnlyList<NewShipmentLine> Lines, bool RequirePackaging = false, string? ContainerCode = null);
 
 public sealed record PackShipment(long ShipmentId);
 
@@ -57,7 +57,14 @@ public sealed partial class InventoryService
             }
 
             var shipment = new ShipmentInfo(0, customer, Optional(c.Reference), c.DemandId, Optional(c.ShipTo), ShipmentStatus.Open, context.Actor, now,
-                null, null, null, null, null, null, null, lines);
+                null, null, null, null, null, null, null, lines, c.RequirePackaging, Optional(c.ContainerCode));
+            if (shipment.ContainerCode is { } containerCode)
+            {
+                var container = await uow.Store<IInventoryLookup>().FindContainerAsync(containerCode, ct)
+                    ?? throw new CommandRejectedException("container_not_found", $"Container {containerCode} does not exist.");
+                if (container.Status != ContainerStatus.Sealed || container.ShipmentId is not null)
+                    throw new CommandRejectedException("container_not_sealed", $"Container {containerCode} must be sealed and unassigned to a shipment.");
+            }
             var shipmentId = await uow.Store<IInventoryStore>().InsertShipmentAsync(shipment, ct);
             var id = shipmentId.ToString(CultureInfo.InvariantCulture);
             return new CommandOutcome(
@@ -117,9 +124,14 @@ public sealed partial class InventoryService
                 transactions.Add(await store.InsertTransactionAsync(txn, now, context.Actor, ct));
             }
 
+            if (shipment.ContainerCode is { } containerCode)
+                await store.ShipContainerAsync(containerCode, shipment.ShipmentId, now, ct);
+
             var shipped = shipment with { Status = ShipmentStatus.Shipped, ShippedBy = context.Actor, ShippedAt = now, Carrier = Optional(c.Carrier), Tracking = Optional(c.Tracking) };
             var events = shipment.Lines.Zip(transactions, (line, txnId) => pipeline.Event(
                 new InventoryMoved(txnId, nameof(InventoryTransactionKind.Shipment), line.PartNumber, line.Quantity, line.LocationCode, null), context, SourceContext, StockEntity, line.PartNumber)).ToList();
+            if (shipment.ContainerCode is { } shippedContainer)
+                events.Add(pipeline.Event(new ContainerChanged(shippedContainer, $"ShippedWith:{shipment.ShipmentId}"), context, SourceContext, "Container", shippedContainer));
             return (shipped, "shipped", events);
         }, ct);
     }
@@ -136,6 +148,31 @@ public sealed partial class InventoryService
     /// <summary>Stock is there (released, at the line's location and lot) and is not on an undecided nonconformance.</summary>
     private static async Task CheckShippableAsync(IKernelUnitOfWork uow, ShipmentInfo shipment, DateTimeOffset now, CancellationToken ct)
     {
+        if (shipment.PackagingRequired)
+        {
+            var hasPackaging = false;
+            foreach (var line in shipment.Lines)
+            {
+                if ((await ItemAsync(uow, line.PartNumber, ct)).Class == Forge.Engineering.Contracts.ItemClass.Packaging)
+                    hasPackaging = true;
+            }
+
+            if (!hasPackaging)
+                throw new CommandRejectedException("packaging_required", $"Shipment {shipment.ShipmentId} requires an explicitly identified packaging material line before it can be packed.");
+        }
+
+        if (shipment.ContainerCode is { } containerCode)
+        {
+            var container = await uow.Store<IInventoryLookup>().FindContainerAsync(containerCode, ct)
+                ?? throw new CommandRejectedException("container_not_found", $"Container {containerCode} does not exist.");
+            if (container.Status != ContainerStatus.Sealed || container.ShipmentId is not null)
+                throw new CommandRejectedException("container_not_sealed", $"Container {containerCode} must be sealed and available.");
+            var shipmentContents = shipment.Lines.GroupBy(l => (l.PartNumber, l.LocationCode, l.LotNumber)).ToDictionary(g => g.Key, g => g.Sum(x => x.Quantity));
+            var containerContents = container.Contents.Where(x => x.Status == StockStatus.Released).GroupBy(x => (x.PartNumber, x.LocationCode, x.LotNumber)).ToDictionary(g => g.Key, g => g.Sum(x => x.Quantity));
+            if (shipmentContents.Count != containerContents.Count || shipmentContents.Any(pair => containerContents.GetValueOrDefault(pair.Key) != pair.Value))
+                throw new CommandRejectedException("container_contents_mismatch", $"Container {containerCode} contents must exactly match the shipment's part, lot, location and quantity lines.");
+        }
+
         foreach (var group in shipment.Lines.GroupBy(l => (l.PartNumber, l.LocationCode, l.LotNumber)))
         {
             await RequireStockAsync(uow, group.Key.PartNumber, group.Key.LocationCode, group.Key.LotNumber, StockStatus.Released, group.Sum(l => l.Quantity), ct);

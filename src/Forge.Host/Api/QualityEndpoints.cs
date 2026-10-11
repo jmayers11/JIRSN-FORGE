@@ -30,7 +30,7 @@ public sealed record CapaRequest(long? NcrId, string Title, string RootCause, st
 
 public sealed record ShipmentLineRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber);
 
-public sealed record ShipmentRequest(string? Customer, string? Reference, long? DemandId, string? ShipTo, ShipmentLineRequest[] Lines, string? Reason);
+public sealed record ShipmentRequest(string? Customer, string? Reference, long? DemandId, string? ShipTo, ShipmentLineRequest[] Lines, string? Reason, bool RequirePackaging = false, string? ContainerCode = null);
 
 public sealed record ShipRequest(string? Carrier, string? Tracking, string? Reason);
 
@@ -180,7 +180,7 @@ public static class QualityEndpoints
             }
 
             return await Command(http, b.Reason, c => s.CreateShipmentAsync(
-                new CreateShipment(customer ?? string.Empty, b.Reference, b.DemandId, b.ShipTo, (b.Lines ?? []).Select(l => new NewShipmentLine(l.PartNumber, l.Quantity, l.LocationCode, l.LotNumber)).ToList()), c, ct));
+                new CreateShipment(customer ?? string.Empty, b.Reference, b.DemandId, b.ShipTo, (b.Lines ?? []).Select(l => new NewShipmentLine(l.PartNumber, l.Quantity, l.LocationCode, l.LotNumber)).ToList(), b.RequirePackaging, b.ContainerCode), c, ct));
         });
         shipping.MapPost("/shipments/{id:long}/pack", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.PackShipmentAsync(new PackShipment(id), c, ct)));

@@ -55,12 +55,15 @@ public enum ItemClass
     /// <summary>A service or special process bought from a supplier (plating, heat treat, calibration).</summary>
     Service,
     OtherControlled,
+
+    /// <summary>Materials consumed to protect, contain or identify shipped goods (V3.14).</summary>
+    Packaging,
 }
 
 public static class ItemClasses
 {
     /// <summary>Classes that are always bought.</summary>
-    public static bool AlwaysBought(ItemClass c) => c is ItemClass.BuildToPrint or ItemClass.Cots or ItemClass.RawMaterial or ItemClass.StandardHardware or ItemClass.Consumable or ItemClass.Service;
+    public static bool AlwaysBought(ItemClass c) => c is ItemClass.BuildToPrint or ItemClass.Cots or ItemClass.RawMaterial or ItemClass.StandardHardware or ItemClass.Consumable or ItemClass.Service or ItemClass.Packaging;
 
     public static bool Allows(ItemClass c, MakeBuy makeBuy) => c switch
     {

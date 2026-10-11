@@ -357,7 +357,7 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
             var target = await VisibleTargetAsync(uow, c.TargetType, c.TargetId, context, ct);
             var document = await VisibleDocumentAsync(uow, number, context, ct);
             RequireSameProgram(document, target);
-            if (target.Type is DocumentTargetType.Receipt or DocumentTargetType.ReceivingInspection or DocumentTargetType.Inspection or DocumentTargetType.Shipment or DocumentTargetType.Fai or DocumentTargetType.SupplierQuote
+            if (target.Type is DocumentTargetType.Receipt or DocumentTargetType.ReceivingInspection or DocumentTargetType.Inspection or DocumentTargetType.Shipment or DocumentTargetType.OutsideProcess or DocumentTargetType.Fai or DocumentTargetType.SupplierQuote
                 && document.Authority != DocumentAuthority.Reference)
             {
                 throw new CommandRejectedException("business_evidence_reference_only", "Attach business evidence as reference files; applicable engineering instructions remain controlled separately.");
