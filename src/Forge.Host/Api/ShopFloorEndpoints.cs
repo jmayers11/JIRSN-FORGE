@@ -16,7 +16,7 @@ public sealed record BadgeRequest(string Badge, string? Reason);
 
 public sealed record PinRequest(string Badge, string? CurrentPin, string NewPin);
 
-public sealed record StartRequest(string Badge, long OrderNumber, int Sequence, string? MachineCode, string? TrainerBadge);
+public sealed record StartRequest(string Badge, long OrderNumber, int Sequence, string? MachineCode, string? TrainerBadge, string? ToolCode = null);
 
 public sealed record ReportRequest(string Badge, long OrderNumber, int Sequence, decimal Good, decimal Scrap, string? ScrapReason, bool Complete, string? ScrapReasonCode = null);
 
@@ -79,7 +79,7 @@ internal static class ShopFloorEndpoints
 
             Secret? trainer = TrySecret(b.TrainerBadge, out var t) ? t : null;
             var safety = await SafetyAsync(http, readiness, uows, b, ct);
-            return await Command(http, null, null, CommandSource.Terminal, c => s.StartAsync(new StartOperation(badge, b.OrderNumber, b.Sequence, b.MachineCode, trainer, safety), c, ct));
+            return await Command(http, null, null, CommandSource.Terminal, c => s.StartAsync(new StartOperation(badge, b.OrderNumber, b.Sequence, b.MachineCode, trainer, safety, b.ToolCode), c, ct));
         });
 
         api.MapPost("/stop", (HttpContext http, BadgeRequest b, ShopFloorService s, CancellationToken ct) =>

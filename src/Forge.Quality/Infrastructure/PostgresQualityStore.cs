@@ -19,28 +19,6 @@ internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualitySto
     private const string CapaSql =
         "SELECT capa_id, ncr_id, title, root_cause, action, due_date, status, opened_by, opened_at, implemented_by, implementation_note, verified_by, verified_at FROM quality.capa";
 
-    public async Task<bool> InsertGaugeAsync(GaugeInfo gauge, DateTimeOffset at, string actor, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(gauge);
-        await using var cmd = uow.Command(
-            "INSERT INTO quality.gauge (code, description, calibration_due, certificate, active, created_at, created_by) VALUES ($1, $2, $3, $4, true, $5, $6) ON CONFLICT DO NOTHING",
-            gauge.Code, gauge.Description, gauge.CalibrationDue, Text(gauge.Certificate), at, actor);
-        return await cmd.ExecuteNonQueryAsync(ct) == 1;
-    }
-
-    public async Task RecordCalibrationAsync(string code, DateOnly calibratedOn, DateOnly due, string? certificate, DateTimeOffset at, string actor, CancellationToken ct)
-    {
-        await using (var insert = uow.Command(
-            "INSERT INTO quality.calibration (gauge_code, calibrated_on, due_date, certificate, recorded_at, recorded_by) VALUES ($1, $2, $3, $4, $5, $6)",
-            code, calibratedOn, due, Text(certificate), at, actor))
-        {
-            await insert.ExecuteNonQueryAsync(ct);
-        }
-
-        await using var update = uow.Command("UPDATE quality.gauge SET calibration_due = $2, certificate = $3 WHERE code = $1", code, due, Text(certificate));
-        await update.ExecuteNonQueryAsync(ct);
-    }
-
     private const string AllRevisions = "*";
 
     public async Task SavePlanAsync(InspectionPlanInfo plan, DateTimeOffset at, string actor, CancellationToken ct)
@@ -225,12 +203,6 @@ internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualitySto
 
     public Task<IReadOnlyList<CapaInfo>> ListCapasAsync(bool includeVerified, CancellationToken ct) =>
         ReadAsync(CapaSql + (includeVerified ? string.Empty : " WHERE status <> 'Verified'") + " ORDER BY capa_id DESC LIMIT 500", ReadCapa, ct);
-
-    public Task<IReadOnlyList<GaugeInfo>> ListGaugesAsync(CancellationToken ct) =>
-        ReadAsync(
-            "SELECT code, description, calibration_due, certificate, active FROM quality.gauge ORDER BY code",
-            r => new GaugeInfo(r.GetString(0), r.GetString(1), r.GetFieldValue<DateOnly>(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetBoolean(4)),
-            ct);
 
     public async Task<OrderQuality> GetOrderQualityAsync(long orderNumber, string partNumber, CancellationToken ct)
     {

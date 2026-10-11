@@ -92,6 +92,9 @@ public class AnalystParserTests
     [InlineData("Which goals are at risk?", "goal-attainment")]
     [InlineData("Which goals are behind plan?", "goal-attainment")]
     [InlineData("Show goal attainment", "goal-attainment")]
+    [InlineData("Which tools are out for service?", "tool-status")]
+    [InlineData("Which gauges are due for calibration?", "tool-status")]
+    [InlineData("Which blades are out for sharpening?", "tool-status")]
     [InlineData("What needs a retest?", "shelf-life")]
     [InlineData("Show shelf life and aging", "shelf-life")]
     [InlineData("Which lots are overdue for retest?", "shelf-life")]
@@ -327,5 +330,13 @@ public class AnalystParserTests
         Assert.Equal("Late", Parse("Which goals are late?").Report!.Parameters.Status);
         Assert.Null(Parse("Show goal attainment").Report!.Parameters.Status);
         Assert.Equal("schedule-attainment", Parse("Show schedule attainment").Report!.ReportId);
+    }
+
+    [Fact]
+    public void Tool_questions_ask_for_tools_out_for_service()
+    {
+        Assert.Equal("OutForService", Parse("Which tools are out for service?").Report!.Parameters.Status);
+        Assert.Null(Parse("Which gauges are due for calibration?").Report!.Parameters.Status);
+        Assert.Equal("qualifications-expiring", Parse("Which certifications expire in the next 90 days?").Report!.ReportId);
     }
 }

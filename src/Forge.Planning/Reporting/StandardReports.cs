@@ -215,6 +215,17 @@ internal static class StandardReports
                 "Stock as it stands now; the period does not apply. Counts for planning = released by quality and in a nettable location."),
             Permissions.InventoryRead, null, StockPositionsAsync),
         new(
+            new("tool-status", "Tools and calibration", "Resources",
+                "Every tool and gauge: where it is and who has it, its condition, calibration due, uses against its limits and since its last service, and whether it may be used now, with why not.",
+                [StatusFilter(Enum.GetNames<Forge.Resources.Contracts.ToolStatus>()), SearchFilter],
+                [C("tool", "Tool", ReportColumnKind.Text), C("type", "Type", ReportColumnKind.Text), C("kind", "Kind", ReportColumnKind.Text), C("where", "Where / with", ReportColumnKind.Text),
+                 C("condition", "Condition", ReportColumnKind.Text), C("status", "Status", ReportColumnKind.Text), C("calibrationDue", "Calibration due", ReportColumnKind.Date),
+                 C("daysLeft", "Days to calibration", ReportColumnKind.Number), C("uses", "Uses", ReportColumnKind.Number), C("usesLeft", "Uses left", ReportColumnKind.Number),
+                 C("sinceService", "Since service", ReportColumnKind.Number), C("valid", "Usable now", ReportColumnKind.Text), C("why", "Why not", ReportColumnKind.Text)],
+                ["status", "kind", "type", "valid"], "valid", 3660,
+                "Tools as they stand now; the period does not apply. Usable now means valid at this moment: calibration in force, not damaged, not away, within its limits."),
+            Permissions.ResourcesRead, null, ToolStatusAsync),
+        new(
             new("goal-attainment", "Goal attainment", "Planning",
                 "Every open production and delivery goal: its required-by date (its own, or cascaded from the goal above it), what is done against its target, the reforecast completion of the remaining work, and whether it is on track, behind plan but recoverable, at risk or late.",
                 [ProgramFilter, StatusFilter(Enum.GetNames<GoalState>()), SearchFilter],
@@ -794,6 +805,35 @@ internal static class StandardReports
         var behind = rows.Count(r => (string)r.Cells[10]! == "Yes" && (string)r.Cells[9]! is not (nameof(GoalState.AtRisk) or nameof(GoalState.Late)));
         return new ReportBody(rows, [rows.Count == 0 ? "No open goals." : $"{rows.Count} goal(s): {risky} at risk or late; {behind} behind plan but still recoverable."],
             ["Goals", "Approved schedule", "Reforecast schedule", "Production orders", "Demand and shipments"]);
+    }
+
+    private static async Task<ReportBody> ToolStatusAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var tools = run.Uow.Store<Forge.Resources.Contracts.IToolLookup>();
+        var types = (await tools.ListToolTypesAsync(ct)).ToDictionary(t => t.Code, StringComparer.Ordinal);
+        var events = (await tools.ListToolEventsAsync(null, ct)).ToLookup(e => e.ToolCode);
+        var today = DateOnly.FromDateTime(run.Now.UtcDateTime);
+        var rows = new List<ReportRow>();
+        foreach (var t in await tools.ListToolsAsync(ct))
+        {
+            var type = types[t.TypeCode];
+            var v = Forge.Resources.Contracts.ToolValidity.At(t, type, events[t.Code], run.Now);
+            var where = t.Custodian is { } who ? $"{t.Custody}: {who}" : t.Location ?? "—";
+            if (!ReportRun.Is(t.Status.ToString(), p.Status) || !run.Matches(t.Code, t.TypeCode, t.Description, where, string.Join(" ", v.Problems)))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [t.Code, type.Name, type.Kind.ToString(), where, t.Condition.ToString(), t.Status.ToString(), t.CalibrationDue, t.CalibrationDue is { } due ? (decimal)(due.DayNumber - today.DayNumber) : null,
+                 (decimal)t.UsageCount, v.UsesLeft is { } left ? (decimal)left : null, (decimal)t.UsesSinceService, v.Valid ? "Yes" : "No", string.Join(" ", v.Problems)],
+                ["tool:" + t.Code]));
+        }
+
+        var unusable = rows.Count(r => (string)r.Cells[11]! == "No");
+        var dueSoon = rows.Count(r => r.Cells[7] is decimal d && d is >= 0 and <= 30);
+        return new ReportBody(rows, [rows.Count == 0 ? "No tools registered." : $"{rows.Count} tool(s): {unusable} not usable now, {dueSoon} due for calibration within 30 days."], ["Tools", "Tool history"]);
     }
 
     private static async Task<ReportBody> StockPositionsAsync(ReportRun run, CancellationToken ct)

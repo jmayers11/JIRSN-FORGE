@@ -242,6 +242,9 @@ public static class ResourcesRegistration
         services.AddForgeStore<IResourcesStore>(uow => new PostgresResourcesStore(uow));
         services.AddForgeStore<IResourcesLookup>(uow => new PostgresResourcesStore(uow));
         services.AddSingleton<ResourcesService>();
+        services.AddForgeStore<IToolLookup>(uow => new PostgresToolStore(uow));
+        services.AddForgeStore<IToolStore>(uow => new PostgresToolStore(uow));
+        services.AddSingleton<ToolService>();
         return services;
     }
 }

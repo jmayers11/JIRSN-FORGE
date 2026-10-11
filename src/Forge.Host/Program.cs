@@ -162,6 +162,7 @@ app.MapShopFloorEndpoints();
 app.MapProductionActualsEndpoints();
 app.MapShelfLifeEndpoints();
 app.MapGoalEndpoints();
+app.MapToolEndpoints();
 app.MapMaterialsEndpoints();
 app.MapQualityEndpoints();
 app.MapProgramsEndpoints();

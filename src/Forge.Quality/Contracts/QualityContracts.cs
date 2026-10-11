@@ -127,9 +127,18 @@ public sealed record CapaInfo(
     string? VerifiedBy,
     DateTimeOffset? VerifiedAt);
 
+/// <summary>A gauge as Quality shows it. Since V3.8 a gauge is a tool of the Gauge kind (Resources).</summary>
 public sealed record GaugeInfo(string Code, string Description, DateOnly CalibrationDue, string? Certificate, bool Active)
 {
     public bool InCalibrationOn(DateOnly day) => Active && day <= CalibrationDue;
+
+    public static IReadOnlyList<GaugeInfo> From(IEnumerable<Forge.Resources.Contracts.ToolInfo> tools, IEnumerable<Forge.Resources.Contracts.ToolTypeInfo> types)
+    {
+        var gauges = types.Where(t => t.Kind == Forge.Resources.Contracts.ToolKind.Gauge).Select(t => t.Code).ToHashSet(StringComparer.Ordinal);
+        return tools.Where(t => gauges.Contains(t.TypeCode))
+            .Select(t => new GaugeInfo(t.Code, t.Description, t.CalibrationDue ?? DateOnly.MinValue, t.Certificate, t.Status != Forge.Resources.Contracts.ToolStatus.Retired))
+            .ToList();
+    }
 }
 
 /// <summary>Quality state of one order as readiness and receiving need it.</summary>
@@ -155,7 +164,6 @@ public interface IQualityLookup
 
     Task<IReadOnlyList<CapaInfo>> ListCapasAsync(bool includeVerified, CancellationToken ct);
 
-    Task<IReadOnlyList<GaugeInfo>> ListGaugesAsync(CancellationToken ct);
 
     /// <summary>Inspection points of the order's part, operations with a passing inspection, and NCRs not yet dispositioned.</summary>
     Task<OrderQuality> GetOrderQualityAsync(long orderNumber, string partNumber, CancellationToken ct);

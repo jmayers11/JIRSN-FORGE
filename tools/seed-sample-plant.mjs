@@ -76,7 +76,8 @@ async function main() {
       const actuals = !(await get('eng', '/api/execution/reason-codes')).length;
       const shelf = !itemList.some(i => i.partNumber === 'ADH-EP');
       const goals = !(await get('planner', '/api/planning/goals')).length;
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals && !shelf && !goals) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const tooling = !(await get('eng', '/api/resources/tools')).some(t => t.tool.code === 'KNIFE-A1');
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals && !shelf && !goals && !tooling) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -154,6 +155,10 @@ async function main() {
         console.log('Adding a delivery goal broken down into production goals, and a reforecast.');
         await seedGoals();
       }
+      if (tooling) {
+        console.log('Adding slitter knives (one out for sharpening) and a caliper; existing gauges are already tools.');
+        await seedTools();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -186,6 +191,7 @@ async function main() {
     await seedActuals();
     await seedShelfLife();
     await seedGoals();
+    await seedTools();
     return finish();
   }
 
@@ -345,6 +351,7 @@ async function main() {
   await seedActuals();
   await seedShelfLife();
   await seedGoals();
+  await seedTools();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -869,6 +876,19 @@ async function seedGoals() {
   const make = await post('planner', '/api/planning/goals', { kind: 'Production', title: 'Make the panels', parentGoalId: Number(ship.entityId), leadDays: 2 });
   for (const n of released.slice(0, 2)) await post('planner', '/api/planning/goals', { kind: 'Production', title: `Order ${n} complete`, parentGoalId: Number(make.entityId), orderNumber: n, leadDays: 1 });
   await post('planner', '/api/planning/goals/reforecast', {});
+}
+
+async function seedTools() {
+  step('Tools: slitter knife sets with a service cycle (one out for sharpening) and a caliper with a calibration interval — see Work Centers → Tools and gauges');
+  const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+  await post('eng', '/api/resources/tool-types', { code: 'SLIT-KNIFE', name: 'Slitter knife set', kind: 'Cutting', usageLimit: 400, serviceUses: 40 });
+  await post('qe', '/api/resources/tool-types', { code: 'CALIPER', name: 'Digital caliper', kind: 'Gauge', calibrationDays: 180 });
+  await post('eng', '/api/resources/tools', { code: 'KNIFE-A1', typeCode: 'SLIT-KNIFE', description: 'Knife set, 100 mm spacing', serial: 'KS-2201', location: 'TOOL-CRIB', eligibleMachines: ['SLITTER-A'], eligibleActivities: ['RUN_SLITTER'] });
+  await post('eng', '/api/resources/tools', { code: 'KNIFE-B1', typeCode: 'SLIT-KNIFE', description: 'Knife set, 50 mm spacing', serial: 'KS-2202', location: 'TOOL-CRIB', eligibleMachines: ['SLITTER-B'], eligibleActivities: ['RUN_SLITTER'] });
+  await post('planner', '/api/resources/tools/KNIFE-A1/uses', { uses: 12, machineCode: 'SLITTER-A', activityCode: 'RUN_SLITTER', reference: 'Sample: last week\'s runs' });
+  await post('planner', '/api/resources/tools/KNIFE-B1/uses', { uses: 40, machineCode: 'SLITTER-B', activityCode: 'RUN_SLITTER', reference: 'Sample: last month\'s runs' });
+  await post('planner', '/api/resources/tools/KNIFE-B1/service', { vendor: 'Precision Sharpening', note: 'Sample: regrind', reason: 'Sample: 40 runs since the last sharpening' });
+  await post('qe', '/api/resources/tools', { code: 'CAL-150', typeCode: 'CALIPER', description: 'Digital caliper 150 mm', serial: 'MT-88123', location: 'QC-LAB', calibratedOn: day(-170), certificate: 'Sample: LAB-2207' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

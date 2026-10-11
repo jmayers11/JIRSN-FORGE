@@ -21,7 +21,8 @@ namespace Forge.Execution;
 public sealed record SafetyFinding(bool Blocked, string Detail);
 
 /// <summary>Start (or join) an operation. A trainer badge is given when the operator works under supervision.</summary>
-public sealed record StartOperation(Secret Badge, long OrderNumber, int Sequence, string? MachineCode, Secret? TrainerBadge, SafetyFinding? Safety = null);
+/// <param name="ToolCode">A tool used for the operation (V3.8): judged valid for the machine and activity at the start, and its use counted.</param>
+public sealed record StartOperation(Secret Badge, long OrderNumber, int Sequence, string? MachineCode, Secret? TrainerBadge, SafetyFinding? Safety = null, string? ToolCode = null);
 
 /// <summary>End the badged person's current direct labor.</summary>
 public sealed record StopWork(Secret Badge);
@@ -145,6 +146,10 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             }
 
             var machine = await MachineAsync(uow, op, c.MachineCode, now, ct);
+            if (!string.IsNullOrWhiteSpace(c.ToolCode))
+            {
+                await ToolUse.RecordAsync(uow, c.ToolCode, machine, op.ActivityCode, $"order {id}", now, context.Actor, ct);
+            }
             var required = op.RequiredQualifications.ToList();
             if (machine is not null && await uow.Store<IResourcesLookup>().FindMachineActivityAsync(machine, op.ActivityCode, ct) is { } activity)
             {

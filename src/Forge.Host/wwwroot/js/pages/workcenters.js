@@ -3,6 +3,7 @@ import { icon } from '../icons.js';
 import { esc, $$, fmtNumber, fmtDateTime, errorBlock, emptyBlock } from '../ui.js';
 import { isDownAt } from '../model.js';
 import { appendStoppages, appendReasonCodes } from '../actuals.js';
+import { appendTools } from '../tools.js';
 
 const DAY = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -72,4 +73,5 @@ export async function workCentersPage(page, ctx) {
   const chosen = selected ? rows.find(x => x.wc.code === selected) : null;
   await appendStoppages(page, chosen ? chosen.ms : r.machines, ctx.me);
   await appendReasonCodes(page, ctx.me);
+  await appendTools(page, r.machines, ctx.me);
 }

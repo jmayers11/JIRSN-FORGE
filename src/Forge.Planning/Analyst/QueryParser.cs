@@ -237,7 +237,7 @@ public static partial class QueryParser
         }
 
         // V3.5, V3.6: stoppage and shelf-life questions are reports even when they say "overdue" or "blocked".
-        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment")
+        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment" or "tool-status")
         {
             return AnalystIntent.Report;
         }
@@ -289,6 +289,7 @@ public static partial class QueryParser
             : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
             : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
             : Has("goal", "reforecast", "required by date", "required-by") ? "goal-attainment"
+            : Has("tool", "gauge", "blade", "sharpen", "calibrat", "out for service", "usage limit") && !Has("cert", "qualif", "training") ? "tool-status"
             : Has("shelf life", "shelf-life", "expir", "expiring", "retest", "open life", "excursion", "aging", "how old", "oldest lot", "fefo", "fifo") && !Has("cert", "qualif", "training", "alternate", "document", "drawing", "contract") ? "shelf-life"
             : Has("stoppage", "stopped", "changeover", "change over", "setup time", "setups", "starved", "blocked machine", "machines blocked", "were blocked", "root cause", "reason code", "downtime by category", "downtime category") ? "stoppages"
             : Has("quantity state", "in rework", "rework", "in repair", "repaired", "in process", "pending inspection", "how much of order", "where is order") ? "quantity-states"
@@ -394,6 +395,13 @@ public static partial class QueryParser
         if (t.Contains(" graph", StringComparison.Ordinal) || t.Contains(" chart", StringComparison.Ordinal))
         {
             notes.Add("Forge shows this as a table with totals; charts are not part of reports yet.");
+        }
+
+        // V3.8: "Which tools are out for service?" — the status asked about.
+        if (entry.Id == "tool-status" && (t.Contains(" out for service", StringComparison.Ordinal) || t.Contains(" sharpen", StringComparison.Ordinal)))
+        {
+            parameters = parameters with { Status = "OutForService" };
+            notes.Add("Only tools out for service.");
         }
 
         // V3.7: "Which goals are at risk?" — the goal state asked about. Behind plan is not at risk.

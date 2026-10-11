@@ -382,6 +382,17 @@ See `docs/adr/0030-v3-6-aging-shelf-life-and-selection.md`.
 
 See `docs/adr/0020-v3-goal-risk.md` and `docs/adr/0031-v3-7-goal-attainment-and-reforecast.md`.
 
+## What V3.8 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Tools | `resources.tool_type`, `resources.tool`, Work Centers page | Identity, serial, place, custody, condition, eligible machines and activities, uses against life and service limits |
+| History | `resources.tool_event` | Registration, moves, calibrations, uses, service sent and returned, condition, retirement; never changed |
+| Validity | `ToolValidity.At`, `/api/resources/tools?at=` | Judged as of the moment of use from the history; shop-floor starts and inspections are refused with the reasons |
+| Gauges | migration `quality/0004`, `/api/quality/gauges` | Quality's gauges are tools of the GAUGE type; inspections count a use |
+
+See `docs/adr/0032-v3-8-tooling-and-calibration.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -808,3 +819,13 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | GET | `/api/planning/goals[?includeClosed=]`, `/api/planning/goal-risk` | `planning.schedule.read` |
 | POST | `/api/planning/goals`, `/api/planning/goals/reforecast` | `planning.goals.manage` |
 | POST | `/api/planning/goals/{id}`, `/api/planning/goals/{id}/close` (reason required) | `planning.goals.manage` |
+
+## V3.8 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/resources/tool-types`, `/api/resources/tools[?at=&machine=&activity=]`, `/api/resources/tools/{code}/history` | `resources.read` |
+| POST | `/api/resources/tool-types`, `/api/resources/tools`, `/api/resources/tools/{code}/retire` (reason) | `resources.tools.manage` |
+| POST | `/api/resources/tools/{code}/calibrations` | `resources.tools.calibrate` |
+| POST | `/api/resources/tools/{code}/move`, `/uses`, `/service` (reason), `/return`, `/condition` (reason) | `resources.tools.handle` |
+| POST | `/api/shopfloor/start` takes `toolCode` | `execution.shopfloor.record` |

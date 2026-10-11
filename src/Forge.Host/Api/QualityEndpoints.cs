@@ -48,7 +48,7 @@ public static class QualityEndpoints
         api.MapGet("/plans", (HttpContext http, string? part, CancellationToken _) =>
             ReadStore<IQualityLookup>(http, Permissions.QualityRead, async (l, ct) => await l.ListPlansAsync(string.IsNullOrWhiteSpace(part) ? null : part.Trim().ToUpperInvariant(), ct)));
         api.MapGet("/gauges", (HttpContext http, CancellationToken _) =>
-            ReadStore<IQualityLookup>(http, Permissions.QualityRead, async (l, ct) => await l.ListGaugesAsync(ct)));
+            ReadStore<Forge.Resources.Contracts.IToolLookup>(http, Permissions.QualityRead, async (l, ct) => GaugeInfo.From(await l.ListToolsAsync(ct), await l.ListToolTypesAsync(ct))));
         api.MapGet("/capas", (HttpContext http, bool? includeVerified, CancellationToken _) =>
             ReadStore<IQualityLookup>(http, Permissions.QualityRead, async (l, ct) => await l.ListCapasAsync(includeVerified ?? false, ct)));
         api.MapGet("/ncrs", (HttpContext http, bool? includeClosed, CancellationToken _) =>

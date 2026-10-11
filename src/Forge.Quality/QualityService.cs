@@ -7,6 +7,7 @@ using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
 using Forge.Quality.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Quality;
 
@@ -64,9 +65,7 @@ public sealed record QualityRecordChanged(string Kind, string Id, string Change)
 
 public interface IQualityStore
 {
-    Task<bool> InsertGaugeAsync(GaugeInfo gauge, DateTimeOffset at, string actor, CancellationToken ct);
 
-    Task RecordCalibrationAsync(string code, DateOnly calibratedOn, DateOnly due, string? certificate, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task SavePlanAsync(InspectionPlanInfo plan, DateTimeOffset at, string actor, CancellationToken ct);
 
@@ -94,6 +93,7 @@ public interface IQualityStore
 public sealed class QualityService(CommandPipeline pipeline)
 {
     public const string SourceContext = "Quality";
+    private const string GaugeType = "GAUGE";
 
     public Task<CommandResult> DefineGaugeAsync(DefineGauge c, CommandContext context, CancellationToken ct)
     {
@@ -102,11 +102,17 @@ public sealed class QualityService(CommandPipeline pipeline)
         var spec = new CommandSpec(SourceContext, nameof(DefineGauge), Permissions.QualityPlan, ResourceRef.Of("Gauge", code));
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
+            // V3.8: a gauge is a tool of the Gauge kind.
             var gauge = new GaugeInfo(code, BusinessCode.RequireName(c.Description, "Gauge"), c.CalibrationDue, Trim(c.Certificate, 100), true);
-            if (!await uow.Store<IQualityStore>().InsertGaugeAsync(gauge, now, context.Actor, ct))
+            var tools = uow.Store<IToolStore>();
+            await tools.InsertToolTypeAsync(new ToolTypeInfo(GaugeType, "Gauge", ToolKind.Gauge, null, null, null), now, context.Actor, ct);
+            var tool = new ToolInfo(code, GaugeType, gauge.Description, null, null, ToolCustody.InHouse, null, ToolCondition.Good, [], [], 0, 0, c.CalibrationDue, gauge.Certificate, ToolStatus.Available, now, context.Actor);
+            if (!await tools.InsertToolAsync(tool, now, context.Actor, ct))
             {
                 throw new CommandRejectedException("code_exists", $"Gauge {code} already exists.");
             }
+
+            await tools.InsertToolEventAsync(new ToolEvent(0, code, ToolEventKind.Registered, now, context.Actor, Condition: ToolCondition.Good, DueOn: c.CalibrationDue, Certificate: gauge.Certificate), ct);
 
             return Outcome(context, "Gauge", code, "Defined", $"Gauge {code} calibrated until {c.CalibrationDue:yyyy-MM-dd}.", null, gauge);
         }, ct);
@@ -124,9 +130,12 @@ public sealed class QualityService(CommandPipeline pipeline)
                 throw new CommandRejectedException("invalid_calibration", "Calibration date cannot be in the future and the next due date must come after it.");
             }
 
-            var gauge = (await uow.Store<IQualityLookup>().ListGaugesAsync(ct)).FirstOrDefault(g => g.Code == code)
+            var lookup = uow.Store<IToolLookup>();
+            var gauge = GaugeInfo.From(await lookup.ListToolsAsync(ct), await lookup.ListToolTypesAsync(ct)).FirstOrDefault(g => g.Code == code)
                 ?? throw new CommandRejectedException("gauge_not_found", $"Gauge {code} does not exist.");
-            await uow.Store<IQualityStore>().RecordCalibrationAsync(code, c.CalibratedOn, c.DueDate, Trim(c.Certificate, 100), now, context.Actor, ct);
+            var tool = (await lookup.FindToolAsync(code, ct))!;
+            await uow.Store<IToolStore>().UpdateToolAsync(tool with { CalibrationDue = c.DueDate, Certificate = Trim(c.Certificate, 100), ChangedAt = now, ChangedBy = context.Actor }, ct);
+            await uow.Store<IToolStore>().InsertToolEventAsync(new ToolEvent(0, code, ToolEventKind.Calibrated, now, context.Actor, CalibratedOn: c.CalibratedOn, DueOn: c.DueDate, Certificate: Trim(c.Certificate, 100)), ct);
             return Outcome(context, "Gauge", code, "Calibrated", $"Gauge {code} calibrated {c.CalibratedOn:yyyy-MM-dd}, due again {c.DueDate:yyyy-MM-dd}.", gauge, gauge with { CalibrationDue = c.DueDate, Certificate = Trim(c.Certificate, 100) });
         }, ct);
     }
@@ -248,12 +257,16 @@ public sealed class QualityService(CommandPipeline pipeline)
             if (plan.Characteristics.Any(x => x.Kind == CharacteristicKind.Variable))
             {
                 gauge = string.IsNullOrWhiteSpace(c.GaugeCode) ? throw new CommandRejectedException("gauge_required", "Measured characteristics need the gauge used.") : BusinessCode.Require(c.GaugeCode, "Gauge");
-                var info = (await uow.Store<IQualityLookup>().ListGaugesAsync(ct)).FirstOrDefault(g => g.Code == gauge)
+                var lookup = uow.Store<IToolLookup>();
+                var info = GaugeInfo.From(await lookup.ListToolsAsync(ct), await lookup.ListToolTypesAsync(ct)).FirstOrDefault(g => g.Code == gauge)
                     ?? throw new CommandRejectedException("gauge_not_found", $"Gauge {gauge} does not exist.");
                 if (!info.InCalibrationOn(DateOnly.FromDateTime(now.UtcDateTime)))
                 {
                     throw new CommandRejectedException("gauge_out_of_calibration", $"Gauge {gauge} was due for calibration {info.CalibrationDue:yyyy-MM-dd}. Use a calibrated gauge.");
                 }
+
+                // V3.8: judged as a tool at the moment of use (custody, condition, service), and the use is counted.
+                await ToolUse.RecordAsync(uow, gauge, null, null, $"inspection {c.OrderNumber}/{c.Sequence}", now, context.Actor, ct);
             }
 
             var results = new List<CharacteristicResult>();
