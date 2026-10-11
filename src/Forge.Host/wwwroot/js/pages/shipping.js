@@ -2,6 +2,7 @@ import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 import { formModal, qty, can } from '../forms.js';
+import { attachmentsDrawer } from '../attachments.js';
 
 // Shipping (spec §47): a shipment is put together and packed by one person, who confirms the stock is
 // there; a different person with shipping authority ships it, and only then does stock leave the ledger.
@@ -61,6 +62,7 @@ export async function shippingPage(page, ctx) {
     $$('[data-from-demand]', page).forEach(b => b.addEventListener('click', () => create((data.demand.data ?? []).find(d => d.demandId === Number(b.dataset.fromDemand)))));
     $$('[data-pack]', page).forEach(b => b.addEventListener('click', () => step(b.dataset.pack, 'pack', 'Pack', 'Confirms the stock is there and nothing on it is on an open NCR. Someone else ships it.', false)));
     $$('[data-ship]', page).forEach(b => b.addEventListener('click', () => ship(Number(b.dataset.ship))));
+    $$('[data-shipment-evidence]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`Shipment ${b.dataset.shipmentEvidence} evidence`, { type: 'Shipment', id: b.dataset.shipmentEvidence, me, title: 'Evidence', note: 'Packing slips, certificates and photos are reference evidence; attaching a file does not release stock or complete inspection.' })));
     $$('[data-cancel]', page).forEach(b => b.addEventListener('click', () => step(b.dataset.cancel, 'cancel', 'Cancel', 'Nothing has left the building; stock is not touched.', true)));
   }
 
@@ -72,6 +74,7 @@ export async function shippingPage(page, ctx) {
         <div class="faint">Created by ${esc(who(s.createdBy))} ${esc(fmtDateTime(s.createdAt))}${s.packedBy ? ` · packed by ${esc(who(s.packedBy))} ${esc(fmtDateTime(s.packedAt))}` : ''}${s.shippedBy ? ` · shipped by ${esc(who(s.shippedBy))} ${esc(fmtDateTime(s.shippedAt))}${s.carrier ? ` via ${esc(s.carrier)}` : ''}${s.tracking ? ` (${esc(s.tracking)})` : ''}` : ''}${s.cancelReason ? ` · cancelled: ${esc(s.cancelReason)}` : ''}</div>
       </div>
       <div class="nowrap">
+        <button class="btn small ghost" data-shipment-evidence="${s.shipmentId}">Evidence</button>
         ${s.status === 'Open' && handler ? `<button class="btn primary small" data-pack="${s.shipmentId}">Pack</button>` : ''}
         ${s.status === 'Packed' && shipper && !mine(s.packedBy) ? `<button class="btn primary small" data-ship="${s.shipmentId}">Ship</button>` : ''}
         ${s.status === 'Packed' && mine(s.packedBy) ? '<span class="faint">You packed it — someone else ships it</span>' : ''}

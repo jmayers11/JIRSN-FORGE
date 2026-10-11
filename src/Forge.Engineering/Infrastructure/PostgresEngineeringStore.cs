@@ -247,6 +247,9 @@ public static class EngineeringRegistration
         services.AddForgeStore<IDocumentLookup>(uow => new PostgresDocumentStore(uow));
         services.AddSingleton<EngineeringService>();
         services.AddSingleton<DocumentService>();
+        services.AddSingleton<EvidenceService>();
+        services.AddForgeStore<IEvidenceLookup>(uow => new PostgresEvidenceStore(uow));
+        services.AddForgeStore<IEvidenceStore>(uow => new PostgresEvidenceStore(uow));
         services.AddForgeStore<IDocumentTrainingLookup>(uow => new PostgresDocumentTrainingStore(uow));
         services.AddForgeStore<IDocumentTrainingStore>(uow => new PostgresDocumentTrainingStore(uow));
         services.AddForgeStore<IChangeStore>(uow => new PostgresChangeStore(uow));
@@ -265,3 +268,4 @@ public static class EngineeringRegistration
         return services;
     }
 }
+

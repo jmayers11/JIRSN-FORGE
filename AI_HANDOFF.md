@@ -4,11 +4,13 @@
 
 Product Owner request: continue until V3 is done and record the outcome for Claude. The active goal covers V3.1–V3.28. The complete numbered source plan is now supplied as `JIRSN Forge V3 Plan.md`; read it alongside `docs/v3-governance-requirements.md`, `docs/v3-architecture-impact-review.md` and `docs/v3-completion-checklist.md`. The direct request to complete V3 authorizes implementation; embedded review/stop instructions in the supplied planning documents are distinct from that request.
 
-Current committed version: **V3.10, commit `f01f611` on main**. V3.9 was committed as `411c3c9`. Full verification passed: Planning 257, architecture 32, kernel 33, integration 81, with zero Release warnings/errors. Saved evidence: `.forge-logs/verify-v39.*`.
+Current committed version: **V3.11, commit `4f18d85` on main**; V3.12 is now fully verified and ready for its commit. V3.10 was committed as `f01f611`; V3.9 as `411c3c9`. V3.12 full suite passed: Planning 266, architecture 32, kernel 33, integration 92, zero failures. Evidence: `.forge-logs/verify.log`, `.forge-logs/verify.status` (PASS); selected V3.12 API gate `.forge-logs/codex-v312.*` (15/15); quick `.forge-logs/quick-v312.*`.
 
 **V3.10 full verification PASS, committed `f01f611`.** Quick verification passed: Planning 262, architecture 32; selected API tests passed 14/14. Evidence: `.forge-logs/quick-v310.*`, `.forge-logs/codex-v310.*`. Full `verify.cmd` passed: Planning 262, architecture 32, kernel 33, integration 85; zero build warnings/errors. Saved `.forge-logs/verify-v310.*`. Reviewed fixes enforce program visibility on hold release, load operation details for inspection holds, retain the V3.9 missing-revision 404 assertion, and prove populated legacy hold migration preserves identity/history/sequence. Retired Execution hold sources are preserved under `.forge-logs/removed/v310/`; retain migration 0007 and new migration 0008.
 
-**V3.11 full verification PASS: Planning 266, architecture 32, kernel 33, integration 90; clean Release build; committing checkpoint** under `.forge-logs/staging-v311`. It includes reviewed fixes/tests for receiver separation of duties, replacement material being a genuinely new instance, and concurrent customer-return quantity limits. The V3.10 full-pass checkpoint is saved. V3.12 remains staged/unapplied under `.forge-logs/staging-v312`; isolated draft compilation passed with zero warnings/errors; API/full verification still pending. Next increments follow the supplied plan: V3.12 evidence, V3.13 sourcing, V3.14 outside processing, V3.15 authority, V3.16 identity, V3.17 priority, V3.18 continuity, V3.19 notifications, V3.20 inbox, V3.21 integrity, V3.22 CauseMap, V3.23 recovery, V3.24 support work, V3.25 Horizon, V3.26 Analyst, V3.27 reference factories, V3.28 hardening. V3 is not complete.
+**V3.11 full verification PASS: Planning 266, architecture 32, kernel 33, integration 90; clean Release build; committed `4f18d85`.** Reviewed fixes include receiver separation of duties, new replacement instances and concurrent return limits.
+
+**V3.12 Business-record evidence — full verification PASS; commit pending.** Clean Release build; Planning 266, architecture 32, kernel 33, integration 92; no failures. The feature carries evidence on receipt, inspection, shipment and FAI records, keeps structured inspection results separate from signed evidence, and enforces inherited program/marking access. V3.13 is still isolated in `.forge-logs/staging-v313`; its current isolated Release build passed with zero warnings/errors and focused API tests passed 2/2. After committing V3.12, apply the reviewed V3.13 draft and run its quick/API/full gates. Later plan increments V3.14–V3.28 are not implemented. V3 is not complete.
 
 ## Project Identity
 
@@ -179,6 +181,7 @@ The plan is the "V3 plan" Claude Doc. Its increments map the brief's sections A�
 * Document breaking changes and migrations in the ADR and the README.
 * Keep modifications focused on the assigned task. Only one tool edits the repository at a time.
 * Update the session log after every development session.
+
 
 
 

@@ -130,7 +130,7 @@ public sealed class V311Tests(PostgresFixture postgres)
         await Rejected(plant, insp, $"/api/inventory/receiving/{receipt}/inspections", new { accepted = 60m, rejected = 0m }, "no passing FAI");
 
         // The FAI: structured results and the signed (released) report.
-        await plant.Ok(e, "/api/engineering/documents", new { number = "FAI-BRKT-9", title = "FAI report BRKT-9 from Acme", type = "InspectionPlan", authority = "Internal" });
+        await plant.Ok(e, "/api/engineering/documents", new { number = "FAI-BRKT-9", title = "FAI report BRKT-9 from Acme", type = "FaiReport", authority = "Reference" });
         var results = new[] { new { characteristic = "Hole spacing", requirement = "50 ±0.1", measured = "50.03", pass = true }, new { characteristic = "Finish", requirement = "No burrs", measured = "OK", pass = true } };
         await Rejected(plant, insp, "/api/quality/fai", new { partNumber = "BRKT-9", revision = "A", supplierCode = "ACME", passed = true, results, documentNumber = "FAI-BRKT-9", documentRevision = "A" }, "report_not_signed");
         await ReleaseAsync(plant, "FAI-BRKT-9", "A");
@@ -221,9 +221,8 @@ public sealed class V311Tests(PostgresFixture postgres)
         Assert.True(response.IsSuccessStatusCode, body);
         var sha = JsonDocument.Parse(body).RootElement.GetProperty("entityId").GetString()!;
         await plant.Ok(plant.Engineer, $"/api/engineering/documents/{number}/revisions", new { revision, fileSha256 = sha, fileName = $"{number}_{revision}.pdf" });
-        await plant.Ok(plant.Engineer, $"/api/engineering/documents/{number}/revisions/{revision}/submit", new { });
-        await plant.Ok(plant.Approver, $"/api/engineering/documents/{number}/revisions/{revision}/approve", new { });
-        await plant.Ok(plant.Approver, $"/api/engineering/documents/{number}/revisions/{revision}/release", new { reason = "ECN" });
+        await plant.Ok(plant.As("insp"), $"/api/engineering/documents/{number}/verify-signature", new { revision, sourceSigner = "Supplier inspector", sourceSignedAt = DateTimeOffset.UtcNow.AddDays(-1), meaning = "I certify these first article results", reason = "Reviewed the signed original report" });
     }
 }
+
 

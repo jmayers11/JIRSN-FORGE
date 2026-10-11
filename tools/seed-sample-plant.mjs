@@ -936,6 +936,8 @@ async function seedReceiving() {
   step('Receiving (V3.11): FAI determined for the Alcoa coil, the receipt accepted in part, the rest returned to the vendor — see Inventory → Receiving');
   const receipt = (await get('insp', '/api/inventory/receiving')).find(r => r.remaining > 0 && r.supplierCode);
   if (!receipt) return;
+  const certificate = await upload('insp', 'SAMPLE-CoC.txt', 'SAMPLE ONLY — illustrative supplier certificate. Does not complete structured inspection or claim a verified signature.\n');
+  await post('insp', `/api/engineering/attachments/Receipt/${receipt.receipt.transactionId}/file`, { fileSha256: certificate, fileName: 'SAMPLE-CoC.txt', type: 'CertificateOfConformance', title: 'Sample receiving certificate' });
   const [part, rest] = receipt.faiSubject.split(':');
   const [revision, supplierCode] = rest.split('@');
   if (receipt.faiStatus === 'PendingDetermination') {

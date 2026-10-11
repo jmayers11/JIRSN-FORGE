@@ -11,6 +11,7 @@ export const ATTACHERS = ['ManufacturingEngineer', 'Planner', 'Buyer', 'Purchasi
 export const TYPE_LABEL = {
   Drawing: 'Drawing', Specification: 'Specification', Procedure: 'Procedure', WorkInstruction: 'Work instruction', InspectionPlan: 'Inspection plan',
   Standard: 'Standard', Datasheet: 'Datasheet', Certificate: 'Certificate', PurchaseDocument: 'Purchase document', Contract: 'Contract', Photo: 'Photo', Other: 'Other',
+  PackingSlip: 'Packing slip', CertificateOfConformance: 'Certificate of conformance', CertificateOfAnalysis: 'Certificate of analysis', MeasurementRecord: 'Measurements', FaiReport: 'Signed FAI report',
 };
 export const MARKING_LABEL = { None: 'No marking', ControlledUnclassified: 'CUI', ExportControlled: 'Export controlled', Proprietary: 'Proprietary' };
 const STATE_TONE = { Current: 'ok', Reference: 'none', 'Not released': 'warn', Superseded: 'warn', Obsolete: 'bad' };
@@ -28,6 +29,7 @@ export async function attachmentsPanel(section, { type, id, me, title = 'Documen
   let history = false;
   const base = `/api/engineering/attachments/${type}/${encodeURIComponent(id)}`;
   const mayAttach = can(me, ...ATTACHERS);
+  const evidence = ['Receipt', 'ReceivingInspection', 'Inspection', 'Shipment', 'Fai'].includes(type);
 
   async function render() {
     const res = await tryGet(`${base}${history ? '?history=true' : ''}`);
@@ -41,7 +43,7 @@ export async function attachmentsPanel(section, { type, id, me, title = 'Documen
     section.innerHTML = `
       <header><h2>${esc(title)}</h2><span class="spacer"></span>
         <label class="opt faint"><input type="checkbox" data-history ${history ? 'checked' : ''}> Show detached</label>
-        ${mayAttach ? '<button class="btn small" data-attach-doc>Attach a document</button><button class="btn small primary" data-attach-file>Attach a file</button>' : ''}</header>
+        ${mayAttach ? `${evidence ? '' : '<button class="btn small" data-attach-doc>Attach a document</button>'}<button class="btn small primary" data-attach-file>Attach a file</button>` : ''}</header>
       ${note ? `<div class="muted" style="margin-bottom:8px">${esc(note)}</div>` : ''}
       ${!list.length ? emptyBlock('Nothing attached', mayAttach ? 'Attach a file (kept as reference) or a controlled document this record must follow.' : 'No documents are attached to this record.') : `
       <div class="table-wrap"><table class="table"><thead><tr><th>Document</th><th>Use</th><th>Revision</th><th>File</th><th>Attached</th><th></th></tr></thead><tbody>
@@ -58,7 +60,7 @@ export async function attachmentsPanel(section, { type, id, me, title = 'Documen
           <td>${r?.fileName ? `<button class="btn small ghost" data-file="${esc(a.documentNumber)}|${esc(r.revision)}|${esc(r.fileName)}">${esc(r.fileName)}</button><div class="faint">${esc(fileSize(r.fileSize))}</div>` : '<span class="faint">—</span>'}</td>
           <td>${esc(who(a.linkedBy))}<div class="faint">${esc(fmtDateTime(a.linkedAt))}</div>
             ${detached ? `<div class="faint">Detached by ${esc(who(a.detachedBy))} ${esc(fmtDateTime(a.detachedAt))}: ${esc(a.detachReason)}</div>` : ''}</td>
-          <td>${!detached && mayAttach ? `<button class="btn small ghost" data-detach="${a.linkId}">Detach</button>` : ''}</td></tr>`;
+          <td>${!detached && mayAttach ? `<button class="btn small ghost" data-detach="${a.linkId}">Detach</button>` : ''}${!detached && a.authority === 'Reference' && r?.fileSha256 && can(me, 'Inspector', 'QualityEngineer') ? `<button class="btn small ghost" data-verify-evidence="${esc(a.documentNumber)}" data-revision="${esc(r.revision)}">Verify source signature</button>` : ''}</td></tr>`;
       }).join('')}
       </tbody></table></div>`}`;
 
@@ -70,6 +72,14 @@ export async function attachmentsPanel(section, { type, id, me, title = 'Documen
     $$('[data-detach]', section).forEach(b => b.addEventListener('click', () => formModal({
       title: 'Detach document', detail: 'It stops applying to this record. The attachment stays in the record\'s history with your reason.', reasonRequired: true, confirmLabel: 'Detach', fields: [],
     }, (_, reason) => command(`/api/engineering/attachment-links/${b.dataset.detach}/detach`, {}, reason), render)));
+    $$('[data-verify-evidence]', section).forEach(b => b.addEventListener('click', () => formModal({
+      title: 'Verify source signature', detail: 'Review the original signed file first. This records your verification evidence; structured inspection results remain required.', reasonRequired: true, confirmLabel: 'Record verification',
+      fields: [
+        { name: 'sourceSigner', label: 'Source signer', required: true },
+        { name: 'sourceSignedAt', label: 'Source signature date and time', type: 'datetime-local', required: true },
+        { name: 'meaning', label: 'Meaning of source signature', type: 'textarea', required: true },
+      ],
+    }, (v, reason) => command(`/api/engineering/documents/${encodeURIComponent(b.dataset.verifyEvidence)}/verify-signature`, { ...v, revision: b.dataset.revision, sourceSignedAt: new Date(v.sourceSignedAt).toISOString() }, reason), render)));
     $('[data-attach-file]', section)?.addEventListener('click', () => formModal({
       title: 'Attach a file', detail: 'Kept as a reference document (customer PO, certificate, photo, note). It is never production authority; controlled documents are released in Engineering.', confirmLabel: 'Attach',
       fields: [

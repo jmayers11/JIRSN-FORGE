@@ -423,7 +423,7 @@ export async function inventoryPage(page, ctx) {
     }));
     $$('[data-part]', page).forEach(r => r.addEventListener('click', () => partDrawer(r.dataset.part)));
     if (tab === 'shelf') bindShelfLifeTab(page, locs(true, false), reload);
-    if (tab === 'receiving') bindReceivingTab(page, locs(), reload);
+    if (tab === 'receiving') bindReceivingTab(page, locs(), reload, me);
     $$('[data-mro-set]', page).forEach(b => b.addEventListener('click', () => setMro(b.dataset.mroSet)));
     $$('[data-mro-clear]', page).forEach(b => b.addEventListener('click', async () => {
       const done = await confirmWithReason({ title: `Clear MRO levels for ${b.dataset.mroClear}`, detail: 'MRP stops replenishing it to a maximum. The old levels stay in the history.', confirmLabel: 'Clear' },
@@ -531,3 +531,4 @@ export async function inventoryPage(page, ctx) {
   await load();
   render();
 }
+

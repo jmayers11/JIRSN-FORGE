@@ -52,6 +52,8 @@ public sealed record EnforcementRequest(bool Enforced, string? Reason);
 
 public sealed record DocumentDetailView(DocumentInfo Document, IReadOnlyList<DocumentLinkInfo> Links);
 
+public sealed record EvidenceVerificationRequest(string Revision, string SourceSigner, DateTimeOffset SourceSignedAt, string Meaning, string? Reason);
+
 /// <summary>V2.2 endpoints: controlled documents, their files, and documents attached to records.</summary>
 public static class DocumentEndpoints
 {
@@ -60,6 +62,16 @@ public static class DocumentEndpoints
     public static void MapDocumentEndpoints(this IEndpointRouteBuilder app)
     {
         var eng = app.MapGroup("/api/engineering").RequireAuthorization();
+
+        eng.MapPost("/documents/{number}/verify-signature", (HttpContext http, string number, EvidenceVerificationRequest b, EvidenceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.VerifyAsync(new VerifySignedEvidence(number, b.Revision, b.SourceSigner, b.SourceSignedAt, b.Meaning), c, ct)));
+        eng.MapGet("/documents/{number}/signature-verification/{revision}", (HttpContext http, string number, string revision, CancellationToken _) =>
+            Read(http, Permissions.EngineeringRead, async principal =>
+            {
+                await using var uow = await Snapshot(http);
+                var document = await VisibleDocumentAsync(uow, principal, number, http.RequestAborted);
+                return await uow.Store<IEvidenceLookup>().FindVerificationAsync(document.Number, revision.ToUpperInvariant(), http.RequestAborted);
+            }));
 
         eng.MapGet("/documents", (HttpContext http, CancellationToken _) =>
             Read(http, Permissions.EngineeringRead, async principal =>
@@ -268,19 +280,9 @@ public static class DocumentEndpoints
     }
 
     /// <summary>A link is visible with its record's program and its record's read permission.</summary>
-    internal static bool CanSeeLink(ForgePrincipal principal, DocumentLinkInfo link) =>
-        (link.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))) && principal.HasPermission(ReadPermission(link.TargetType));
+    internal static bool CanSeeLink(ForgePrincipal principal, DocumentLinkInfo link) => DocumentAccess.CanSeeLink(principal, link);
 
-    internal static string ReadPermission(DocumentTargetType type) => type switch
-    {
-        DocumentTargetType.Supplier or DocumentTargetType.PurchaseOrder => Permissions.PurchasingRead,
-        DocumentTargetType.Program => Permissions.ProgramsRead,
-        DocumentTargetType.ProductionOrder => Permissions.OrdersRead,
-        DocumentTargetType.WorkOrder => Permissions.MaintenanceRead,
-        DocumentTargetType.Ncr => Permissions.QualityRead,
-        DocumentTargetType.WorkCenter => Permissions.ResourcesRead,
-        _ => Permissions.EngineeringRead,
-    };
+    internal static string ReadPermission(DocumentTargetType type) => DocumentAccess.ReadPermission(type);
 
     private static DocumentTargetType TargetType(string raw) =>
         Enum.TryParse<DocumentTargetType>(raw, ignoreCase: true, out var type) && Enum.IsDefined(type) && !int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)
@@ -298,3 +300,4 @@ public static class DocumentEndpoints
     private static Task<IKernelUnitOfWork> Snapshot(HttpContext http) =>
         http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
 }
+

@@ -1,6 +1,7 @@
 using System.Globalization;
 using Forge.Engineering.Contracts;
 using Forge.Execution.Contracts;
+using Forge.Inventory.Contracts;
 using Forge.Kernel.Access;
 using Forge.Kernel.Security;
 using Forge.Maintenance.Contracts;
@@ -113,6 +114,49 @@ public sealed class DocumentTargetResolver : IDocumentTargetResolver
                 {
                     var wc = await uow.Store<IResourcesLookup>().FindWorkCenterAsync(key.ToUpperInvariant(), ct);
                     return wc is null ? null : new DocumentTarget(type, wc.Code, $"Work center {wc.Code}", null, Permissions.ResourcesRead);
+                }
+
+            case DocumentTargetType.Receipt:
+                {
+                    if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return null;
+                    var receipt = await uow.Store<IReceivingLookup>().FindTransactionAsync(number, ct);
+                    if (receipt is null || receipt.Kind is not (InventoryTransactionKind.Receipt or InventoryTransactionKind.CustomerReturn)) return null;
+                    var program = receipt.OrderNumber is { } orderNumber ? (await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct))?.ProgramId : null;
+                    return new DocumentTarget(type, Text(number), $"Receipt {number} ({receipt.PartNumber})", program, Permissions.InventoryRead);
+                }
+
+            case DocumentTargetType.ReceivingInspection:
+                {
+                    if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return null;
+                    var inspection = (await uow.Store<IReceivingLookup>().ListReceivingInspectionsAsync(null, ct)).FirstOrDefault(i => i.InspectionId == number);
+                    if (inspection is null) return null;
+                    var receipt = await ResolveAsync(uow, DocumentTargetType.Receipt, Text(inspection.ReceiptTransactionId), ct);
+                    return receipt is null ? null : new DocumentTarget(type, Text(number), $"Receiving inspection {number}", receipt.ProgramId, Permissions.QualityRead);
+                }
+
+            case DocumentTargetType.Shipment:
+                {
+                    if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return null;
+                    var shipment = await uow.Store<IInventoryLookup>().FindShipmentAsync(number, ct);
+                    return shipment is null ? null : new DocumentTarget(type, Text(number), $"Shipment {number} ({shipment.Customer})", null, Permissions.InventoryRead);
+                }
+
+            case DocumentTargetType.Fai:
+                {
+                    if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return null;
+                    var fai = (await uow.Store<IDeterminationLookup>().ListFaisAsync(null, ct)).FirstOrDefault(f => f.FaiId == number);
+                    if (fai is null) return null;
+                    var report = await uow.Store<IDocumentLookup>().FindDocumentAsync(fai.DocumentNumber, ct);
+                    return report is null ? null : new DocumentTarget(type, Text(number), $"FAI {number} ({fai.Subject})", report.ProgramId, Permissions.QualityRead, report.Markings);
+                }
+
+            case DocumentTargetType.Inspection:
+                {
+                    if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return null;
+                    var inspection = (await uow.Store<IQualityLookup>().ListInspectionsAsync(null, int.MaxValue, ct)).FirstOrDefault(i => i.InspectionId == number);
+                    if (inspection is null) return null;
+                    var order = await uow.Store<IExecutionLookup>().FindOrderAsync(inspection.OrderNumber, ct);
+                    return order is null ? null : new DocumentTarget(type, Text(number), $"Inspection {number} (order {order.OrderNumber})", order.ProgramId, Permissions.QualityRead);
                 }
 
             default:

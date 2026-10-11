@@ -30,6 +30,11 @@ public enum DocumentType
     Contract,
     Photo,
     Other,
+    PackingSlip,
+    CertificateOfConformance,
+    CertificateOfAnalysis,
+    MeasurementRecord,
+    FaiReport,
 }
 
 public enum DocumentRevisionStatus
@@ -60,6 +65,11 @@ public enum DocumentTargetType
     WorkOrder,
     Ncr,
     WorkCenter,
+    Receipt,
+    ReceivingInspection,
+    Inspection,
+    Shipment,
+    Fai,
 }
 
 public enum DocumentPurpose
@@ -129,11 +139,12 @@ public sealed record DocumentLinkInfo(
     DateTimeOffset LinkedAt,
     string? DetachedBy,
     DateTimeOffset? DetachedAt,
-    string? DetachReason);
+    string? DetachReason,
+    DataMarking TargetMarkings = DataMarking.None);
 
 /// <summary>A record a document is attached to, as its owning context describes it.</summary>
 /// <param name="ReadPermission">The permission needed to see the record (and so its attachments).</param>
-public sealed record DocumentTarget(DocumentTargetType Type, string Id, string Label, Guid? ProgramId, string ReadPermission);
+public sealed record DocumentTarget(DocumentTargetType Type, string Id, string Label, Guid? ProgramId, string ReadPermission, DataMarking Markings = DataMarking.None);
 
 /// <summary>
 /// Finds the record a document is attached to. Implemented by the host, which can see every context's
@@ -208,6 +219,26 @@ public sealed record DocumentationPolicyInfo(ItemClass ItemClass, bool Enforced,
 /// <summary>Who may see a document: its program and its markings. The same rule in screens, reports, exports and Analyst.</summary>
 public static class DocumentAccess
 {
+    public static bool CanSeeLink(ForgePrincipal principal, DocumentLinkInfo link)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        ArgumentNullException.ThrowIfNull(link);
+        return (link.ProgramId is not { } p || principal.Programs.Contains(new Forge.Kernel.Identity.ProgramId(p)))
+            && principal.HasPermission(ReadPermission(link.TargetType)) && (link.TargetMarkings & ~principal.Markings) == DataMarking.None;
+    }
+
+    public static string ReadPermission(DocumentTargetType type) => type switch
+    {
+        DocumentTargetType.Supplier or DocumentTargetType.PurchaseOrder => Permissions.PurchasingRead,
+        DocumentTargetType.Program => Permissions.ProgramsRead,
+        DocumentTargetType.ProductionOrder => Permissions.OrdersRead,
+        DocumentTargetType.WorkOrder => Permissions.MaintenanceRead,
+        DocumentTargetType.Ncr or DocumentTargetType.ReceivingInspection or DocumentTargetType.Inspection or DocumentTargetType.Fai => Permissions.QualityRead,
+        DocumentTargetType.Receipt or DocumentTargetType.Shipment => Permissions.InventoryRead,
+        DocumentTargetType.WorkCenter => Permissions.ResourcesRead,
+        _ => Permissions.EngineeringRead,
+    };
+
     public static bool CanSee(ForgePrincipal principal, DocumentInfo document)
     {
         ArgumentNullException.ThrowIfNull(principal);

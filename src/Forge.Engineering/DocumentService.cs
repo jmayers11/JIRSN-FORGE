@@ -357,6 +357,11 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
             var target = await VisibleTargetAsync(uow, c.TargetType, c.TargetId, context, ct);
             var document = await VisibleDocumentAsync(uow, number, context, ct);
             RequireSameProgram(document, target);
+            if (target.Type is DocumentTargetType.Receipt or DocumentTargetType.ReceivingInspection or DocumentTargetType.Inspection or DocumentTargetType.Shipment or DocumentTargetType.Fai
+                && document.Authority != DocumentAuthority.Reference)
+            {
+                throw new CommandRejectedException("business_evidence_reference_only", "Attach business evidence as reference files; applicable engineering instructions remain controlled separately.");
+            }
             string? revision = null;
             if (!string.IsNullOrWhiteSpace(c.Revision))
             {
@@ -389,12 +394,12 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
             var (sha, name, size) = await FileAsync(uow, c.FileSha256, c.FileName, true, ct);
             var store = uow.Store<IDocumentStore>();
             var number = $"REF-{await store.NextReferenceNumberAsync(ct):D6}";
-            var document = new DocumentInfo(number, Title(string.IsNullOrWhiteSpace(c.Title) ? name! : c.Title), c.Type, DocumentAuthority.Reference, null, null, target.ProgramId, c.Markings, context.Actor, now, []);
+            var document = new DocumentInfo(number, Title(string.IsNullOrWhiteSpace(c.Title) ? name! : c.Title), c.Type, DocumentAuthority.Reference, null, null, target.ProgramId, c.Markings | target.Markings, context.Actor, now, []);
             await store.InsertDocumentAsync(document, ct);
             var revision = new DocumentRevisionInfo(number, "1", DocumentRevisionStatus.Uncontrolled, sha, name, size, null, null, context.Actor, now,
                 null, null, null, null, null, null, null, null, null, null);
             await store.InsertRevisionAsync(revision, ct);
-            await uow.Outbox.EnqueueAsync(pipeline.Event(new DocumentCreated(number, nameof(DocumentAuthority.Reference), c.Type.ToString()), context, SourceContext, DocumentEntity, number, Program(document), c.Markings), ct);
+            await uow.Outbox.EnqueueAsync(pipeline.Event(new DocumentCreated(number, nameof(DocumentAuthority.Reference), c.Type.ToString()), context, SourceContext, DocumentEntity, number, Program(document), document.Markings), ct);
             await uow.Outbox.EnqueueAsync(RevisionEvent(document, revision, "Proposed", context), ct);
             return await LinkAsync(uow, document with { Revisions = [revision] }, null, target, DocumentPurpose.Information, Optional(c.Note, 500), context, now, ct);
         }, ct);
@@ -432,14 +437,14 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
     {
         ArgumentNullException.ThrowIfNull(principal);
         var target = string.IsNullOrWhiteSpace(id) ? null : await targets.ResolveAsync(uow, type, id.Trim(), ct);
-        return target is null || !principal.HasPermission(target.ReadPermission) || (target.ProgramId is { } p && !principal.Programs.Contains(new ProgramId(p)))
+        return target is null || !principal.HasPermission(target.ReadPermission) || (target.ProgramId is { } p && !principal.Programs.Contains(new ProgramId(p))) || (target.Markings & ~principal.Markings) != DataMarking.None
             ? null
             : target;
     }
 
     private async Task<CommandOutcome> LinkAsync(IKernelUnitOfWork uow, DocumentInfo document, string? revision, DocumentTarget target, DocumentPurpose purpose, string? note, CommandContext context, DateTimeOffset now, CancellationToken ct)
     {
-        var link = new DocumentLinkInfo(0, document.Number, revision, target.Type, target.Id, target.Label, target.ProgramId, purpose, note, context.Actor, now, null, null, null);
+        var link = new DocumentLinkInfo(0, document.Number, revision, target.Type, target.Id, target.Label, target.ProgramId, purpose, note, context.Actor, now, null, null, null, target.Markings);
         if (await uow.Store<IDocumentStore>().InsertLinkAsync(link, ct) is not { } linkId)
         {
             return CommandOutcome.NoChange(CommandResult.NoChange(document.Number, $"{document.Number} is already attached to {target.Label}."));

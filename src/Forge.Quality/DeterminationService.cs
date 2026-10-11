@@ -12,7 +12,7 @@ namespace Forge.Quality;
 /// <summary>Decide whether first article inspection applies to a part revision from a supplier. The reason is the basis.</summary>
 public sealed record DetermineFai(string PartNumber, string Revision, string SupplierCode, DeterminationState State);
 
-/// <summary>Record a first article inspection with its results and the released FAI report it is backed by.</summary>
+/// <summary>Record a first article inspection with its results and the verified signed reference report it is backed by.</summary>
 public sealed record RecordFai(string PartNumber, string Revision, string SupplierCode, bool Passed, IReadOnlyList<ReceivingCharacteristicResult> Results, string DocumentNumber, string DocumentRevision);
 
 public sealed record DeterminationMade(string Question, string Subject, string State) : IDomainEvent
@@ -81,7 +81,7 @@ public sealed class DeterminationService(CommandPipeline pipeline)
                 throw new CommandRejectedException("results_disagree", "An FAI with a failed characteristic has not passed.");
             }
 
-            // The signed report: a released revision of a controlled document.
+            // Business evidence stays a reference attachment; verification binds the original signed file.
             var number = BusinessCode.Require(c.DocumentNumber, "Document");
             var document = await uow.Store<IDocumentLookup>().FindDocumentAsync(number, ct)
                 ?? throw new CommandRejectedException("document_not_found", $"Document {number} does not exist.");
@@ -91,9 +91,9 @@ public sealed class DeterminationService(CommandPipeline pipeline)
             }
 
             var revision = document.Revisions.FirstOrDefault(r => r.Revision == (c.DocumentRevision ?? string.Empty).Trim());
-            if (revision?.Status is not (DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable))
+            if (document.Authority != DocumentAuthority.Reference || revision?.Status != DocumentRevisionStatus.Uncontrolled || revision.FileSha256 is null || await uow.Store<IEvidenceLookup>().FindVerificationAsync(number, revision.Revision, ct) is null)
             {
-                throw new CommandRejectedException("report_not_signed", $"The FAI report {number} rev {c.DocumentRevision} is not released (signed).");
+                throw new CommandRejectedException("report_not_signed", $"The FAI report {number} rev {c.DocumentRevision} has no verified signed reference file.");
             }
 
             var parts = subject.Split(':', '@');
@@ -121,6 +121,7 @@ public sealed class DeterminationService(CommandPipeline pipeline)
 
     private static string Key(long id) => id.ToString(CultureInfo.InvariantCulture);
 }
+
 
 
 

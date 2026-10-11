@@ -201,3 +201,11 @@ V3.12 staging additionally inherits FAI report scope on targets and uploaded sup
 ### V3.11 full-pass checkpoint
 
 Full verify.cmd PASS, exit 0: Planning 266, architecture 32, kernel 33, integration 90 in 20.2745 minutes. Release build zero warnings/errors. Saved verify-v311.log/status; focused V311 gate passed 5/5 after the two schema/actor corrections. Final fixes include receipt-actor separation, genuinely new replacement lot, replacement quantity reconciliation and original PO/supplier context, locked/reloaded mutable receiving transitions, concurrent return/disposition limits, hidden report access, and package type/analyzer corrections. Committing this checkpoint before V3.12 application. V3.12 isolated build passes; V3.13 is only an incomplete staged sourcing draft.
+
+V3.11 committed on main as 4f18d85. Applied V3.12 reviewed evidence implementation from staging. Its isolated build passed; live quick/API/full gates now required. V3.13 draft remains ignored and unapplied.
+
+V3.12 live quick verification PASS: clean Release build, Planning 266, architecture 32. Saved quick-v312.*. Starting selected evidence/FAI/V2.2 attachment/kernel API gate codex-v312.cmd. Stronger parent scope and link immutability changes are compiled and covered by the new program-revocation regression.
+
+V3.12 selected API gate PASS: 15/15 in 3.5144 minutes. First run passed 14/15: receipt fixture omitted required reason; fixture corrected, rebuilt and rerun. Full `verify.cmd` PASS, exit 0: Release build zero warnings/errors; Planning 266, architecture 32, kernel 33, integration 92; zero failures. Saved `.forge-logs/verify.log` and `.forge-logs/verify.status` (PASS). Commit this verified V3.12 checkpoint before applying V3.13.
+
+V3.13 draft stayed isolated in `.forge-logs/staging-v313` through V3.12 verification. Isolated Release build passed with zero warnings/errors. First API run found the RFQ creator in the separation-of-duties test lacked approval permission and hit 403 before the rule; test now gives that actor the existing PurchasingManager role. Focused V3.13 API run then passed 2/2 using the configured PostgreSQL. V3.13 remains unapplied and needs quick/API/full verification in the main tree after the V3.12 commit.

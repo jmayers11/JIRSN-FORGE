@@ -901,3 +901,11 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | GET | `/api/quality/determinations[?subject=]`, `/api/quality/fai[?subject=]` | `quality.read` |
 | POST | `/api/quality/fai-determinations` (reason) | `quality.plan` |
 | POST | `/api/quality/fai` | `quality.inspect` |
+
+### V3.12 — Business-record evidence
+
+Receipts, receiving inspections, production inspections, shipments and first article inspections use the existing reference attachments and immutable file storage. Packing slips, CoC, CoA, measurements, photographs and signed FAI reports remain reference evidence and never acquire production authority. Evidence panels are available in Receiving and Shipping; the business-evidence report and Analyst expose the same accessible records.
+
+An inspector may record verification of a source signature with the signer, source timestamp, meaning and review reason. This records a human review of the original file, not cryptographic authentication of its external signer. New FAI records require both structured results and a verified signed reference file; neither substitutes for the other. Historical FAI/report records remain intact. Targets and attachments inherit program/marking scope from their authoritative source, and a revoked program membership hides their evidence.
+
+API: existing /api/engineering/attachments routes now accept Receipt, ReceivingInspection, Inspection, Shipment and Fai. POST /api/engineering/documents/{number}/verify-signature and GET /api/engineering/documents/{number}/signature-verification/{revision} record/read immutable verification evidence. The shared command pipeline supplies permissions, audit, transactional events and idempotent retries.

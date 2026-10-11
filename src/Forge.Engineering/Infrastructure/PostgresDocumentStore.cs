@@ -18,7 +18,7 @@ internal sealed class PostgresDocumentStore(PostgresUnitOfWork uow) : IDocumentS
         """;
 
     private const string LinkSql =
-        "SELECT link_id, document_number, revision, target_type, target_id, target_label, program_id, purpose, note, linked_by, linked_at, detached_by, detached_at, detach_reason FROM engineering.document_link";
+        "SELECT link_id, document_number, revision, target_type, target_id, target_label, program_id, purpose, note, linked_by, linked_at, detached_by, detached_at, detach_reason, target_markings FROM engineering.document_link";
 
     public async Task<bool> InsertFileAsync(string sha256, byte[] content, DateTimeOffset at, string actor, CancellationToken ct)
     {
@@ -89,11 +89,11 @@ internal sealed class PostgresDocumentStore(PostgresUnitOfWork uow) : IDocumentS
         ArgumentNullException.ThrowIfNull(link);
         await using var cmd = uow.Command(
             """
-            INSERT INTO engineering.document_link (document_number, revision, target_type, target_id, target_label, program_id, purpose, note, linked_by, linked_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING RETURNING link_id
+            INSERT INTO engineering.document_link (document_number, revision, target_type, target_id, target_label, program_id, purpose, note, linked_by, linked_at, target_markings)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING RETURNING link_id
             """,
             link.DocumentNumber, Text(link.Revision), link.TargetType.ToString(), link.TargetId, link.TargetLabel, Uuid(link.ProgramId), link.Purpose.ToString(),
-            Text(link.Note), link.LinkedBy, link.LinkedAt);
+            Text(link.Note), link.LinkedBy, link.LinkedAt, (int)link.TargetMarkings);
         return await cmd.ExecuteScalarAsync(ct) is long id ? id : null;
     }
 
@@ -299,7 +299,8 @@ internal sealed class PostgresDocumentStore(PostgresUnitOfWork uow) : IDocumentS
         r.GetFieldValue<DateTimeOffset>(10),
         Opt(r, 11),
         OptTime(r, 12),
-        Opt(r, 13));
+        Opt(r, 13),
+        (DataMarking)r.GetInt32(14));
 
     private static string? Opt(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
 

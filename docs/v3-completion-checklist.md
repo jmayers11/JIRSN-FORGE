@@ -11,8 +11,8 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | V3.1–V3.8 | Previously verified and committed through `0232d18`; historical details in AI log | Preserve regression coverage |
 | V3.9 | Full verification PASS: Planning 257, architecture 32, kernel 33, integration 81; zero build warnings/errors; commit `411c3c9` | Complete |
 | V3.10 | Full PASS: Planning 262, architecture 32, kernel 33, integration 85; zero warnings/errors; selected API 14/14; commit `f01f611` | Complete |
-| V3.11 | Full PASS: Planning 266, architecture 32, kernel 33, integration 90; zero warnings/errors | Commit checkpoint |
-| V3.12 | Evidence draft staged in `.forge-logs/staging-v312`; isolated build review underway | Finish staging and tests; apply after V3.11 full-pass; verify |
+| V3.11 | Full PASS: Planning 266, architecture 32, kernel 33, integration 90; zero warnings/errors; commit `4f18d85` | Complete |
+| V3.12 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 92; zero failures | Commit verified V3.12 checkpoint; then apply and verify V3.13 |
 | V3.13–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
 
 ## Governance expansion validation

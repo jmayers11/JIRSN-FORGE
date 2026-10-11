@@ -186,6 +186,16 @@ internal static class StandardReports
                 "Documents as they stand now; the period does not apply. Documents in programs you do not hold, or with markings you do not hold, are not shown. Reference documents are never production authority."),
             Permissions.EngineeringRead, null, DocumentRegisterAsync),
         new(
+            new("business-evidence", "Business-record evidence", "Quality",
+                "Reference files on receipts, inspections, shipments and FAI, with source-signature verification kept separate from structured inspection results.",
+                [StatusFilter(["Attached", "SignatureVerified"]), SearchFilter],
+                [C("targetType", "Record kind", ReportColumnKind.Text), C("target", "Record", ReportColumnKind.Text), C("document", "Evidence", ReportColumnKind.Text),
+                 C("type", "Kind", ReportColumnKind.Text), C("file", "Original file", ReportColumnKind.Text), C("state", "Verification", ReportColumnKind.Text),
+                 C("signer", "Source signer", ReportColumnKind.Text), C("verifiedBy", "Verified by", ReportColumnKind.Text), C("attachedAt", "Attached at", ReportColumnKind.DateTime)],
+                ["targetType", "type", "state"], "targetType", 3660,
+                "Current reference attachments visible through both record permissions and document markings/program access. An attachment or signature verification does not complete inspection."),
+            Permissions.EngineeringRead, null, BusinessEvidenceAsync),
+        new(
             new("documentation-status", "Order documentation", "Engineering",
                 "Open orders and the documents they must follow: the revision each was released with, the revision that applies now, and mismatches, missing or unreleased documents.",
                 [PartFilter, StatusFilter(["Current", "Pinned", "LegitimatelySuperseded", "Mismatch", "Missing", "NotReleased", "Obsolete", "RequiresReview"]), SearchFilter],
@@ -1060,7 +1070,7 @@ internal static class StandardReports
     {
         var p = run.Parameters;
         var lookup = run.Uow.Store<IDocumentLookup>();
-        var links = (await lookup.ListLinksAsync(null, null, null, false, ct)).ToLookup(l => l.DocumentNumber);
+        var links = (await lookup.ListLinksAsync(null, null, null, false, ct)).Where(l => DocumentAccess.CanSeeLink(run.Principal, l)).ToLookup(l => l.DocumentNumber);
         var rows = new List<ReportRow>();
         foreach (var d in (await lookup.ListDocumentsAsync(ct)).Where(d => DocumentAccess.CanSee(run.Principal, d)))
         {
@@ -1091,6 +1101,27 @@ internal static class StandardReports
             rows,
             [$"{rows.Count} document(s); {attention} need attention (a revision, approval, release or an overdue review)."],
             ["Controlled documents", "Attachments"]);
+    }
+
+    private static async Task<ReportBody> BusinessEvidenceAsync(ReportRun run, CancellationToken ct)
+    {
+        var lookup = run.Uow.Store<IDocumentLookup>();
+        var rows = new List<ReportRow>();
+        foreach (var link in (await lookup.ListLinksAsync(null, null, null, false, ct)).Where(l =>
+            l.TargetType is DocumentTargetType.Receipt or DocumentTargetType.ReceivingInspection or DocumentTargetType.Inspection or DocumentTargetType.Shipment or DocumentTargetType.Fai
+            && DocumentAccess.CanSeeLink(run.Principal, l)))
+        {
+            var document = await lookup.FindDocumentAsync(link.DocumentNumber, ct);
+            if (document is null || document.Authority != DocumentAuthority.Reference || !DocumentAccess.CanSee(run.Principal, document)) continue;
+            var revision = link.Revision is { } pinned ? document.Revisions.FirstOrDefault(r => r.Revision == pinned) : document.Latest;
+            var verification = revision is null ? null : await run.Uow.Store<IEvidenceLookup>().FindVerificationAsync(document.Number, revision.Revision, ct);
+            var state = verification is null ? "Attached" : "SignatureVerified";
+            if (!ReportRun.Is(state, run.Parameters.Status) || !run.Matches(link.TargetLabel, document.Number, document.Title, document.Type.ToString())) continue;
+            rows.Add(new ReportRow([link.TargetType.ToString(), link.TargetLabel, document.Number, document.Type.ToString(), revision?.FileName, state,
+                verification?.SourceSigner, verification?.VerifiedBy, link.LinkedAt], ["document:" + document.Number]));
+        }
+
+        return new ReportBody(rows, [$"{rows.Count} visible evidence attachment(s). Signature verification and structured inspection acceptance are separate facts."], ["Reference attachments", "Source signature verification"]);
     }
 
     private static async Task<ReportBody> ItemClassificationAsync(ReportRun run, CancellationToken ct)

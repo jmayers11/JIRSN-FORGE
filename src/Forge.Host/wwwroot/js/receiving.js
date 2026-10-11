@@ -1,6 +1,7 @@
 import { tryGet, command } from './api.js';
 import { esc, $$, fmtDateTime, errorBlock, emptyBlock } from './ui.js';
 import { formModal, qty, can } from './forms.js';
+import { attachmentsDrawer } from './attachments.js';
 
 // Receiving inspection, supplier dispositions, returns to vendor and customer returns (V3.11).
 // A receipt is accepted in part; FAI pending determination is never shown as complete.
@@ -35,7 +36,7 @@ export function receivingTab(rec, me) {
       <td>${esc(r.receipt.partNumber)}${r.receipt.lotNumber ? ` <span class="faint">lot ${esc(r.receipt.lotNumber)}</span>` : ''}</td><td>${esc(r.supplierCode ?? '—')}${r.receipt.poNumber ? ` · PO ${r.receipt.poNumber}` : ''}</td>
       <td class="num">${qty(r.receipt.quantity)}</td><td class="num">${qty(r.accepted)}</td><td class="num">${qty(r.rejected)}</td><td class="num">${qty(r.remaining)}</td>
       <td><span class="pill ${cls}" title="${esc(r.faiSubject)}">${esc(label)}</span></td>
-      <td>${inspect && r.remaining > 0 ? `<button class="btn small" data-inspect="${r.receipt.transactionId}" data-left="${r.remaining}">Inspect</button>` : ''}</td></tr>`; }).join('')}
+      <td><button class="btn small ghost" data-receipt-evidence="${r.receipt.transactionId}">Evidence</button>${r.inspections.map(i => `<button class="btn small ghost" data-inspection-evidence="${i.inspectionId}">Inspection ${i.inspectionId} evidence</button>`).join('')}${inspect && r.remaining > 0 ? `<button class="btn small" data-inspect="${r.receipt.transactionId}" data-left="${r.remaining}">Inspect</button>` : ''}</td></tr>`; }).join('')}
     </tbody></table>`}
     <h3>Rejected material</h3>
     ${!(rec.rejections.data ?? []).length ? '<div class="muted">No rejected material waiting for a decision.</div>' : `
@@ -60,7 +61,9 @@ export function receivingTab(rec, me) {
     </tbody></table>`}`;
 }
 
-export function bindReceivingTab(page, locations, reload) {
+export function bindReceivingTab(page, locations, reload, me) {
+  $$('[data-receipt-evidence]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`Receipt ${b.dataset.receiptEvidence} evidence`, { type: 'Receipt', id: b.dataset.receiptEvidence, me, note: 'Reference evidence does not complete the structured inspection.' })));
+  $$('[data-inspection-evidence]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`Inspection ${b.dataset.inspectionEvidence} evidence`, { type: 'ReceivingInspection', id: b.dataset.inspectionEvidence, me })));
   $$('[data-inspect]', page).forEach(b => b.addEventListener('click', () => formModal({
     title: `Inspect receipt ${b.dataset.inspect}`, detail: `${b.dataset.left} still to inspect. Accept part, reject part; the rest waits. Material is not accepted until FAI is complete, not required or not applicable.`, confirmLabel: 'Record',
     fields: [
