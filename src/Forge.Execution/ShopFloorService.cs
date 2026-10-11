@@ -100,9 +100,9 @@ public interface IShopFloorStore
 
     Task EndTrainingSessionAsync(long sessionId, DateTimeOffset at, CancellationToken ct);
 
-    Task EvaluateTrainingSessionAsync(long sessionId, TrainingEvaluation evaluation, string? notes, DateTimeOffset at, CancellationToken ct);
+    Task<int?> EvaluateTrainingSessionAsync(long sessionId, TrainingEvaluation evaluation, string? notes, DateTimeOffset at, CancellationToken ct);
 
-    Task InsertSignoffAsync(Guid person, string method, string action, string subject, string meaning, DateTimeOffset at, string actor, CancellationToken ct);
+    Task InsertSignoffAsync(Guid person, string method, string signerRole, string assurance, int recordVersion, string action, string subject, string meaning, DateTimeOffset at, string actor, CancellationToken ct);
 }
 
 /// <summary>
@@ -112,7 +112,7 @@ public interface IShopFloorStore
 /// presence, machine status and qualifications; a person in training may start only under a
 /// present, authorized trainer, and that never makes them qualified.
 /// </summary>
-public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthorizationEngine engine)
+public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthorizationEngine engine, IBadgePinVerifier pinVerifier)
 {
     public const string SourceContext = "Execution";
     private const string OperationEntity = "OrderOperation";
@@ -361,7 +361,7 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             }
 
             // Consequential signoff: badge and PIN. A wrong PIN is rejected (and the attempt audited).
-            if (!await uow.Store<IWorkforceLookup>().VerifyBadgePinAsync(c.TrainerBadge.Reveal(), c.Pin.Reveal(), ct))
+            if (!await pinVerifier.VerifyAsync(c.TrainerBadge.Reveal(), c.Pin.Reveal(), ct))
             {
                 throw new CommandRejectedException("signoff_failed", "Badge and PIN did not match. Set a PIN at the terminal first if you have none.");
             }
@@ -382,8 +382,9 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
                 }
             }
 
-            await store.EvaluateTrainingSessionAsync(c.SessionId, c.Evaluation, notes, now, ct);
-            await store.InsertSignoffAsync(trainer.PersonId, "BadgeAndPin", nameof(EvaluateTraining), $"{TrainingEntity}:{id}", $"Trainer evaluation: {c.Evaluation}", now, context.Actor, ct);
+            var signedVersion = await store.EvaluateTrainingSessionAsync(c.SessionId, c.Evaluation, notes, now, ct)
+                ?? throw new CommandRejectedException("already_evaluated", $"Session {id} was evaluated by another request.");
+            await store.InsertSignoffAsync(trainer.PersonId, "BadgeAndPin", "Trainer", "Badge+PIN", signedVersion, nameof(EvaluateTraining), $"{TrainingEntity}:{id}", $"Trainer evaluation: {c.Evaluation}", now, context.Actor, ct);
             var program = (await uow.Store<IExecutionLookup>().FindOrderAsync(session.OrderNumber, ct))?.ProgramId is { } p ? new ProgramId(p) : (ProgramId?)null;
             return new CommandOutcome(
                 CommandResult.Ok(id, $"Session {id} evaluated: {c.Evaluation}, signed by {trainer.DisplayName}. This is not certification; a certifier records the qualification."),

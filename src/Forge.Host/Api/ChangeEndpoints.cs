@@ -75,7 +75,8 @@ public static class ChangeEndpoints
         eng.MapPost("/changes/{number}/reviews", (HttpContext http, string number, ChangeReviewRequest b, ChangeService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordReviewAsync(new RecordChangeReview(number, b.Kind, b.Decision, b.Notes), c, ct)));
         eng.MapPost("/changes/{number}/approve", (HttpContext http, string number, ReasonRequest b, ChangeService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ApproveAsync(new ApproveChange(number), c, ct)));
+            Command(http, b.Reason, c => s.ApproveAsync(new ApproveChange(number), c, ct)))
+            .WithMetadata(new StepUpRequiredAttribute());
         eng.MapPost("/changes/{number}/reject", (HttpContext http, string number, ReasonRequest b, ChangeService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RejectAsync(new RejectChange(number), c, ct)));
         eng.MapPost("/changes/{number}/cancel", (HttpContext http, string number, ReasonRequest b, ChangeService s, CancellationToken ct) =>

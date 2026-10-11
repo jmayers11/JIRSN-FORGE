@@ -55,7 +55,8 @@ internal static class ReceivingEndpoints
         api.MapPost("/rejections/{id:long}/disposition", (HttpContext http, long id, RejectionDispositionRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DispositionRejectionAsync(new DispositionRejection(id, b.Disposition), c, ct)));
         api.MapPost("/rejections/{id:long}/approve", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ApproveUseAsIsAsync(new ApproveUseAsIs(id), c, ct)));
+            Command(http, b.Reason, c => s.ApproveUseAsIsAsync(new ApproveUseAsIs(id), c, ct)))
+            .WithMetadata(new StepUpRequiredAttribute());
 
         api.MapGet("/rtvs", (HttpContext http, bool? open, CancellationToken _) =>
             ReadStore<IReceivingLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListRtvsAsync(open ?? false, ct)));

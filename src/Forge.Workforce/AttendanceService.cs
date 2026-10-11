@@ -39,6 +39,14 @@ public sealed record BadgePinSet(Guid PersonId) : IDomainEvent
     public static int SchemaVersion => 1;
 }
 
+/// <summary>Contains no badge value or PIN; emitted for Sentinel security monitoring and investigation.</summary>
+public sealed record BadgePinVerificationFailed(Guid PersonId, int ConsecutiveFailures, bool Locked) : IDomainEvent
+{
+    public static string EventType => nameof(BadgePinVerificationFailed);
+
+    public static int SchemaVersion => 1;
+}
+
 public sealed record EmployeeClockedIn(Guid PersonId, long AttendanceId, DateTimeOffset At) : IDomainEvent
 {
     public static string EventType => nameof(EmployeeClockedIn);
@@ -78,7 +86,7 @@ public interface IAttendanceStore
 /// operation authentication and electronic signoff are different things; this service owns only
 /// the first, plus the badge that identifies a person for all of them.
 /// </summary>
-public sealed class AttendanceService(CommandPipeline pipeline)
+public sealed class AttendanceService(CommandPipeline pipeline, IBadgePinVerifier pinVerifier)
 {
     public const string SourceContext = "Workforce";
     public static readonly TimeSpan ClockInPresence = TimeSpan.FromHours(12);
@@ -145,7 +153,7 @@ public sealed class AttendanceService(CommandPipeline pipeline)
                 throw new CommandRejectedException("invalid_pin", "A PIN is 4 to 8 digits.");
             }
 
-            if (badge.PinHash is not null && (c.CurrentPin is null || !Badges.PinMatches(c.CurrentPin.Reveal(), badge.PinHash, badge.PinSalt!)))
+            if (badge.PinHash is not null && (c.CurrentPin is null || !await pinVerifier.VerifyAsync(c.Badge.Reveal(), c.CurrentPin.Reveal(), ct)))
             {
                 throw new CommandRejectedException("pin_mismatch", "The current PIN does not match.");
             }

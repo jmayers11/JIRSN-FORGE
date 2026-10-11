@@ -79,14 +79,15 @@ export async function shopFloorPage(page, ctx) {
     const awaiting = (p.training ?? []).filter(t => t.trainerId === p.personId && !t.evaluation);
     page.innerHTML = `
       <div class="page-head">
-        <div><h1>${esc(p.displayName)}</h1>
+        <div aria-live="polite" aria-label="Current shop-floor operator"><h1>${esc(p.displayName)}</h1>
           <div class="sub">${clocked ? `<span class="pill ok">Clocked in ${esc(relative(clocked))}</span>` : '<span class="pill none">Not clocked in</span>'}
             ${p.homeWorkCenter ? ` · Home: ${esc(p.homeWorkCenter)}` : ''}${p.hasPin ? '' : ' · <span class="c-warn">No PIN set</span>'}</div></div>
         <div class="spacer"></div>
         <div class="head-controls">
           ${clocked ? '<button class="btn" id="clock-out">Clock out</button>' : '<button class="btn primary big" id="clock-in">Clock in</button>'}
           <button class="btn" id="pin">${p.hasPin ? 'Change PIN' : 'Set PIN'}</button>
-          <button class="btn outline" id="done">Done</button>
+          <button class="btn outline" id="done">Switch user</button>
+          <button class="btn danger" id="lock-terminal">Lock terminal</button>
         </div>
       </div>
       ${!p.isWorker ? emptyBlock('Not a registered worker', 'This badge belongs to someone who is not set up as a worker.') : ''}
@@ -134,6 +135,7 @@ export async function shopFloorPage(page, ctx) {
       if (!(r instanceof Error)) { badge = null; person = null; render(); }
     });
     $('#done', page).addEventListener('click', () => { badge = null; person = null; render(); });
+    $('#lock-terminal', page).addEventListener('click', () => { clearTimeout(idle); badge = null; person = null; render(); });
     $('#stop', page)?.addEventListener('click', () => act('/api/shopfloor/stop', { badge }));
     $('#pin', page).addEventListener('click', () => pinDialog());
     $('#report', page)?.addEventListener('submit', async e => {

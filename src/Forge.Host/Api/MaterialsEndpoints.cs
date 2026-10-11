@@ -441,7 +441,8 @@ public static class MaterialsEndpoints
         api.MapPost("/purchase-orders/{po:long}/lines", (HttpContext http, long po, PurchaseLineAddRequest b, PurchasingService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AddLineAsync(new AddPurchaseLine(po, b.PartNumber, b.Quantity, b.PromisedDate, b.RequisitionId), c, ct)));
         api.MapPost("/purchase-orders/{po:long}/approve", (HttpContext http, long po, ReasonRequest b, PurchasingService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ApproveAsync(new ApprovePurchaseOrder(po), c, ct)));
+            Command(http, b.Reason, c => s.ApproveAsync(new ApprovePurchaseOrder(po), c, ct)))
+            .WithMetadata(new StepUpRequiredAttribute());
         api.MapPost("/purchase-orders/{po:long}/lines/{line:int}/date", (HttpContext http, long po, int line, PromisedDateRequest b, PurchasingService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ChangePromisedDateAsync(new ChangePromisedDate(po, line, b.PromisedDate), c, ct)));
         api.MapPost("/purchase-orders/{po:long}/lines/{line:int}/cancel", (HttpContext http, long po, int line, ReasonRequest b, PurchasingService s, CancellationToken ct) =>

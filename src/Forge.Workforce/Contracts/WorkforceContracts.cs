@@ -57,9 +57,6 @@ public interface IWorkforceLookup
     /// <summary>The active badge's holder, or null for an unknown or revoked badge.</summary>
     Task<BadgeHolder?> FindBadgeHolderAsync(string badge, CancellationToken ct);
 
-    /// <summary>True only if the badge is active, has a PIN and the PIN matches.</summary>
-    Task<bool> VerifyBadgePinAsync(string badge, string pin, CancellationToken ct);
-
     /// <summary>The person's open attendance (clocked in, not yet out), if any.</summary>
     Task<AttendanceRecord?> FindOpenAttendanceAsync(Guid personId, CancellationToken ct);
 

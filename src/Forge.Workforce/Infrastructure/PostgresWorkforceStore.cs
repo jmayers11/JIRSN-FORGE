@@ -26,7 +26,7 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
 
     public async Task<BadgeRow?> FindBadgeAsync(string digest, CancellationToken ct)
     {
-        await using var cmd = uow.Command("SELECT person_id, revoked_at IS NOT NULL, pin_hash, pin_salt FROM workforce.badge WHERE badge_digest = $1", digest);
+        await using var cmd = uow.Command("SELECT b.person_id, b.revoked_at IS NOT NULL OR NOT p.is_active, b.pin_hash, b.pin_salt FROM workforce.badge b JOIN kernel.person p ON p.person_id = b.person_id WHERE b.badge_digest = $1", digest);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
             ? new BadgeRow(digest, reader.GetGuid(0), reader.GetBoolean(1), reader.IsDBNull(2) ? null : reader.GetFieldValue<byte[]>(2), reader.IsDBNull(3) ? null : reader.GetFieldValue<byte[]>(3))
@@ -35,7 +35,7 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
 
     public async Task SetPinAsync(string digest, byte[] hash, byte[] salt, DateTimeOffset at, CancellationToken ct)
     {
-        await using var cmd = uow.Command("UPDATE workforce.badge SET pin_hash = $2, pin_salt = $3, pin_set_at = $4 WHERE badge_digest = $1", digest, hash, salt, at);
+        await using var cmd = uow.Command("UPDATE workforce.badge SET pin_hash = $2, pin_salt = $3, pin_set_at = $4, pin_failed_attempts = 0, pin_locked_until = NULL WHERE badge_digest = $1", digest, hash, salt, at);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -71,17 +71,6 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
             Badges.Digest(badge));
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct) ? new BadgeHolder(reader.GetGuid(0), reader.GetString(1), reader.GetBoolean(2), reader.GetBoolean(3)) : null;
-    }
-
-    public async Task<bool> VerifyBadgePinAsync(string badge, string pin, CancellationToken ct)
-    {
-        if (!Badges.TryNormalize(badge, out _) || !Badges.IsValidPin(pin))
-        {
-            return false;
-        }
-
-        var row = await FindBadgeAsync(Badges.Digest(badge), ct);
-        return row is { Revoked: false, PinHash: { } hash, PinSalt: { } salt } && Badges.PinMatches(pin, hash, salt);
     }
 
     public async Task<AttendanceRecord?> FindOpenAttendanceAsync(Guid personId, CancellationToken ct)
@@ -262,6 +251,7 @@ public static class WorkforceRegistration
         services.AddForgeStore<IWorkforceStore>(uow => new PostgresWorkforceStore(uow));
         services.AddForgeStore<IWorkforceLookup>(uow => new PostgresWorkforceStore(uow));
         services.AddForgeStore<IAttendanceStore>(uow => new PostgresWorkforceStore(uow));
+        services.AddSingleton<IBadgePinVerifier, PostgresBadgePinVerifier>();
         services.AddSingleton<WorkforceService>();
         services.AddSingleton<AttendanceService>();
         return services;

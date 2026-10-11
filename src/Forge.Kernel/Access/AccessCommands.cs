@@ -5,6 +5,8 @@ namespace Forge.Kernel.Access;
 
 public sealed record RegisterPerson(string IdpSubject, string DisplayName, DataMarking Markings);
 
+public sealed record DeactivateIdentity(string IdpSubject, string Provider);
+
 public sealed record AssignRole(PersonId PersonId, string Role, DateTimeOffset? ExpiresAt = null);
 
 public sealed record CreateRole(string Role, string DisplayName, IReadOnlyList<string> Permissions);

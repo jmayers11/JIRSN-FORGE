@@ -87,6 +87,17 @@ internal sealed class InMemoryKernel : IKernelUnitOfWorkFactory
             return Task.CompletedTask;
         }
 
+        public Task<bool> SetActiveAsync(PersonId id, bool active, CancellationToken ct)
+        {
+            if (!people.TryGetValue(id, out var person) || person.IsActive == active)
+            {
+                return Task.FromResult(false);
+            }
+
+            people[id] = person with { IsActive = active };
+            return Task.FromResult(true);
+        }
+
         public Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, DateTimeOffset? expiresAt, CancellationToken ct) => Task.FromResult(roles.Add((id, role)));
 
         public Task<bool> CreateRoleAsync(string role, string displayName, IReadOnlyList<string> permissions, DateTimeOffset at, string actor, CancellationToken ct) => Task.FromResult(false);

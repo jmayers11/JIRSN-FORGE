@@ -53,6 +53,28 @@ builder.Services.AddSingleton<Forge.Host.Propagation.PropagationRetry>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Propagation.ChangePropagationSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Installation.InstallationSubscriber>();
 
+var sentinelEventsEndpoint = builder.Configuration["Forge:Sentinel:SecurityEventsEndpoint"];
+if (!string.IsNullOrWhiteSpace(sentinelEventsEndpoint))
+{
+    var sentinelBearerToken = builder.Configuration["Forge:Sentinel:SecurityEventsBearerToken"];
+    if (string.IsNullOrWhiteSpace(sentinelBearerToken))
+    {
+        throw new InvalidOperationException("Forge:Sentinel:SecurityEventsBearerToken is required when a Sentinel security-event endpoint is configured.");
+    }
+
+    if (!Uri.TryCreate(sentinelEventsEndpoint, UriKind.Absolute, out var sentinelUri)
+        || (sentinelUri.Scheme != Uri.UriSchemeHttps && !(builder.Environment.IsDevelopment() && sentinelUri.IsLoopback && sentinelUri.Scheme == Uri.UriSchemeHttp)))
+    {
+        throw new InvalidOperationException("Forge:Sentinel:SecurityEventsEndpoint must be HTTPS (HTTP loopback is allowed only in Development).");
+    }
+
+    builder.Services.AddHttpClient("forge-sentinel-security-events", client =>
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", sentinelBearerToken));
+    builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber>(sp => new Forge.Host.Security.SentinelSecurityEventSubscriber(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("forge-sentinel-security-events"),
+        sentinelUri));
+}
+
 // Optional generative AI for Forge Analyst (off by default; Forge works fully without it).
 var narratorOptions = builder.Configuration.GetSection("Forge:Analyst").Get<Forge.Host.Api.AnalystNarratorOptions>() ?? new();
 if (string.Equals(narratorOptions.Provider, "anthropic", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(narratorOptions.ApiKey))
@@ -133,6 +155,7 @@ app.UseExceptionHandler();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseAuthentication();
+app.UseMiddleware<StepUpMiddleware>();
 app.UseAuthorization();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
@@ -152,6 +175,7 @@ app.MapGet("/health/ready", async (NpgsqlDataSource db, CancellationToken ct) =>
 
 app.MapUiEndpoints();
 app.MapKernelEndpoints();
+app.MapScimEndpoints();
 app.MapOperationsEndpoints();
 app.MapEngineeringEndpoints();
 app.MapDocumentEndpoints();

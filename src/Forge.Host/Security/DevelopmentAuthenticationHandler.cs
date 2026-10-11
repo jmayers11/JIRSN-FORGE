@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using System.Globalization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 
@@ -12,7 +13,9 @@ namespace Forge.Host.Security;
 public sealed class DevelopmentAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,
-    UrlEncoder encoder)
+    UrlEncoder encoder,
+    IConfiguration configuration,
+    TimeProvider time)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string SchemeName = "ForgeDevelopment";
@@ -25,7 +28,27 @@ public sealed class DevelopmentAuthenticationHandler(
             return Task.FromResult(AuthenticateResult.NoResult());
         }
 
-        var identity = new ClaimsIdentity([new Claim("sub", subject.ToString())], SchemeName);
+        var authTime = configuration["Forge:Authentication:DevelopmentAuthTime"];
+        if (!long.TryParse(authTime, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds))
+        {
+            seconds = time.GetUtcNow().ToUnixTimeSeconds();
+        }
+
+        var acr = configuration["Forge:Authentication:DevelopmentAssurance"] ?? "urn:forge:assurance:high";
+        var claims = new List<Claim>
+        {
+            new("sub", subject.ToString()),
+            new("iss", "urn:forge:development"),
+            new("acr", acr),
+            new("auth_time", seconds.ToString(CultureInfo.InvariantCulture)),
+        };
+        if (!string.IsNullOrWhiteSpace(configuration["Forge:Authentication:DevelopmentScopes"]))
+        {
+            claims.Add(new Claim("scope", configuration["Forge:Authentication:DevelopmentScopes"]!));
+        }
+
+        var identity = new ClaimsIdentity(
+            claims, SchemeName);
         return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName)));
     }
 }

@@ -292,19 +292,20 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task EvaluateTrainingSessionAsync(long sessionId, TrainingEvaluation evaluation, string? notes, DateTimeOffset at, CancellationToken ct)
+    public async Task<int?> EvaluateTrainingSessionAsync(long sessionId, TrainingEvaluation evaluation, string? notes, DateTimeOffset at, CancellationToken ct)
     {
         await using var cmd = uow.Command(
-            "UPDATE execution.training_session SET evaluation = $2, evaluated_at = $3, evaluation_notes = $4 WHERE session_id = $1",
+            "UPDATE execution.training_session SET evaluation = $2, evaluated_at = $3, evaluation_notes = $4, version = version + 1 WHERE session_id = $1 AND evaluation IS NULL RETURNING version",
             sessionId, evaluation.ToString(), at, Text(notes));
-        await cmd.ExecuteNonQueryAsync(ct);
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return result is null or DBNull ? null : Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    public async Task InsertSignoffAsync(Guid person, string method, string action, string subject, string meaning, DateTimeOffset at, string actor, CancellationToken ct)
+    public async Task InsertSignoffAsync(Guid person, string method, string signerRole, string assurance, int recordVersion, string action, string subject, string meaning, DateTimeOffset at, string actor, CancellationToken ct)
     {
         await using var cmd = uow.Command(
-            "INSERT INTO execution.electronic_signoff (person_id, method, action, subject, meaning, signed_at, recorded_by) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-            person, method, action, subject, meaning, at, actor);
+            "INSERT INTO execution.electronic_signoff (person_id, method, signer_role, assurance, record_version, action, subject, meaning, signed_at, recorded_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            person, method, signerRole, assurance, recordVersion, action, subject, meaning, at, actor);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

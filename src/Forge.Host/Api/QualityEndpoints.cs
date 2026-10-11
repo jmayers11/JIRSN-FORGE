@@ -132,7 +132,8 @@ public static class QualityEndpoints
         api.MapPost("/ncrs/{id:long}/disposition", (HttpContext http, long id, DispositionRequest b, QualityService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DispositionAsync(new DispositionNcr(id, b.Disposition, b.Note), c, ct)));
         api.MapPost("/ncrs/{id:long}/approve", (HttpContext http, long id, ReasonRequest b, QualityService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.DecideUseAsIsAsync(new DecideUseAsIs(id, true), c, ct)));
+            Command(http, b.Reason, c => s.DecideUseAsIsAsync(new DecideUseAsIs(id, true), c, ct)))
+            .WithMetadata(new StepUpRequiredAttribute());
         api.MapPost("/ncrs/{id:long}/reject", (HttpContext http, long id, ReasonRequest b, QualityService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DecideUseAsIsAsync(new DecideUseAsIs(id, false), c, ct)));
         api.MapPost("/ncrs/{id:long}/close", (HttpContext http, long id, NoteRequest b, QualityService s, CancellationToken ct) =>

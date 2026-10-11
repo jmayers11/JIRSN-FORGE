@@ -137,6 +137,7 @@ public sealed class Phase5Tests(PostgresFixture postgres)
         floor = await Get(k, $"/api/orders/{order}/shopfloor");
         Assert.All(floor.GetProperty("labor").EnumerateArray(), l => Assert.NotEqual(JsonValueKind.Null, l.GetProperty("endedAt").ValueKind));
         Assert.Equal(1, await Scalar(app, "SELECT count(*) FROM execution.electronic_signoff WHERE method = 'BadgeAndPin'"));
+        Assert.Equal(1, await Scalar(app, "SELECT count(*) FROM execution.electronic_signoff WHERE signer_role = 'Trainer' AND assurance = 'Badge+PIN' AND record_version = 2"));
     }
 
     [Fact]

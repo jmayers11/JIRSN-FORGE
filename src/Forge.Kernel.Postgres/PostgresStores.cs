@@ -34,6 +34,14 @@ internal sealed class PostgresPeopleStore(PostgresUnitOfWork uow) : IPeopleStore
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<bool> SetActiveAsync(PersonId id, bool active, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE kernel.person SET is_active = $2, version = version + 1 WHERE person_id = $1 AND is_active <> $2",
+            id.Value, active);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
     public async Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, DateTimeOffset? expiresAt, CancellationToken ct)
     {
         await using var cmd = uow.Command(

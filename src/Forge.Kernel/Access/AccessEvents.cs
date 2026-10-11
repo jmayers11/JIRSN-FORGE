@@ -9,6 +9,13 @@ public sealed record PersonRegistered(Guid PersonId, string IdpSubject, string D
     public static int SchemaVersion => 1;
 }
 
+public sealed record IdentityDeactivated(Guid PersonId, string IdpSubject, string Provider) : IDomainEvent
+{
+    public static string EventType => nameof(IdentityDeactivated);
+
+    public static int SchemaVersion => 1;
+}
+
 public sealed record RoleAssigned(Guid PersonId, string Role) : IDomainEvent
 {
     public static string EventType => nameof(RoleAssigned);

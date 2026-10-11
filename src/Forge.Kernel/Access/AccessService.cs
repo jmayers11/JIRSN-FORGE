@@ -44,6 +44,35 @@ public sealed class AccessService(CommandPipeline pipeline, IKernelUnitOfWorkFac
         }, ct);
     }
 
+    public Task<CommandResult> DeactivateIdentityAsync(DeactivateIdentity command, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        return pipeline.ExecuteAsync(Spec(nameof(DeactivateIdentity), null), command, context, async (uow, now) =>
+        {
+            var subject = command.IdpSubject.Trim();
+            if (subject.Length == 0 || command.Provider != "Nexus")
+            {
+                throw new CommandRejectedException("invalid_provisioning_request", "A provider subject and the configured identity provider are required.");
+            }
+
+            var person = await uow.People.FindBySubjectAsync(subject, ct);
+            if (person is null || !person.IsActive)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(subject, "Identity is not registered or is already inactive."));
+            }
+
+            if (!await uow.People.SetActiveAsync(person.Id, false, ct))
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(person.Id.ToString(), "Identity is already inactive."));
+            }
+            var id = person.Id.ToString();
+            return new CommandOutcome(
+                CommandResult.Ok(id, "Identity deactivated in Forge."),
+                [Event(new IdentityDeactivated(person.Id.Value, person.IdpSubject, command.Provider), context, id)],
+                new AuditChange(PersonEntity, id, "active", "inactive"));
+        }, ct);
+    }
+
     public Task<CommandResult> AssignRoleAsync(AssignRole command, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);

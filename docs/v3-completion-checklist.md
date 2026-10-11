@@ -16,7 +16,8 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | V3.13 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 94; focused API 17/17; zero warnings/errors; commit `20bfd9f` | Complete |
 | V3.14 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 95; focused PostgreSQL API 1/1; zero build warnings/errors; commit `2d83b5a` | Complete |
 | V3.15 | Full verify PASS: Planning 266, Architecture 32, Kernel 33, Integration 100; zero build warnings/errors; all V3.15 PostgreSQL acceptance tests passed | Complete (commit recorded in AI handoff) |
-| V3.16–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
+| V3.16 | Full `verify.cmd` PASS: Planning 266, Architecture 32, Kernel 33, Integration 104; zero Release build warnings/errors; focused PostgreSQL gate 6/6 | Complete; production Nexus/Sentinel configuration and physical terminal exercise remain deployment validation |
+| V3.17–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
 
 ## Governance expansion validation
 
@@ -24,8 +25,8 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | --- | --- | --- |
 | A — expired required gauge | V39 unit/API tests pass in focused runs | Full suite/release checkpoint |
 | B — historical calibration | Existing ToolValidity and V38 tests | Confirm full-suite pass and relevant inspection-use linkage |
-| C — shared terminal actor protection | Kiosk authenticates badge for operations; training signs badge/PIN | Configurable inactivity lock, secure switching and explicit shared-session regression |
-| D — step-up hold release | JWT validation and hold release permission foundation | Trusted Nexus assurance, configured step-up, signature binding and end-to-end test |
+| C — shared terminal actor protection | Selected operator is visible; idle/manual lock clears badge and identity; switch-user returns to scan | Live kiosk UX exercise on a shared physical terminal |
+| D — step-up hold release | Selected approval routes require fresh provider assurance; signer role/assurance/version are persisted and tested | Configure and exercise against the production identity provider; full release gate |
 | E — authenticated but unqualified | Existing operator authorization and trainee/qualification tests | Retain in full verification and contextual authorization migration |
 | F — temporary authority | Missing | Approved scoped timed delegation and expiry tests |
 | G — generated shift handoff | Analyst shift brief and authoritative source records exist | Persistent pass-on, checklist, acknowledgment/actions and scenario test |
@@ -37,4 +38,4 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 
 ## Release rule
 
-Do not mark V3 done until the reconciled requirements are implemented, required migration paths and tests pass, source commits are recorded, and the handoff/session log contain final counts, limitations and deployment configuration. Staged code, a proposed architecture or an available package does not count as a finished increment. Real Nexus/communication provider configuration must be distinguished from local contract tests.
+Do not mark V3 done until the reconciled requirements are implemented, required migration paths and tests pass, source commits are recorded, and the handoff/session log contain final counts, limitations and deployment configuration. Staged code, a proposed architecture or an available package does not count as a finished increment. Real Nexus and Sentinel configuration must be distinguished from local contract tests. Forge's SCIM and Sentinel adapters have local acceptance coverage, but no live Nexus issuer or Sentinel intake was available for this checkpoint.

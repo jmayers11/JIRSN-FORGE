@@ -52,7 +52,8 @@ internal static class ShelfLifeEndpoints
         api.MapGet("/extensions", (HttpContext http, bool? pending, CancellationToken _) =>
             ReadStore<IShelfLifeLookup>(http, Permissions.InventoryRead, async (l, ct) => (await l.ListExtensionsAsync(null, ct)).Where(e => !(pending ?? false) || e.Approved is null).ToList()));
         api.MapPost("/extensions/{id:long}/approve", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.DecideShelfLifeExtensionAsync(new DecideShelfLifeExtension(id, true), c, ct)));
+            Command(http, b.Reason, c => s.DecideShelfLifeExtensionAsync(new DecideShelfLifeExtension(id, true), c, ct)))
+            .WithMetadata(new StepUpRequiredAttribute());
         api.MapPost("/extensions/{id:long}/reject", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DecideShelfLifeExtensionAsync(new DecideShelfLifeExtension(id, false), c, ct)));
         api.MapPost("/lots/{part}/{lot}/retests", (HttpContext http, string part, string lot, RetestRequest b, InventoryService s, CancellationToken ct) =>

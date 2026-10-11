@@ -17,6 +17,8 @@ public interface IPeopleStore
 
     Task InsertAsync(PersonRecord person, DateTimeOffset at, string actor, CancellationToken ct);
 
+    Task<bool> SetActiveAsync(PersonId id, bool active, CancellationToken ct);
+
     /// <returns>True if the role was newly assigned; false if already held.</returns>
     Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, DateTimeOffset? expiresAt, CancellationToken ct);
 
