@@ -2,6 +2,7 @@ import { tryGet, command } from '../api.js';
 import { esc, $, $$, fmtDateTime, fmtDate, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 import { categoryInfo } from '../model.js';
 import { who } from '../people.js';
+import { appendGoals } from '../goals.js';
 
 const DELIVERY_TONE = { OnTime: 'ok', AtRisk: 'warn', Late: 'bad', Unschedulable: 'bad' };
 const CONSTRAINT_TONE = { Open: 'bad', Investigating: 'warn', Resolved: 'info', Verified: 'ok' };
@@ -71,6 +72,7 @@ export async function schedulingPage(page, ctx) {
         </tbody></table>`}
       </section>`;
 
+    await appendGoals(page, me);
     $$('[data-which]', page).forEach(b => b.addEventListener('click', () => { which = b.dataset.which; render(); }));
     $('#closed', page)?.addEventListener('change', e => { showClosed = e.target.checked; render(); });
     $('#propose', page)?.addEventListener('click', async () => {

@@ -13,6 +13,7 @@ public static class PlanningRegistration
         services.AddForgeStore<IPlanningStore>(uow => new PostgresPlanningStore(uow));
         services.AddForgeStore<IResourceUsage>(uow => new ResourceUsage(uow));
         services.AddForgeStore<IDemandStore>(uow => new PostgresDemandStore(uow));
+        services.AddForgeStore<IGoalStore>(uow => new PostgresGoalStore(uow));
         services.AddForgeStore<Reporting.IReportDefinitionStore>(uow => new PostgresReportStore(uow));
         services.AddSingleton<DemandService>();
         services.AddSingleton<MaterialPlanningService>();
@@ -29,6 +30,7 @@ public static class PlanningRegistration
         services.AddSingleton<ProductionActualsQueries>();
         services.AddSingleton<HistoryService>();
         services.AddSingleton<ScheduleService>();
+        services.AddSingleton<GoalService>();
         services.AddSingleton<ProgramHorizonService>();
         services.AddSingleton<Reporting.ReportService>();
         services.AddSingleton<Reporting.ReportDefinitionService>();

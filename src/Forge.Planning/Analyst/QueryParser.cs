@@ -237,7 +237,7 @@ public static partial class QueryParser
         }
 
         // V3.5, V3.6: stoppage and shelf-life questions are reports even when they say "overdue" or "blocked".
-        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages")
+        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment")
         {
             return AnalystIntent.Report;
         }
@@ -288,6 +288,7 @@ public static partial class QueryParser
             : Has("lineage", "split from", "merged from", "merged into", "split into", "lot splits", "splits and merges", "was split", "were merged") ? "lot-lineage"
             : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
             : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
+            : Has("goal", "reforecast", "required by date", "required-by") ? "goal-attainment"
             : Has("shelf life", "shelf-life", "expir", "expiring", "retest", "open life", "excursion", "aging", "how old", "oldest lot", "fefo", "fifo") && !Has("cert", "qualif", "training", "alternate", "document", "drawing", "contract") ? "shelf-life"
             : Has("stoppage", "stopped", "changeover", "change over", "setup time", "setups", "starved", "blocked machine", "machines blocked", "were blocked", "root cause", "reason code", "downtime by category", "downtime category") ? "stoppages"
             : Has("quantity state", "in rework", "rework", "in repair", "repaired", "in process", "pending inspection", "how much of order", "where is order") ? "quantity-states"
@@ -393,6 +394,21 @@ public static partial class QueryParser
         if (t.Contains(" graph", StringComparison.Ordinal) || t.Contains(" chart", StringComparison.Ordinal))
         {
             notes.Add("Forge shows this as a table with totals; charts are not part of reports yet.");
+        }
+
+        // V3.7: "Which goals are at risk?" — the goal state asked about. Behind plan is not at risk.
+        if (entry.Id == "goal-attainment")
+        {
+            var state = t.Contains(" behind plan", StringComparison.Ordinal) || t.Contains(" behind schedule", StringComparison.Ordinal) ? "BehindPlan"
+                : t.Contains(" at risk", StringComparison.Ordinal) ? "AtRisk"
+                : t.Contains(" late", StringComparison.Ordinal) ? "Late"
+                : t.Contains(" on track", StringComparison.Ordinal) ? "OnTrack"
+                : null;
+            if (state is not null)
+            {
+                parameters = parameters with { Status = state };
+                notes.Add($"Only goals that are {state switch { "BehindPlan" => "behind plan", "AtRisk" => "at risk", "OnTrack" => "on track", _ => "late" }}.");
+            }
         }
 
         // V3.6: "Which lots are expired?", "What needs a retest?" — the status asked about.

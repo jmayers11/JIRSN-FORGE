@@ -89,6 +89,9 @@ public class AnalystParserTests
     [InlineData("How much of order 1042 is in rework?", "quantity-states")]
     [InlineData("Show order quantity states", "quantity-states")]
     [InlineData("Which lots are expired?", "shelf-life")]
+    [InlineData("Which goals are at risk?", "goal-attainment")]
+    [InlineData("Which goals are behind plan?", "goal-attainment")]
+    [InlineData("Show goal attainment", "goal-attainment")]
     [InlineData("What needs a retest?", "shelf-life")]
     [InlineData("Show shelf life and aging", "shelf-life")]
     [InlineData("Which lots are overdue for retest?", "shelf-life")]
@@ -314,5 +317,15 @@ public class AnalystParserTests
         Assert.Equal("RetestOverdue", Parse("Which lots are overdue for retest?").Report!.Parameters.Status);
         Assert.Null(Parse("Show shelf life and aging").Report!.Parameters.Status);
         Assert.Equal("qualifications-expiring", Parse("Which certifications expire in the next 90 days?").Report!.ReportId);
+    }
+
+    [Fact]
+    public void Goal_questions_keep_behind_plan_apart_from_at_risk()
+    {
+        Assert.Equal("AtRisk", Parse("Which goals are at risk?").Report!.Parameters.Status);
+        Assert.Equal("BehindPlan", Parse("Which goals are behind plan?").Report!.Parameters.Status);
+        Assert.Equal("Late", Parse("Which goals are late?").Report!.Parameters.Status);
+        Assert.Null(Parse("Show goal attainment").Report!.Parameters.Status);
+        Assert.Equal("schedule-attainment", Parse("Show schedule attainment").Report!.ReportId);
     }
 }

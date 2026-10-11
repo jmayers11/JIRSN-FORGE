@@ -372,6 +372,16 @@ See `docs/adr/0029-v3-5-production-actuals-and-quantity-states.md`.
 
 See `docs/adr/0030-v3-6-aging-shelf-life-and-selection.md`.
 
+## What V3.7 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Goal risk | `GoalRiskEngine`, `/api/planning/goal-risk` | Behind plan (against the approved schedule) kept apart from goal at risk (against the due date); the paused V3 slice, taken over |
+| Goals | `planning.goal`, Scheduling page | Production and delivery goals, broken down; a child's required-by date is its own or a number of days before its parent's |
+| Attainment and reforecast | `GoalAttainmentEngine`, `planning.goal_forecast`, `goal-attainment` report | Done against target, remaining work, a fresh finite-capacity reforecast; every reforecast kept per goal |
+
+See `docs/adr/0020-v3-goal-risk.md` and `docs/adr/0031-v3-7-goal-attainment-and-reforecast.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -790,3 +800,11 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | GET | `/api/inventory/excursions` | `inventory.read` |
 | POST | `/api/inventory/excursions` (reason required) | `inventory.transact` |
 | GET | `/api/inventory/selection?part=[&order=]` | `inventory.read` |
+
+## V3.7 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/planning/goals[?includeClosed=]`, `/api/planning/goal-risk` | `planning.schedule.read` |
+| POST | `/api/planning/goals`, `/api/planning/goals/reforecast` | `planning.goals.manage` |
+| POST | `/api/planning/goals/{id}`, `/api/planning/goals/{id}/close` (reason required) | `planning.goals.manage` |

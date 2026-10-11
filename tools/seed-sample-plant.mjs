@@ -75,7 +75,8 @@ async function main() {
       const transformation = !itemList.some(i => i.partNumber === 'SHIELD-CU');
       const actuals = !(await get('eng', '/api/execution/reason-codes')).length;
       const shelf = !itemList.some(i => i.partNumber === 'ADH-EP');
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals && !shelf) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const goals = !(await get('planner', '/api/planning/goals')).length;
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals && !shelf && !goals) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -149,6 +150,10 @@ async function main() {
         console.log('Adding an epoxy adhesive with a shelf life: one lot expired, one extended, one expiring, one failed a retest.');
         await seedShelfLife();
       }
+      if (goals) {
+        console.log('Adding a delivery goal broken down into production goals, and a reforecast.');
+        await seedGoals();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -180,6 +185,7 @@ async function main() {
     await seedMaterialFlow();
     await seedActuals();
     await seedShelfLife();
+    await seedGoals();
     return finish();
   }
 
@@ -338,6 +344,7 @@ async function main() {
   await seedMaterialFlow();
   await seedActuals();
   await seedShelfLife();
+  await seedGoals();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -848,6 +855,20 @@ async function seedShelfLife() {
   await post('qm', `/api/inventory/extensions/${ext.entityId}/approve`, { reason: 'Sample: QR-88 reviewed' });
   await post('insp', '/api/inventory/lots/ADH-EP/EP-0590/retests', { passed: false, evidence: 'Sample: viscosity out of range' });
   await post('stores', '/api/inventory/lots/ADH-EP/EP-0601/open', {});
+}
+
+async function seedGoals() {
+  step('Goals: a customer delivery broken down into the panel orders that make it, dates following the delivery, and a reforecast — see Scheduling → Goals');
+  const demand = (await get('planner', '/api/planning/demand')).filter(d => d.partNumber === 'PANEL-500').sort((a, b) => a.needDate.localeCompare(b.needDate))[0];
+  const released = (await get('planner', '/api/orders/')).filter(o => o.status === 'Released' && o.partNumber === 'PANEL-500' && (!demand?.programId || !o.programId || o.programId === demand.programId))
+    .map(o => o.orderNumber).sort((a, b) => a - b);
+  const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+  const ship = await post('planner', '/api/planning/goals', demand
+    ? { kind: 'Delivery', title: `Deliver ${demand.customer ?? 'customer'} panels`, demandId: demand.demandId, requiredBy: demand.needDate }
+    : { kind: 'Delivery', title: 'Deliver the first panel batch', requiredBy: day(21) });
+  const make = await post('planner', '/api/planning/goals', { kind: 'Production', title: 'Make the panels', parentGoalId: Number(ship.entityId), leadDays: 2 });
+  for (const n of released.slice(0, 2)) await post('planner', '/api/planning/goals', { kind: 'Production', title: `Order ${n} complete`, parentGoalId: Number(make.entityId), orderNumber: n, leadDays: 1 });
+  await post('planner', '/api/planning/goals/reforecast', {});
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

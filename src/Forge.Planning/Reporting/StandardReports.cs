@@ -215,6 +215,17 @@ internal static class StandardReports
                 "Stock as it stands now; the period does not apply. Counts for planning = released by quality and in a nettable location."),
             Permissions.InventoryRead, null, StockPositionsAsync),
         new(
+            new("goal-attainment", "Goal attainment", "Planning",
+                "Every open production and delivery goal: its required-by date (its own, or cascaded from the goal above it), what is done against its target, the reforecast completion of the remaining work, and whether it is on track, behind plan but recoverable, at risk or late.",
+                [ProgramFilter, StatusFilter(Enum.GetNames<GoalState>()), SearchFilter],
+                [C("goal", "Goal", ReportColumnKind.Text), C("kind", "Kind", ReportColumnKind.Text), C("title", "Title", ReportColumnKind.Text), C("parent", "Part of", ReportColumnKind.Text),
+                 C("requiredBy", "Required by", ReportColumnKind.Date), C("projected", "Reforecast", ReportColumnKind.DateTime), C("done", "Done", ReportColumnKind.Number), C("target", "Target", ReportColumnKind.Number),
+                 C("attainment", "Attainment %", ReportColumnKind.Number), C("status", "State", ReportColumnKind.Text), C("behindPlan", "Behind plan", ReportColumnKind.Text),
+                 C("remaining", "Remaining min", ReportColumnKind.Number), C("why", "Why", ReportColumnKind.Text)],
+                ["status", "kind", "parent"], "status", 3660,
+                "Goals as they stand now; the period does not apply. Behind plan is measured against the approved schedule; at risk and late against the goal's required-by date and a fresh finite-capacity reforecast."),
+            Permissions.ScheduleRead, null, GoalAttainmentAsync),
+        new(
             new("shelf-life", "Shelf life and aging", "Inventory",
                 "Every lot on hand that has a shelf life, retest, open life or storage limits: its age, the expiry it was given and the one in force after any approved extension, days left, retest due, open life, and whether it may be used.",
                 [PartFilter, StatusFilter(Enum.GetNames<ShelfLifeStatus>()), SearchFilter],
@@ -753,6 +764,36 @@ internal static class StandardReports
         var expiring = rows.Count(r => (string)r.Cells[10]! == nameof(ShelfLifeStatus.Expiring));
         return new ReportBody(rows, [rows.Count == 0 ? "No lots on hand with shelf life." : $"{rows.Count} lot(s): {blocked} not usable, {expiring} expiring within {LotShelfLife.ExpiringDays} days."],
             ["Lots", "Shelf-life rules", "Extensions", "Retests", "Storage excursions", "Inventory ledger"]);
+    }
+
+    private static async Task<ReportBody> GoalAttainmentAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var g in await GoalService.EvaluateAsync(run.Uow, new FixedTime(run.Now), false, ct))
+        {
+            var id = Id(g.GoalId);
+            if (!run.Visible(g.ProgramId) || !ReportRun.Is(g.State.ToString(), p.Status) || !run.Matches(id, g.Title, g.Kind.ToString(), string.Join(" ", g.Evidence)))
+            {
+                continue;
+            }
+
+            List<string> trace = ["goal:" + id];
+            if (g.OrderNumber is { } n)
+            {
+                trace.Add("order:" + Id(n));
+            }
+
+            rows.Add(new ReportRow(
+                [id, g.Kind.ToString(), g.Title, g.ParentGoalId is { } parent ? Id(parent) : null, g.RequiredBy, g.Projected, g.Done, g.Target, Math.Round(g.Attainment * 100, 1), g.State.ToString(),
+                 g.BehindPlan ? "Yes" : "No", g.RemainingMinutes, string.Join(" ", g.Evidence)],
+                trace));
+        }
+
+        var risky = rows.Count(r => (string)r.Cells[9]! is nameof(GoalState.AtRisk) or nameof(GoalState.Late));
+        var behind = rows.Count(r => (string)r.Cells[10]! == "Yes" && (string)r.Cells[9]! is not (nameof(GoalState.AtRisk) or nameof(GoalState.Late)));
+        return new ReportBody(rows, [rows.Count == 0 ? "No open goals." : $"{rows.Count} goal(s): {risky} at risk or late; {behind} behind plan but still recoverable."],
+            ["Goals", "Approved schedule", "Reforecast schedule", "Production orders", "Demand and shipments"]);
     }
 
     private static async Task<ReportBody> StockPositionsAsync(ReportRun run, CancellationToken ct)
