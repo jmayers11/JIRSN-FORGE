@@ -93,6 +93,6 @@ public class GenealogyGraphTests
         Assert.DoesNotContain(back.Nodes, n => n.Id == GenealogyGraph.InstanceId("STRIP", "WO11")); // a sibling, not an ancestor
         Assert.Contains(back.Notes, n => n.Contains("cannot see", StringComparison.Ordinal));
 
-        Assert.Equal(13, Enum.GetValues<GenealogyRelation>().Length);
+        Assert.Equal(14, Enum.GetValues<GenealogyRelation>().Length); // V3.11 adds Replaced
     }
 }

@@ -98,6 +98,8 @@ public class AnalystParserTests
     [InlineData("Which operations can run now?", "executable-operations")]
     [InlineData("Which operations are on hold?", "executable-operations")]
     [InlineData("Which operations are blocked by tooling?", "executable-operations")]
+    [InlineData("Which receipts are waiting for inspection?", "receiving-inspection")]
+    [InlineData("Which FAIs are pending determination?", "receiving-inspection")]
     [InlineData("What is on hold?", "holds")]
     [InlineData("Which quality holds are open?", "holds")]
     [InlineData("Who is present?", "presence")]
@@ -359,5 +361,6 @@ public class AnalystParserTests
         Assert.Equal("stock-positions", Parse("Show stock at the point of use").Report!.ReportId);
         Assert.Equal("Quality", Parse("Which quality holds are open?").Report!.Parameters.Status);
         Assert.Equal("Procurement", Parse("Show procurement holds").Report!.Parameters.Status);
+        Assert.Equal("PendingDetermination", Parse("Which FAIs are pending determination?").Report!.Parameters.Status);
     }
 }

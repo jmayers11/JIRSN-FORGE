@@ -165,6 +165,7 @@ app.MapShelfLifeEndpoints();
 app.MapGoalEndpoints();
 app.MapToolEndpoints();
 app.MapHoldEndpoints();
+app.MapReceivingEndpoints();
 app.MapExecutableEndpoints();
 app.MapMaterialsEndpoints();
 app.MapQualityEndpoints();

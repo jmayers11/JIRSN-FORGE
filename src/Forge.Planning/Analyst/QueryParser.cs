@@ -237,7 +237,7 @@ public static partial class QueryParser
         }
 
         // V3.5, V3.6: stoppage and shelf-life questions are reports even when they say "overdue" or "blocked".
-        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment" or "tool-status" or "executable-operations" or "presence" or "holds")
+        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment" or "tool-status" or "executable-operations" or "presence" or "holds" or "receiving-inspection")
         {
             return AnalystIntent.Report;
         }
@@ -289,6 +289,7 @@ public static partial class QueryParser
             : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
             : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
             : Has("executable", "can run now", "can happen", "operations can", "operations cannot", "operations cant", "operation can", "operations on hold", "operations are on hold", "untrained", "not trained", "which operations", "what operations", "open operations", "operations are blocked", "operations blocked") ? "executable-operations"
+            : Has("receiving inspection", "receipts waiting", "waiting for inspection", "awaiting inspection", "to inspect", "first article", "fais", "fai status", "fai pending", "fai required", "need fai", "needs fai") ? "receiving-inspection"
             : Has("holds", "on hold", "hold register", "release authority") ? "holds"
             : Has("presence", "who is present", "who is here", "who is clocked in", "clocked in", "on site", "scheduled but not", "not clocked in", "who is working on", "active on an operation", "actually here") ? "presence"
             : Has("goal", "reforecast", "required by date", "required-by") ? "goal-attainment"
@@ -415,6 +416,19 @@ public static partial class QueryParser
             {
                 parameters = parameters with { Status = constraint };
                 notes.Add(constraint == "Executable" ? "Only operations that can run now." : $"Only operations whose primary constraint is {constraint}.");
+            }
+        }
+
+        // V3.11: "Which FAIs are pending determination?" — the FAI status asked about.
+        if (entry.Id == "receiving-inspection")
+        {
+            var fai = t.Contains(" pending determination", StringComparison.Ordinal) || t.Contains(" undetermined", StringComparison.Ordinal) ? "PendingDetermination"
+                : t.Contains(" fai required", StringComparison.Ordinal) || t.Contains(" need fai", StringComparison.Ordinal) || t.Contains(" needs fai", StringComparison.Ordinal) ? "Required"
+                : null;
+            if (fai is not null)
+            {
+                parameters = parameters with { Status = fai };
+                notes.Add(fai == "Required" ? "Only receipts whose FAI is required and not yet done." : "Only receipts whose FAI is pending determination.");
             }
         }
 

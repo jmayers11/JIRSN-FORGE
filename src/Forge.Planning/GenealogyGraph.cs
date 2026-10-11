@@ -16,6 +16,9 @@ public enum GenealogyRelation
     /// <summary>An instance was combined into another where policy allowed.</summary>
     Merged,
 
+    /// <summary>A supplier sent a new instance to replace a returned one (V3.11); the returned one keeps its history.</summary>
+    Replaced,
+
     /// <summary>An instance was issued to a production order (the as-built record).</summary>
     Issued,
 
@@ -211,7 +214,7 @@ public sealed class GenealogyGraph
 
         foreach (var l in sources.Links)
         {
-            g.Add(Instance(l.SourcePart, l.SourceLot), Instance(l.ResultPart, l.ResultLot), l.Relation == InstanceRelation.Split ? GenealogyRelation.Split : GenealogyRelation.Merged, l.Quantity, l.At, l.Reason);
+            g.Add(Instance(l.SourcePart, l.SourceLot), Instance(l.ResultPart, l.ResultLot), l.Relation switch { InstanceRelation.Split => GenealogyRelation.Split, InstanceRelation.Replaces => GenealogyRelation.Replaced, _ => GenealogyRelation.Merged }, l.Quantity, l.At, l.Reason);
         }
 
         foreach (var x in sources.Transformations)

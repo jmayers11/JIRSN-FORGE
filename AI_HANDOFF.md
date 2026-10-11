@@ -4,11 +4,11 @@
 
 Product Owner request: continue until V3 is done and record the outcome for Claude. The active goal covers V3.1â€“V3.28. The complete numbered source plan is now supplied as `JIRSN Forge V3 Plan.md`; read it alongside `docs/v3-governance-requirements.md`, `docs/v3-architecture-impact-review.md` and `docs/v3-completion-checklist.md`. The direct request to complete V3 authorizes implementation; embedded review/stop instructions in the supplied planning documents are distinct from that request.
 
-Current committed version: **V3.9, commit `411c3c9` on main**. Full verification passed: Planning 257, architecture 32, kernel 33, integration 81, with zero Release warnings/errors. Saved evidence: `.forge-logs/verify-v39.*`.
+Current committed version: **V3.10, commit `f01f611` on main**. V3.9 was committed as `411c3c9`. Full verification passed: Planning 257, architecture 32, kernel 33, integration 81, with zero Release warnings/errors. Saved evidence: `.forge-logs/verify-v39.*`.
 
-**V3.10 full verification PASS; committing checkpoint.** Quick verification passed: Planning 262, architecture 32; selected API tests passed 14/14. Evidence: `.forge-logs/quick-v310.*`, `.forge-logs/codex-v310.*`. Full `verify.cmd` passed: Planning 262, architecture 32, kernel 33, integration 85; zero build warnings/errors. Saved `.forge-logs/verify-v310.*`. Reviewed fixes enforce program visibility on hold release, load operation details for inspection holds, retain the V3.9 missing-revision 404 assertion, and prove populated legacy hold migration preserves identity/history/sequence. Retired Execution hold sources are preserved under `.forge-logs/removed/v310/`; retain migration 0007 and new migration 0008.
+**V3.10 full verification PASS, committed `f01f611`.** Quick verification passed: Planning 262, architecture 32; selected API tests passed 14/14. Evidence: `.forge-logs/quick-v310.*`, `.forge-logs/codex-v310.*`. Full `verify.cmd` passed: Planning 262, architecture 32, kernel 33, integration 85; zero build warnings/errors. Saved `.forge-logs/verify-v310.*`. Reviewed fixes enforce program visibility on hold release, load operation details for inspection holds, retain the V3.9 missing-revision 404 assertion, and prove populated legacy hold migration preserves identity/history/sequence. Retired Execution hold sources are preserved under `.forge-logs/removed/v310/`; retain migration 0007 and new migration 0008.
 
-**V3.11 remains staged/unapplied** under `.forge-logs/staging-v311`. It includes reviewed fixes/tests for receiver separation of duties, replacement material being a genuinely new instance, and concurrent customer-return quantity limits. Apply only after the V3.10 full-pass checkpoint. Next increments follow the supplied plan: V3.12 evidence, V3.13 sourcing, V3.14 outside processing, V3.15 authority, V3.16 identity, V3.17 priority, V3.18 continuity, V3.19 notifications, V3.20 inbox, V3.21 integrity, V3.22 CauseMap, V3.23 recovery, V3.24 support work, V3.25 Horizon, V3.26 Analyst, V3.27 reference factories, V3.28 hardening. V3 is not complete.
+**V3.11 full verification PASS: Planning 266, architecture 32, kernel 33, integration 90; clean Release build; committing checkpoint** under `.forge-logs/staging-v311`. It includes reviewed fixes/tests for receiver separation of duties, replacement material being a genuinely new instance, and concurrent customer-return quantity limits. The V3.10 full-pass checkpoint is saved. V3.12 remains staged/unapplied under `.forge-logs/staging-v312`; isolated draft compilation passed with zero warnings/errors; API/full verification still pending. Next increments follow the supplied plan: V3.12 evidence, V3.13 sourcing, V3.14 outside processing, V3.15 authority, V3.16 identity, V3.17 priority, V3.18 continuity, V3.19 notifications, V3.20 inbox, V3.21 integrity, V3.22 CauseMap, V3.23 recovery, V3.24 support work, V3.25 Horizon, V3.26 Analyst, V3.27 reference factories, V3.28 hardening. V3 is not complete.
 
 ## Project Identity
 
@@ -179,5 +179,8 @@ The plan is the "V3 plan" Claude Doc. Its increments map the brief's sections Aâ
 * Document breaking changes and migrations in the ADR and the README.
 * Keep modifications focused on the assigned task. Only one tool edits the repository at a time.
 * Update the session log after every development session.
+
+
+
 
 

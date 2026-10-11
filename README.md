@@ -420,6 +420,19 @@ See `docs/adr/0033-v3-9-executable-capacity-and-presence.md`.
 
 See `docs/adr/0034-v3-10-generalized-holds.md`.
 
+## What V3.11 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Determinations | `quality.determination`, `/api/quality/fai-determinations` | Whether FAI applies to a part revision from a supplier: required, not required, not applicable, pending determination |
+| FAI | `quality.fai`, `/api/quality/fai` | Structured results and a released (signed) FAI report; pending determination is never complete |
+| Receiving inspection | `inventory.receiving_inspection`, Inventory → Receiving | Partial acceptance: accepted released, rejected held, the rest waits; FAI must allow acceptance |
+| Supplier dispositions | `inventory.supplier_rejection` | Return to vendor, rework by supplier, scrap, or use as is (a second person approves) |
+| Return to vendor | `inventory.rtv` | Shipped back from hold; replacement is a new lot linked by `Replaces`; or credited |
+| Customer returns | `inventory.customer_return` | Against a shipment, onto hold; restock, rework or scrap |
+
+See `docs/adr/0035-v3-11-receiving-inspection-fai-and-returns.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -874,3 +887,17 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/holds` (reason) | `holds.place` |
 | POST | `/api/holds/{id}/release` (reason) | the kind's release authority |
 | POST | `/api/holds/kinds/{kind}` (reason) | `kernel.access.manage` |
+
+## V3.11 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/inventory/receiving`, `/rejections[?open=]`, `/rtvs[?open=]`, `/customer-returns[?shipmentId=]` | `inventory.read` |
+| POST | `/api/inventory/receiving/{receipt}/inspections` | `quality.inspect` |
+| POST | `/api/inventory/rejections/{id}/disposition` (reason), `/api/inventory/customer-returns/{id}/disposition` (reason) | `quality.disposition` |
+| POST | `/api/inventory/rejections/{id}/approve` (reason, a different person) | `quality.approve` |
+| POST | `/api/inventory/rtvs/{id}/ship`, `/replacement`, `/api/inventory/customer-returns` (reason) | `inventory.transact` |
+| POST | `/api/inventory/rtvs/{id}/credit` (reason) | `procurement.approve` |
+| GET | `/api/quality/determinations[?subject=]`, `/api/quality/fai[?subject=]` | `quality.read` |
+| POST | `/api/quality/fai-determinations` (reason) | `quality.plan` |
+| POST | `/api/quality/fai` | `quality.inspect` |

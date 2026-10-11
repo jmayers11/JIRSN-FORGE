@@ -187,3 +187,17 @@ Prepared an unapplied `.forge-logs/staging-v312` evidence draft and ADR 0036. It
 ### V3.10 full-pass checkpoint
 
 Full `verify.cmd` passed, exit 0: Planning 262, architecture 32, kernel 33, integration 85 (20.0847 minutes); zero Release warnings/errors. Saved `.forge-logs/verify-v310.log` and `.status`. The selected API gate also passed 14/14. Committing generalized holds and its reviewed access/register/migration fixes before applying V3.11. Isolated V3.11/V3.12 compilation caught an existing package collision with the InspectionResult enum; renamed the new structured record ReceivingCharacteristicResult across receiving/FAI contracts and callers. Draft rebuild is running.
+
+V3.10 committed on main as f01f611. Applied reviewed V3.11 from staging, including receiving integrity fixes, FAI report visibility and ReceivingCharacteristicResult naming correction. V3.11 quick/API/full verification now required; V3.12 remains an unapplied draft.
+
+V3.11 build review exposed package-level type collisions (InspectionResult and ReplacementRequest) and CA1826 collection-use errors. Fixed them as ReceivingCharacteristicResult/RtvReplacementRequest and direct indexed selection. Reloaded mutable supplier rejection/approval, RTV and customer-return state under the existing inventory advisory lock; added concurrent return-disposition regression. No analyzer settings were weakened. Quick gate retries continue after these corrections.
+
+V3.11 quick verification PASS: Release build clean, Planning 266 and architecture 32 tests. Saved quick-v311 log/status. Selected API gate codex-v311.cmd starting (receiving/FAI/returns, V3.10 holds and kernel migration/idempotency). Full verification follows after any API corrections.
+
+V3.11 selected gate initially passed 12/14, with use-as-is approval and customer returns failing existing ledger checks. Extended the shipment-reference constraint for CustomerReturn and its QualityRelease/Scrap dispositions; preserved requester/approver identities on the use-as-is ledger transaction. Focused V311 retry passed 5/5 in 1.4248 minutes (codex-v311-fix.status PASS). Earlier selected logs saved as codex-v311-initial.*. Starting full verify.cmd next. V3.12 isolated draft build also passed, zero warnings/errors, including its report/Analyst/tests. Its API/full gates remain pending.
+
+V3.12 staging additionally inherits FAI report scope on targets and uploaded supporting evidence, stores immutable target markings on attachment links, centralizes link visibility for API/report paths, and adds program-revocation regression. These changes remain unapplied and require isolated rebuild plus API/full gates. V3.13 sourcing model/store/service drafts have begun in staging-v313; they are not yet wired, compiled or verified.
+
+### V3.11 full-pass checkpoint
+
+Full verify.cmd PASS, exit 0: Planning 266, architecture 32, kernel 33, integration 90 in 20.2745 minutes. Release build zero warnings/errors. Saved verify-v311.log/status; focused V311 gate passed 5/5 after the two schema/actor corrections. Final fixes include receipt-actor separation, genuinely new replacement lot, replacement quantity reconciliation and original PO/supplier context, locked/reloaded mutable receiving transitions, concurrent return/disposition limits, hidden report access, and package type/analyzer corrections. Committing this checkpoint before V3.12 application. V3.12 isolated build passes; V3.13 is only an incomplete staged sourcing draft.

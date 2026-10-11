@@ -101,6 +101,12 @@ public enum InventoryTransactionKind
 
     /// <summary>A new instance of another part a production order made alongside its output (V3.3).</summary>
     Byproduct,
+
+    /// <summary>Rejected material shipped back to its supplier (V3.11).</summary>
+    ReturnToVendor,
+
+    /// <summary>Material a customer sent back against a shipment, received onto hold (V3.11).</summary>
+    CustomerReturn,
 }
 
 /// <summary>What kind of physical instance a lot row is (V3.2). The quantity is always the ledger sum; the kind never changes.</summary>
@@ -122,6 +128,9 @@ public enum InstanceRelation
 
     /// <summary>The source was combined into the result.</summary>
     Merge,
+
+    /// <summary>The result is replacement material a supplier sent for the returned source (V3.11).</summary>
+    Replaces,
 }
 
 /// <summary>A recorded link between two physical instances (V3.2), never changed: what became what, how much, when, by whom.</summary>

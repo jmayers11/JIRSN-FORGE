@@ -69,7 +69,7 @@ export async function appendOrderGenealogy(page, orderNumber) {
 // ---------------------------------------------------------------- V3.3: the genealogy graph and material accounting
 
 const RELATION_TEXT = {
-  Received: 'received', Split: 'split', Merged: 'merged', Issued: 'issued', Returned: 'returned', Consumed: 'consumed', Scrapped: 'scrapped',
+  Received: 'received', Split: 'split', Merged: 'merged', Replaced: 'replaced by', Issued: 'issued', Returned: 'returned', Consumed: 'consumed', Scrapped: 'scrapped',
   Lost: 'lost', Remnant: 'remnant cut', Produced: 'produced', Byproduct: 'byproduct', Shipped: 'shipped', Installed: 'installed',
 };
 

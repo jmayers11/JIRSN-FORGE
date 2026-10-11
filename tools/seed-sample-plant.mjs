@@ -79,7 +79,8 @@ async function main() {
       const tooling = !(await get('eng', '/api/resources/tools')).some(t => t.tool.code === 'KNIFE-A1');
       const executable = !(await get('eng', '/api/resources/tool-requirements')).length;
       const holdSample = !(await get('planner', '/api/holds?includeReleased=true')).some(h => h.source === 'Sample: supplier scorecard');
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals && !shelf && !goals && !tooling && !executable && !holdSample) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const receivingSample = !(await get('qe', '/api/inventory/rtvs')).length;
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals && !shelf && !goals && !tooling && !executable && !holdSample && !receivingSample) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -169,6 +170,10 @@ async function main() {
         console.log('Adding a procurement hold on a supplier.');
         await seedHolds();
       }
+      if (receivingSample) {
+        console.log('Inspecting the Alcoa receipt: FAI determined, part accepted, part returned to the vendor.');
+        await seedReceiving();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -204,6 +209,7 @@ async function main() {
     await seedTools();
     await seedExecutable();
     await seedHolds();
+    await seedReceiving();
     return finish();
   }
 
@@ -366,6 +372,7 @@ async function main() {
   await seedTools();
   await seedExecutable();
   await seedHolds();
+  await seedReceiving();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -923,6 +930,24 @@ async function seedExecutable() {
 async function seedHolds() {
   step('Holds (V3.10): a procurement hold on Fastenal with its evidence — see Work Centers → Holds and the Holds report');
   await post('bob', '/api/holds', { kind: 'Procurement', targetType: 'Supplier', targetId: 'FASTENAL', source: 'Sample: supplier scorecard', evidence: 'Three late deliveries this quarter', reason: 'Sample: no new orders until the corrective action is accepted' }).catch(() => null);
+}
+
+async function seedReceiving() {
+  step('Receiving (V3.11): FAI determined for the Alcoa coil, the receipt accepted in part, the rest returned to the vendor — see Inventory → Receiving');
+  const receipt = (await get('insp', '/api/inventory/receiving')).find(r => r.remaining > 0 && r.supplierCode);
+  if (!receipt) return;
+  const [part, rest] = receipt.faiSubject.split(':');
+  const [revision, supplierCode] = rest.split('@');
+  if (receipt.faiStatus === 'PendingDetermination') {
+    await post('qe', '/api/quality/fai-determinations', { partNumber: part, revision, supplierCode, state: 'NotRequired', reason: 'Sample: established supplier, commodity coil' });
+  }
+  const rejected = Math.min(10, receipt.remaining);
+  await post('insp', `/api/inventory/receiving/${receipt.receipt.transactionId}/inspections`, {
+    accepted: receipt.remaining - rejected, rejected, defect: 'Sample: edge damage on the outer wraps',
+    results: [{ characteristic: 'Edge condition', requirement: 'No damage', measured: `Damage on ${rejected}`, pass: false }],
+  });
+  const rejection = (await get('qe', '/api/inventory/rejections?open=true'))[0];
+  if (rejection) await post('qe', `/api/inventory/rejections/${rejection.rejectionId}/disposition`, { disposition: 'ReturnToVendor', reason: 'Sample: supplier replaces damaged coil' });
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

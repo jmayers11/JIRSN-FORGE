@@ -5,6 +5,7 @@ import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithRea
 import { formModal, qty, can } from '../forms.js';
 import { serialDrawer, traceDrawer } from '../genealogy.js';
 import { loadShelfLife, shelfLifeTab, bindShelfLifeTab, appendPartShelfLife } from '../shelflife.js';
+import { loadReceiving, receivingTab, bindReceivingTab, receivingCount } from '../receiving.js';
 
 // Inventory (spec §11, §49): every quantity is the sum of ledger entries, and every entry says who,
 // when, why and what it relates to. Adjustments, count variances and quality releases need a second person.
@@ -36,7 +37,8 @@ export async function inventoryPage(page, ctx) {
       tryGet('/api/procurement/suppliers'), tryGet('/api/inventory/tasks?open=true'), tryGet('/api/inventory/count-programs'), tryGet('/api/inventory/counts-due'),
     ]);
     const shelf = await loadShelfLife();
-    data = { shelf, summary, locations, requests, ledger, items, orders, mro, tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
+    const receiving = await loadReceiving();
+    data = { shelf, receiving, summary, locations, requests, ledger, items, orders, mro, tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
   }
 
   const locs = (active = true, ours = true) => (data.locations.data ?? []).filter(l => (!active || l.active) && (!ours || l.inCompanyCustody)).map(l => [l.code, `${l.code} — ${l.name} (${l.kind})`]);
@@ -408,8 +410,8 @@ export async function inventoryPage(page, ctx) {
       ${buttons.length ? `<div class="toolbar">${buttons.map(([k, l]) => `<button class="btn ${k === 'receive' ? 'primary' : ''}" data-act="${k}">${esc(l)}</button>`).join('')}</div>` : '<div class="notice">You can look at stock. Material handlers move it; inventory controllers approve changes.</div>'}
       ${kpis()}
       <section class="panel">
-        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : stockTab()}
+        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`], ['receiving', `Receiving${receivingCount(data.receiving) ? ` (${receivingCount(data.receiving)})` : ''}`], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        ${tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : stockTab()}
       </section>`;
     $('#trace-q', page)?.addEventListener('click', () => { const q = $('#serial-q', page).value.trim(); if (q) traceDrawer({ lot: q.toUpperCase() }); });
     $('#serial-find', page)?.addEventListener('submit', ev => { ev.preventDefault(); const q = $('#serial-q', page).value.trim(); if (q) serialDrawer(q.toUpperCase()); });
@@ -421,6 +423,7 @@ export async function inventoryPage(page, ctx) {
     }));
     $$('[data-part]', page).forEach(r => r.addEventListener('click', () => partDrawer(r.dataset.part)));
     if (tab === 'shelf') bindShelfLifeTab(page, locs(true, false), reload);
+    if (tab === 'receiving') bindReceivingTab(page, locs(), reload);
     $$('[data-mro-set]', page).forEach(b => b.addEventListener('click', () => setMro(b.dataset.mroSet)));
     $$('[data-mro-clear]', page).forEach(b => b.addEventListener('click', async () => {
       const done = await confirmWithReason({ title: `Clear MRO levels for ${b.dataset.mroClear}`, detail: 'MRP stops replenishing it to a maximum. The old levels stay in the history.', confirmLabel: 'Clear' },

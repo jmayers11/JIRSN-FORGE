@@ -257,6 +257,16 @@ internal static class StandardReports
                 "Holds as they stand now; the period does not apply. Released holds stay in the register (filter Active = No)."),
             Permissions.HoldsRead, null, HoldsAsync),
         new(
+            new("receiving-inspection", "Receiving inspection", "Inventory",
+                "Every receipt into inspection: supplier and PO, what was received, accepted and rejected so far, what is still to inspect, and first article inspection (FAI) status. FAI pending determination is never shown as complete; material is not accepted until FAI is complete, not required or not applicable.",
+                [StatusFilter(Enum.GetNames<FaiStatus>()), SearchFilter],
+                [C("receipt", "Receipt", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("lot", "Lot", ReportColumnKind.Text), C("supplier", "Supplier", ReportColumnKind.Text),
+                 C("po", "PO", ReportColumnKind.Text), C("received", "Received", ReportColumnKind.Number), C("accepted", "Accepted", ReportColumnKind.Number), C("rejected", "Rejected", ReportColumnKind.Number),
+                 C("remaining", "To inspect", ReportColumnKind.Number), C("status", "FAI", ReportColumnKind.Text), C("at", "Received at", ReportColumnKind.DateTime)],
+                ["status", "supplier", "part"], "status", 366,
+                "Receipts into inspection, newest first (up to 500); the period does not apply."),
+            Permissions.InventoryRead, null, ReceivingInspectionAsync),
+        new(
             new("presence", "Presence", "Workforce",
                 "Every worker's presence now, as far as the evidence goes: not present, scheduled (on shift but not clocked in: never counted), clocked in or confirmed by a supervisor, assigned to a work center, or active on an operation.",
                 [StatusFilter(Enum.GetNames<PresenceLevel>()), SearchFilter],
@@ -279,7 +289,7 @@ internal static class StandardReports
             Permissions.InventoryRead, null, ShelfLifeAsync),
         new(
             new("lot-lineage", "Lot splits and merges", "Inventory",
-                "Every split and merge of a lot, roll, batch or other instance in the period: what it came from, what it became, how much, who and why. Each is a recorded link, never changed.",
+                "Every split and merge of a lot, roll, batch or other instance in the period, and every replacement a supplier sent for returned material (V3.11): what it came from, what it became, how much, who and why. Each is a recorded link, never changed.",
                 [FromFilter, ToFilter, PartFilter, StatusFilter(Enum.GetNames<InstanceRelation>()), SearchFilter],
                 [C("at", "When", ReportColumnKind.DateTime), C("status", "Relation", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("from", "From", ReportColumnKind.Text),
                  C("to", "Into", ReportColumnKind.Text), C("quantity", "Quantity", ReportColumnKind.Number), C("actor", "By", ReportColumnKind.Text), C("reason", "Why", ReportColumnKind.Text)],
@@ -857,6 +867,37 @@ internal static class StandardReports
         var blocked = rows.Where(r => (string)r.Cells[6]! == "No").GroupBy(r => (string)r.Cells[7]!).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}").ToList();
         return new ReportBody(rows, [rows.Count == 0 ? "No open operations." : $"{rows.Count} open operation(s): {rows.Count(r => (string)r.Cells[6]! == "Yes")} can run now" + (blocked.Count == 0 ? "." : $"; blocked by {string.Join(", ", blocked)}.")],
             ["Production orders", "Order readiness", "Tools", "Holds", "Stock positions", "Presence", "Document training"]);
+    }
+
+    private static async Task<ReportBody> ReceivingInspectionAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var receipt in await run.Uow.Store<IReceivingLookup>().ListInspectionReceiptsAsync(500, ct))
+        {
+            var state = await ReceivingQueries.ReceiptStateAsync(run.Uow, receipt, ct);
+            var (fai, _) = await ReceivingQueries.FaiStatusAsync(run.Uow, receipt, state.SupplierCode, ct);
+            var po = receipt.PoNumber is { } n ? Id(n) : null;
+            if (!ReportRun.Is(fai.ToString(), p.Status) || !run.Matches(Id(receipt.TransactionId), receipt.PartNumber, receipt.LotNumber ?? string.Empty, state.SupplierCode ?? string.Empty, po ?? string.Empty))
+            {
+                continue;
+            }
+
+            var trace = new List<string> { "part:" + receipt.PartNumber };
+            if (po is not null)
+            {
+                trace.Add("po:" + po);
+            }
+
+            rows.Add(new ReportRow(
+                [Id(receipt.TransactionId), receipt.PartNumber, receipt.LotNumber, state.SupplierCode, po, receipt.Quantity, state.Accepted, state.Rejected, state.Remaining, fai.ToString(), receipt.At],
+                trace));
+        }
+
+        var waiting = rows.Count(r => r.Cells[8] is decimal d && d > 0);
+        var pending = rows.Count(r => (string)r.Cells[9]! is nameof(FaiStatus.PendingDetermination) or nameof(FaiStatus.Required));
+        return new ReportBody(rows, [rows.Count == 0 ? "No receipts into inspection." : $"{rows.Count} receipt(s): {waiting} still to inspect; {pending} with FAI pending determination or not yet done."],
+            ["Inventory ledger", "Receiving inspections", "Determinations", "First article inspections", "Purchase orders"]);
     }
 
     private static async Task<ReportBody> HoldsAsync(ReportRun run, CancellationToken ct)
