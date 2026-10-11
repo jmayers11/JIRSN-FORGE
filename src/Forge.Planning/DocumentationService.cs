@@ -64,7 +64,12 @@ public sealed class DocumentationService(IKernelUnitOfWorkFactory unitOfWork, IF
         var lines = new List<PurchaseLineDocumentation>();
         foreach (var line in po.Lines.Where(l => l.Status != PurchaseLineStatus.Cancelled))
         {
-            var revision = await engineering.GetEffectiveRevisionAsync(line.PartNumber, now, ct);
+            var sourcingNeed = line.RequisitionId is { } requisitionId ? await uow.Store<IRequisitionLookup>().FindRequisitionAsync(requisitionId, ct) : null;
+            var revision = sourcingNeed?.RequiredRevision is { } required
+                ? (await engineering.ListRevisionsAsync(line.PartNumber, ct)).FirstOrDefault(r => r.Revision == required && r.Status == RevisionStatus.Released)
+                : await engineering.GetEffectiveRevisionAsync(line.PartNumber, now, ct);
+            if (sourcingNeed?.RequiredRevision is not null && revision is null)
+                throw new CommandRejectedException("required_revision_not_released", "The purchase line's requested configuration is not released.");
             var needs = new List<DocumentNeed>();
             if (revision is not null)
             {
@@ -79,12 +84,37 @@ public sealed class DocumentationService(IKernelUnitOfWorkFactory unitOfWork, IF
                 continue;
             }
 
-            var facts = new ApplicabilityFacts(null, line.PartNumber, revision?.Revision ?? string.Empty, null, null, line.PromisedDate);
+            var customer = sourcingNeed?.ProgramId is { } program ? (await uow.Store<IProgramsLookup>().FindProgramAsync(program, ct))?.Customer : null;
+            var facts = new ApplicabilityFacts(null, line.PartNumber, revision?.Revision ?? string.Empty, sourcingNeed?.ProgramId, customer, line.PromisedDate);
             var docs = await EvaluateAsync(cache, needs, facts, now, null, viewer, ct);
             lines.Add(new PurchaseLineDocumentation(line.LineNumber, line.PartNumber, revision?.Revision, docs, Summarize(docs)));
         }
 
         return new PurchaseDocumentation(po.PoNumber, po.Supplier, lines);
+    }
+
+    /// <summary>The documentation of one order, in an open read transaction (shared by readiness and reports).</summary>
+    public static async Task<PurchaseLineDocumentation> ForSourcingAsync(IKernelUnitOfWork uow, long rfqId, RequisitionInfo need, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(uow);
+        ArgumentNullException.ThrowIfNull(need);
+        var engineering = uow.Store<IEngineeringLookup>();
+        var revision = need.RequiredRevision is { } required
+            ? (await engineering.ListRevisionsAsync(need.PartNumber, ct)).FirstOrDefault(r => r.Revision == required && r.Status == RevisionStatus.Released)
+            : await engineering.GetEffectiveRevisionAsync(need.PartNumber, now, ct);
+        if (revision is null)
+            throw new CommandRejectedException("required_revision_not_released", "The sourcing need's required revision is not released.");
+        var cache = new Cache(uow.Store<IDocumentLookup>());
+        var requirements = revision is null ? [] : await cache.RequirementsAsync(need.PartNumber, revision.Revision, ct);
+        var needs = requirements.Where(r => r.RemovedAt is null).Select(r => new DocumentNeed(r.DocumentNumber, r.DocumentRevision, r.OperationSequence,
+            $"{need.PartNumber} rev {revision!.Revision}", r.AddedAt)).ToList();
+        needs.AddRange((await uow.Store<IDocumentLookup>().ListLinksAsync(DocumentTargetType.Rfq, rfqId.ToString(System.Globalization.CultureInfo.InvariantCulture), null, false, ct))
+            .Where(l => l.Purpose == DocumentPurpose.Follow)
+            .Select(l => new DocumentNeed(l.DocumentNumber, l.Revision, null, "Attached to RFQ", l.LinkedAt)));
+        var customer = need.ProgramId is { } p ? (await uow.Store<IProgramsLookup>().FindProgramAsync(p, ct))?.Customer : null;
+        var facts = new ApplicabilityFacts(null, need.PartNumber, revision?.Revision ?? string.Empty, need.ProgramId, customer, need.NeedDate);
+        var resolved = await EvaluateAsync(cache, needs, facts, now, null, null, ct);
+        return new PurchaseLineDocumentation(1, need.PartNumber, revision?.Revision, resolved, Summarize(resolved));
     }
 
     /// <summary>The documentation of one order, in an open read transaction (shared by readiness and reports).</summary>

@@ -173,6 +173,7 @@ async function main() {
       if (receivingSample) {
         console.log('Inspecting the Alcoa receipt: FAI determined, part accepted, part returned to the vendor.');
         await seedReceiving();
+  await seedSourcing();
       }
       return finish();
     }
@@ -210,6 +211,7 @@ async function main() {
     await seedExecutable();
     await seedHolds();
     await seedReceiving();
+  await seedSourcing();
     return finish();
   }
 
@@ -373,6 +375,7 @@ async function main() {
   await seedExecutable();
   await seedHolds();
   await seedReceiving();
+  await seedSourcing();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -952,4 +955,24 @@ async function seedReceiving() {
   if (rejection) await post('qe', `/api/inventory/rejections/${rejection.rejectionId}/disposition`, { disposition: 'ReturnToVendor', reason: 'Sample: supplier replaces damaged coil' });
 }
 
+async function seedSourcing() {
+  step('Sourcing (V3.13): two factual supplier responses, with a human decision on the existing requisition');
+  if ((await get('bob', '/api/procurement/rfqs')).some(v => v.rfq.title === 'Sample coil sourcing')) return;
+  const day = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+  const item = (await get('bob', '/api/engineering/items')).find(i => i.makeBuy === 'Buy');
+  if (!item) return;
+  const suppliers = (await get('bob', '/api/procurement/suppliers')).filter(s => s.status === 'Active').slice(0, 2);
+  if (!suppliers.length) return;
+  const need = await post('bob', '/api/procurement/requisitions', { partNumber: item.partNumber, quantity: 10, needDate: day(21), sourceKind: 'Internal', sourceKey: 'internal:SAMPLE-RFQ', sourceLabel: 'Sample sourcing comparison' });
+  const rfq = await post('bob', '/api/procurement/rfqs', { requisitionId: Number(need.entityId), title: 'Sample coil sourcing', supplierCodes: suppliers.map(s => s.code) });
+  await post('pat', `/api/procurement/rfqs/${rfq.entityId}/release`, { reason: 'Sample: applicable technical package reviewed' });
+  const responses = [];
+  for (const [index, supplier] of suppliers.entries()) {
+    const sha = await upload('bob', `${supplier.code}-SAMPLE-quote.txt`, `SAMPLE ONLY — fictional supplier response from ${supplier.code}. Quantity 10, USD ${5 + index} each.\n`);
+    const link = await post('bob', `/api/engineering/attachments/Rfq/${rfq.entityId}/file`, { fileSha256: sha, fileName: `${supplier.code}-SAMPLE-quote.txt`, type: 'Other' });
+    const file = (await get('bob', `/api/engineering/attachments/Rfq/${rfq.entityId}`)).find(l => String(l.linkId) === String(link.entityId));
+    responses.push(await post('bob', `/api/procurement/rfqs/${rfq.entityId}/quotes`, { supplierCode: supplier.code, quantity: 10, unitPrice: 5 + index, currency: 'USD', promisedDate: day(10 + index), validThrough: day(7), originalDocumentNumber: file.documentNumber, originalDocumentRevision: file.revision.revision, note: 'Sample only', reason: 'Sample: original response transcribed' }));
+  }
+  await post('pat', `/api/procurement/rfqs/${rfq.entityId}/select`, { quoteId: Number(responses[0].entityId), reason: 'Sample: meets the required configuration and quantity, with the earlier date' });
+}
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

@@ -209,3 +209,9 @@ V3.12 live quick verification PASS: clean Release build, Planning 266, architect
 V3.12 selected API gate PASS: 15/15 in 3.5144 minutes. First run passed 14/15: receipt fixture omitted required reason; fixture corrected, rebuilt and rerun. Full `verify.cmd` PASS, exit 0: Release build zero warnings/errors; Planning 266, architecture 32, kernel 33, integration 92; zero failures. Saved `.forge-logs/verify.log` and `.forge-logs/verify.status` (PASS). Commit this verified V3.12 checkpoint before applying V3.13.
 
 V3.13 draft stayed isolated in `.forge-logs/staging-v313` through V3.12 verification. Isolated Release build passed with zero warnings/errors. First API run found the RFQ creator in the separation-of-duties test lacked approval permission and hit 403 before the rule; test now gives that actor the existing PurchasingManager role. Focused V3.13 API run then passed 2/2 using the configured PostgreSQL. V3.13 remains unapplied and needs quick/API/full verification in the main tree after the V3.12 commit.
+
+V3.12 committed as `5db186c` after the full suite passed: Planning 266, architecture 32, kernel 33, integration 92; zero warnings/errors/failures.
+
+### V3.13 full-pass checkpoint
+
+Applied the reviewed RFQ/sourcing draft after the V3.12 commit. Live quick passed: Release build zero warnings/errors, Planning 266, architecture 32. Focused PostgreSQL API gate passed 17/17 (V313, V312, V311, V22 and KernelRoundTrip). Full `verify.cmd` passed, exit 0: Planning 266, architecture 32, kernel 33, integration 94; zero failures and zero Release warnings/errors. The focused and full suites confirm the test actor now reaches the RFQ separation-of-duties check. V3.13 full-suite evidence is in `.forge-logs/verify.log`/`.status`, quick evidence `.forge-logs/quick.*`, and API evidence `.forge-logs/codex-v313.*`. Commit V3.13 before starting V3.14. V3.14–V3.28 remain outstanding.

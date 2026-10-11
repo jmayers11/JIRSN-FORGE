@@ -1,3 +1,4 @@
+import { sourcingQueue } from '../sourcing.js';
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
@@ -26,16 +27,17 @@ export async function procurementPage(page, ctx) {
   let data = {};
 
   async function load() {
-    const [orders, items, suppliers, sources, requisitions] = await Promise.all([
+    const [orders, items, suppliers, sources, requisitions, rfqs] = await Promise.all([
       tryGet('/api/procurement/purchase-orders'), tryGet('/api/engineering/items'),
-      tryGet('/api/procurement/suppliers'), tryGet('/api/procurement/approved-sources'), tryGet('/api/procurement/requisitions')]);
-    data = { orders, items, suppliers, sources, requisitions };
+      tryGet('/api/procurement/suppliers'), tryGet('/api/procurement/approved-sources'), tryGet('/api/procurement/requisitions'), tryGet('/api/procurement/rfqs')]);
+    data = { orders, items, suppliers, sources, requisitions, rfqs };
   }
   const supplierOptions = () => (data.suppliers.data ?? []).filter(x => x.status === 'Active').map(x => [x.code, `${x.name} (${x.code})`]);
   const reload = async () => { await load(); render(); };
   const buyParts = () => (data.items.data ?? []).filter(i => i.makeBuy === 'Buy').map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]);
 
   function render() {
+    if (tab === 'rfqs') return sourcingQueue(page, { me, data, tabs, bindTabs, reload });
     if (tab === 'suppliers') return renderSuppliers();
     if (tab === 'requisitions') return renderRequisitions();
     const all = data.orders.data ?? [];
@@ -224,7 +226,7 @@ export async function procurementPage(page, ctx) {
 
   function tabs() {
     const openReqs = (data.requisitions?.data ?? []).length;
-    return `<div class="seg" style="margin-bottom:12px">${[['orders', 'Purchase orders'], ['requisitions', `Requisitions${openReqs ? ` (${openReqs})` : ''}`], ['suppliers', `Suppliers${data.suppliers.data ? ` (${data.suppliers.data.length})` : ''}`]]
+    return `<div class="seg" style="margin-bottom:12px">${[['orders', 'Purchase orders'], ['rfqs', 'RFQs / sourcing'], ['requisitions', `Requisitions${openReqs ? ` (${openReqs})` : ''}`], ['suppliers', `Suppliers${data.suppliers.data ? ` (${data.suppliers.data.length})` : ''}`]]
       .map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>`;
   }
 

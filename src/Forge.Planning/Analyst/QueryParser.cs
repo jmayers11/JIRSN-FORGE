@@ -289,6 +289,7 @@ public static partial class QueryParser
             : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
             : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
             : Has("executable", "can run now", "can happen", "operations can", "operations cannot", "operations cant", "operation can", "operations on hold", "operations are on hold", "untrained", "not trained", "which operations", "what operations", "open operations", "operations are blocked", "operations blocked") ? "executable-operations"
+            : Has("rfq", "rfqs", "supplier quotes", "source decisions", "supplier responses", "sourcing") ? "sourcing"
             : Has("business evidence", "packing slip", "certificates of conformance", "certificate of conformance", "certificate of analysis", "signed evidence", "receipt evidence", "shipment evidence") ? "business-evidence"
             : Has("receiving inspection", "receipts waiting", "waiting for inspection", "awaiting inspection", "to inspect", "first article", "fais", "fai status", "fai pending", "fai required", "need fai", "needs fai") ? "receiving-inspection"
             : Has("holds", "on hold", "hold register", "release authority") ? "holds"

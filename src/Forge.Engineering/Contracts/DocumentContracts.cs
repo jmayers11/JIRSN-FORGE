@@ -70,6 +70,8 @@ public enum DocumentTargetType
     Inspection,
     Shipment,
     Fai,
+    Rfq,
+    SupplierQuote,
 }
 
 public enum DocumentPurpose
@@ -229,7 +231,7 @@ public static class DocumentAccess
 
     public static string ReadPermission(DocumentTargetType type) => type switch
     {
-        DocumentTargetType.Supplier or DocumentTargetType.PurchaseOrder => Permissions.PurchasingRead,
+        DocumentTargetType.Supplier or DocumentTargetType.PurchaseOrder or DocumentTargetType.Rfq or DocumentTargetType.SupplierQuote => Permissions.PurchasingRead,
         DocumentTargetType.Program => Permissions.ProgramsRead,
         DocumentTargetType.ProductionOrder => Permissions.OrdersRead,
         DocumentTargetType.WorkOrder => Permissions.MaintenanceRead,

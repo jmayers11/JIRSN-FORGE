@@ -97,7 +97,7 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             foreach (var (line, index) in c.Lines.Select((l, i) => (l, i)))
             {
                 var valid = await ValidLineAsync(uow, index + 1, line.PartNumber, line.Quantity, line.PromisedDate, now, supplier.Code, ct);
-                lines.Add(await WithSourceAsync(uow, valid, line.RequisitionId, context, lines, ct));
+                lines.Add(await WithSourceAsync(uow, valid, line.RequisitionId, context, lines, supplier.Code, now, ct));
             }
 
             var store = uow.Store<IProcurementStore>();
@@ -130,7 +130,7 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             }
 
             var line = await ValidLineAsync(uow, po.Lines.Count == 0 ? 1 : po.Lines.Max(l => l.LineNumber) + 1, c.PartNumber, c.Quantity, c.PromisedDate, now, po.SupplierCode, ct);
-            line = await WithSourceAsync(uow, line, c.RequisitionId, context, [], ct);
+            line = await WithSourceAsync(uow, line, c.RequisitionId, context, [], po.SupplierCode, now, ct);
             await uow.Store<IProcurementStore>().InsertLineAsync(po.PoNumber, line, ct);
             if (line.RequisitionId is { } requisition)
             {
@@ -252,13 +252,14 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
     private static string Id(long number) => number.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>A line bought for a requisition carries its source; the requisition must be open, for the same part, and not used twice.</summary>
-    private static async Task<PurchaseLineInfo> WithSourceAsync(Kernel.Access.IKernelUnitOfWork uow, PurchaseLineInfo line, long? requisitionId, CommandContext context, IReadOnlyList<PurchaseLineInfo> earlier, CancellationToken ct)
+    private static async Task<PurchaseLineInfo> WithSourceAsync(Kernel.Access.IKernelUnitOfWork uow, PurchaseLineInfo line, long? requisitionId, CommandContext context, IReadOnlyList<PurchaseLineInfo> earlier, string? supplierCode, DateTimeOffset now, CancellationToken ct)
     {
         if (requisitionId is not { } id)
         {
             return line;
         }
 
+        await uow.Store<ISourcingStore>().LockRfqAsync(-id, ct);
         var requisition = await uow.Store<IRequisitionLookup>().FindRequisitionAsync(id, ct);
         if (requisition is null || (requisition.ProgramId is { } p && !context.Principal.Programs.Contains(new ProgramId(p))))
         {
@@ -273,6 +274,20 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
         if (requisition.PartNumber != line.PartNumber)
         {
             throw new CommandRejectedException("requisition_part", $"Requisition {id} is for {requisition.PartNumber}, not {line.PartNumber}.");
+        }
+
+        var sourcing = uow.Store<ISourcingLookup>();
+        var rfq = (await sourcing.ListRfqsAsync(ct)).FirstOrDefault(r => r.RequisitionId == id && r.Status != RfqStatus.Cancelled);
+        if (rfq is not null)
+        {
+            await uow.Store<ISourcingStore>().LockRfqAsync(rfq.RfqId, ct);
+            var selected = await sourcing.SelectedQuoteForRequisitionAsync(id, ct);
+            if (selected is null) throw new CommandRejectedException("source_selection_required", "This RFQ requires an authorized source selection before a purchase order is created.");
+            var original = await uow.Store<IDocumentLookup>().FindDocumentAsync(selected.OriginalDocumentNumber, ct);
+            if (original is null || !DocumentAccess.CanSee(context.Principal, original))
+                throw new CommandRejectedException("source_selection_required", "The selected supplier response is not available to you.");
+            if (selected.SupplierCode != supplierCode || selected.Quantity < line.Quantity || selected.ValidThrough < DateOnly.FromDateTime(now.UtcDateTime))
+                throw new CommandRejectedException("selected_source_mismatch", "The purchase line must match the selected supplier, quoted quantity and current response validity.");
         }
 
         return line with { RequisitionId = id, SourceKind = requisition.SourceKind, SourceKey = requisition.SourceKey, SourceLabel = requisition.SourceLabel };

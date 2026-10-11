@@ -159,6 +159,25 @@ public sealed class DocumentTargetResolver : IDocumentTargetResolver
                     return order is null ? null : new DocumentTarget(type, Text(number), $"Inspection {number} (order {order.OrderNumber})", order.ProgramId, Permissions.QualityRead);
                 }
 
+            case DocumentTargetType.Rfq:
+                {
+                    if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return null;
+                    var rfq = await uow.Store<ISourcingLookup>().FindRfqAsync(number, ct);
+                    var need = rfq is null ? null : await uow.Store<IRequisitionLookup>().FindRequisitionAsync(rfq.RequisitionId, ct);
+                    return need is null ? null : new DocumentTarget(type, Text(number), $"RFQ {number}", need.ProgramId, Permissions.PurchasingRead);
+                }
+
+            case DocumentTargetType.SupplierQuote:
+                {
+                    if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return null;
+                    var quote = (await uow.Store<ISourcingLookup>().ListQuotesAsync(null, ct)).FirstOrDefault(q => q.QuoteId == number);
+                    if (quote is null) return null;
+                    var rfq = await uow.Store<ISourcingLookup>().FindRfqAsync(quote.RfqId, ct);
+                    var need = rfq is null ? null : await uow.Store<IRequisitionLookup>().FindRequisitionAsync(rfq.RequisitionId, ct);
+                    var original = await uow.Store<IDocumentLookup>().FindDocumentAsync(quote.OriginalDocumentNumber, ct);
+                    return need is null || original is null ? null : new DocumentTarget(type, Text(number), $"Supplier quote {number}", need.ProgramId, Permissions.PurchasingRead, original.Markings);
+                }
+
             default:
                 return null;
         }

@@ -9,6 +9,7 @@ using Forge.Maintenance.Contracts;
 using Forge.Planning.Engines;
 using Forge.Programs.Contracts;
 using Forge.Quality.Contracts;
+using Forge.Procurement.Contracts;
 using Forge.Workforce.Contracts;
 
 namespace Forge.Planning.Reporting;
@@ -185,6 +186,17 @@ internal static class StandardReports
                 ["authority", "type", "attention"], "authority", 3660,
                 "Documents as they stand now; the period does not apply. Documents in programs you do not hold, or with markings you do not hold, are not shown. Reference documents are never production authority."),
             Permissions.EngineeringRead, null, DocumentRegisterAsync),
+        new(
+            new("sourcing", "RFQ and source decisions", "Procurement",
+                "Sourcing needs, factual supplier responses and recorded human decisions. RFQs create no projected supply.",
+                [ProgramFilter, PartFilter, StatusFilter(Enum.GetNames<RfqStatus>()), SearchFilter],
+                [C("rfq", "RFQ", ReportColumnKind.Text), C("need", "Requisition", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("status", "RFQ state", ReportColumnKind.Text),
+                 C("quote", "Response", ReportColumnKind.Text), C("supplier", "Supplier", ReportColumnKind.Text), C("quantity", "Offered qty", ReportColumnKind.Number), C("price", "Unit price", ReportColumnKind.Number),
+                 C("currency", "Currency", ReportColumnKind.Text), C("promised", "Promised", ReportColumnKind.Date), C("valid", "Valid through", ReportColumnKind.Date), C("alternate", "Proposed alternate", ReportColumnKind.Text),
+                 C("selected", "Selected", ReportColumnKind.Text), C("reason", "Decision reason", ReportColumnKind.Text)],
+                ["status", "part", "supplier", "currency", "selected"], "status", 3660,
+                "Immutable supplier responses. Program and original-file access are enforced. Prices in different currencies are not converted or ranked."),
+            Permissions.PurchasingRead, null, SourcingAsync),
         new(
             new("business-evidence", "Business-record evidence", "Quality",
                 "Reference files on receipts, inspections, shipments and FAI, with source-signature verification kept separate from structured inspection results.",
@@ -1103,6 +1115,32 @@ internal static class StandardReports
             ["Controlled documents", "Attachments"]);
     }
 
+    private static async Task<ReportBody> SourcingAsync(ReportRun run, CancellationToken ct)
+    {
+        var sourcing = run.Uow.Store<ISourcingLookup>();
+        var needs = run.Uow.Store<IRequisitionLookup>();
+        var documents = run.Uow.Store<IDocumentLookup>();
+        var rows = new List<ReportRow>();
+        foreach (var rfq in await sourcing.ListRfqsAsync(ct))
+        {
+            var need = await needs.FindRequisitionAsync(rfq.RequisitionId, ct);
+            if (need is null || !run.Visible(need.ProgramId) || !ReportRun.Is(need.PartNumber, run.Parameters.PartNumber)
+                || !ReportRun.Is(rfq.Status.ToString(), run.Parameters.Status) || !run.Matches(rfq.Title, need.PartNumber, need.SourceLabel)) continue;
+            var visible = new List<SupplierQuote>();
+            foreach (var quote in await sourcing.ListQuotesAsync(rfq.RfqId, ct))
+            {
+                var original = await documents.FindDocumentAsync(quote.OriginalDocumentNumber, ct);
+                if (original is not null && DocumentAccess.CanSee(run.Principal, original)) visible.Add(quote);
+            }
+            if (visible.Count == 0)
+                rows.Add(new ReportRow([Id(rfq.RfqId), Id(need.RequisitionId), need.PartNumber, rfq.Status.ToString(), null, null, null, null, null, null, null, null, null, null], ["rfq:" + Id(rfq.RfqId), "requisition:" + Id(need.RequisitionId)]));
+            foreach (var q in visible)
+                rows.Add(new ReportRow([Id(rfq.RfqId), Id(need.RequisitionId), need.PartNumber, rfq.Status.ToString(), Id(q.QuoteId), q.SupplierCode, q.Quantity, q.UnitPrice, q.Currency,
+                    q.PromisedDate, q.ValidThrough, q.ProposedAlternatePart, rfq.SelectedQuoteId == q.QuoteId ? "Yes" : "No", rfq.SelectedQuoteId == q.QuoteId ? rfq.SelectionReason : null],
+                    ["rfq:" + Id(rfq.RfqId), "supplier-quote:" + Id(q.QuoteId), "document:" + q.OriginalDocumentNumber]));
+        }
+        return new ReportBody(rows, [$"{rows.Count} visible sourcing row(s). Selection remains a human decision; RFQs and quotes do not count as supply."], ["Requisitions", "RFQs", "Immutable supplier responses", "Source decisions"]);
+    }
     private static async Task<ReportBody> BusinessEvidenceAsync(ReportRun run, CancellationToken ct)
     {
         var lookup = run.Uow.Store<IDocumentLookup>();
