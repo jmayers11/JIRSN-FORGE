@@ -3,7 +3,8 @@ import { icon } from '../icons.js';
 import { esc, $$, fmtNumber, fmtDateTime, errorBlock, emptyBlock } from '../ui.js';
 import { isDownAt } from '../model.js';
 import { appendStoppages, appendReasonCodes } from '../actuals.js';
-import { appendTools } from '../tools.js';
+import { appendTools, appendToolRequirements } from '../tools.js';
+import { appendOperations, appendPresence, appendHolds } from '../executable.js';
 
 const DAY = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -74,4 +75,9 @@ export async function workCentersPage(page, ctx) {
   await appendStoppages(page, chosen ? chosen.ms : r.machines, ctx.me);
   await appendReasonCodes(page, ctx.me);
   await appendTools(page, r.machines, ctx.me);
+  await appendToolRequirements(page, ctx.me);
+  // V3.9: can each open operation run now, who is actually present, and production holds.
+  await appendOperations(page, chosen?.wc.code);
+  await appendPresence(page, chosen?.wc.code);
+  await appendHolds(page, ctx.me);
 }

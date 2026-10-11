@@ -1,3 +1,4 @@
+using Forge.Execution.Contracts;
 using Forge.Maintenance.Contracts;
 using Forge.Resources.Contracts;
 using Forge.SafetyRules.Contracts;
@@ -30,6 +31,14 @@ public sealed record PersonSnapshot(
 
     /// <summary>Expiry of each currently valid qualification (null = never expires).</summary>
     public IReadOnlyDictionary<string, DateTimeOffset?> QualificationExpiry { get; init; } = new Dictionary<string, DateTimeOffset?>();
+
+    /// <summary>Controlled-document revisions this person is trained on, as "NUMBER@REV" (V3.9).</summary>
+    public IReadOnlySet<string> TrainedDocuments { get; init; } = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>The order operation this person has open direct labor on, as "order/sequence" (V3.9): active on an operation.</summary>
+    public string? ActiveOperation { get; init; }
+
+    public bool TrainedOn(string documentNumber, string revision) => TrainedDocuments.Contains($"{documentNumber}@{revision}");
 
     /// <summary>Whether a currently valid qualification is still valid at a later instant.</summary>
     public bool HoldsAt(string qualification, DateTimeOffset at) =>
@@ -64,6 +73,22 @@ public sealed record SiteSnapshot(
 
     /// <summary>Recorded unavailability overlapping the planning horizon (no reasons).</summary>
     public IReadOnlyList<UnavailabilityWindow> Unavailability { get; init; } = [];
+
+    /// <summary>Tool types, tools, their history and what activities need (V3.9).</summary>
+    public IReadOnlyList<ToolTypeInfo> ToolTypes { get; init; } = [];
+
+    public IReadOnlyList<ToolInfo> Tools { get; init; } = [];
+
+    public IReadOnlyList<ToolEvent> ToolEvents { get; init; } = [];
+
+    public IReadOnlyList<ToolRequirement> ToolRequirements { get; init; } = [];
+
+    /// <summary>Active production holds (V3.9).</summary>
+    public IReadOnlyList<ProductionHold> ProductionHolds { get; init; } = [];
+
+    /// <summary>Whether the tools <paramref name="activity"/> needs on <paramref name="machine"/> are valid at <paramref name="at"/> (V3.9).</summary>
+    public ToolingCheck Tooling(string? machine, string activity, DateTimeOffset at) =>
+        ToolingCheck.For(ToolRequirements, ToolTypes, Tools, ToolEvents.ToLookup(e => e.ToolCode, StringComparer.Ordinal), machine, activity, at);
 
     public PersonSnapshot? Person(Guid id) => People.FirstOrDefault(p => p.PersonId == id);
 

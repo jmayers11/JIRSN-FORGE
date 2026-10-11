@@ -28,6 +28,11 @@ public sealed record UseTool(string Code, int Uses, string? MachineCode, string?
 
 public sealed record RetireTool(string Code);
 
+/// <summary>An activity (on one machine, or any machine) needs this many valid tools of a type (V3.9).</summary>
+public sealed record SetToolRequirement(string ActivityCode, string? MachineCode, string ToolTypeCode, int Quantity = 1);
+
+public sealed record RemoveToolRequirement(long RequirementId);
+
 public sealed record ToolChanged(string Code, string Change) : IDomainEvent
 {
     public static string EventType => nameof(ToolChanged);
@@ -188,6 +193,55 @@ public sealed class ToolService(CommandPipeline pipeline)
             tool.Status == ToolStatus.Retired
                 ? throw new CommandRejectedException("tool_retired", $"{tool.Code} is already retired.")
                 : (tool with { Status = ToolStatus.Retired }, new ToolEvent(0, tool.Code, ToolEventKind.Retired, now, context.Actor, Note: context.Reason), $"{tool.Code} retired; its history stays."), ct);
+
+    public Task<CommandResult> SetRequirementAsync(SetToolRequirement c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var activity = BusinessCode.Require(c.ActivityCode, "Activity");
+        var spec = new CommandSpec(SourceContext, nameof(SetToolRequirement), Permissions.ToolsManage, ResourceRef.Of("ToolRequirement", activity));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            if (c.Quantity is < 1 or > 50)
+            {
+                throw new CommandRejectedException("invalid_quantity", "Require between 1 and 50 tools.");
+            }
+
+            await KnownActivitiesAsync(uow, [activity], ct);
+            var machine = Optional(c.MachineCode) is { } m ? (await KnownMachinesAsync(uow, [m], ct))[0] : null;
+            var typeCode = BusinessCode.Require(c.ToolTypeCode, "Tool type");
+            if (!(await uow.Store<IToolLookup>().ListToolTypesAsync(ct)).Any(t => t.Code == typeCode && t.Active))
+            {
+                throw new CommandRejectedException("unknown_tool_type", $"Tool type {typeCode} does not exist.");
+            }
+
+            var before = (await uow.Store<IToolLookup>().ListToolRequirementsAsync(ct)).FirstOrDefault(r => r.ActivityCode == activity && r.MachineCode == machine && r.ToolTypeCode == typeCode);
+            var requirement = new ToolRequirement(0, activity, machine, typeCode, c.Quantity, now, context.Actor);
+            var id = await uow.Store<IToolStore>().SetToolRequirementAsync(requirement, ct);
+            requirement = requirement with { RequirementId = id };
+            var key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return new CommandOutcome(
+                CommandResult.Ok(key, $"{requirement.Describe()} is now required."),
+                [pipeline.Event(new ToolChanged(typeCode, "RequirementSet"), context, SourceContext, "ToolRequirement", key)],
+                new AuditChange("ToolRequirement", key, before is null ? null : CanonicalJson.Serialize(before), CanonicalJson.Serialize(requirement)));
+        }, ct);
+    }
+
+    public Task<CommandResult> RemoveRequirementAsync(RemoveToolRequirement c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var key = c.RequirementId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var spec = new CommandSpec(SourceContext, nameof(RemoveToolRequirement), Permissions.ToolsManage, ResourceRef.Of("ToolRequirement", key), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var before = (await uow.Store<IToolLookup>().ListToolRequirementsAsync(ct)).FirstOrDefault(r => r.RequirementId == c.RequirementId)
+                ?? throw new CommandRejectedException("requirement_not_found", $"Tool requirement {key} does not exist.");
+            await uow.Store<IToolStore>().DeleteToolRequirementAsync(c.RequirementId, ct);
+            return new CommandOutcome(
+                CommandResult.Ok(key, $"{before.Describe()} is no longer required."),
+                [pipeline.Event(new ToolChanged(before.ToolTypeCode, "RequirementRemoved"), context, SourceContext, "ToolRequirement", key)],
+                new AuditChange("ToolRequirement", key, CanonicalJson.Serialize(before), null));
+        }, ct);
+    }
 
     /// <summary>Records a use, after checking the tool was valid for it at that moment.</summary>
     public Task<CommandResult> UseAsync(UseTool c, CommandContext context, CancellationToken ct) =>

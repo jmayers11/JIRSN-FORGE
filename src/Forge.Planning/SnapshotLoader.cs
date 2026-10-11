@@ -1,4 +1,6 @@
 using Forge.Competency.Contracts;
+using Forge.Engineering.Contracts;
+using Forge.Execution.Contracts;
 using Forge.Kernel.Access;
 using Forge.Kernel.Identity;
 using Forge.Maintenance.Contracts;
@@ -21,6 +23,7 @@ internal static class SnapshotLoader
         at = new DateTimeOffset(at.UtcDateTime.Ticks / 10 * 10, TimeSpan.Zero); // database precision
 
         var resources = uow.Store<IResourcesLookup>();
+        var tools = uow.Store<IToolLookup>();
         var workforce = uow.Store<IWorkforceLookup>();
         var workers = await workforce.GetWorkerStatesAsync(at, ct);
         var qualifications = await uow.Store<ICompetencyLookup>().GetQualificationsAsync(workers.Select(w => new PersonId(w.PersonId)).ToList(), ct);
@@ -28,6 +31,14 @@ internal static class SnapshotLoader
             .Where(q => q.IsValidAt(at))
             .GroupBy(q => q.PersonId)
             .ToDictionary(g => g.Key, g => g.OrderBy(q => q.Code, StringComparer.Ordinal).ToList());
+
+        // V3.9: training on controlled documents, and who has open direct labor (active on an operation).
+        var trained = (await uow.Store<IDocumentTrainingLookup>().ListTrainingAsync(workers.Select(w => w.PersonId).ToList(), ct))
+            .GroupBy(t => t.PersonId)
+            .ToDictionary(g => g.Key, g => (IReadOnlySet<string>)g.Select(t => t.Key).ToHashSet(StringComparer.Ordinal));
+        var labor = (await uow.Store<IExecutionLookup>().ListOpenLaborAsync(ct))
+            .GroupBy(l => l.PersonId)
+            .ToDictionary(g => g.Key, g => g.OrderBy(l => l.StartedAt).Last());
 
         var people = workers
             .Select(w =>
@@ -46,6 +57,8 @@ internal static class SnapshotLoader
                     HomeWorkCenterCode = w.HomeWorkCenterCode,
                     ShiftCode = w.ShiftCode,
                     QualificationExpiry = held.ToDictionary(q => q.Code, q => q.ExpiresAt, StringComparer.Ordinal),
+                    TrainedDocuments = trained.TryGetValue(w.PersonId, out var docs) ? docs : new HashSet<string>(StringComparer.Ordinal),
+                    ActiveOperation = labor.TryGetValue(w.PersonId, out var l) ? $"{l.OrderNumber}/{l.Sequence}" : null,
                 };
             })
             .OrderBy(p => p.PersonId)
@@ -76,6 +89,11 @@ internal static class SnapshotLoader
             Closures = await resources.ListSiteClosuresAsync(ct),
             Downtime = await uow.Store<IMaintenanceLookup>().ListDowntimeAsync(from, to, ct),
             Unavailability = await workforce.ListUnavailabilityAsync(from, to, ct),
+            ToolTypes = await tools.ListToolTypesAsync(ct),
+            Tools = await tools.ListToolsAsync(ct),
+            ToolEvents = await tools.ListToolEventsAsync(null, ct),
+            ToolRequirements = await tools.ListToolRequirementsAsync(ct),
+            ProductionHolds = await uow.Store<IProductionHoldLookup>().ListProductionHoldsAsync(false, ct),
         };
     }
 }

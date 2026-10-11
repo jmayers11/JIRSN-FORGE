@@ -237,6 +237,26 @@ internal static class StandardReports
                 "Goals as they stand now; the period does not apply. Behind plan is measured against the approved schedule; at risk and late against the goal's required-by date and a fresh finite-capacity reforecast."),
             Permissions.ScheduleRead, null, GoalAttainmentAsync),
         new(
+            new("executable-operations", "Executable operations", "Production",
+                "Every open operation of released and held orders, answered now: can it happen, and if not, the primary constraint and why. Machine, equipment, tooling (calibration in force, not away or damaged), material, material at the point of use, holds, quality, documentation, qualified and trained people present, safety staffing.",
+                [StatusFilter(["Executable", "Order", "Holds", "Engineering", "Documentation", "Predecessor", "Quality", "Material", "PointOfUse", "RequirementProfile", "Equipment", "Tooling", "Safety", "Workforce", "Training"]), SearchFilter],
+                [C("order", "Order", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("op", "Op", ReportColumnKind.Number), C("description", "Operation", ReportColumnKind.Text),
+                 C("workCenter", "Work center", ReportColumnKind.Text), C("machine", "Best machine", ReportColumnKind.Text), C("executable", "Can run now", ReportColumnKind.Text),
+                 C("status", "Constraint", ReportColumnKind.Text), C("why", "Why", ReportColumnKind.Text), C("due", "Due", ReportColumnKind.Date)],
+                ["status", "workCenter", "executable"], "status", 3660,
+                "Operations as they stand now; the period does not apply. Presence counts only clocked-in or supervisor-confirmed people: a schedule is never presence."),
+            Permissions.ReadinessRead, null, ExecutableOperationsAsync),
+        new(
+            new("presence", "Presence", "Workforce",
+                "Every worker's presence now, as far as the evidence goes: not present, scheduled (on shift but not clocked in: never counted), clocked in or confirmed by a supervisor, assigned to a work center, or active on an operation.",
+                [StatusFilter(Enum.GetNames<PresenceLevel>()), SearchFilter],
+                [C("person", "Person", ReportColumnKind.Text), C("status", "Presence", ReportColumnKind.Text), C("counts", "Counts as present", ReportColumnKind.Text), C("source", "Evidence", ReportColumnKind.Text),
+                 C("home", "Home work center", ReportColumnKind.Text), C("workCenter", "Assigned to", ReportColumnKind.Text), C("machine", "Machine", ReportColumnKind.Text),
+                 C("operation", "Operation", ReportColumnKind.Text), C("onShift", "On shift", ReportColumnKind.Text), C("detail", "Detail", ReportColumnKind.Text)],
+                ["status", "home", "workCenter"], "status", 3660,
+                "Presence as it stands now; the period does not apply. No reason for an absence is ever shown."),
+            Permissions.ReadinessRead, null, PresenceAsync),
+        new(
             new("shelf-life", "Shelf life and aging", "Inventory",
                 "Every lot on hand that has a shelf life, retest, open life or storage limits: its age, the expiry it was given and the one in force after any approved extension, days left, retest due, open life, and whether it may be used.",
                 [PartFilter, StatusFilter(Enum.GetNames<ShelfLifeStatus>()), SearchFilter],
@@ -805,6 +825,49 @@ internal static class StandardReports
         var behind = rows.Count(r => (string)r.Cells[10]! == "Yes" && (string)r.Cells[9]! is not (nameof(GoalState.AtRisk) or nameof(GoalState.Late)));
         return new ReportBody(rows, [rows.Count == 0 ? "No open goals." : $"{rows.Count} goal(s): {risky} at risk or late; {behind} behind plan but still recoverable."],
             ["Goals", "Approved schedule", "Reforecast schedule", "Production orders", "Demand and shipments"]);
+    }
+
+    private static async Task<ReportBody> ExecutableOperationsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var o in await ExecutableOperations.EvaluateAsync(run.Uow, new FixedTime(run.Now), run.Principal, ct))
+        {
+            var constraint = o.Executable ? "Executable" : o.PrimaryConstraint ?? "Unknown";
+            if (!run.Visible(o.ProgramId) || !ReportRun.Is(constraint, p.Status) || !run.Matches(Id(o.OrderNumber), o.PartNumber, o.Description, o.WorkCenter, o.Why))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [Id(o.OrderNumber), o.PartNumber, (decimal)o.Sequence, o.Description, o.WorkCenter, o.Machine, o.Executable ? "Yes" : "No", constraint, o.Why, o.DueDate],
+                ["order:" + Id(o.OrderNumber)]));
+        }
+
+        var blocked = rows.Where(r => (string)r.Cells[6]! == "No").GroupBy(r => (string)r.Cells[7]!).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}").ToList();
+        return new ReportBody(rows, [rows.Count == 0 ? "No open operations." : $"{rows.Count} open operation(s): {rows.Count(r => (string)r.Cells[6]! == "Yes")} can run now" + (blocked.Count == 0 ? "." : $"; blocked by {string.Join(", ", blocked)}.")],
+            ["Production orders", "Order readiness", "Tools", "Holds", "Stock positions", "Presence", "Document training"]);
+    }
+
+    private static async Task<ReportBody> PresenceAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var x in ExecutableChecks.Presence(await SnapshotLoader.LoadAsync(run.Uow, new FixedTime(run.Now), ct)))
+        {
+            if (!ReportRun.Is(x.Level.ToString(), p.Status) || !run.Matches(x.Name, x.HomeWorkCenter ?? string.Empty, x.WorkCenter ?? string.Empty, x.Operation ?? string.Empty, x.Detail))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [x.Name, x.Level.ToString(), x.CountsAsPresent ? "Yes" : "No", x.Source, x.HomeWorkCenter, x.WorkCenter, x.Machine, x.Operation, x.OnShift ? "Yes" : "No", x.Detail],
+                ["person:" + x.PersonId]));
+        }
+
+        var present = rows.Count(r => (string)r.Cells[2]! == "Yes");
+        var scheduled = rows.Count(r => (string)r.Cells[1]! == nameof(PresenceLevel.Scheduled));
+        return new ReportBody(rows, [rows.Count == 0 ? "No workers." : $"{rows.Count} worker(s): {present} present; {scheduled} scheduled but not clocked in (not counted)."], ["Workers", "Attendance", "Assignments", "Open direct labor", "Shift schedules"]);
     }
 
     private static async Task<ReportBody> ToolStatusAsync(ReportRun run, CancellationToken ct)

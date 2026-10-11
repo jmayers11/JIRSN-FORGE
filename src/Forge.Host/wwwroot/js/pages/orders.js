@@ -5,6 +5,7 @@ import { appendAttachments, appendApplicability } from '../attachments.js';
 import { appendOrderGenealogy, appendOrderReconciliation } from '../genealogy.js';
 import { appendOrderMaterialFlow } from '../materialflow.js';
 import { appendOrderQuantityStates } from '../actuals.js';
+import { appendHolds } from '../executable.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 
 const STATUS_TONE = { Planned: 'none', FirmPlanned: 'info', Released: 'ok', Held: 'warn', Cancelled: 'bad', Completed: 'ok' };
@@ -166,6 +167,7 @@ async function orderDetail(page, ctx, number) {
 
   await appendOrderGenealogy(page, o.orderNumber);
   if (o.status !== 'Planned' && o.status !== 'FirmPlanned') await appendOrderQuantityStates(page, o, me);
+  if (o.status !== 'Planned' && o.status !== 'FirmPlanned') await appendHolds(page, me, o);
   await appendOrderMaterialFlow(page, o.orderNumber, can(me, 'MaterialHandler'));
   await appendOrderReconciliation(page, o.orderNumber, can(me, 'MaterialHandler'));
   await appendApplicability(page, o.orderNumber, me);

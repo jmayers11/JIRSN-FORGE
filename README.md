@@ -393,6 +393,21 @@ See `docs/adr/0020-v3-goal-risk.md` and `docs/adr/0031-v3-7-goal-attainment-and-
 
 See `docs/adr/0032-v3-8-tooling-and-calibration.md`.
 
+## What V3.9 contains
+
+Every open operation answers "can this happen now, and if not, why not?" with one primary constraint and its reason.
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Tooling | `resources.tool_requirement`, Work Centers → Tooling required | An activity (on a machine, or any) needs N valid tools of a type: calibration in force, not away, damaged or past its limits |
+| Holds | `execution.production_hold`, Orders and Work Centers → Holds | On an order, operation, part, work center or machine, with a reason; starting work is refused; a different person releases it |
+| Point of use | readiness, `stock-positions` | Where a work center has a staging or machine-side location, the first operation waits until the material is there |
+| Training | `engineering.document_training`, Workforce page | People trained on a revision of a controlled document; policy Off, Warn (named, not stopped) or Enforce |
+| Presence | `/api/readiness/presence`, `presence` report | Not present, scheduled (never counted), clocked in or supervisor confirmed, assigned to a work center, active on an operation |
+| Answers | `/api/readiness/operations`, `executable-operations` report, Work Centers → Can it run now? | The order-readiness engine for every open operation of released and held orders |
+
+See `docs/adr/0033-v3-9-executable-capacity-and-presence.md`.
+
 ## Plant setup
 
 Every plant is different: one slits and winds, another bonds and laminates, another machines and paints.
@@ -829,3 +844,14 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | POST | `/api/resources/tools/{code}/calibrations` | `resources.tools.calibrate` |
 | POST | `/api/resources/tools/{code}/move`, `/uses`, `/service` (reason), `/return`, `/condition` (reason) | `resources.tools.handle` |
 | POST | `/api/shopfloor/start` takes `toolCode` | `execution.shopfloor.record` |
+
+## V3.9 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/readiness/operations[?workCenter=]`, `/api/readiness/presence[?workCenter=]` | `planning.readiness.read` |
+| GET, POST | `/api/resources/tool-requirements` (GET: `resources.read`); `/api/resources/tool-requirements/{id}/remove` (reason) | `resources.tools.manage` |
+| GET | `/api/holds[?includeReleased=]` | `execution.orders.read` |
+| POST | `/api/holds` (reason), `/api/holds/{id}/release` (reason, a different person) | `execution.holds.manage` |
+| GET | `/api/engineering/document-training[?personId=]` | `competency.read` |
+| POST | `/api/engineering/document-training`, `/api/engineering/document-training/policy` (reason) | `competency.manage` |

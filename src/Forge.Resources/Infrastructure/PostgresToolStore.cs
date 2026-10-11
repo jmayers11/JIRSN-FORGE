@@ -38,6 +38,32 @@ internal sealed class PostgresToolStore(PostgresUnitOfWork uow) : IToolLookup, I
             ct,
             Text(toolCode));
 
+    public Task<IReadOnlyList<ToolRequirement>> ListToolRequirementsAsync(CancellationToken ct) =>
+        Read(
+            "SELECT requirement_id, activity_code, machine_code, tool_type_code, quantity, set_at, set_by FROM resources.tool_requirement ORDER BY activity_code, machine_code NULLS FIRST, tool_type_code",
+            r => new ToolRequirement(r.GetInt64(0), r.GetString(1), S(r, 2), r.GetString(3), r.GetInt32(4), r.GetFieldValue<DateTimeOffset>(5), r.GetString(6)),
+            ct);
+
+    public async Task<long> SetToolRequirementAsync(ToolRequirement requirement, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(requirement);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO resources.tool_requirement (activity_code, machine_code, tool_type_code, quantity, set_at, set_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (activity_code, coalesce(machine_code, ''), tool_type_code) DO UPDATE SET quantity = EXCLUDED.quantity, set_at = EXCLUDED.set_at, set_by = EXCLUDED.set_by
+            RETURNING requirement_id
+            """,
+            requirement.ActivityCode, Text(requirement.MachineCode), requirement.ToolTypeCode, requirement.Quantity, requirement.SetAt, requirement.SetBy);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<bool> DeleteToolRequirementAsync(long requirementId, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("DELETE FROM resources.tool_requirement WHERE requirement_id = $1", requirementId);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
     public async Task<bool> InsertToolTypeAsync(ToolTypeInfo type, DateTimeOffset at, string actor, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(type);

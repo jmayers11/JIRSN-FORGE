@@ -24,10 +24,10 @@ public sealed record ReadinessResult(
 public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, ReadinessResult>
 {
     /// <summary>Dimensions that exist in the architecture but have no data in Forge yet.</summary>
-    public static readonly IReadOnlyList<string> NotYetEvaluated = ["Material", "Engineering", "Tooling", "Quality"];
+    public static readonly IReadOnlyList<string> NotYetEvaluated = ["Material", "Engineering", "Quality"];
 
     // Fixed, documented order used to name the primary constraint when several dimensions fail.
-    private static readonly string[] Precedence = ["RequirementProfile", "Equipment", "Safety", "Workforce"];
+    private static readonly string[] Precedence = ["Holds", "RequirementProfile", "Equipment", "Tooling", "Safety", "Workforce"];
 
     /// <summary>Equipment readiness from recorded downtime. Calibration and tooling arrive with their contexts.</summary>
     public static EvidenceNode EquipmentCheck(SiteSnapshot snapshot, string machineCode, DateTimeOffset at)
@@ -55,7 +55,7 @@ public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, R
 
     public string Name => "operation-readiness";
 
-    public string Version => "1";
+    public string Version => "2";
 
     public EngineEvaluation<ReadinessResult> Evaluate(SiteSnapshot snapshot, WorkItem parameters, DateTimeOffset asOf)
     {
@@ -85,12 +85,19 @@ public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, R
                     Inputs = new(StringComparer.Ordinal) { ["operatorQualifications"] = string.Join(",", profile.OperatorQualifications) },
                 });
                 Add("Equipment", EquipmentCheck(snapshot, machineCode, asOf));
+                var tooling = ExecutableChecks.Tooling(snapshot, machineCode, parameters.ActivityCode, asOf);
+                Add("Tooling", new EvidenceNode("Tooling", tooling.Outcome, tooling.Detail));
                 Add("Workforce", WorkforceCheck(snapshot, parameters, profile.OperatorQualifications));
             }
         }
         else
         {
             Add("Workforce", new EvidenceNode("Workforce", EvidenceOutcome.Info, $"{parameters.ActivityCode} is not machine work; no operator qualification is defined for it."));
+        }
+
+        if (ExecutableChecks.EquipmentHolds(snapshot, parameters.WorkCenterCode, parameters.MachineCode) is { } held)
+        {
+            Add("Holds", new EvidenceNode("Holds", held.Outcome, held.Detail));
         }
 
         var safety = composition.Evaluate(snapshot, parameters, asOf);

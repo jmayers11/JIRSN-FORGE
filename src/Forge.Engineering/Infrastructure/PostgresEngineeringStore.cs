@@ -247,6 +247,8 @@ public static class EngineeringRegistration
         services.AddForgeStore<IDocumentLookup>(uow => new PostgresDocumentStore(uow));
         services.AddSingleton<EngineeringService>();
         services.AddSingleton<DocumentService>();
+        services.AddForgeStore<IDocumentTrainingLookup>(uow => new PostgresDocumentTrainingStore(uow));
+        services.AddForgeStore<IDocumentTrainingStore>(uow => new PostgresDocumentTrainingStore(uow));
         services.AddForgeStore<IChangeStore>(uow => new PostgresChangeStore(uow));
         services.AddForgeStore<IChangeLookup>(uow => new PostgresChangeStore(uow));
         services.AddSingleton<ChangeService>();

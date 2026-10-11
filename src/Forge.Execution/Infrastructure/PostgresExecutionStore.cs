@@ -421,6 +421,9 @@ public static class ExecutionRegistration
         services.AddForgeStore<IProductionActualsLookup>(uow => new PostgresProductionActualsStore(uow));
         services.AddForgeStore<IProductionActualsStore>(uow => new PostgresProductionActualsStore(uow));
         services.AddSingleton<ProductionActualsService>();
+        services.AddForgeStore<IProductionHoldLookup>(uow => new PostgresHoldStore(uow));
+        services.AddForgeStore<IProductionHoldStore>(uow => new PostgresHoldStore(uow));
+        services.AddSingleton<HoldService>();
         return services;
     }
 }

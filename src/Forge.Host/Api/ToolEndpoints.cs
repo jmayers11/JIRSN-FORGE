@@ -23,6 +23,8 @@ public sealed record ToolConditionRequest(ToolCondition Condition, string? Reaso
 
 public sealed record ToolUseRequest(int Uses, string? MachineCode, string? ActivityCode, string? Reference, string? Reason);
 
+public sealed record ToolRequirementRequest(string ActivityCode, string? MachineCode, string ToolTypeCode, int? Quantity, string? Reason);
+
 /// <summary>A tool now: what it is, where, and whether it may be used.</summary>
 public sealed record ToolView(ToolInfo Tool, ToolTypeInfo Type, ToolValidity Validity);
 
@@ -44,6 +46,13 @@ internal static class ToolEndpoints
             }));
         api.MapGet("/tools/{code}/history", (HttpContext http, string code, CancellationToken _) =>
             ReadStore<IToolLookup>(http, Permissions.ResourcesRead, async (l, ct) => await l.ListToolEventsAsync(code.Trim().ToUpperInvariant(), ct)));
+
+        api.MapGet("/tool-requirements", (HttpContext http, CancellationToken _) =>
+            ReadStore<IToolLookup>(http, Permissions.ResourcesRead, async (l, ct) => await l.ListToolRequirementsAsync(ct)));
+        api.MapPost("/tool-requirements", (HttpContext http, ToolRequirementRequest b, ToolService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SetRequirementAsync(new SetToolRequirement(b.ActivityCode, b.MachineCode, b.ToolTypeCode, b.Quantity ?? 1), c, ct)));
+        api.MapPost("/tool-requirements/{id:long}/remove", (HttpContext http, long id, ReasonRequest b, ToolService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RemoveRequirementAsync(new RemoveToolRequirement(id), c, ct)));
 
         api.MapPost("/tool-types", (HttpContext http, ToolTypeRequest b, ToolService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DefineTypeAsync(new DefineToolType(b.Code, b.Name, b.Kind, b.CalibrationDays, b.UsageLimit, b.ServiceUses), c, ct)));

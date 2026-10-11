@@ -48,7 +48,42 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
             : null;
         var snapshot = await LoadSnapshotAsync(uow, ct);
         var documentation = await DocumentationService.ForOrderAsync(uow, order, snapshot.AsOf, principal, ct);
-        return EngineRunner.Run(orders, snapshot, new OrderReadinessRequest(order, revision, material, quality, documentation), snapshot.AsOf);
+        var pointOfUse = material is null ? null : await PointOfUseAsync(uow, snapshot.AsOf, ct);
+        var training = await TrainingAsync(uow, documentation, ct);
+        return EngineRunner.Run(orders, snapshot, new OrderReadinessRequest(order, revision, material, quality, documentation, pointOfUse, training), snapshot.AsOf);
+    }
+
+    /// <summary>Released, usable stock at points of use, and the work centers that have a point-of-use location (V3.9).</summary>
+    internal static async Task<OrderPointOfUse> PointOfUseAsync(IKernelUnitOfWork uow, DateTimeOffset now, CancellationToken ct)
+    {
+        var positions = (await Forge.Inventory.Contracts.ShelfLifeQueries.PositionsAsync(uow, null, now, ct)).Where(p => p.PointOfUseWorkCenter is not null).ToList();
+        var centers = (await uow.Store<Forge.Inventory.Contracts.IInventoryLookup>().ListLocationsAsync(ct))
+            .Where(l => l.Active && l.PointOfUse)
+            .Select(l => l.WorkCenterCode!)
+            .ToHashSet(StringComparer.Ordinal);
+        return new OrderPointOfUse(positions, centers);
+    }
+
+    /// <summary>The training policy and the controlled-document revisions of the order that need training (V3.9).</summary>
+    internal static async Task<OrderTraining> TrainingAsync(IKernelUnitOfWork uow, OrderDocumentation documentation, CancellationToken ct)
+    {
+        var policy = await uow.Store<IDocumentTrainingLookup>().GetTrainingPolicyAsync(ct);
+        if (policy.Policy == TrainingPolicy.Off)
+        {
+            return new OrderTraining(TrainingPolicy.Off, []);
+        }
+
+        var requirements = new List<TrainingRequirement>();
+        var lookup = uow.Store<IDocumentLookup>();
+        foreach (var d in documentation.Documents)
+        {
+            if ((d.AtRelease ?? d.Applicable) is { } revision && await lookup.FindDocumentAsync(d.DocumentNumber, ct) is { } info && policy.DocumentTypes.Contains(info.Type))
+            {
+                requirements.Add(new TrainingRequirement(d.DocumentNumber, revision, d.OperationSequence));
+            }
+        }
+
+        return new OrderTraining(policy.Policy, requirements.Distinct().ToList());
     }
 
     public async Task<EngineRun<ReadinessResult>> EvaluateMachineAsync(ForgePrincipal principal, string machineCode, string activityCode, CancellationToken ct)
@@ -73,6 +108,28 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
             .Where(w => area is null || w.SafetyAreaCode == area)
             .Select(w => EngineRunner.Run(readiness, snapshot, w, snapshot.AsOf))
             .ToList();
+    }
+
+    /// <summary>
+    /// Each worker's presence level now (V3.9): not present, scheduled (never counted), clocked in, assigned to a work
+    /// center, active on an operation. Optionally for one work center (home, assigned or working there).
+    /// </summary>
+    public async Task<IReadOnlyList<PersonPresence>> EvaluatePresenceAsync(ForgePrincipal principal, string? workCenterCode, CancellationToken ct)
+    {
+        Demand(principal);
+        var wc = string.IsNullOrWhiteSpace(workCenterCode) ? null : BusinessCode.Require(workCenterCode, "Work center");
+        var snapshot = await LoadSnapshotAsync(ct);
+        return ExecutableChecks.Presence(snapshot).Where(p => wc is null || p.HomeWorkCenter == wc || p.WorkCenter == wc).ToList();
+    }
+
+    /// <summary>Every open operation of released and held orders: can it happen now, and if not, why not (V3.9).</summary>
+    public async Task<IReadOnlyList<OperationAnswer>> EvaluateOperationsAsync(ForgePrincipal principal, string? workCenterCode, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        Demand(principal);
+        var wc = string.IsNullOrWhiteSpace(workCenterCode) ? null : BusinessCode.Require(workCenterCode, "Work center");
+        await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
+        return (await ExecutableOperations.EvaluateAsync(uow, time, principal, ct)).Where(o => wc is null || o.WorkCenter == wc).ToList();
     }
 
     /// <summary>Impact of moving a person, evaluated on a copy of the current state. Nothing is committed.</summary>

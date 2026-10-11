@@ -1,8 +1,9 @@
 import { tryGet } from '../api.js';
 import { esc, fmtNumber, errorBlock, emptyBlock } from '../ui.js';
 import { roleTitle } from '../app.js';
+import { appendPresence, appendDocumentTraining } from '../executable.js';
 
-export async function workforcePage(page) {
+export async function workforcePage(page, ctx) {
   const now = Date.now();
   const iso = ms => new Date(ms).toISOString();
   const [people, capacity] = await Promise.all([
@@ -29,4 +30,7 @@ export async function workforcePage(page) {
       ${people.data.map(p => `<tr><td>${esc(p.displayName)}</td><td class="mono">${esc(p.idpSubject)}</td><td>${esc(p.roles.map(roleTitle).join(', ') || '—')}</td><td>${p.isActive ? '<span class="pill ok">Active</span>' : '<span class="pill none">Inactive</span>'}</td></tr>`).join('')}
       </tbody></table>`}
     </section>`;
+  // V3.9: presence levels, and training on controlled documents.
+  await appendPresence(page);
+  await appendDocumentTraining(page, ctx.me);
 }

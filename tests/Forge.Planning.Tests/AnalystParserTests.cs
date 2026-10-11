@@ -95,6 +95,11 @@ public class AnalystParserTests
     [InlineData("Which tools are out for service?", "tool-status")]
     [InlineData("Which gauges are due for calibration?", "tool-status")]
     [InlineData("Which blades are out for sharpening?", "tool-status")]
+    [InlineData("Which operations can run now?", "executable-operations")]
+    [InlineData("Which operations are on hold?", "executable-operations")]
+    [InlineData("Which operations are blocked by tooling?", "executable-operations")]
+    [InlineData("Who is present?", "presence")]
+    [InlineData("Who is scheduled but not clocked in?", "presence")]
     [InlineData("What needs a retest?", "shelf-life")]
     [InlineData("Show shelf life and aging", "shelf-life")]
     [InlineData("Which lots are overdue for retest?", "shelf-life")]
@@ -338,5 +343,17 @@ public class AnalystParserTests
         Assert.Equal("OutForService", Parse("Which tools are out for service?").Report!.Parameters.Status);
         Assert.Null(Parse("Which gauges are due for calibration?").Report!.Parameters.Status);
         Assert.Equal("qualifications-expiring", Parse("Which certifications expire in the next 90 days?").Report!.ReportId);
+    }
+
+    [Fact]
+    public void Executable_and_presence_questions_ask_for_the_constraint_or_level()
+    {
+        Assert.Equal("Holds", Parse("Which operations are on hold?").Report!.Parameters.Status);
+        Assert.Equal("Tooling", Parse("Which operations are blocked by tooling?").Report!.Parameters.Status);
+        Assert.Equal("Executable", Parse("Which operations can run now?").Report!.Parameters.Status);
+        Assert.Equal("Training", Parse("Which operations are waiting for training?").Report!.Parameters.Status);
+        Assert.Equal("Scheduled", Parse("Who is scheduled but not clocked in?").Report!.Parameters.Status);
+        Assert.Null(Parse("Who is present?").Report!.Parameters.Status);
+        Assert.Equal("stock-positions", Parse("Show stock at the point of use").Report!.ReportId);
     }
 }

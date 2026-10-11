@@ -237,7 +237,7 @@ public static partial class QueryParser
         }
 
         // V3.5, V3.6: stoppage and shelf-life questions are reports even when they say "overdue" or "blocked".
-        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment" or "tool-status")
+        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment" or "tool-status" or "executable-operations" or "presence")
         {
             return AnalystIntent.Report;
         }
@@ -288,6 +288,8 @@ public static partial class QueryParser
             : Has("lineage", "split from", "merged from", "merged into", "split into", "lot splits", "splits and merges", "was split", "were merged") ? "lot-lineage"
             : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
             : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
+            : Has("executable", "can run now", "can happen", "operations can", "operations cannot", "operations cant", "operation can", "on hold", "untrained", "not trained", "which operations", "what operations", "open operations", "operations are blocked", "operations blocked") ? "executable-operations"
+            : Has("presence", "who is present", "who is here", "who is clocked in", "clocked in", "on site", "scheduled but not", "not clocked in", "who is working on", "active on an operation", "actually here") ? "presence"
             : Has("goal", "reforecast", "required by date", "required-by") ? "goal-attainment"
             : Has("tool", "gauge", "blade", "sharpen", "calibrat", "out for service", "usage limit") && !Has("cert", "qualif", "training") ? "tool-status"
             : Has("shelf life", "shelf-life", "expir", "expiring", "retest", "open life", "excursion", "aging", "how old", "oldest lot", "fefo", "fifo") && !Has("cert", "qualif", "training", "alternate", "document", "drawing", "contract") ? "shelf-life"
@@ -395,6 +397,37 @@ public static partial class QueryParser
         if (t.Contains(" graph", StringComparison.Ordinal) || t.Contains(" chart", StringComparison.Ordinal))
         {
             notes.Add("Forge shows this as a table with totals; charts are not part of reports yet.");
+        }
+
+        // V3.9: "Which operations are on hold?" — the constraint asked about.
+        if (entry.Id == "executable-operations")
+        {
+            bool Says(params string[] words) => words.Any(w => t.Contains(" " + w, StringComparison.Ordinal));
+            var constraint = Says("hold") ? "Holds"
+                : Says("tool", "gauge", "calibrat") ? "Tooling"
+                : Says("point of use", "staged", "staging") ? "PointOfUse"
+                : Says("untrained", "not trained", "training") ? "Training"
+                : Says("material") ? "Material"
+                : Says("can run now", "can happen", "executable") && !Says("not executable", "cannot", "cant") ? "Executable"
+                : null;
+            if (constraint is not null)
+            {
+                parameters = parameters with { Status = constraint };
+                notes.Add(constraint == "Executable" ? "Only operations that can run now." : $"Only operations whose primary constraint is {constraint}.");
+            }
+        }
+
+        // V3.9: "Who is scheduled but not clocked in?" — the presence level asked about.
+        if (entry.Id == "presence")
+        {
+            var level = t.Contains(" scheduled but not", StringComparison.Ordinal) || t.Contains(" not clocked in", StringComparison.Ordinal) ? "Scheduled"
+                : t.Contains(" working on", StringComparison.Ordinal) || t.Contains(" active on", StringComparison.Ordinal) ? "ActiveOnOperation"
+                : null;
+            if (level is not null)
+            {
+                parameters = parameters with { Status = level };
+                notes.Add(level == "Scheduled" ? "Only people on shift who are not clocked in or confirmed (never counted as present)." : "Only people with open direct labor on an operation.");
+            }
         }
 
         // V3.8: "Which tools are out for service?" — the status asked about.

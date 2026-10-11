@@ -10,7 +10,16 @@ namespace Forge.Planning.Engines;
 /// material allocation and quality state. Without them, material and quality are listed as not evaluated.
 /// </summary>
 /// <param name="Documentation">The order's documentation (V2.3). When the item class is not enforced, Documentation is listed as not evaluated.</param>
-public sealed record OrderReadinessRequest(OrderInfo Order, RevisionInfo? RevisionNow, OrderMaterialStatus? Material = null, OrderQuality? Quality = null, OrderDocumentation? Documentation = null);
+/// <param name="PointOfUse">Stock at points of use (V3.9); with material, the first operation checks material is there.</param>
+/// <param name="Training">The training policy and the document revisions that need training (V3.9).</param>
+public sealed record OrderReadinessRequest(
+    OrderInfo Order,
+    RevisionInfo? RevisionNow,
+    OrderMaterialStatus? Material = null,
+    OrderQuality? Quality = null,
+    OrderDocumentation? Documentation = null,
+    OrderPointOfUse? PointOfUse = null,
+    OrderTraining? Training = null);
 
 /// <summary>How one eligible machine (or the work center, for work without a machine) looks for an operation.</summary>
 public sealed record OperationCandidate(string? MachineCode, bool Executable, string? PrimaryConstraint, IReadOnlyList<ReadinessDimension> Dimensions);
@@ -35,21 +44,23 @@ public sealed record OrderReadinessResult(long OrderNumber, string Status, IRead
 /// </summary>
 public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessRequest, OrderReadinessResult>
 {
-    public static readonly IReadOnlyList<string> NotYetEvaluated = ["Material", "Tooling", "Quality"];
+    public static readonly IReadOnlyList<string> NotYetEvaluated = ["Material", "Quality"];
 
-    public static readonly IReadOnlyList<string> NotYetEvaluatedWithMaterial = ["Tooling", "Quality"];
+    public static readonly IReadOnlyList<string> NotYetEvaluatedWithMaterial = ["Quality"];
 
-    public static readonly IReadOnlyList<string> NotYetEvaluatedWithQuality = ["Material", "Tooling"];
+    public static readonly IReadOnlyList<string> NotYetEvaluatedWithQuality = ["Material"];
 
-    public static readonly IReadOnlyList<string> NotYetEvaluatedWithBoth = ["Tooling"];
+    public static readonly IReadOnlyList<string> NotYetEvaluatedWithBoth = [];
 
-    private static readonly string[] Precedence = ["Order", "Engineering", "Documentation", "Predecessor", "Quality", "Material", "RequirementProfile", "Equipment", "Safety", "Workforce"];
+    // V3.9 adds Holds, PointOfUse, Tooling and Training. The order says which constraint is named first.
+    private static readonly string[] Precedence =
+        ["Order", "Holds", "Engineering", "Documentation", "Predecessor", "Quality", "Material", "PointOfUse", "RequirementProfile", "Equipment", "Tooling", "Safety", "Workforce", "Training"];
 
     private readonly PersonnelCompositionEngine composition = new();
 
     public string Name => "order-readiness";
 
-    public string Version => "4";
+    public string Version => "5";
 
     public EngineEvaluation<OrderReadinessResult> Evaluate(SiteSnapshot snapshot, OrderReadinessRequest parameters, DateTimeOffset asOf)
     {
@@ -103,7 +114,7 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
                     ? new ReadinessDimension("Predecessor", EvidenceOutcome.Pass, "All earlier operations are complete.")
                     : new ReadinessDimension("Predecessor", EvidenceOutcome.Fail, $"Earlier operation(s) not complete: {string.Join(", ", unfinished)}.");
 
-            var candidates = Candidates(snapshot, op, asOf).ToList();
+            var candidates = Candidates(snapshot, parameters, op, asOf).ToList();
             var best = candidates.OrderBy(c => c.Executable ? 0 : 1)
                 .ThenBy(c => c.Dimensions.Count(d => d.Outcome is EvidenceOutcome.Fail or EvidenceOutcome.Indeterminate))
                 .ThenBy(c => c.MachineCode ?? string.Empty, StringComparer.Ordinal)
@@ -123,6 +134,13 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
             if (material is not null && op.Status != OperationStatus.Complete)
             {
                 dimensions.Add(material);
+            }
+
+            // Material is used from the first operation; it must be at that operation's point of use before it starts.
+            var first = order.Operations.Min(o => o.Sequence);
+            if (op.Sequence == first && op.Status == OperationStatus.Pending && ExecutableChecks.PointOfUse(parameters.PointOfUse, parameters.Material, op.WorkCenterCode) is { } pointOfUse)
+            {
+                dimensions.Add(pointOfUse);
             }
 
             dimensions.AddRange(best.Dimensions);
@@ -188,7 +206,7 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
             : $"Inspection after operation {string.Join(", ", passed)} passed; no nonconformance is open.");
     }
 
-    private IEnumerable<OperationCandidate> Candidates(SiteSnapshot snapshot, OrderOperationInfo op, DateTimeOffset asOf)
+    private IEnumerable<OperationCandidate> Candidates(SiteSnapshot snapshot, OrderReadinessRequest request, OrderOperationInfo op, DateTimeOffset asOf)
     {
         var workCenter = snapshot.WorkCenters.FirstOrDefault(w => w.Code == op.WorkCenterCode);
         if (workCenter is null)
@@ -199,7 +217,7 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
 
         if (op.EligibleMachines.Count == 0)
         {
-            yield return Candidate(snapshot, op, workCenter.SafetyAreaCode, null, [], asOf);
+            yield return Candidate(snapshot, request, op, workCenter.SafetyAreaCode, null, [], asOf);
             yield break;
         }
 
@@ -212,18 +230,28 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
                 continue;
             }
 
-            yield return Candidate(snapshot, op, workCenter.SafetyAreaCode, machineCode, profile.OperatorQualifications, asOf);
+            yield return Candidate(snapshot, request, op, workCenter.SafetyAreaCode, machineCode, profile.OperatorQualifications, asOf);
         }
     }
 
-    private OperationCandidate Candidate(SiteSnapshot snapshot, OrderOperationInfo op, string area, string? machine, IReadOnlyList<string> operatorQualifications, DateTimeOffset asOf)
+    private OperationCandidate Candidate(SiteSnapshot snapshot, OrderReadinessRequest request, OrderOperationInfo op, string area, string? machine, IReadOnlyList<string> operatorQualifications, DateTimeOffset asOf)
     {
         var dimensions = new List<ReadinessDimension>();
+        if (op.Status != OperationStatus.Complete)
+        {
+            dimensions.Add(ExecutableChecks.Holds(snapshot, request.Order.OrderNumber, request.Order.PartNumber, op.Sequence, op.WorkCenterCode, machine));
+        }
+
         if (machine is not null)
         {
             dimensions.Add(new ReadinessDimension("RequirementProfile", EvidenceOutcome.Pass, $"{op.ActivityCode} on {machine} requires one of {string.Join(", ", operatorQualifications)}."));
             var equipment = OperationReadinessEngine.EquipmentCheck(snapshot, machine, asOf);
             dimensions.Add(new ReadinessDimension("Equipment", equipment.Outcome, equipment.Detail));
+        }
+
+        if (op.Status != OperationStatus.Complete)
+        {
+            dimensions.Add(ExecutableChecks.Tooling(snapshot, machine, op.ActivityCode, asOf));
         }
 
         // Candidates: present, not a trainee, in this safety area or not yet assigned anywhere.
@@ -244,6 +272,11 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
                 "Workforce",
                 EvidenceOutcome.Fail,
                 $"Needs a crew of {op.CrewSize}{(requirement.Length == 0 ? string.Empty : " holding " + requirement)}; {qualified.Count} qualified and present in {area}" + (qualified.Count == 0 ? "." : $": {string.Join(", ", qualified.Select(p => p.Name))}.")));
+
+        if (op.Status != OperationStatus.Complete && ExecutableChecks.Training(request.Training, op.Sequence, qualified, op.CrewSize) is { } training)
+        {
+            dimensions.Add(training);
+        }
 
         var safety = composition.Evaluate(snapshot, new WorkItem(area, op.WorkCenterCode, machine, op.ActivityCode), asOf);
         dimensions.Add(new ReadinessDimension("Safety", safety.Evidence.Outcome, safety.Output.Status == CompositionStatus.NotSatisfied

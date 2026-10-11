@@ -86,3 +86,32 @@ export async function appendTools(container, machines, me) {
   };
   await load();
 }
+
+/** What tools activities need (V3.9): readiness checks that enough of them are valid for the machine and activity. */
+export async function appendToolRequirements(container, me) {
+  const section = document.createElement('section');
+  section.className = 'panel';
+  container.appendChild(section);
+  const manage = can(me, 'ManufacturingEngineer', 'QualityEngineer', 'MaintenancePlanner');
+  const load = async () => {
+    const [reqs, types] = await Promise.all([tryGet('/api/resources/tool-requirements'), tryGet('/api/resources/tool-types')]);
+    const list = reqs.data ?? [];
+    section.innerHTML = `<header><h2>Tooling required</h2><span class="spacer"></span>${manage ? '<button class="btn small" data-req-add>+ Requirement</button>' : ''}</header>
+      ${reqs.error ? errorBlock(reqs.error, 'tool requirements') : !list.length ? emptyBlock('No tooling required', 'Say which tools an activity needs (on a machine, or anywhere); readiness then checks that enough are valid at that moment.') : `
+      <table class="table"><thead><tr><th>Activity</th><th>Machine</th><th>Tool type</th><th class="num">How many</th><th>Set</th><th></th></tr></thead><tbody>
+      ${list.map(r => `<tr><td>${esc(r.activityCode)}</td><td>${esc(r.machineCode ?? 'Any')}</td><td>${esc(r.toolTypeCode)}</td><td class="num">${r.quantity}</td><td>${esc(fmtDateTime(r.setAt))} <span class="faint">${esc(who(r.setBy))}</span></td>
+        <td>${manage ? `<button class="btn small ghost" data-req-remove="${r.requirementId}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table>`}`;
+    $$('[data-req-add]', section).forEach(b => b.addEventListener('click', () => formModal({
+      title: 'Require tooling', detail: 'A machine-specific requirement replaces the general one for the same tool type.', confirmLabel: 'Save',
+      fields: [
+        { name: 'activityCode', label: 'Activity', code: true, required: true, placeholder: 'RUN_SLITTER' }, { name: 'machineCode', label: 'Machine (empty for any)', code: true },
+        { name: 'toolTypeCode', label: 'Tool type', type: 'select', options: (types.data ?? []).filter(t => t.active).map(t => [t.code, `${t.code} — ${t.name}`]), required: true },
+        { name: 'quantity', label: 'How many', type: 'number', min: 1, value: 1 },
+      ],
+    }, (v, reason) => command('/api/resources/tool-requirements', { ...v, machineCode: v.machineCode || null, quantity: Number(v.quantity || 1) }, reason), load)));
+    $$('[data-req-remove]', section).forEach(b => b.addEventListener('click', () => formModal({
+      title: 'Remove this tooling requirement', confirmLabel: 'Remove', reasonRequired: true, fields: [],
+    }, (v, reason) => command(`/api/resources/tool-requirements/${b.dataset.reqRemove}/remove`, {}, reason), load)));
+  };
+  await load();
+}

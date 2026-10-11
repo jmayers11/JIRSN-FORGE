@@ -200,6 +200,76 @@ public sealed record ToolValidity(string ToolCode, DateTimeOffset AsOf, bool Val
     }
 }
 
+/// <summary>
+/// An activity (on one machine, or on any machine when <see cref="MachineCode"/> is null) needs this many valid tools
+/// of a type (V3.9). A machine-specific requirement for the same tool type replaces the general one.
+/// </summary>
+public sealed record ToolRequirement(long RequirementId, string ActivityCode, string? MachineCode, string ToolTypeCode, int Quantity, DateTimeOffset SetAt, string SetBy)
+{
+    public string Describe() => $"{Quantity} x {ToolTypeCode} for {ActivityCode}{(MachineCode is null ? string.Empty : $" on {MachineCode}")}";
+}
+
+/// <summary>Whether the tools an activity needs on a machine are there and valid at one moment (V3.9).</summary>
+/// <param name="Required">False when nothing is required.</param>
+/// <param name="Problems">One line per requirement that is not met, naming what is wrong with each tool of that type.</param>
+public sealed record ToolingCheck(bool Required, bool Ready, IReadOnlyList<string> Met, IReadOnlyList<string> Problems)
+{
+    public string Detail => !Required
+        ? "No tools are required."
+        : Ready ? $"Tools ready: {string.Join("; ", Met)}." : string.Join(" ", Problems);
+
+    /// <summary>
+    /// For each requirement that applies (machine-specific ones win over general ones for the same tool type), counts
+    /// the tools of that type valid for the machine and activity at <paramref name="at"/>, judged from their history.
+    /// </summary>
+    public static ToolingCheck For(
+        IEnumerable<ToolRequirement> requirements,
+        IReadOnlyCollection<ToolTypeInfo> types,
+        IReadOnlyCollection<ToolInfo> tools,
+        ILookup<string, ToolEvent> history,
+        string? machine,
+        string activity,
+        DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(requirements);
+        ArgumentNullException.ThrowIfNull(types);
+        ArgumentNullException.ThrowIfNull(tools);
+        ArgumentNullException.ThrowIfNull(history);
+        var applicable = requirements
+            .Where(r => r.ActivityCode == activity && (r.MachineCode is null || r.MachineCode == machine))
+            .GroupBy(r => r.ToolTypeCode, StringComparer.Ordinal)
+            .Select(g => g.OrderBy(r => r.MachineCode is null ? 1 : 0).First())
+            .OrderBy(r => r.ToolTypeCode, StringComparer.Ordinal)
+            .ToList();
+        var met = new List<string>();
+        var problems = new List<string>();
+        foreach (var requirement in applicable)
+        {
+            var type = types.FirstOrDefault(t => t.Code == requirement.ToolTypeCode);
+            var candidates = tools.Where(t => t.TypeCode == requirement.ToolTypeCode).OrderBy(t => t.Code, StringComparer.Ordinal).ToList();
+            if (type is null || candidates.Count == 0)
+            {
+                problems.Add($"{requirement.Describe()} is required; no tool of that type is registered.");
+                continue;
+            }
+
+            var judged = candidates.Select(t => ToolValidity.At(t, type, history[t.Code], at, machine, activity)).ToList();
+            var valid = judged.Where(v => v.Valid).Select(v => v.ToolCode).ToList();
+            if (valid.Count >= requirement.Quantity)
+            {
+                met.Add($"{requirement.ToolTypeCode} {string.Join(", ", valid)}");
+            }
+            else
+            {
+                var why = judged.Where(v => !v.Valid).Select(v => string.Join(" ", v.Problems));
+                problems.Add($"{requirement.Describe()} is required; {valid.Count} valid{(valid.Count == 0 ? string.Empty : $" ({string.Join(", ", valid)})")}. {string.Join(" ", why)}".TrimEnd());
+            }
+        }
+
+        return new ToolingCheck(applicable.Count > 0, problems.Count == 0, met, problems);
+    }
+}
+
 public interface IToolLookup
 {
     Task<IReadOnlyList<ToolTypeInfo>> ListToolTypesAsync(CancellationToken ct);
@@ -210,6 +280,9 @@ public interface IToolLookup
 
     /// <summary>A tool's history (all tools when null), oldest first.</summary>
     Task<IReadOnlyList<ToolEvent>> ListToolEventsAsync(string? toolCode, CancellationToken ct);
+
+    /// <summary>What tools activities need (V3.9), by activity, machine and tool type.</summary>
+    Task<IReadOnlyList<ToolRequirement>> ListToolRequirementsAsync(CancellationToken ct);
 }
 
 public interface IToolStore
@@ -221,4 +294,9 @@ public interface IToolStore
     Task UpdateToolAsync(ToolInfo tool, CancellationToken ct);
 
     Task<long> InsertToolEventAsync(ToolEvent e, CancellationToken ct);
+
+    /// <summary>Adds the requirement, or changes the quantity of the same activity, machine and tool type. Returns its id.</summary>
+    Task<long> SetToolRequirementAsync(ToolRequirement requirement, CancellationToken ct);
+
+    Task<bool> DeleteToolRequirementAsync(long requirementId, CancellationToken ct);
 }

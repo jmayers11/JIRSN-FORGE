@@ -163,6 +163,8 @@ app.MapProductionActualsEndpoints();
 app.MapShelfLifeEndpoints();
 app.MapGoalEndpoints();
 app.MapToolEndpoints();
+app.MapHoldEndpoints();
+app.MapExecutableEndpoints();
 app.MapMaterialsEndpoints();
 app.MapQualityEndpoints();
 app.MapProgramsEndpoints();

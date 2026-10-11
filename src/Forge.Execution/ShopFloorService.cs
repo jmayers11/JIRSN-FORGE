@@ -146,6 +146,7 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             }
 
             var machine = await MachineAsync(uow, op, c.MachineCode, now, ct);
+            await HoldService.RequireNoProductionHoldAsync(uow, order, op, machine, ct);
             if (!string.IsNullOrWhiteSpace(c.ToolCode))
             {
                 await ToolUse.RecordAsync(uow, c.ToolCode, machine, op.ActivityCode, $"order {id}", now, context.Actor, ct);
@@ -295,6 +296,7 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             if (c.GoodQuantity > 0 || c.CompleteOperation)
             {
                 await RequireNoHoldAsync(uow, order, c.Sequence, wholeOrderOnly: true, ct);
+                await HoldService.RequireNoProductionHoldAsync(uow, order, null, null, ct);
             }
 
             var good = op.GoodQuantity + c.GoodQuantity;

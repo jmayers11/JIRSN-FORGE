@@ -200,6 +200,7 @@ internal static class ShopFloorEndpoints
             holds[o.OrderNumber] = await uow.Store<IWorkHoldLookup>().ListHoldsAsync(o.OrderNumber, o.PartNumber, ct);
         }
 
+        var production = await uow.Store<IProductionHoldLookup>().ListProductionHoldsAsync(false, ct);
         var queue = mine
             .Select(o => new
             {
@@ -212,7 +213,8 @@ internal static class ShopFloorEndpoints
                 scheduledStart = scheduleStart.TryGetValue((o.OrderNumber, o.Operation.Sequence), out var at) ? at.Start : null,
                 scheduledMachine = scheduleStart.TryGetValue((o.OrderNumber, o.Operation.Sequence), out var sm) ? sm.MachineCode : null,
                 scheduledForYou = scheduledForMe.ContainsKey((o.OrderNumber, o.Operation.Sequence)),
-                hold = string.Join(" ", holds[o.OrderNumber].Where(h => h.Blocks(o.Operation.Sequence)).Select(h => h.Detail)) is { Length: > 0 } why ? why : null,
+                hold = string.Join(" ", holds[o.OrderNumber].Where(h => h.Blocks(o.Operation.Sequence)).Select(h => h.Detail)
+                    .Concat(production.Where(h => h.Covers(o.OrderNumber, o.PartNumber, o.Operation.Sequence, o.Operation.WorkCenterCode, null)).Select(h => h.Describe() + "."))) is { Length: > 0 } why ? why : null,
             })
             .OrderByDescending(o => o.scheduledForYou)
             .ThenBy(o => o.scheduledStart ?? DateTimeOffset.MaxValue)
