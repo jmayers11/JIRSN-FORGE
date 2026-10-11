@@ -34,12 +34,30 @@ internal sealed class PostgresPeopleStore(PostgresUnitOfWork uow) : IPeopleStore
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, CancellationToken ct)
+    public async Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, DateTimeOffset? expiresAt, CancellationToken ct)
     {
         await using var cmd = uow.Command(
-            "INSERT INTO kernel.role_assignment (person_id, role, granted_at, granted_by) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
-            id.Value, role, at, actor);
+            "INSERT INTO kernel.role_assignment (person_id, role, granted_at, granted_by, expires_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (person_id, role) DO UPDATE SET granted_at = EXCLUDED.granted_at, granted_by = EXCLUDED.granted_by, expires_at = EXCLUDED.expires_at WHERE kernel.role_assignment.expires_at IS NOT NULL AND kernel.role_assignment.expires_at <= now()",
+            id.Value, role, at, actor, expiresAt);
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> CreateRoleAsync(string role, string displayName, IReadOnlyList<string> permissions, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var roleCommand = uow.Command(
+            "INSERT INTO kernel.role_definition (role_name, display_name, created_at, updated_at) VALUES ($1, $2, $3, $3) ON CONFLICT DO NOTHING",
+            role, displayName, at);
+        if (await roleCommand.ExecuteNonQueryAsync(ct) == 0)
+        {
+            return false;
+        }
+
+        foreach (var permission in permissions.Distinct(StringComparer.Ordinal))
+        {
+            await AddRolePermissionAsync(role, permission, at, actor, ct);
+        }
+
+        return true;
     }
 
     public async Task<bool> RemoveRoleAsync(PersonId id, string role, CancellationToken ct)
@@ -71,7 +89,7 @@ internal sealed class PostgresPeopleStore(PostgresUnitOfWork uow) : IPeopleStore
         }
 
         var roles = new HashSet<string>(StringComparer.Ordinal);
-        await using (var cmd = uow.Command("SELECT role FROM kernel.role_assignment WHERE person_id = $1", id.Value))
+        await using (var cmd = uow.Command("SELECT role FROM kernel.role_assignment WHERE person_id = $1 AND (expires_at IS NULL OR expires_at > now())", id.Value))
         await using (var reader = await cmd.ExecuteReaderAsync(ct))
         {
             while (await reader.ReadAsync(ct))
@@ -90,15 +108,116 @@ internal sealed class PostgresPeopleStore(PostgresUnitOfWork uow) : IPeopleStore
             }
         }
 
-        return new ForgePrincipal(person.Id, person.DisplayName, person.IsActive, roles, programs, person.Markings);
+        var permissions = new HashSet<string>(StringComparer.Ordinal);
+        var scopedPermissions = new List<ScopedPermission>();
+        var approvalThresholds = new HashSet<ApprovalThreshold>();
+        await using (var cmd = uow.Command(
+            "SELECT rp.permission, rps.scope_type, rps.scope_id, atp.maximum_amount, atp.currency FROM kernel.role_assignment ra JOIN kernel.role_permission rp ON rp.role_name = ra.role JOIN kernel.role_definition rd ON rd.role_name = ra.role LEFT JOIN kernel.role_permission_scope rps ON rps.role_name = rp.role_name AND rps.permission = rp.permission LEFT JOIN kernel.approval_threshold_policy atp ON atp.permission = rp.permission WHERE ra.person_id = $1 AND (ra.expires_at IS NULL OR ra.expires_at > now()) AND rd.is_active AND (rps.scope_type IS NOT NULL OR NOT EXISTS (SELECT 1 FROM kernel.role_permission_scope s WHERE s.role_name = rp.role_name AND s.permission = rp.permission))",
+            id.Value))
+        await using (var reader = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+            {
+                if (reader.IsDBNull(1))
+                {
+                    permissions.Add(reader.GetString(0));
+                }
+                else
+                {
+                    scopedPermissions.Add(new ScopedPermission(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+                }
+
+                if (!reader.IsDBNull(3))
+                {
+                    approvalThresholds.Add(new ApprovalThreshold(reader.GetString(0), reader.GetDecimal(3), reader.GetString(4)));
+                }
+            }
+        }
+
+        return new ForgePrincipal(person.Id, person.DisplayName, person.IsActive, roles, programs, person.Markings, permissions, scopedPermissions, approvalThresholds.ToList());
     }
 
     public async Task<int> CountActiveWithRoleAsync(string role, CancellationToken ct)
     {
         await using var cmd = uow.Command(
-            "SELECT count(*) FROM kernel.role_assignment r JOIN kernel.person p ON p.person_id = r.person_id WHERE r.role = $1 AND p.is_active",
+            "SELECT count(*) FROM kernel.role_assignment r JOIN kernel.person p ON p.person_id = r.person_id WHERE r.role = $1 AND p.is_active AND (r.expires_at IS NULL OR r.expires_at > now())",
             role);
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    public async Task<bool> HasRoleAsync(string role, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("SELECT EXISTS (SELECT 1 FROM kernel.role_definition WHERE role_name = $1 AND is_active)", role);
+        return (bool)(await cmd.ExecuteScalarAsync(ct) ?? false);
+    }
+
+    public async Task<bool> HasPermissionAsync(string permission, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("SELECT EXISTS (SELECT 1 FROM kernel.permission_catalog WHERE permission = $1)", permission);
+        return (bool)(await cmd.ExecuteScalarAsync(ct) ?? false);
+    }
+
+    public async Task<bool> AddRolePermissionAsync(string role, string permission, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "INSERT INTO kernel.role_permission (role_name, permission, granted_at, granted_by) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+            role, permission, at, actor);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> RemoveRolePermissionAsync(string role, string permission, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("DELETE FROM kernel.role_permission WHERE role_name = $1 AND permission = $2", role, permission);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> AddRolePermissionScopeAsync(string role, string permission, string scopeType, string scopeId, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "INSERT INTO kernel.role_permission_scope (role_name, permission, scope_type, scope_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+            role, permission, scopeType, scopeId);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> RemoveRolePermissionScopeAsync(string role, string permission, string scopeType, string scopeId, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "DELETE FROM kernel.role_permission_scope WHERE role_name = $1 AND permission = $2 AND scope_type = $3 AND scope_id = $4",
+            role, permission, scopeType, scopeId);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<int> CountRolePermissionScopesAsync(string role, string permission, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("SELECT count(*) FROM kernel.role_permission_scope WHERE role_name = $1 AND permission = $2", role, permission);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    public async Task<bool> IsSeparationPolicyEnabledAsync(string policy, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("SELECT enabled FROM kernel.separation_policy WHERE policy_id = $1", policy);
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return result is bool enabled && enabled;
+    }
+
+    public async Task<bool> SetSeparationPolicyAsync(string policy, bool enabled, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE kernel.separation_policy SET enabled = $2, updated_at = now() WHERE policy_id = $1 AND enabled <> $2", policy, enabled);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> SetApprovalThresholdAsync(string permission, decimal? maximumAmount, string? currency, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        if (maximumAmount is null)
+        {
+            await using var delete = uow.Command("DELETE FROM kernel.approval_threshold_policy WHERE permission = $1", permission);
+            return await delete.ExecuteNonQueryAsync(ct) == 1;
+        }
+
+        await using var cmd = uow.Command(
+            "INSERT INTO kernel.approval_threshold_policy (permission, maximum_amount, currency, updated_at, updated_by) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (permission) DO UPDATE SET maximum_amount = EXCLUDED.maximum_amount, currency = EXCLUDED.currency, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by WHERE kernel.approval_threshold_policy.maximum_amount <> EXCLUDED.maximum_amount OR kernel.approval_threshold_policy.currency <> EXCLUDED.currency",
+            permission, maximumAmount.Value, currency!, at, actor);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
     private static async Task<PersonRecord?> ReadPerson(NpgsqlCommand cmd, CancellationToken ct)

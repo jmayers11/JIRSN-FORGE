@@ -87,7 +87,9 @@ internal sealed class InMemoryKernel : IKernelUnitOfWorkFactory
             return Task.CompletedTask;
         }
 
-        public Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, CancellationToken ct) => Task.FromResult(roles.Add((id, role)));
+        public Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, DateTimeOffset? expiresAt, CancellationToken ct) => Task.FromResult(roles.Add((id, role)));
+
+        public Task<bool> CreateRoleAsync(string role, string displayName, IReadOnlyList<string> permissions, DateTimeOffset at, string actor, CancellationToken ct) => Task.FromResult(false);
 
         public Task<bool> RemoveRoleAsync(PersonId id, string role, CancellationToken ct) => Task.FromResult(roles.Remove((id, role)));
 
@@ -111,6 +113,29 @@ internal sealed class InMemoryKernel : IKernelUnitOfWorkFactory
 
         public Task<int> CountActiveWithRoleAsync(string role, CancellationToken ct) =>
             Task.FromResult(roles.Count(r => r.Item2 == role && people.TryGetValue(r.Item1, out var p) && p.IsActive));
+
+        public Task<bool> HasRoleAsync(string role, CancellationToken ct) => Task.FromResult(Roles.IsKnown(role));
+
+        public Task<bool> HasPermissionAsync(string permission, CancellationToken ct) =>
+            Task.FromResult(typeof(Permissions).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                .Where(f => f.FieldType == typeof(string)).Select(f => (string)f.GetValue(null)!).Contains(permission, StringComparer.Ordinal));
+
+        public Task<bool> AddRolePermissionAsync(string role, string permission, DateTimeOffset at, string actor, CancellationToken ct) =>
+            Task.FromResult(Roles.PermissionsOf(role).Contains(permission, StringComparer.Ordinal));
+
+        public Task<bool> RemoveRolePermissionAsync(string role, string permission, CancellationToken ct) => Task.FromResult(false);
+
+        public Task<bool> AddRolePermissionScopeAsync(string role, string permission, string scopeType, string scopeId, CancellationToken ct) => Task.FromResult(false);
+
+        public Task<bool> RemoveRolePermissionScopeAsync(string role, string permission, string scopeType, string scopeId, CancellationToken ct) => Task.FromResult(false);
+
+        public Task<int> CountRolePermissionScopesAsync(string role, string permission, CancellationToken ct) => Task.FromResult(0);
+
+        public Task<bool> IsSeparationPolicyEnabledAsync(string policy, CancellationToken ct) => Task.FromResult(true);
+
+        public Task<bool> SetSeparationPolicyAsync(string policy, bool enabled, CancellationToken ct) => Task.FromResult(true);
+
+        public Task<bool> SetApprovalThresholdAsync(string permission, decimal? maximumAmount, string? currency, DateTimeOffset at, string actor, CancellationToken ct) => Task.FromResult(true);
 
         public Task EnqueueAsync(EventEnvelope envelope, CancellationToken ct)
         {

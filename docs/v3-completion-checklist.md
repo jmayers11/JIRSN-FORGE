@@ -14,8 +14,9 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | V3.11 | Full PASS: Planning 266, architecture 32, kernel 33, integration 90; zero warnings/errors; commit `4f18d85` | Complete |
 | V3.12 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 92; commit `5db186c` | Complete |
 | V3.13 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 94; focused API 17/17; zero warnings/errors; commit `20bfd9f` | Complete |
-| V3.14 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 95; focused PostgreSQL API 1/1; zero build warnings/errors | Commit checkpoint; start V3.15 |
-| V3.15–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
+| V3.14 | Full verify PASS; Planning 266, architecture 32, kernel 33, integration 95; focused PostgreSQL API 1/1; zero build warnings/errors; commit `2d83b5a` | Complete |
+| V3.15 | Full verify PASS: Planning 266, Architecture 32, Kernel 33, Integration 100; zero build warnings/errors; all V3.15 PostgreSQL acceptance tests passed | Complete (commit recorded in AI handoff) |
+| V3.16–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
 
 ## Governance expansion validation
 
@@ -37,9 +38,3 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 ## Release rule
 
 Do not mark V3 done until the reconciled requirements are implemented, required migration paths and tests pass, source commits are recorded, and the handoff/session log contain final counts, limitations and deployment configuration. Staged code, a proposed architecture or an available package does not count as a finished increment. Real Nexus/communication provider configuration must be distinguished from local contract tests.
-
-
-
-
-
-| V3.14 | In progress; outside-processing dispatch/partial-return slice implemented, Release build PASS (0 warnings/errors), focused API PASS (1/1) in ignored review checkout. Remaining: processor certificates/evidence, containers and pallets, packaging classes and readiness block, explicit partial-shipment/correction coverage, then root full verify. | Continue V3.14; no commit until full increment gates pass |

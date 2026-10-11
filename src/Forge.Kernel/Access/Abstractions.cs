@@ -18,7 +18,9 @@ public interface IPeopleStore
     Task InsertAsync(PersonRecord person, DateTimeOffset at, string actor, CancellationToken ct);
 
     /// <returns>True if the role was newly assigned; false if already held.</returns>
-    Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, CancellationToken ct);
+    Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, DateTimeOffset? expiresAt, CancellationToken ct);
+
+    Task<bool> CreateRoleAsync(string role, string displayName, IReadOnlyList<string> permissions, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task<bool> RemoveRoleAsync(PersonId id, string role, CancellationToken ct);
 
@@ -29,6 +31,26 @@ public interface IPeopleStore
     Task<ForgePrincipal?> LoadPrincipalAsync(PersonId id, CancellationToken ct);
 
     Task<int> CountActiveWithRoleAsync(string role, CancellationToken ct);
+
+    Task<bool> HasRoleAsync(string role, CancellationToken ct);
+
+    Task<bool> HasPermissionAsync(string permission, CancellationToken ct);
+
+    Task<bool> AddRolePermissionAsync(string role, string permission, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task<bool> RemoveRolePermissionAsync(string role, string permission, CancellationToken ct);
+
+    Task<bool> AddRolePermissionScopeAsync(string role, string permission, string scopeType, string scopeId, CancellationToken ct);
+
+    Task<bool> RemoveRolePermissionScopeAsync(string role, string permission, string scopeType, string scopeId, CancellationToken ct);
+
+    Task<int> CountRolePermissionScopesAsync(string role, string permission, CancellationToken ct);
+
+    Task<bool> IsSeparationPolicyEnabledAsync(string policy, CancellationToken ct);
+
+    Task<bool> SetSeparationPolicyAsync(string policy, bool enabled, CancellationToken ct);
+
+    Task<bool> SetApprovalThresholdAsync(string permission, decimal? maximumAmount, string? currency, DateTimeOffset at, string actor, CancellationToken ct);
 }
 
 public interface IEventOutbox

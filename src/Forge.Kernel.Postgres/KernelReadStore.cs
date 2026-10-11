@@ -25,7 +25,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
         await using var cmd = dataSource.CreateCommand(
             """
             SELECT p.person_id, p.idp_subject, p.display_name, p.is_active, p.markings,
-                   COALESCE(array_agg(DISTINCT r.role) FILTER (WHERE r.role IS NOT NULL), '{}') AS roles,
+                   COALESCE(array_agg(DISTINCT r.role) FILTER (WHERE r.role IS NOT NULL AND (r.expires_at IS NULL OR r.expires_at > now())), '{}') AS roles,
                    COALESCE(array_agg(DISTINCT a.program_id) FILTER (WHERE a.program_id IS NOT NULL), '{}') AS programs
             FROM kernel.person p
             LEFT JOIN kernel.role_assignment r ON r.person_id = p.person_id

@@ -23,6 +23,41 @@ public sealed record RoleRevoked(Guid PersonId, string Role) : IDomainEvent
     public static int SchemaVersion => 1;
 }
 
+public sealed record RolePermissionChanged(string Role, string Permission, bool Granted) : IDomainEvent
+{
+    public static string EventType => nameof(RolePermissionChanged);
+
+    public static int SchemaVersion => 1;
+}
+
+public sealed record RoleCreated(string Role, string DisplayName, IReadOnlyList<string> Permissions) : IDomainEvent
+{
+    public static string EventType => nameof(RoleCreated);
+
+    public static int SchemaVersion => 1;
+}
+
+public sealed record RolePermissionScopeChanged(string Role, string Permission, string ScopeType, string ScopeId, bool Granted) : IDomainEvent
+{
+    public static string EventType => nameof(RolePermissionScopeChanged);
+
+    public static int SchemaVersion => 1;
+}
+
+public sealed record SeparationPolicyChanged(string Policy, bool Enabled) : IDomainEvent
+{
+    public static string EventType => nameof(SeparationPolicyChanged);
+
+    public static int SchemaVersion => 1;
+}
+
+public sealed record ApprovalThresholdChanged(string Permission, decimal? MaximumAmount, string? Currency) : IDomainEvent
+{
+    public static string EventType => nameof(ApprovalThresholdChanged);
+
+    public static int SchemaVersion => 1;
+}
+
 public sealed record ProgramAccessGranted(Guid PersonId, Guid ProgramId) : IDomainEvent
 {
     public static string EventType => nameof(ProgramAccessGranted);

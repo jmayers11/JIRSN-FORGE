@@ -9,7 +9,17 @@ namespace Forge.Host.Api;
 
 public sealed record RegisterPersonRequest(string IdpSubject, string DisplayName, string[]? Markings, string? Reason);
 
-public sealed record RoleRequest(string Role, string? Reason);
+public sealed record RoleRequest(string Role, string? Reason, DateTimeOffset? ExpiresAt = null);
+
+public sealed record CreateRoleRequest(string Role, string DisplayName, string[] Permissions, string? Reason);
+
+public sealed record RolePermissionRequest(string Permission, string? Reason);
+
+public sealed record RoleScopeRequest(string Permission, string ScopeType, string ScopeId, string? Reason);
+
+public sealed record SeparationPolicyRequest(bool Enabled, string? Reason);
+
+public sealed record ApprovalThresholdRequest(decimal? MaximumAmount, string? Currency, string? Reason);
 
 public sealed record ProgramAccessRequest(Guid ProgramId, string? Reason);
 
@@ -70,7 +80,28 @@ public static class KernelEndpoints
             }));
 
         api.MapPost("/people/{personId:guid}/roles", (HttpContext http, Guid personId, RoleRequest body, AccessService access, CancellationToken ct) =>
-            Command(http, body.Reason, context => access.AssignRoleAsync(new AssignRole(new PersonId(personId), body.Role), context, ct)));
+            Command(http, body.Reason, context => access.AssignRoleAsync(new AssignRole(new PersonId(personId), body.Role, body.ExpiresAt), context, ct)));
+
+        api.MapPost("/roles", (HttpContext http, CreateRoleRequest body, AccessService access, CancellationToken ct) =>
+            Command(http, body.Reason, context => access.CreateRoleAsync(new CreateRole(body.Role, body.DisplayName, body.Permissions), context, ct)));
+
+        api.MapPost("/roles/{role}/permissions", (HttpContext http, string role, RolePermissionRequest body, AccessService access, CancellationToken ct) =>
+            Command(http, body.Reason, context => access.ChangeRolePermissionAsync(new ChangeRolePermission(role, body.Permission, true), context, ct)));
+
+        api.MapPost("/roles/{role}/permissions/{permission}/revoke", (HttpContext http, string role, string permission, ReasonRequest body, AccessService access, CancellationToken ct) =>
+            Command(http, body.Reason, context => access.ChangeRolePermissionAsync(new ChangeRolePermission(role, permission, false), context, ct)));
+
+        api.MapPost("/roles/{role}/permission-scopes", (HttpContext http, string role, RoleScopeRequest body, AccessService access, CancellationToken ct) =>
+            Command(http, body.Reason, context => access.ChangeRolePermissionScopeAsync(new ChangeRolePermissionScope(role, body.Permission, body.ScopeType, body.ScopeId, true), context, ct)));
+
+        api.MapPost("/roles/{role}/permission-scopes/revoke", (HttpContext http, string role, RoleScopeRequest body, AccessService access, CancellationToken ct) =>
+            Command(http, body.Reason, context => access.ChangeRolePermissionScopeAsync(new ChangeRolePermissionScope(role, body.Permission, body.ScopeType, body.ScopeId, false), context, ct)));
+
+        api.MapPost("/separation-policies/{policy}", (HttpContext http, string policy, SeparationPolicyRequest body, AccessService access, CancellationToken ct) =>
+            Command(http, body.Reason, context => access.ChangeSeparationPolicyAsync(new ChangeSeparationPolicy(policy, body.Enabled), context, ct)));
+
+        api.MapPost("/approval-thresholds/{permission}", (HttpContext http, string permission, ApprovalThresholdRequest body, AccessService access, CancellationToken ct) =>
+            Command(http, body.Reason, context => access.ChangeApprovalThresholdAsync(new ChangeApprovalThreshold(permission, body.MaximumAmount, body.Currency), context, ct)));
 
         api.MapPost("/people/{personId:guid}/roles/{role}/revoke", (HttpContext http, Guid personId, string role, ReasonRequest body, AccessService access, CancellationToken ct) =>
             Command(http, body.Reason, context => access.RevokeRoleAsync(new RevokeRole(new PersonId(personId), role), context, ct)));

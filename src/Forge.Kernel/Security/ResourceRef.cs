@@ -10,7 +10,14 @@ public sealed record ResourceRef(
     string Type,
     string? Id = null,
     ProgramId? Program = null,
-    DataMarking Markings = DataMarking.None)
+    DataMarking Markings = DataMarking.None,
+    string? FacilityId = null,
+    string? WorkCenterId = null,
+    string? ContractId = null,
+    string? CustomerId = null,
+    string? ShiftId = null,
+    decimal? Amount = null,
+    string? Currency = null)
 {
     public static ResourceRef Of(string type, object? id = null) => new(type, id?.ToString());
 }

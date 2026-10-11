@@ -28,9 +28,11 @@ public sealed class ForgeAuthorizer : IForgeAuthorizer
             reasons.Add("Identity is not active.");
         }
 
-        if (!principal.HasPermission(permission))
+        if (!principal.HasPermission(permission, resource))
         {
-            reasons.Add($"No assigned role grants '{permission}'.");
+            reasons.Add(principal.ExceedsApprovalThreshold(permission, resource)
+                ? $"The requested amount exceeds the configured approval threshold for '{permission}'."
+                : $"No assigned role grants '{permission}'.");
         }
 
         if (resource.Program is { } program && !principal.Programs.Contains(program))

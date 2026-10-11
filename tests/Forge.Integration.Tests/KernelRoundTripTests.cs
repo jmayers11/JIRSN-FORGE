@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Forge.Kernel.Postgres;
+using Forge.Kernel.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 
@@ -35,7 +36,39 @@ public sealed class KernelRoundTripTests(PostgresFixture postgres)
         _ = app.Services; // starting the host applies every migration
         var again = await app.Services.GetRequiredService<MigrationRunner>().MigrateAsync(CancellationToken.None);
         Assert.Empty(again);
-        Assert.Equal(77, await Count(cs, "SELECT count(*) FROM public.forge_schema_migrations"));
+        Assert.Equal(78, await Count(cs, "SELECT count(*) FROM public.forge_schema_migrations"));
+    }
+
+    [Fact]
+    public async Task Seeded_data_roles_match_every_legacy_permission()
+    {
+        var cs = await postgres.CreateDatabaseAsync();
+        await using var app = new ForgeApp(cs);
+        _ = app.Services;
+        await using var connection = new NpgsqlConnection(cs);
+        await connection.OpenAsync();
+        await using var cmd = new NpgsqlCommand("SELECT role_name, permission FROM kernel.role_permission ORDER BY role_name, permission", connection);
+        var actual = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var role = reader.GetString(0);
+            if (!actual.TryGetValue(role, out var permissions))
+            {
+                permissions = new HashSet<string>(StringComparer.Ordinal);
+                actual.Add(role, permissions);
+            }
+
+            permissions.Add(reader.GetString(1));
+        }
+
+        foreach (var role in Roles.All)
+        {
+            Assert.True(actual.TryGetValue(role, out var permissions), $"Missing seeded role {role}.");
+            Assert.Equal(Roles.PermissionsOf(role).Order(StringComparer.Ordinal), permissions!.Order(StringComparer.Ordinal));
+        }
+
+        Assert.Equal(Roles.All.Count, actual.Count);
     }
 
     [Fact]
@@ -76,6 +109,115 @@ public sealed class KernelRoundTripTests(PostgresFixture postgres)
         var me = await Json(await app.As("sarah").GetAsync("/api/kernel/me"));
         Assert.Equal(Falcon, me.GetProperty("programs")[0].GetGuid());
         Assert.Equal("ControlledUnclassified", me.GetProperty("markings").GetString());
+    }
+
+    [Fact]
+    public async Task Role_permission_policy_is_loaded_from_data_and_changes_take_effect()
+    {
+        var cs = await postgres.CreateDatabaseAsync();
+        await using var app = new ForgeApp(cs);
+        var admin = app.As(ForgeApp.AdminSubject);
+        admin.Timeout = TimeSpan.FromSeconds(20);
+        var registered = await Json(await admin.CommandAsync("/api/kernel/people",
+            new { idpSubject = "policy-user", displayName = "Policy User", markings = Array.Empty<string>(), reason = "Policy test" }, "policy-user-register"));
+        var personId = registered.GetProperty("entityId").GetString();
+        _ = await Json(await admin.CommandAsync($"/api/kernel/people/{personId}/roles",
+            new { role = "Auditor", reason = "Policy test" }, "policy-user-role"));
+
+        var store = app.Services.GetRequiredService<KernelReadStore>();
+        var before = await store.ResolvePrincipalBySubjectAsync("policy-user", CancellationToken.None);
+        Assert.NotNull(before);
+        Assert.False(before.HasPermission("planning.goals.manage"));
+
+        _ = await Json(await admin.CommandAsync("/api/kernel/roles/Auditor/permissions",
+            new { permission = "planning.goals.manage", reason = "Temporary policy test" }, "policy-grant"));
+        var afterGrant = await store.ResolvePrincipalBySubjectAsync("policy-user", CancellationToken.None);
+        Assert.NotNull(afterGrant);
+        Assert.True(afterGrant.HasPermission("planning.goals.manage"));
+
+        _ = await Json(await admin.CommandAsync("/api/kernel/roles/Auditor/permissions/planning.goals.manage/revoke",
+            new { reason = "Temporary policy test ended" }, "policy-revoke"));
+        var afterRevoke = await store.ResolvePrincipalBySubjectAsync("policy-user", CancellationToken.None);
+        Assert.NotNull(afterRevoke);
+        Assert.False(afterRevoke.HasPermission("planning.goals.manage"));
+    }
+
+    [Fact]
+    public async Task Created_role_with_temporary_assignment_expires_automatically()
+    {
+        var cs = await postgres.CreateDatabaseAsync();
+        await using var app = new ForgeApp(cs);
+        var admin = app.As(ForgeApp.AdminSubject);
+        admin.Timeout = TimeSpan.FromSeconds(20);
+        var registered = await Json(await admin.CommandAsync("/api/kernel/people",
+            new { idpSubject = "temporary-authority", displayName = "Temporary Authority", markings = Array.Empty<string>(), reason = "Delegation test" }, "temporary-authority-register"));
+        var personId = registered.GetProperty("entityId").GetString();
+
+        _ = await Json(await admin.CommandAsync("/api/kernel/roles",
+            new { role = "TemporaryPlanner", displayName = "Temporary Planner", permissions = new[] { "planning.goals.manage" }, reason = "Delegation test" }, "temporary-role-create"));
+        _ = await Json(await admin.CommandAsync($"/api/kernel/people/{personId}/roles",
+            new { role = "TemporaryPlanner", expiresAt = DateTimeOffset.UtcNow.AddSeconds(3), reason = "Cover planning shift" }, "temporary-role-assign"));
+
+        var store = app.Services.GetRequiredService<KernelReadStore>();
+        var active = await store.ResolvePrincipalBySubjectAsync("temporary-authority", CancellationToken.None);
+        Assert.NotNull(active);
+        Assert.True(active.HasPermission("planning.goals.manage"));
+        await Task.Delay(TimeSpan.FromSeconds(3.5));
+        var expired = await store.ResolvePrincipalBySubjectAsync("temporary-authority", CancellationToken.None);
+        Assert.NotNull(expired);
+        Assert.False(expired.HasPermission("planning.goals.manage"));
+    }
+
+    [Fact]
+    public async Task Scoped_role_permission_only_authorizes_matching_resource_scope()
+    {
+        var cs = await postgres.CreateDatabaseAsync();
+        await using var app = new ForgeApp(cs);
+        var admin = app.As(ForgeApp.AdminSubject);
+        var registered = await Json(await admin.CommandAsync("/api/kernel/people",
+            new { idpSubject = "scoped-authority", displayName = "Scoped Authority", markings = Array.Empty<string>(), reason = "Scope test" }, "scoped-authority-register"));
+        var personId = registered.GetProperty("entityId").GetString();
+        _ = await Json(await admin.CommandAsync($"/api/kernel/people/{personId}/roles",
+            new { role = "Auditor", reason = "Scope test" }, "scoped-authority-role"));
+        _ = await Json(await admin.CommandAsync("/api/kernel/roles/Auditor/permissions",
+            new { permission = "planning.goals.manage", reason = "Scope test" }, "scoped-authority-permission"));
+        _ = await Json(await admin.CommandAsync("/api/kernel/roles/Auditor/permission-scopes",
+            new { permission = "planning.goals.manage", scopeType = "facility", scopeId = "plant-east", reason = "Limit to east plant" }, "scoped-authority-scope"));
+        _ = await Json(await admin.CommandAsync("/api/kernel/approval-thresholds/planning.goals.manage",
+            new { maximumAmount = 100m, currency = "USD", reason = "Set approval limit" }, "scoped-authority-threshold"));
+
+        var principal = await app.Services.GetRequiredService<KernelReadStore>()
+            .ResolvePrincipalBySubjectAsync("scoped-authority", CancellationToken.None);
+        Assert.NotNull(principal);
+        var authorizer = app.Services.GetRequiredService<Forge.Kernel.Security.IForgeAuthorizer>();
+        Assert.True(authorizer.Authorize(principal, "planning.goals.manage", new Forge.Kernel.Security.ResourceRef("Facility", FacilityId: "plant-east", Amount: 100m, Currency: "USD")).IsPermitted);
+        Assert.False(authorizer.Authorize(principal, "planning.goals.manage", new Forge.Kernel.Security.ResourceRef("Facility", FacilityId: "plant-east", Amount: 101m, Currency: "USD")).IsPermitted);
+        Assert.False(authorizer.Authorize(principal, "planning.goals.manage", new Forge.Kernel.Security.ResourceRef("Facility", FacilityId: "plant-west", Amount: 50m, Currency: "USD")).IsPermitted);
+    }
+
+    [Fact]
+    public async Task Separation_of_duty_rule_is_policy_configurable_and_enforced()
+    {
+        var cs = await postgres.CreateDatabaseAsync();
+        await using var app = new ForgeApp(cs);
+        var admin = app.As(ForgeApp.AdminSubject);
+        var me = await Json(await admin.GetAsync("/api/kernel/me"));
+        var adminId = me.GetProperty("personId").GetGuid();
+
+        var denied = await admin.CommandAsync($"/api/kernel/people/{adminId}/programs",
+            new { programId = Falcon, reason = "Verify configured SoD" }, "sod-self-before-policy");
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, denied.StatusCode);
+
+        _ = await Json(await admin.CommandAsync("/api/kernel/separation-policies/access.self_program_change",
+            new { enabled = false, reason = "Temporary local policy validation" }, "sod-policy-disable"));
+        _ = await Json(await admin.CommandAsync($"/api/kernel/people/{adminId}/programs",
+            new { programId = Falcon, reason = "Rule is disabled by policy" }, "sod-self-policy-disabled"));
+
+        _ = await Json(await admin.CommandAsync("/api/kernel/separation-policies/access.self_program_change",
+            new { enabled = true, reason = "Restore policy after validation" }, "sod-policy-enable"));
+        var deniedAgain = await admin.CommandAsync($"/api/kernel/people/{adminId}/programs/{Falcon}/revoke",
+            new { reason = "Rule was restored" }, "sod-self-policy-restored");
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, deniedAgain.StatusCode);
     }
 
     [Fact]
@@ -166,4 +308,3 @@ public sealed class KernelRoundTripTests(PostgresFixture postgres)
         Assert.Equal(2, verify.GetProperty("firstBrokenSequence").GetInt64());
     }
 }
-
