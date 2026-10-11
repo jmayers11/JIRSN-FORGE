@@ -98,6 +98,8 @@ public class AnalystParserTests
     [InlineData("Which operations can run now?", "executable-operations")]
     [InlineData("Which operations are on hold?", "executable-operations")]
     [InlineData("Which operations are blocked by tooling?", "executable-operations")]
+    [InlineData("What is on hold?", "holds")]
+    [InlineData("Which quality holds are open?", "holds")]
     [InlineData("Who is present?", "presence")]
     [InlineData("Who is scheduled but not clocked in?", "presence")]
     [InlineData("What needs a retest?", "shelf-life")]
@@ -355,5 +357,7 @@ public class AnalystParserTests
         Assert.Equal("Scheduled", Parse("Who is scheduled but not clocked in?").Report!.Parameters.Status);
         Assert.Null(Parse("Who is present?").Report!.Parameters.Status);
         Assert.Equal("stock-positions", Parse("Show stock at the point of use").Report!.ReportId);
+        Assert.Equal("Quality", Parse("Which quality holds are open?").Report!.Parameters.Status);
+        Assert.Equal("Procurement", Parse("Show procurement holds").Report!.Parameters.Status);
     }
 }

@@ -321,6 +321,8 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 }
 
                 line = poLine.LineNumber;
+                await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(uow, new Forge.Kernel.Holds.HoldCheck(
+                    Forge.Kernel.Holds.HoldActivity.Receive, Parts: [item.PartNumber], SupplierCode: po.SupplierCode, PoNumber: poNumber), ct);
 
                 // Bought for a project line (V2.10): the receipt records the allocation to that line.
                 if (Forge.Projects.Contracts.ProjectSource.TryParse(poLine.SourceKey, out var projectCode, out var projectLine)
@@ -391,6 +393,8 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             var lot = RequireLot(item, c.LotNumber);
             await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
             await RequireUsableAsync(uow, item, lot, now, ct);
+            await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(uow, new Forge.Kernel.Holds.HoldCheck(
+                Forge.Kernel.Holds.HoldActivity.IssueMaterial, order.OrderNumber, null, [item.PartNumber], lot is null ? null : new[] { new Forge.Kernel.Holds.HoldLot(item.PartNumber, lot) }, ProgramId: order.ProgramId), ct);
             var txn = new NewTransaction(InventoryTransactionKind.Issue, item.PartNumber, quantity, location.Code, StockStatus.Released, null, null, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
                 SubstitutesFor: alternate is null ? null : needed, AlternateId: alternate?.AlternateId, PrimaryQuantity: alternate is null ? null : primaryQuantity);
             (through, needs, issuedPrimary) = (alternate, needed, primaryQuantity);

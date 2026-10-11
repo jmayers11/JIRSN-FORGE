@@ -1,5 +1,6 @@
 using Forge.Engineering.Contracts;
 using Forge.Execution.Contracts;
+using Forge.Kernel.Holds;
 using Forge.Inventory.Contracts;
 using Forge.Kernel.Engines;
 using Forge.Planning.Engines;
@@ -62,18 +63,18 @@ public class ExecutableReadinessTests
     [Fact]
     public void A_machine_hold_moves_the_work_to_another_machine_and_a_work_center_hold_stops_it()
     {
-        var hold = new ProductionHold(501, HoldScope.Machine, null, null, null, null, "SLITTER-A", "Guard damaged", Now.AddHours(-1), "sup");
-        var machineHeld = Op(Staffed().Build() with { ProductionHolds = [hold] });
+        var hold = new Hold(501, HoldKind.Production, HoldTargetType.Machine, "SLITTER-A", null, "Placed by hand", "Guard damaged", null, [], "Supervisor confirms", Now.AddHours(-1), "sup");
+        var machineHeld = Op(Staffed().Build() with { Holds = [hold] });
         Assert.True(machineHeld.Executable);
         Assert.Equal("SLITTER-B", machineHeld.BestMachine);
 
-        var wcHold = hold with { Scope = HoldScope.WorkCenter, MachineCode = null, WorkCenterCode = "SLIT-WC" };
-        var held = Op(Staffed().Build() with { ProductionHolds = [wcHold] });
+        var wcHold = hold with { TargetType = HoldTargetType.WorkCenter, TargetId = "SLIT-WC" };
+        var held = Op(Staffed().Build() with { Holds = [wcHold] });
         Assert.False(held.Executable);
         Assert.Equal("Holds", held.PrimaryConstraint);
-        Assert.Contains("Hold 501 on work center SLIT-WC: Guard damaged", held.Dimensions.Single(d => d.Name == "Holds").Detail, StringComparison.Ordinal);
+        Assert.Contains("Production hold 501 on work center SLIT-WC: Guard damaged", held.Dimensions.Single(d => d.Name == "Holds").Detail, StringComparison.Ordinal);
 
-        var released = Op(Staffed().Build() with { ProductionHolds = [wcHold with { ReleasedAt = Now, ReleasedBy = "qe", ReleaseReason = "Fixed" }] });
+        var released = Op(Staffed().Build() with { Holds = [wcHold with { ReleasedAt = Now, ReleasedBy = "qe", ReleaseReason = "Fixed" }] });
         Assert.True(released.Executable);
     }
 

@@ -1,5 +1,6 @@
 using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
+using Forge.Kernel.Holds;
 using Forge.Kernel.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -24,6 +25,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MigrationRunner>();
         services.AddSingleton<OutboxRelay>();
         services.AddSingleton<SubscriptionPump>();
+        services.AddForgeStore<IHoldLookup>(uow => new PostgresHoldStore(uow));
+        services.AddForgeStore<IHoldStore>(uow => new PostgresHoldStore(uow));
+        services.AddSingleton<HoldService>();
         return services;
     }
 

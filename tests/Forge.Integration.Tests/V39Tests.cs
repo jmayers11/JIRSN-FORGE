@@ -85,15 +85,16 @@ public sealed class V39Tests(PostgresFixture postgres)
         Assert.Null(Constraint(await Answer(planner, order)));
 
         // A machine hold moves the work to the other slitter; a work-center hold stops it until someone else releases it.
-        await Rejected(plant, e, "/api/holds", new { scope = "Machine", machineCode = "SLITTER-A" }, "reason_required");
-        var machineHold = Id(await plant.Ok(e, "/api/holds", new { scope = "Machine", machineCode = "SLITTER-A", reason = "Guard damaged" }));
+        await Rejected(plant, e, "/api/holds", new { kind = "Production", targetType = "Machine", targetId = "SLITTER-A" }, "reason_required");
+        var machineHold = Id(await plant.Ok(e, "/api/holds", new { kind = "Production", targetType = "Machine", targetId = "SLITTER-A", reason = "Guard damaged" }));
         var moved = await Answer(planner, order);
         Assert.Equal((true, "SLITTER-B"), (moved.GetProperty("executable").GetBoolean(), moved.GetProperty("machine").GetString()));
-        var wcHold = Id(await plant.Ok(e, "/api/holds", new { scope = "WorkCenter", workCenterCode = "SLIT-WC", reason = "Area cleanup after spill" }));
+        var wcHold = Id(await plant.Ok(qe, "/api/holds", new { kind = "Production", targetType = "WorkCenter", targetId = "SLIT-WC", reason = "Area cleanup after spill" }));
         var held = await Answer(planner, order);
         Assert.Equal("Holds", Constraint(held));
         Assert.Contains("Area cleanup after spill", held.GetProperty("why").GetString(), StringComparison.Ordinal);
-        await Rejected(plant, e, $"/api/holds/{wcHold}/release", new { reason = "Clean" }, "separation_of_duties");
+        // V3.10: the quality engineer who placed it has no release authority for production holds.
+        Assert.Equal(HttpStatusCode.Forbidden, (await plant.Try(qe, $"/api/holds/{wcHold}/release", new { reason = "Clean" })).StatusCode);
         await Rejected(plant, planner, $"/api/holds/{wcHold}/release", new { }, "reason_required");
         await plant.Ok(planner, $"/api/holds/{wcHold}/release", new { reason = "Area inspected and clean" });
         await plant.Ok(planner, $"/api/holds/{machineHold}/release", new { reason = "Guard replaced" });
@@ -137,7 +138,7 @@ public sealed class V39Tests(PostgresFixture postgres)
         await plant.Ok(plant.Admin, $"/api/workforce/people/{plant.People["sarah"]}/badge", new { badge = Sarah });
         await plant.Ok(kiosk, "/api/shopfloor/clock-in", new { badge = Sarah });
         await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = order, partNumber = "COIL-AL", quantity = 26m, locationCode = "SL-STAGE" });
-        var hold = Id(await plant.Ok(e, "/api/holds", new { scope = "Order", orderNumber = order, reason = "Customer asked to wait for a drawing change" }));
+        var hold = Id(await plant.Ok(e, "/api/holds", new { kind = "Production", targetType = "Order", targetId = order.ToString(CultureInfo.InvariantCulture), reason = "Customer asked to wait for a drawing change" }));
         await Rejected(plant, kiosk, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" }, "on_hold");
         Assert.Equal("Holds", Constraint(await Answer(planner, order)));
         await plant.Ok(planner, $"/api/holds/{hold}/release", new { reason = "Drawing confirmed unchanged" });

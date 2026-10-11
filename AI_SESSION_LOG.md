@@ -168,4 +168,22 @@ Start work on the existing project and leave a current handoff and session log f
 
 Also staged V3.11 fixes/tests for original-receiver separation of duties, rejection of any pre-existing replacement lot and serialized counting of concurrent customer returns. These are not applied/verified yet.
 
-**Session status:** Active work; V3.9 fully verified, ready to checkpoint. Continue reviewed V3.10, then V3.11 and reconcile the outstanding base plan.
+V3.9 committed as **`411c3c9`**. Applied reviewed V3.10 staging, including the prepared fixes/tests. Moved only obsolete Execution hold source files to `.forge-logs/removed/v310/` after verifying source/destination paths stay within the Forge workspace; preserved SQL migration 0007. Started `.forge-logs/quick.cmd` for V3.10. Ignored `.forge-logs/codex-v310.cmd` selects V310, V39, Phase7 and kernel round-trip API tests for the next verification gate.
+
+**Session status:** Active work; V3.9 complete, V3.10 applied and in initial verification. Continue V3.10, then reviewed V3.11 and reconcile the outstanding base plan.
+
+### V3.10 quick verification and API gate
+
+Quick verification passed: Release build zero warnings/errors; Planning **262**, architecture **32**. Saved `.forge-logs/quick-v310.*`. Added a meaningful migration regression using retained embedded 0007/0008 SQL with populated active/released holds, checking IDs, release history, old-table removal and the next identity value. Started `.forge-logs/codex-v310.cmd` after applying that test; selected API verification is in progress. No application source mutation while the suite runs.
+
+### Codex continuation — base V3 plan recovered
+
+Owner supplied `JIRSN Forge V3 Plan.md` in the project root. Read the full 28-increment roadmap, coverage and acceptance table, including its twelve recommended decisions. Continue the authorized implementation using those recommendations and the governance expansion, preserving existing architecture. V3.10 selected API gate passed 14/14 in 3.6149 minutes. Started full `verify.cmd`; completion is still pending. V3.11 remains staged, with integrity regressions awaiting execution. Rewrote the current handoff header to remove stale current-version claims while preserving older architectural/history sections.
+
+### V3.12 preparation during V3.10 regression
+
+Prepared an unapplied `.forge-logs/staging-v312` evidence draft and ADR 0036. It extends V2.2 reference attachments to receipt/inspection/shipment/FAI targets, evidence kinds, immutable source-signature verification and a Quality FAI gate requiring both results and verified signed-file evidence. Syntax checks passed for attachment, receiving and shipping JS. Further V3.11 staging fixes enforce document access on FAI recording and list visibility; added a hidden-program report regression. Created an isolated ignored `.forge-logs/review-v312` compilation checkout so staging can be compiled without changing source or binaries used by the ongoing V3.10 regression. All V3.11/V3.12 runtime verification remains pending.
+
+### V3.10 full-pass checkpoint
+
+Full `verify.cmd` passed, exit 0: Planning 262, architecture 32, kernel 33, integration 85 (20.0847 minutes); zero Release warnings/errors. Saved `.forge-logs/verify-v310.log` and `.status`. The selected API gate also passed 14/14. Committing generalized holds and its reviewed access/register/migration fixes before applying V3.11. Isolated V3.11/V3.12 compilation caught an existing package collision with the InspectionResult enum; renamed the new structured record ReceivingCharacteristicResult across receiving/FAI contracts and callers. Draft rebuild is running.

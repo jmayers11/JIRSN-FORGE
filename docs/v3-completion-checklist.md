@@ -2,18 +2,18 @@
 
 Owner request: complete V3 and record the result. Last checkpoint: 2026-10-11.
 
-This is the release checklist, not a completion declaration. Reconcile it with the base V3 brief and Claude's numbered V3.12–V3.28 plan when supplied. The governance expansion alone cannot prove the original V3 scope is complete.
+This is the release checklist, not a completion declaration. The supplied `JIRSN Forge V3 Plan.md` defines the numbered roadmap and acceptance gates; use it together with the governance expansion.
 
 ## Increment verification
 
 | Increment | Current state | Remaining gate |
 | --- | --- | --- |
 | V3.1–V3.8 | Previously verified and committed through `0232d18`; historical details in AI log | Preserve regression coverage |
-| V3.9 | Full verification PASS: Planning 257, architecture 32, kernel 33, integration 81; zero build warnings/errors | Record Git checkpoint, then continue V3.10 |
-| V3.10 | Package and additional fixes/tests staged in `.forge-logs/staging-v310` | Apply after V3.9 checkpoint; build, relevant API tests, full verification, commit |
+| V3.9 | Full verification PASS: Planning 257, architecture 32, kernel 33, integration 81; zero build warnings/errors; commit `411c3c9` | Complete |
+| V3.10 | Full PASS: Planning 262, architecture 32, kernel 33, integration 85; zero warnings/errors; selected API 14/14 | Commit checkpoint |
 | V3.11 | Package and additional fixes/tests staged in `.forge-logs/staging-v311` | Apply after V3.10 checkpoint; build, relevant API tests, full verification, commit |
 | V3.12 | Prior handoff identifies business-record evidence | Implement reusable evidence separate from controlled documents, integrate receipt/inspection/shipment/FAI, verify |
-| V3.13–V3.28 | Numbered source plan not supplied yet | Map base requirements and expansion, implement and verify each increment |
+| V3.13–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
 
 ## Governance expansion validation
 
@@ -35,3 +35,5 @@ This is the release checklist, not a completion declaration. Reconcile it with t
 ## Release rule
 
 Do not mark V3 done until the reconciled requirements are implemented, required migration paths and tests pass, source commits are recorded, and the handoff/session log contain final counts, limitations and deployment configuration. Staged code, a proposed architecture or an available package does not count as a finished increment. Real Nexus/communication provider configuration must be distinguished from local contract tests.
+
+

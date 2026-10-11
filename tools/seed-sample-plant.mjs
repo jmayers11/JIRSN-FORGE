@@ -78,7 +78,8 @@ async function main() {
       const goals = !(await get('planner', '/api/planning/goals')).length;
       const tooling = !(await get('eng', '/api/resources/tools')).some(t => t.tool.code === 'KNIFE-A1');
       const executable = !(await get('eng', '/api/resources/tool-requirements')).length;
-      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals && !shelf && !goals && !tooling && !executable) throw new Error('This database already has the full sample plant. It is set up once per database.');
+      const holdSample = !(await get('planner', '/api/holds?includeReleased=true')).some(h => h.source === 'Sample: supplier scorecard');
+      if (!insight && !classification && !documents && !applicability && !changes && !propagation && !alternates && !requisitions && !assets && !outages && !projects && !horizon && !places && !identity && !transformation && !flow && !actuals && !shelf && !goals && !tooling && !executable && !holdSample) throw new Error('This database already has the full sample plant. It is set up once per database.');
       if (insight) {
         console.log('Adding sample funding, WBS, run-hour PM and saved reports.');
         await seedInsight();
@@ -164,6 +165,10 @@ async function main() {
         console.log('Adding tooling requirements, a hold on the paint booth and training on a work instruction.');
         await seedExecutable();
       }
+      if (holdSample) {
+        console.log('Adding a procurement hold on a supplier.');
+        await seedHolds();
+      }
       return finish();
     }
     if (!existing.includes('stores')) {
@@ -198,6 +203,7 @@ async function main() {
     await seedGoals();
     await seedTools();
     await seedExecutable();
+    await seedHolds();
     return finish();
   }
 
@@ -359,6 +365,7 @@ async function main() {
   await seedGoals();
   await seedTools();
   await seedExecutable();
+  await seedHolds();
   console.log(`Sample badges: ${Object.entries(badges).map(([k, v]) => `${k}=${v}`).join(', ')}. Sarah is a trainer (PIN 2468); Alex is in training.`);
   finish();
 }
@@ -899,9 +906,9 @@ async function seedTools() {
 }
 
 async function seedExecutable() {
-  step('Executable operations: slitting needs a valid knife set, the paint booth is on hold, training on the kitting instruction is checked (warn) — see Work Centers → Can it run now?');
+  step('Executable operations: slitting needs a valid knife set, the paint booth has a production hold, training on the kitting instruction is checked (warn) — see Work Centers → Can it run now?');
   await post('eng', '/api/resources/tool-requirements', { activityCode: 'RUN_SLITTER', toolTypeCode: 'SLIT-KNIFE', quantity: 1 });
-  await post('planner', '/api/holds', { scope: 'Machine', machineCode: 'PAINT-BOOTH', reason: 'Sample: filter change before the next batch' });
+  await post('planner', '/api/holds', { kind: 'Production', targetType: 'Machine', targetId: 'PAINT-BOOTH', reason: 'Sample: filter change before the next batch' });
   const wi = await upload('eng', 'WI-KIT-01_A.txt', 'SAMPLE work instruction: kitting slit rolls, labels outward, two straps per roll.\n');
   await post('eng', '/api/engineering/documents', { number: 'WI-KIT-01', title: 'Kitting slit rolls', type: 'WorkInstruction', authority: 'Internal' });
   await post('eng', '/api/engineering/documents/WI-KIT-01/revisions', { revision: 'A', fileSha256: wi, fileName: 'WI-KIT-01_A.txt', changeNote: 'First issue' });
@@ -911,6 +918,11 @@ async function seedExecutable() {
   const sarah = (await get(adminSubject, '/api/kernel/people')).find(p => p.idpSubject === 'sarah');
   if (sarah) await post('eng', '/api/engineering/document-training', { personId: sarah.personId, documentNumber: 'WI-KIT-01', revision: 'A' });
   await post('eng', '/api/engineering/document-training/policy', { policy: 'Warn', reason: 'Sample: training records being loaded; warn before enforcing' });
+}
+
+async function seedHolds() {
+  step('Holds (V3.10): a procurement hold on Fastenal with its evidence — see Work Centers → Holds and the Holds report');
+  await post('bob', '/api/holds', { kind: 'Procurement', targetType: 'Supplier', targetId: 'FASTENAL', source: 'Sample: supplier scorecard', evidence: 'Three late deliveries this quarter', reason: 'Sample: no new orders until the corrective action is accepted' }).catch(() => null);
 }
 
 main().catch(e => { console.error(`\nSample setup stopped: ${e.message}`); process.exitCode = 1; });

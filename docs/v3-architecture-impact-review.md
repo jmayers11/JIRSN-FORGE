@@ -1,12 +1,12 @@
 # V3 architecture impact review
 
-Updated 2026-10-11 by Codex against the supplied governance expansion and the local working tree. Base V3 numbered plan remains outstanding. This document is a review, not a claim that the missing features are implemented.
+Updated 2026-10-11 by Codex against the supplied governance expansion and the local working tree. The supplied `JIRSN Forge V3 Plan.md` now provides the complete numbered roadmap and acceptance gates. This document is a review, not a claim that the missing features are implemented.
 
 ## Current foundation
 
 Forge is a .NET modular monolith with bounded-context schemas, Npgsql stores, deterministic Planning engines, plain JavaScript UI, one command pipeline, one append-only audit/event/outbox path, and real PostgreSQL API integration tests. Extend these components. Context interactions remain through contracts; host target resolvers handle cross-context entity lookup.
 
-V3.1–V3.8 are committed. V3.9 adds executable operations, point-of-use material, tooling requirements, production holds, document training and presence levels; full verification is running. V3.10 and V3.11 are prepared packages, not applied yet. Neither packages nor staged fixes are completed releases.
+V3.1–V3.9 are committed, with V3.9 full verification PASS at `411c3c9`. V3.10 is applied, its quick/API gates passed and its full regression is running. V3.11 is reviewed/staged, and V3.12 has an unapplied evidence draft. Neither packages nor staged fixes are completed releases.
 
 ## Identity and authentication assurance (brief 2–6, 11–14)
 
@@ -90,3 +90,4 @@ A customer sends a serialized fixture for repair and temporary use in production
 ## Completion and decisions
 
 This review exposes dependencies; it does not silently decide enterprise assurance levels, export rules, signature meanings or organization-specific approvals. Seed current behavior and make policy configurable where required. Base V3.12–V3.28 mapping must be reconciled with the Product Owner's original numbered plan before calling all of V3 complete. Each increment needs source/API/UI/report/Analyst coverage where applicable, migrations, ADR, meaningful tests and full verification before release.
+

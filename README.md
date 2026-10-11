@@ -400,13 +400,25 @@ Every open operation answers "can this happen now, and if not, why not?" with on
 | Area | Where | Notes |
 | --- | --- | --- |
 | Tooling | `resources.tool_requirement`, Work Centers → Tooling required | An activity (on a machine, or any) needs N valid tools of a type: calibration in force, not away, damaged or past its limits |
-| Holds | `execution.production_hold`, Orders and Work Centers → Holds | On an order, operation, part, work center or machine, with a reason; starting work is refused; a different person releases it |
+| Holds | `execution.production_hold` (production holds in the kernel since V3.10), Orders and Work Centers → Holds | On an order, operation, part, work center or machine, with a reason; starting work is refused |
 | Point of use | readiness, `stock-positions` | Where a work center has a staging or machine-side location, the first operation waits until the material is there |
 | Training | `engineering.document_training`, Workforce page | People trained on a revision of a controlled document; policy Off, Warn (named, not stopped) or Enforce |
 | Presence | `/api/readiness/presence`, `presence` report | Not present, scheduled (never counted), clocked in or supervisor confirmed, assigned to a work center, active on an operation |
 | Answers | `/api/readiness/operations`, `executable-operations` report, Work Centers → Can it run now? | The order-readiness engine for every open operation of released and held orders |
 
 See `docs/adr/0033-v3-9-executable-capacity-and-presence.md`.
+
+## What V3.10 contains
+
+| Area | Where | Notes |
+| --- | --- | --- |
+| Holds | `kernel.hold`, Orders and Work Centers → Holds | Ten kinds; on an order, operation, part, lot, work center, machine, supplier, PO, shipment or program; source, evidence, affected records, required resolution |
+| Blocked activities | `kernel.hold_kind`, `/api/holds/kinds` | Each kind blocks configured activities: order release, starting work, reporting output, issuing, shipping, purchasing, receiving |
+| Release authority | per kind | Quality: quality disposition; procurement: purchasing approval; production: `holds.production.release`; and so on. The placer cannot release without it |
+| Enforcement | release, shop floor, issues, shipments, PO approval, receipts, readiness | Refused with `on_hold`, naming each hold and what releases it |
+| Register | `/api/holds`, `holds` report | Kernel holds with the holds Quality and Inventory keep: undecided NCRs, inspections not passed, stock on quality hold |
+
+See `docs/adr/0034-v3-10-generalized-holds.md`.
 
 ## Plant setup
 
@@ -851,7 +863,14 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | --- | --- | --- |
 | GET | `/api/readiness/operations[?workCenter=]`, `/api/readiness/presence[?workCenter=]` | `planning.readiness.read` |
 | GET, POST | `/api/resources/tool-requirements` (GET: `resources.read`); `/api/resources/tool-requirements/{id}/remove` (reason) | `resources.tools.manage` |
-| GET | `/api/holds[?includeReleased=]` | `execution.orders.read` |
-| POST | `/api/holds` (reason), `/api/holds/{id}/release` (reason, a different person) | `execution.holds.manage` |
 | GET | `/api/engineering/document-training[?personId=]` | `competency.read` |
 | POST | `/api/engineering/document-training`, `/api/engineering/document-training/policy` (reason) | `competency.manage` |
+
+## V3.10 API
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/holds[?includeReleased=]`, `/api/holds/kinds` | `holds.read` |
+| POST | `/api/holds` (reason) | `holds.place` |
+| POST | `/api/holds/{id}/release` (reason) | the kind's release authority |
+| POST | `/api/holds/kinds/{kind}` (reason) | `kernel.access.manage` |

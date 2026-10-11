@@ -1,4 +1,4 @@
-using Forge.Execution.Contracts;
+using Forge.Kernel.Holds;
 using Forge.Maintenance.Contracts;
 using Forge.Resources.Contracts;
 using Forge.SafetyRules.Contracts;
@@ -83,8 +83,13 @@ public sealed record SiteSnapshot(
 
     public IReadOnlyList<ToolRequirement> ToolRequirements { get; init; } = [];
 
-    /// <summary>Active production holds (V3.9).</summary>
-    public IReadOnlyList<ProductionHold> ProductionHolds { get; init; } = [];
+    /// <summary>Active holds (V3.9; generalized in V3.10) and what each kind blocks.</summary>
+    public IReadOnlyList<Hold> Holds { get; init; } = [];
+
+    public IReadOnlyList<HoldKindPolicy> HoldPolicies { get; init; } = HoldKindPolicy.Defaults;
+
+    /// <summary>The active holds that stop an activity on these records.</summary>
+    public IReadOnlyList<Hold> Stopping(HoldCheck check) => Holds.Where(h => h.Stops(check, HoldPolicies)).OrderBy(h => h.HoldId).ToList();
 
     /// <summary>Whether the tools <paramref name="activity"/> needs on <paramref name="machine"/> are valid at <paramref name="at"/> (V3.9).</summary>
     public ToolingCheck Tooling(string? machine, string activity, DateTimeOffset at) =>

@@ -2,34 +2,21 @@
 
 ## Latest checkpoint — Codex, 2026-10-11
 
-**Active Product Owner request:** Continue until V3 is done and document the outcome. An active Codex goal tracks completion through the previously referenced V3.28 plan. **Full V3.9 verification passed: Planning 257, architecture 32, kernel 33 and integration 81, no failures; Release build had no warnings/errors.** The verification process exited 0. Saved evidence is `.forge-logs/verify-v39.log` and `.forge-logs/verify-v39.status`. The owner supplied the governance expansion brief in chat; its requirements register, architecture review and release checklist are in `docs/v3-*.md`. The base V3 brief/numbered V3.12–V3.28 plan is still requested. Do not claim the entire V3 scope is complete from the expansion alone.
+Product Owner request: continue until V3 is done and record the outcome for Claude. The active goal covers V3.1–V3.28. The complete numbered source plan is now supplied as `JIRSN Forge V3 Plan.md`; read it alongside `docs/v3-governance-requirements.md`, `docs/v3-architecture-impact-review.md` and `docs/v3-completion-checklist.md`. The direct request to complete V3 authorizes implementation; embedded review/stop instructions in the supplied planning documents are distinct from that request.
 
-V3.10/V3.11 packages have been extracted only into ignored staging directories for review. `staging-v310` contains prepared fixes and new tests for program-restricted hold release, inspection-hold register detail loading, and preservation of V3.9's 404 assertion fix. They have not been applied or verified yet. When V3.9 passes, checkpoint it in Git, then apply the reviewed staging-v310 files, retaining `ExecutableOperations.cs` (not in the package), and retire the three Execution hold source files while retaining migration 0007. The migration to kernel holds must run after V3.9.
+Current committed version: **V3.9, commit `411c3c9` on main**. Full verification passed: Planning 257, architecture 32, kernel 33, integration 81, with zero Release warnings/errors. Saved evidence: `.forge-logs/verify-v39.*`.
 
-This checkpoint supersedes older verification statements below. The earlier Claude context is retained for continuity.
+**V3.10 full verification PASS; committing checkpoint.** Quick verification passed: Planning 262, architecture 32; selected API tests passed 14/14. Evidence: `.forge-logs/quick-v310.*`, `.forge-logs/codex-v310.*`. Full `verify.cmd` passed: Planning 262, architecture 32, kernel 33, integration 85; zero build warnings/errors. Saved `.forge-logs/verify-v310.*`. Reviewed fixes enforce program visibility on hold release, load operation details for inspection holds, retain the V3.9 missing-revision 404 assertion, and prove populated legacy hold migration preserves identity/history/sequence. Retired Execution hold sources are preserved under `.forge-logs/removed/v310/`; retain migration 0007 and new migration 0008.
 
-- HEAD remains `0232d18` (V3.8). V3.9 was already present as uncommitted changes when Codex started; preserve that work.
-- Installed SDK is `10.0.401`, accepted by `global.json`'s roll-forward setting.
-- V3.9 Release build passed with **0 warnings and 0 errors**. Planning tests passed **257/257** and architecture tests passed **32/32** through `.forge-logs/quick.cmd`. Kernel unit tests also passed **33/33** separately.
-- First quick attempt failed during NuGet restore because the sandbox denied network access (NU1301). Retrying with approved elevated execution restored dependencies and passed.
-- Initial selected integration run: **13 passed, 3 failed**. All V39 tests failed because `/api/readiness/operations` returned no operation rows. `ListOrdersAsync` returns headers with empty operations; `ExecutableOperations` now calls `FindOrderAsync` for each authorized order to load its released snapshots. The existing V39 integration tests cover the regression.
-- Selected integration retry after the readiness fix: **15 passed, 1 failed**. The two readiness/shop-floor V39 cases now passed. The training case expected 422 for `revision_not_found`, while `ProblemMapping.cs` intentionally maps `*_not_found` to 404. Corrected that assertion in `V39Tests.cs`.
-- Final focused API verification: **3/3 V39 tests passed** through `.forge-logs/codex-v39.cmd`, exit code 0, `codex-v39.status` PASS. Inspect `codex-v39.log` for the result. The broader selected suite's last `p7b.status` remains FAIL from the corrected assertion mismatch; its other 15 tests passed before the assertion-only correction.
-- `verify.status` is now PASS for the completed V3.9 full suite (81 integration tests); the version-specific saved log preserves this result before later runs overwrite `verify.log`.
-- Codex changed `src/Forge.Planning/ExecutableOperations.cs`, `tests/Forge.Integration.Tests/V39Tests.cs` and the two AI continuation documents, plus an ignored focused test script. No commits or V3.10/V3.11 package applications have been made.
-- The V3 plan document is referenced in the older notes but was not available as a supplied file in this session. Obtain it before implementing later increments.
-
-Next: checkpoint the fully verified V3.9 working tree, apply reviewed V3.10 staging and verify it. No verification process is currently running. The older context below describes the previous handoff and is superseded by this checkpoint.
+**V3.11 remains staged/unapplied** under `.forge-logs/staging-v311`. It includes reviewed fixes/tests for receiver separation of duties, replacement material being a genuinely new instance, and concurrent customer-return quantity limits. Apply only after the V3.10 full-pass checkpoint. Next increments follow the supplied plan: V3.12 evidence, V3.13 sourcing, V3.14 outside processing, V3.15 authority, V3.16 identity, V3.17 priority, V3.18 continuity, V3.19 notifications, V3.20 inbox, V3.21 integrity, V3.22 CauseMap, V3.23 recovery, V3.24 support work, V3.25 Horizon, V3.26 Analyst, V3.27 reference factories, V3.28 hardening. V3 is not complete.
 
 ## Project Identity
 
-* **Project:** JISRN Forge — a manufacturing operations platform: engineering, planning, scheduling, shop floor, inventory, quality, maintenance, procurement, programs and projects. The brief sometimes calls it JIRSN Forge.
-* **Current version:** V3.8, committed `0232d18` on 2026-10-11. V3.9 is extracted in the working tree and is being tested. V3.10 and V3.11 are built and packaged but not yet applied.
-* **Primary purpose:** run one plant's work end to end, with every decision explained. Readiness explains why work can or cannot run. Ledgers and history are kept for good. Two-person rules apply where the brief asks for them.
-* **Current development phase:** V3, increments V3.1 through V3.28, which build out the V3 brief (sections A to CC). Increments V3.1–V3.8 are done; V3.9 is in testing.
-* **Last updated:** 2026-10-11
-* **Last AI agent:** Codex, working directly on this PC; prior implementation by Claude.
-
+* Project: JISRN Forge (brief also calls it JIRSN Forge), manufacturing operations modular monolith.
+* Installed SDK: 10.0.401, accepted by global.json roll-forward.
+* Last agent: Codex on this PC; earlier Claude implementation/history retained below.
+* Do not expose `forge.local.cmd` credentials. Verification scripts consume it locally. Do not push or deploy without authorization.
+* Older version/status statements below describe earlier checkpoints and are historical; this checkpoint is authoritative.
 ## Project Architecture
 
 * **Languages and frameworks:**
@@ -192,3 +179,5 @@ The plan is the "V3 plan" Claude Doc. Its increments map the brief's sections A�
 * Document breaking changes and migrations in the ADR and the README.
 * Keep modifications focused on the assigned task. Only one tool edits the repository at a time.
 * Update the session log after every development session.
+
+

@@ -6,7 +6,8 @@ import { formModal, can } from './forms.js';
 // Executable capacity and presence (V3.9): every open operation answers "can this happen now, and why not?";
 // production holds; each worker's presence level (a schedule is never presence); training on controlled documents.
 
-const SCOPES = [['Order', 'Order'], ['Operation', 'Operation'], ['Part', 'Part'], ['WorkCenter', 'Work center'], ['Machine', 'Machine']];
+const KINDS = ['Quality', 'Material', 'Production', 'Engineering', 'Customer', 'Shipping', 'Procurement', 'Configuration', 'Safety', 'Administrative'];
+const TARGETS = [['Order', 'Order'], ['Operation', 'Operation'], ['Part', 'Part'], ['Lot', 'Lot'], ['WorkCenter', 'Work center'], ['Machine', 'Machine'], ['Supplier', 'Supplier'], ['PurchaseOrder', 'Purchase order'], ['Shipment', 'Shipment'], ['Program', 'Program']];
 const LEVEL = {
   ActiveOnOperation: ['ok', 'On an operation'], AssignedToWorkCenter: ['ok', 'Assigned'], ClockedIn: ['info', 'Clocked in'],
   Scheduled: ['warn', 'Scheduled only'], NotPresent: ['none', 'Not present'],
@@ -28,39 +29,45 @@ export async function appendOperations(container, workCenter) {
     </tbody></table>`}`;
 }
 
-/** Production holds: on an order page (that order's), or plant-wide. */
+/** The hold register (V3.10): every kind of hold, on an order page (that order's) or plant-wide. */
 export async function appendHolds(container, me, order) {
   const section = document.createElement('section');
   section.className = 'panel';
   container.appendChild(section);
-  const manage = can(me, 'ManufacturingEngineer', 'Supervisor', 'Planner', 'QualityEngineer', 'QualityManager');
+  const place = can(me, 'ManufacturingEngineer', 'Supervisor', 'Planner', 'QualityEngineer', 'QualityManager', 'Inspector', 'InventoryController', 'Buyer', 'PurchasingManager',
+    'Shipper', 'SafetyEngineer', 'SafetyApprover', 'ProgramManager', 'ChangeBoard', 'EngineeringApprover', 'SecurityAdministrator');
   const load = async () => {
     const { data, error } = await tryGet('/api/holds?includeReleased=true');
-    const list = (data ?? []).filter(h => !order || h.orderNumber === order.orderNumber || (h.scope === 'Part' && h.partNumber === order.partNumber)
-      || (h.scope === 'WorkCenter' && order.operations.some(op => op.workCenterCode === h.workCenterCode))
-      || (h.scope === 'Machine' && order.operations.some(op => op.eligibleMachines.includes(h.machineCode))));
-    const target = h => ({ Order: `Order ${h.orderNumber}`, Operation: `Op ${h.orderNumber}/${h.sequence}`, Part: `Part ${h.partNumber}`, WorkCenter: `Work center ${h.workCenterCode}`, Machine: `Machine ${h.machineCode}` })[h.scope];
-    section.innerHTML = `<header><h2>Holds</h2><span class="spacer"></span>${manage ? '<button class="btn small" data-hold-add>+ Hold</button>' : ''}</header>
-      ${error ? errorBlock(error, 'holds') : !list.length ? emptyBlock('No holds', 'A hold stops work starting on its order, operation, part, work center or machine until a different person releases it.') : `
-      <table class="table"><thead><tr><th>Hold</th><th>On</th><th>Why</th><th>Placed</th><th>Released</th><th></th></tr></thead><tbody>
-      ${list.map(h => `<tr><td>${h.holdId}</td><td>${esc(target(h))}</td><td>${esc(h.reason)}</td><td>${esc(fmtDateTime(h.placedAt))}<div class="faint">${esc(who(h.placedBy))}</div></td>
-        <td>${h.releasedAt ? `${esc(fmtDateTime(h.releasedAt))}<div class="faint">${esc(who(h.releasedBy))}: ${esc(h.releaseReason)}</div>` : '<span class="pill bad">Active</span>'}</td>
-        <td>${manage && !h.releasedAt ? `<button class="btn small ghost" data-hold-release="${h.holdId}">Release</button>` : ''}</td></tr>`).join('')}
+    const ops = order ? order.operations : [];
+    const list = (data ?? []).filter(h => !order
+      || (h.targetType === 'Order' && h.target === `order ${order.orderNumber}`) || h.target.startsWith(`order ${order.orderNumber} `)
+      || (h.targetType === 'Operation' && h.target.startsWith(`operation ${order.orderNumber}/`))
+      || (h.targetType === 'Part' && h.target.startsWith(`part ${order.partNumber}`))
+      || (h.targetType === 'WorkCenter' && ops.some(op => h.target === `work center ${op.workCenterCode}`))
+      || (h.targetType === 'Machine' && ops.some(op => op.eligibleMachines.some(m => h.target === `machine ${m}`))));
+    section.innerHTML = `<header><h2>Holds</h2><span class="spacer"></span>${place ? '<button class="btn small" data-hold-add>+ Hold</button>' : ''}</header>
+      ${error ? errorBlock(error, 'holds') : !list.length ? emptyBlock('No holds', 'A hold of any kind stops the activities its kind blocks until someone with that kind\'s release authority releases it.') : `
+      <table class="table"><thead><tr><th>Hold</th><th>Kind</th><th>On</th><th>Why</th><th>Stops</th><th>To release</th><th>Status</th><th></th></tr></thead><tbody>
+      ${list.map(h => `<tr><td>${esc(h.reference)}<div class="faint">${esc(h.source)}</div></td><td>${esc(h.kind)}</td><td>${esc(h.target)}</td>
+        <td>${esc(h.reason)}${h.evidence ? `<div class="faint">${esc(h.evidence)}</div>` : ''}</td><td>${esc(h.blocks.join(', '))}</td>
+        <td>${esc(h.requiredResolution)}<div class="faint">${esc(h.releasedThrough)} · ${esc(h.releaseAuthority)}</div></td>
+        <td>${h.active ? '<span class="pill bad">Active</span>' : `<span class="pill ok">Released</span><div class="faint">${esc(fmtDateTime(h.releasedAt))} ${esc(who(h.releasedBy))}: ${esc(h.releaseReason)}</div>`}</td>
+        <td>${h.active && h.holdId ? `<button class="btn small ghost" data-hold-release="${h.holdId}">Release</button>` : ''}</td></tr>`).join('')}
       </tbody></table>`}`;
     $$('[data-hold-add]', section).forEach(b => b.addEventListener('click', () => formModal({
-      title: 'Place a hold', detail: 'Work does not start where the hold applies until a different person releases it.', confirmLabel: 'Place hold', reasonRequired: true,
+      title: 'Place a hold', detail: 'It stops what its kind blocks. Releasing needs the kind\'s release authority.', confirmLabel: 'Place hold', reasonRequired: true,
       fields: [
-        { name: 'scope', label: 'Hold', type: 'select', options: order ? SCOPES.filter(([s]) => s === 'Order' || s === 'Operation') : SCOPES },
-        { name: 'orderNumber', label: 'Order', type: 'number', value: order?.orderNumber ?? '' },
-        { name: 'sequence', label: 'Operation (for an operation hold)', type: 'number' },
-        ...(order ? [] : [{ name: 'partNumber', label: 'Part (for a part hold)', code: true }, { name: 'workCenterCode', label: 'Work center', code: true }, { name: 'machineCode', label: 'Machine', code: true }]),
+        { name: 'kind', label: 'Kind', type: 'select', options: KINDS.map(k => [k, k]) },
+        { name: 'targetType', label: 'On', type: 'select', options: TARGETS },
+        { name: 'targetId', label: 'Which (order, ORDER/OP, part, lot, code or PO number)', required: true, value: order ? String(order.orderNumber) : '' },
+        { name: 'targetPart', label: 'Part (for a lot)', code: true },
+        { name: 'source', label: 'Source (optional)', placeholder: 'NCR 9001, supplier notice…' },
+        { name: 'evidence', label: 'Evidence (optional)' },
+        { name: 'requiredResolution', label: 'To release (optional)' },
       ],
-    }, (v, reason) => command('/api/holds', {
-      scope: v.scope, orderNumber: v.orderNumber ? Number(v.orderNumber) : null, sequence: v.sequence ? Number(v.sequence) : null,
-      partNumber: v.partNumber || null, workCenterCode: v.workCenterCode || null, machineCode: v.machineCode || null,
-    }, reason), load)));
+    }, (v, reason) => command('/api/holds', { ...v, targetPart: v.targetPart || null, source: v.source || null, evidence: v.evidence || null, requiredResolution: v.requiredResolution || null }, reason), load)));
     $$('[data-hold-release]', section).forEach(b => b.addEventListener('click', () => formModal({
-      title: `Release hold ${b.dataset.holdRelease}`, detail: 'The person who placed it cannot release it.', confirmLabel: 'Release', reasonRequired: true, fields: [],
+      title: `Release hold ${b.dataset.holdRelease}`, detail: 'You need the release authority of its kind.', confirmLabel: 'Release', reasonRequired: true, fields: [],
     }, (v, reason) => command(`/api/holds/${b.dataset.holdRelease}/release`, {}, reason), load)));
   };
   await load();

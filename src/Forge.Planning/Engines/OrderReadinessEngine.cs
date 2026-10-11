@@ -239,7 +239,7 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
         var dimensions = new List<ReadinessDimension>();
         if (op.Status != OperationStatus.Complete)
         {
-            dimensions.Add(ExecutableChecks.Holds(snapshot, request.Order.OrderNumber, request.Order.PartNumber, op.Sequence, op.WorkCenterCode, machine));
+            dimensions.Add(ExecutableChecks.Holds(snapshot, request.Order.OrderNumber, request.Order.PartNumber, op.Sequence, op.WorkCenterCode, machine, request.Order.ProgramId));
         }
 
         if (machine is not null)

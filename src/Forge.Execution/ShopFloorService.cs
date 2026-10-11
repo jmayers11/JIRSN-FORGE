@@ -5,6 +5,7 @@ using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Engines;
 using Forge.Kernel.Events;
+using Forge.Kernel.Holds;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
@@ -146,7 +147,7 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             }
 
             var machine = await MachineAsync(uow, op, c.MachineCode, now, ct);
-            await HoldService.RequireNoProductionHoldAsync(uow, order, op, machine, ct);
+            await HoldGate.RequireNoneAsync(uow, HoldCheckFor(HoldActivity.StartWork, order, op, machine), ct);
             if (!string.IsNullOrWhiteSpace(c.ToolCode))
             {
                 await ToolUse.RecordAsync(uow, c.ToolCode, machine, op.ActivityCode, $"order {id}", now, context.Actor, ct);
@@ -296,7 +297,7 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             if (c.GoodQuantity > 0 || c.CompleteOperation)
             {
                 await RequireNoHoldAsync(uow, order, c.Sequence, wholeOrderOnly: true, ct);
-                await HoldService.RequireNoProductionHoldAsync(uow, order, null, null, ct);
+                await HoldGate.RequireNoneAsync(uow, HoldCheckFor(HoldActivity.ReportOutput, order, op, labor.MachineCode), ct);
             }
 
             var good = op.GoodQuantity + c.GoodQuantity;
@@ -419,6 +420,10 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             throw new CommandRejectedException("order_on_hold", $"Order {order.OrderNumber} is on hold: {string.Join(" ", holds.Select(h => h.Detail))} See Quality.");
         }
     }
+
+    /// <summary>The records an activity on an operation touches, for the hold check (V3.10).</summary>
+    internal static HoldCheck HoldCheckFor(HoldActivity activity, OrderInfo order, OrderOperationInfo op, string? machine) =>
+        new(activity, order.OrderNumber, op.Sequence, [order.PartNumber], null, op.WorkCenterCode, machine, ProgramId: order.ProgramId);
 
     private static async Task<BadgeHolder> HolderAsync(IKernelUnitOfWork uow, Secret badge, CancellationToken ct)
     {

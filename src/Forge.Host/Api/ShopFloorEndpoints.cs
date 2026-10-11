@@ -200,7 +200,8 @@ internal static class ShopFloorEndpoints
             holds[o.OrderNumber] = await uow.Store<IWorkHoldLookup>().ListHoldsAsync(o.OrderNumber, o.PartNumber, ct);
         }
 
-        var production = await uow.Store<IProductionHoldLookup>().ListProductionHoldsAsync(false, ct);
+        var kernelHolds = await uow.Store<Forge.Kernel.Holds.IHoldLookup>().ListHoldsAsync(false, ct);
+        var holdPolicies = await uow.Store<Forge.Kernel.Holds.IHoldLookup>().ListKindPoliciesAsync(ct);
         var queue = mine
             .Select(o => new
             {
@@ -214,7 +215,8 @@ internal static class ShopFloorEndpoints
                 scheduledMachine = scheduleStart.TryGetValue((o.OrderNumber, o.Operation.Sequence), out var sm) ? sm.MachineCode : null,
                 scheduledForYou = scheduledForMe.ContainsKey((o.OrderNumber, o.Operation.Sequence)),
                 hold = string.Join(" ", holds[o.OrderNumber].Where(h => h.Blocks(o.Operation.Sequence)).Select(h => h.Detail)
-                    .Concat(production.Where(h => h.Covers(o.OrderNumber, o.PartNumber, o.Operation.Sequence, o.Operation.WorkCenterCode, null)).Select(h => h.Describe() + "."))) is { Length: > 0 } why ? why : null,
+                    .Concat(kernelHolds.Where(h => h.Stops(new Forge.Kernel.Holds.HoldCheck(Forge.Kernel.Holds.HoldActivity.StartWork, o.OrderNumber, o.Operation.Sequence, [o.PartNumber], null, o.Operation.WorkCenterCode, null, ProgramId: o.ProgramId), holdPolicies))
+                        .Select(h => h.Describe() + "."))) is { Length: > 0 } why ? why : null,
             })
             .OrderByDescending(o => o.scheduledForYou)
             .ThenBy(o => o.scheduledStart ?? DateTimeOffset.MaxValue)

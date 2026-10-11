@@ -104,6 +104,11 @@ public sealed partial class InventoryService
             }
 
             await CheckShippableAsync(uow, shipment, now, ct);
+            await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(uow, new Forge.Kernel.Holds.HoldCheck(
+                Forge.Kernel.Holds.HoldActivity.Ship,
+                Parts: shipment.Lines.Select(l => l.PartNumber).Distinct(StringComparer.Ordinal).ToList(),
+                LotList: shipment.Lines.Where(l => l.LotNumber is not null).Select(l => new Forge.Kernel.Holds.HoldLot(l.PartNumber, l.LotNumber!)).ToList(),
+                ShipmentId: shipment.ShipmentId), ct);
             var transactions = new List<long>();
             foreach (var line in shipment.Lines)
             {

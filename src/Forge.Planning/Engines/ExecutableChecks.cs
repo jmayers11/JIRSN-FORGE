@@ -1,5 +1,5 @@
 using Forge.Engineering.Contracts;
-using Forge.Execution.Contracts;
+using Forge.Kernel.Holds;
 using Forge.Inventory.Contracts;
 using Forge.Kernel.Engines;
 using Forge.Workforce.Contracts;
@@ -74,24 +74,21 @@ public static class ExecutableChecks
             : new ReadinessDimension("Tooling", check.Ready ? EvidenceOutcome.Pass : EvidenceOutcome.Fail, check.Ready ? $"Tools for {where} are valid now: {string.Join("; ", check.Met)}." : check.Detail);
     }
 
-    /// <summary>Production holds that stop this operation (on this machine, when one is named).</summary>
-    public static ReadinessDimension Holds(SiteSnapshot snapshot, long orderNumber, string partNumber, int sequence, string workCenter, string? machine)
+    /// <summary>Holds that stop this operation starting (on this machine, when one is named), V3.10: of any kind that blocks starting work.</summary>
+    public static ReadinessDimension Holds(SiteSnapshot snapshot, long orderNumber, string partNumber, int sequence, string workCenter, string? machine, Guid? programId = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        var holds = snapshot.ProductionHolds.Where(h => h.Covers(orderNumber, partNumber, sequence, workCenter, machine)).OrderBy(h => h.HoldId).ToList();
+        var holds = snapshot.Stopping(new HoldCheck(HoldActivity.StartWork, orderNumber, sequence, [partNumber], null, workCenter, machine, ProgramId: programId));
         return holds.Count == 0
-            ? new ReadinessDimension("Holds", EvidenceOutcome.Pass, "No production hold applies.")
-            : new ReadinessDimension("Holds", EvidenceOutcome.Fail, string.Join(" ", holds.Select(h => h.Describe() + ".")));
+            ? new ReadinessDimension("Holds", EvidenceOutcome.Pass, "No hold applies.")
+            : new ReadinessDimension("Holds", EvidenceOutcome.Fail, string.Join(" ", holds.Select(h => $"{h.Describe()}. To release: {h.RequiredResolution}")));
     }
 
-    /// <summary>Production holds on whatever is running now (machine or work center), for current-work readiness.</summary>
+    /// <summary>Holds on whatever is running now (machine or work center), for current-work readiness.</summary>
     public static ReadinessDimension? EquipmentHolds(SiteSnapshot snapshot, string? workCenter, string? machine)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        var holds = snapshot.ProductionHolds
-            .Where(h => h.Active && ((h.Scope == HoldScope.WorkCenter && h.WorkCenterCode == workCenter) || (h.Scope == HoldScope.Machine && machine is not null && h.MachineCode == machine)))
-            .OrderBy(h => h.HoldId)
-            .ToList();
+        var holds = snapshot.Stopping(new HoldCheck(HoldActivity.StartWork, WorkCenterCode: workCenter, MachineCode: machine));
         return holds.Count == 0 ? null : new ReadinessDimension("Holds", EvidenceOutcome.Fail, string.Join(" ", holds.Select(h => h.Describe() + ".")));
     }
 

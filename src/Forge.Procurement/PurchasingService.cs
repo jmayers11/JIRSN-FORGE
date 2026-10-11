@@ -165,6 +165,11 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
                 throw new CommandRejectedException("no_open_lines", "The purchase order has no open lines.");
             }
 
+            // V3.10: a procurement (or administrative) hold on the supplier, the order or a part on it stops approval.
+            await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(uow, new Forge.Kernel.Holds.HoldCheck(
+                Forge.Kernel.Holds.HoldActivity.Purchase, Parts: po.Lines.Where(l => l.Status == PurchaseLineStatus.Open).Select(l => l.PartNumber).Distinct(StringComparer.Ordinal).ToList(),
+                SupplierCode: po.SupplierCode, PoNumber: po.PoNumber), ct);
+
             await uow.Store<IProcurementStore>().SetStatusAsync(po.PoNumber, PurchaseOrderStatus.Approved, now, context.Actor, ct);
             var recorded = await packages.ResolveAsync(uow, po with { Lines = po.Lines.Where(l => l.Status == PurchaseLineStatus.Open).ToList() }, now, context.Actor, ct);
             foreach (var package in recorded)

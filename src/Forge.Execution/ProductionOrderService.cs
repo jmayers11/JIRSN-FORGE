@@ -182,6 +182,10 @@ public sealed class ProductionOrderService(CommandPipeline pipeline)
                 throw new CommandRejectedException("separation_of_duties", "You set up this order; a different person must release it.");
             }
 
+            // V3.10: an engineering, customer, configuration or administrative hold on the order, part or program stops release.
+            await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(
+                uow, new Forge.Kernel.Holds.HoldCheck(Forge.Kernel.Holds.HoldActivity.ReleaseOrder, order.OrderNumber, null, [order.PartNumber], ProgramId: order.ProgramId), ct);
+
             var engineering = uow.Store<IEngineeringLookup>();
             var now = pipeline.Time.GetUtcNow();
             var detail = await engineering.GetRevisionDetailAsync(order.PartNumber, order.Revision, ct)

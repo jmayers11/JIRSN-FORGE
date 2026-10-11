@@ -34,6 +34,7 @@ builder.Services.AddForgeWorkforce();
 builder.Services.AddForgeSafetyRules();
 builder.Services.AddForgeEngineering();
 builder.Services.AddSingleton<Forge.Engineering.Contracts.IDocumentTargetResolver, Forge.Host.Documents.DocumentTargetResolver>();
+builder.Services.AddSingleton<Forge.Kernel.Holds.IHoldTargetResolver, Forge.Host.Documents.HoldTargetResolver>();
 builder.Services.AddSingleton<Forge.Procurement.Contracts.ITechnicalPackageResolver, Forge.Host.Documents.TechnicalPackageResolver>();
 builder.Services.AddForgePrograms();
 builder.Services.AddForgeProjects();

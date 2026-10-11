@@ -93,7 +93,8 @@ internal static class SnapshotLoader
             Tools = await tools.ListToolsAsync(ct),
             ToolEvents = await tools.ListToolEventsAsync(null, ct),
             ToolRequirements = await tools.ListToolRequirementsAsync(ct),
-            ProductionHolds = await uow.Store<IProductionHoldLookup>().ListProductionHoldsAsync(false, ct),
+            Holds = await uow.Store<Forge.Kernel.Holds.IHoldLookup>().ListHoldsAsync(false, ct),
+            HoldPolicies = await uow.Store<Forge.Kernel.Holds.IHoldLookup>().ListKindPoliciesAsync(ct),
         };
     }
 }

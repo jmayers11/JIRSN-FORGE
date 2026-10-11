@@ -1,6 +1,6 @@
 # V3 governance expansion — requirements register
 
-Source: Product Owner supplied the 55-section “JIRSN FORGE V3 — Operational Governance, Identity, Tooling, Shift Continuity & External Processing Expansion” in this chat on 2026-10-11. This register summarizes that supplied brief; it does not replace the missing base V3 brief or Claude's numbered V3.1–V3.28 plan.
+Source: Product Owner supplied the 55-section “JIRSN FORGE V3 — Operational Governance, Identity, Tooling, Shift Continuity & External Processing Expansion” in this chat on 2026-10-11. This register summarizes that supplied brief; it supplements the supplied `JIRSN Forge V3 Plan.md`, which defines V3.1–V3.28.
 
 The current Product Owner request is to continue until V3 is done and document the outcome. The supplied brief contains an architecture-review-first/approval stop instruction. That is recorded as source-document context; the current direct request authorizes continuation. Architecture impact review still precedes new expansion implementation. Existing working architecture must be extended, with no competing sources of truth.
 
@@ -39,3 +39,4 @@ The current Product Owner request is to continue until V3 is done and document t
 - L: Machine failure updates capacity/goals, communication rules and recovery scenarios; human chooses response.
 
 Completion must be supported by tests and traceable evidence. A described capability or proposed design is not implementation.
+

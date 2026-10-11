@@ -237,7 +237,7 @@ public static partial class QueryParser
         }
 
         // V3.5, V3.6: stoppage and shelf-life questions are reports even when they say "overdue" or "blocked".
-        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment" or "tool-status" or "executable-operations" or "presence")
+        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment" or "tool-status" or "executable-operations" or "presence" or "holds")
         {
             return AnalystIntent.Report;
         }
@@ -288,7 +288,8 @@ public static partial class QueryParser
             : Has("lineage", "split from", "merged from", "merged into", "split into", "lot splits", "splits and merges", "was split", "were merged") ? "lot-lineage"
             : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
             : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
-            : Has("executable", "can run now", "can happen", "operations can", "operations cannot", "operations cant", "operation can", "on hold", "untrained", "not trained", "which operations", "what operations", "open operations", "operations are blocked", "operations blocked") ? "executable-operations"
+            : Has("executable", "can run now", "can happen", "operations can", "operations cannot", "operations cant", "operation can", "operations on hold", "operations are on hold", "untrained", "not trained", "which operations", "what operations", "open operations", "operations are blocked", "operations blocked") ? "executable-operations"
+            : Has("holds", "on hold", "hold register", "release authority") ? "holds"
             : Has("presence", "who is present", "who is here", "who is clocked in", "clocked in", "on site", "scheduled but not", "not clocked in", "who is working on", "active on an operation", "actually here") ? "presence"
             : Has("goal", "reforecast", "required by date", "required-by") ? "goal-attainment"
             : Has("tool", "gauge", "blade", "sharpen", "calibrat", "out for service", "usage limit") && !Has("cert", "qualif", "training") ? "tool-status"
@@ -414,6 +415,17 @@ public static partial class QueryParser
             {
                 parameters = parameters with { Status = constraint };
                 notes.Add(constraint == "Executable" ? "Only operations that can run now." : $"Only operations whose primary constraint is {constraint}.");
+            }
+        }
+
+        // V3.10: "Which quality holds are open?" — the kind asked about.
+        if (entry.Id == "holds")
+        {
+            var kind = Enum.GetNames<Forge.Kernel.Holds.HoldKind>().FirstOrDefault(k => t.Contains(" " + k.ToLowerInvariant() + " hold", StringComparison.Ordinal));
+            if (kind is not null)
+            {
+                parameters = parameters with { Status = kind };
+                notes.Add($"Only {kind.ToLowerInvariant()} holds.");
             }
         }
 

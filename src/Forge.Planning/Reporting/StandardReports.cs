@@ -247,6 +247,16 @@ internal static class StandardReports
                 "Operations as they stand now; the period does not apply. Presence counts only clocked-in or supervisor-confirmed people: a schedule is never presence."),
             Permissions.ReadinessRead, null, ExecutableOperationsAsync),
         new(
+            new("holds", "Holds", "Production",
+                "Every hold in the plant: kernel holds of every kind (quality, material, production, engineering, customer, shipping, procurement, configuration, safety, administrative) and the holds Quality and Inventory keep (undecided NCRs, inspections not passed, stock on quality hold). What each is on, where it came from, what it stops, who may release it and what must happen first.",
+                [StatusFilter(Enum.GetNames<Forge.Kernel.Holds.HoldKind>()), SearchFilter],
+                [C("hold", "Hold", ReportColumnKind.Text), C("status", "Kind", ReportColumnKind.Text), C("target", "On", ReportColumnKind.Text), C("source", "Source", ReportColumnKind.Text),
+                 C("reason", "Reason", ReportColumnKind.Text), C("blocks", "Stops", ReportColumnKind.Text), C("authority", "Release authority", ReportColumnKind.Text),
+                 C("resolution", "To release", ReportColumnKind.Text), C("placed", "Placed", ReportColumnKind.DateTime), C("active", "Active", ReportColumnKind.Text)],
+                ["status", "active", "source"], "status", 3660,
+                "Holds as they stand now; the period does not apply. Released holds stay in the register (filter Active = No)."),
+            Permissions.HoldsRead, null, HoldsAsync),
+        new(
             new("presence", "Presence", "Workforce",
                 "Every worker's presence now, as far as the evidence goes: not present, scheduled (on shift but not clocked in: never counted), clocked in or confirmed by a supervisor, assigned to a work center, or active on an operation.",
                 [StatusFilter(Enum.GetNames<PresenceLevel>()), SearchFilter],
@@ -847,6 +857,28 @@ internal static class StandardReports
         var blocked = rows.Where(r => (string)r.Cells[6]! == "No").GroupBy(r => (string)r.Cells[7]!).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}").ToList();
         return new ReportBody(rows, [rows.Count == 0 ? "No open operations." : $"{rows.Count} open operation(s): {rows.Count(r => (string)r.Cells[6]! == "Yes")} can run now" + (blocked.Count == 0 ? "." : $"; blocked by {string.Join(", ", blocked)}.")],
             ["Production orders", "Order readiness", "Tools", "Holds", "Stock positions", "Presence", "Document training"]);
+    }
+
+    private static async Task<ReportBody> HoldsAsync(ReportRun run, CancellationToken ct)
+    {
+        var p = run.Parameters;
+        var rows = new List<ReportRow>();
+        foreach (var h in await HoldRegister.ListAsync(run.Uow, run.Principal, true, ct))
+        {
+            if (!ReportRun.Is(h.Kind.ToString(), p.Status) || !run.Matches(h.Reference, h.Target, h.Source, h.Reason, h.RequiredResolution))
+            {
+                continue;
+            }
+
+            rows.Add(new ReportRow(
+                [h.Reference, h.Kind.ToString(), h.Target, h.Source, h.Reason, string.Join(", ", h.Blocks), h.ReleaseAuthority, h.RequiredResolution, h.PlacedAt, h.Active ? "Yes" : "No"],
+                h.HoldId is { } id ? new List<string> { "hold:" + Id(id) } : h.AffectedRecords.ToList()));
+        }
+
+        var active = rows.Count(r => (string)r.Cells[9]! == "Yes");
+        var kinds = rows.Where(r => (string)r.Cells[9]! == "Yes").GroupBy(r => (string)r.Cells[1]!).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}").ToList();
+        return new ReportBody(rows, [rows.Count == 0 ? "No holds." : $"{active} active hold(s)" + (kinds.Count == 0 ? "." : $": {string.Join(", ", kinds)}.")],
+            ["Holds", "Hold kinds", "Nonconformances", "Inspections", "Stock status"]);
     }
 
     private static async Task<ReportBody> PresenceAsync(ReportRun run, CancellationToken ct)
