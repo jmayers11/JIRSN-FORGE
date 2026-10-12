@@ -74,6 +74,15 @@ V3.1–V3.9 are committed, with V3.9 full verification PASS at `411c3c9`. V3.10 
 14–16. Integration/failure/performance: the read is bounded to 500 rows. Impossible states are injected in isolated test PostgreSQL fixtures; healthy reference data returns empty. The view neither repairs data nor bypasses source APIs.
 17–20. Migration/tests/dependencies/decisions: no migration required. V3.21 acceptance seeds every detector and verifies silence on the engineered reference plant. Any source-specific repair retains its normal owner and audit rules.
 
+## What changed and CauseMap (V3.22)
+
+1–4. Existing: Horizon history compares schedule snapshots and supplies downtime, constraint, production, NCR and optional audit evidence. The event envelope contains `CausationId`; command event creation and change propagation did not populate it.
+5. Owner: Kernel owns causation metadata on the canonical event. Planning owns the history projection and explanation boundary. Source domains remain owners of their commands and facts.
+6–9. Entities/API: no new table or migration. `CommandContext.CausationId` is optional. `/api/planning/history/compare` returns a bounded `CauseMapView` assembled by a recursive event-log read.
+10–13. Events/UI/authorization/audit: engineering change propagation links generated events to the recorded release event. Current program and marking access filter both seeds and ancestors. The UI only draws a direct recorded cause edge; constraints are labelled correlated evidence. Same correlation or timing never implies causation.
+14–16. Failure/performance: missing root event leaves causation empty. The query caps seeds at 500 and ancestry at 20 links and guards cycles. Historical propagation is not rewritten.
+17–20. Tests/dependencies/decisions: PostgreSQL tests verify cause/effect and a same-correlation unlinked constraint; the V2.5 propagation scenario checks production event links. No new dependency. Missing or invisible causes stay unknown.
+
 ## Priority and generalized holds (28–32)
 
 1–4. Existing: priorities influence deterministic scheduling; V3.9 production holds and separate quality/stock mechanisms. V3.10 package centralizes explicit holds and configures blocked activities/release authority; missing controlled priority proposals/impact, general downstream hold impact and signoff policies.

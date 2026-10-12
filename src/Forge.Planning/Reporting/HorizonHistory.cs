@@ -16,6 +16,10 @@ public sealed record HistoryVersion(long VersionId, DateTimeOffset? ApprovedAt, 
 /// <summary>A recorded fact that happened between the two moments and bears on a change.</summary>
 public sealed record HistoryEvidence(DateTimeOffset? At, string Kind, string Text, string Trace);
 
+public sealed record CauseMapStep(Guid EventId, string EventType, string SourceContext, string EntityType, string EntityId, DateTimeOffset At, string? Reason, string Trace);
+public sealed record CauseMapLink(Guid CauseEventId, Guid EffectEventId);
+public sealed record CauseMapView(IReadOnlyList<CauseMapStep> Steps, IReadOnlyList<CauseMapLink> Links, IReadOnlyList<Guid> EventsWithoutVisibleCause);
+
 public sealed record OperationChange(
     int Sequence,
     string WorkCenterCode,
@@ -63,7 +67,8 @@ public sealed record HorizonComparison(
     string Headline,
     IReadOnlyList<OrderChange> Orders,
     IReadOnlyList<HistoryEvidence> SiteEvidence,
-    bool AuditIncluded);
+    bool AuditIncluded,
+    CauseMapView? CauseMap = null);
 
 /// <summary>
 /// Horizon history (spec §63–65): compares the approved schedules in force at two moments and explains

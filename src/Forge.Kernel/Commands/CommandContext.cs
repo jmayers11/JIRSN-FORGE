@@ -21,7 +21,8 @@ public sealed record CommandContext(
     string IdempotencyKey,
     CommandSource Source,
     string? Reason,
-    string? SystemActor = null)
+    string? SystemActor = null,
+    Guid? CausationId = null)
 {
     /// <summary>Who the audit names: the person, or a named system actor (for example system:propagation).</summary>
     public string Actor => SystemActor ?? "person:" + Principal.PersonId;

@@ -957,3 +957,7 @@ My Work (`#/my-work`) and `GET /api/work-inbox` show pending second-person decis
 ### V3.21 — Data-integrity exceptions
 
 Data Integrity (`#/integrity`) and `GET /api/integrity/exceptions` report four evidence-backed anomalies: negative inventory ledger balances, duplicate asset serials, material consumption without a prior matching issue, and tool use recorded after its calibration due date. Findings are filtered by the source-domain read permission and labelled as data or process exceptions; they do not infer misconduct or modify source data. The view recomputes from authoritative ledgers and histories, so source corrections continue through the normal domain APIs. See ADR 0045.
+
+### V3.22 — What changed and CauseMap
+
+The schedule comparison (`#/reports?view=changes`) now includes a CauseMap built from the event log's explicit `causation_id` links. Engineering change propagation names the recorded release event as the cause of its downstream events. The view filters links using current program access and data markings, bounds history traversal, and lists constraints as correlated evidence; shared timing or correlation never creates a causal arrow. Historical propagation is not backfilled. See ADR 0046.

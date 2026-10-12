@@ -251,11 +251,22 @@ async function changesView(page, ctx, head) {
   const res = await tryGet(`/api/planning/history/compare?at1=${encodeURIComponent(iso(at1))}&at2=${encodeURIComponent(iso(at2))}&includeUnchanged=${all}`);
   const c = res.data;
   const version = v => v ? `<a href="#/scheduling">version ${v.versionId}</a>, approved ${esc(fmtDateTime(v.approvedAt))}${v.approvedBy ? ` by ${esc(who(v.approvedBy))}` : ''}` : '<span class="muted">none</span>';
-  const evidence = list => list.length ? `<ul class="evidence-list">${list.map(e => `<li><span class="muted">${e.at ? esc(fmtDateTime(e.at)) : ''}</span> <b>${esc(e.kind)}</b> — ${esc(e.text)} ${traceLink(e.trace)}</li>`).join('')}</ul>` : '';
+  const evidence = list => list.length ? `<ul class="evidence-list">${list.map(e => `<li><span class="muted">${e.at ? esc(fmtDateTime(e.at)) : ''}</span> <b>${esc(e.kind === 'Constraint found' ? 'Correlated constraint' : e.kind)}</b> — ${esc(e.text)} ${traceLink(e.trace)}</li>`).join('')}</ul>` : '';
+  const causeMap = map => {
+    if (!map) return '';
+    const steps = new Map(map.steps.map(s => [s.eventId, s]));
+    const edges = map.links.map(link => {
+      const from = steps.get(link.causeEventId), to = steps.get(link.effectEventId);
+      if (!from || !to) return '';
+      return `<li><b>${esc(from.eventType)}</b> (${esc(from.sourceContext)} ${esc(from.entityType)} ${esc(from.entityId)}) → <b>${esc(to.eventType)}</b> (${esc(to.sourceContext)} ${esc(to.entityType)} ${esc(to.entityId)}) ${traceLink(to.trace)}</li>`;
+    }).join('');
+    const unlinked = map.eventsWithoutVisibleCause.map(id => steps.get(id)).filter(Boolean);
+    return `<section class="section"><h3>CauseMap</h3><p class="muted">Arrows appear only where a recorded event names the prior event as its cause. Shared timing or correlation does not establish cause.</p>${edges ? `<ul class="evidence-list">${edges}</ul>` : '<div class="empty">No recorded causal links are visible in this interval.</div>'}${unlinked.length ? `<h4>Observed events without a visible causal link</h4><ul class="evidence-list">${unlinked.map(s => `<li><span class="muted">${esc(fmtDateTime(s.at))}</span> <b>${esc(s.eventType)}</b> — ${esc(s.sourceContext)} ${esc(s.entityType)} ${esc(s.entityId)} ${traceLink(s.trace)}</li>`).join('')}</ul>` : ''}</section>`;
+  };
   page.innerHTML = head('changes') + `
     <section class="panel no-print">
       <header><h2>What changed?</h2></header>
-      <p class="muted" style="margin:0 0 10px">Compares the approved schedule in force at each moment, order by order, and lists what was recorded in between that bears on each change: downtime, constraint findings, shop-floor reports, NCRs${c?.auditIncluded ? ' and audit entries' : ''}.</p>
+      <p class="muted" style="margin:0 0 10px">Compares the approved schedule in force at each moment, order by order, and lists recorded events in between. Constraints observed in the same period are correlated evidence; timing alone does not establish cause. Recorded cause links appear separately below. Evidence includes downtime, shop-floor reports, NCRs${c?.auditIncluded ? ' and audit entries' : ''}.</p>
       <form id="cmp" class="report-filters">
         <div class="field"><label>From (${esc(timeZone() ?? 'local')})</label><input class="input" type="datetime-local" name="at1" value="${esc(at1)}"></div>
         <div class="field"><label>To</label><input class="input" type="datetime-local" name="at2" value="${esc(at2)}"></div>
@@ -274,6 +285,7 @@ async function changesView(page, ctx, head) {
       <p><b>${esc(c.headline)}</b></p>
       <div class="report-meta">Before: ${version(c.before)} · After: ${version(c.after)}</div>
       ${c.siteEvidence.length ? `<h3>Recorded in between</h3>${evidence(c.siteEvidence)}` : ''}
+      ${causeMap(c.causeMap)}
     </section>
     <section class="panel">
       ${!c.orders.length ? emptyBlock('No order changed', c.before?.versionId === c.after?.versionId ? 'The same schedule was in force at both moments.' : 'Every order kept its projection.') : c.orders.map(o => `

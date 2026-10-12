@@ -19,7 +19,10 @@ public static class EventFactory
         where TEvent : IDomainEvent
     {
         ArgumentNullException.ThrowIfNull(context);
-        return Create(payload, context.Actor, context.CorrelationId, context.Reason, time, sourceContext, entityType, entityId, programId, markings);
+        return Create(payload, context.Actor, context.CorrelationId, context.Reason, time, sourceContext, entityType, entityId, programId, markings) with
+        {
+            CausationId = context.CausationId,
+        };
     }
 
     public static EventEnvelope Create<TEvent>(

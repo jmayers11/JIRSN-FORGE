@@ -1,6 +1,7 @@
 using System.Globalization;
 using Forge.Kernel.Postgres;
 using Forge.Kernel.Security;
+using Forge.Host.History;
 using Forge.Planning.Reporting;
 using static Forge.Host.Api.ApiSupport;
 
@@ -60,7 +61,7 @@ public static class ReportsEndpoints
                 : Results.File(ReportExport.Csv(result), "text/csv; charset=utf-8", name + ".csv");
         });
 
-        app.MapGet("/api/planning/history/compare", async (HttpContext http, DateTimeOffset at1, DateTimeOffset at2, bool? includeUnchanged, HorizonHistoryService s, KernelReadStore reads, IForgeAuthorizer authorizer, CancellationToken ct) =>
+        app.MapGet("/api/planning/history/compare", async (HttpContext http, DateTimeOffset at1, DateTimeOffset at2, bool? includeUnchanged, HorizonHistoryService s, KernelReadStore reads, IForgeAuthorizer authorizer, CauseMapReadStore causeMap, CancellationToken ct) =>
         {
             var principal = await PrincipalAsync(http);
             if (principal is null)
@@ -74,6 +75,8 @@ public static class ReportsEndpoints
                 var entries = await reads.QueryAuditBetweenAsync(at1, at2, HistoryAuditTypes, principal.Programs, 5000, ct);
                 comparison = HorizonHistoryService.WithAudit(comparison, entries);
             }
+
+            comparison = comparison with { CauseMap = await causeMap.LoadAsync(principal, at1, at2, ct) };
 
             return Results.Ok(comparison);
         }).RequireAuthorization();

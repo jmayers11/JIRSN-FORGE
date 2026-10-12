@@ -102,6 +102,9 @@ public sealed class V25Tests(PostgresFixture postgres)
         }
 
         await app.Services.GetRequiredService<SubscriptionPump>().PumpOnceAsync(1_000_000, CancellationToken.None);
+        while (await relay.RelayBatchAsync(100, CancellationToken.None) > 0)
+        {
+        }
     }
 
     private static Dictionary<string, (int Expected, int Done, int Waiting, int Failed)> Counts(JsonElement view) =>
@@ -211,6 +214,17 @@ public sealed class V25Tests(PostgresFixture postgres)
         Assert.Empty(before.GetProperty("propagation").GetProperty("steps").EnumerateArray());
 
         await PropagateAsync(app);
+        await using (var connection = await app.Services.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync())
+        await using (var causation = new NpgsqlCommand("""
+            SELECT count(*) FROM kernel.event_log child
+            JOIN kernel.event_log cause ON cause.event_id=child.causation_id
+            WHERE cause.event_type='EngineeringChangeReleased' AND cause.entity_id=$1
+            """, connection))
+        {
+            causation.Parameters.AddWithValue(ecn);
+            Assert.True((long)(await causation.ExecuteScalarAsync())! > 0, "Propagation events must name the released change event as their recorded cause.");
+        }
+
         var view = await Get(e, url);
         Assert.True(view.GetProperty("propagation").GetProperty("status").GetString() == "Complete", view.GetRawText());
         var counts = Counts(view);

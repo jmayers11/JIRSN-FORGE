@@ -11,6 +11,7 @@ using Forge.Kernel.Security;
 using Forge.Procurement.Contracts;
 using Forge.Programs.Contracts;
 using Forge.Workforce.Contracts;
+using Npgsql;
 
 namespace Forge.Host.Propagation;
 
@@ -44,7 +45,8 @@ public sealed class ChangePropagationRunner(
     DocumentService documents,
     ChangeActionService actions,
     IPropagationFaults faults,
-    TimeProvider time)
+    TimeProvider time,
+    NpgsqlDataSource dataSource)
 {
     private const string Reason = "Propagation of a released engineering change";
     private const string NotMoved = "Not moved:";
@@ -76,6 +78,7 @@ public sealed class ChangePropagationRunner(
         }
 
         var inForce = change.EffectiveFrom is not { } from || from <= DateOnly.FromDateTime(now.UtcDateTime);
+        var releaseEventId = await ReleaseEventIdAsync(change.Number, ct);
         string? firstError = null;
 
         // Plan, then do every step not done. A second pass plans again when an order started between planning
@@ -105,7 +108,7 @@ public sealed class ChangePropagationRunner(
             var replan = false;
             foreach (var step in propagation.Steps.Where(s => s.Status != PropagationStepStatus.Done))
             {
-                var (status, detail, error) = await ExecuteAsync(change, propagation, step, principal, inForce, ct);
+                var (status, detail, error) = await ExecuteAsync(change, propagation, step, principal, inForce, releaseEventId, ct);
                 firstError ??= error;
                 replan |= detail.Contains(NotMoved, StringComparison.Ordinal) && step.Status != PropagationStepStatus.Done;
                 await using var write = await unitOfWork.BeginAsync(ct);
@@ -126,7 +129,7 @@ public sealed class ChangePropagationRunner(
             var status = unresolved == 0 ? PropagationStatus.Complete : PropagationStatus.Incomplete;
             var error = firstError ?? (unresolved > 0 && !inForce ? $"waiting for the change to take effect on {change.EffectiveFrom:yyyy-MM-dd}" : null);
             await finish.Store<IPropagationStore>().FinishRunAsync(change.Number, status, error, time.GetUtcNow(), ct);
-            var context = Context(principal, propagation.CorrelationId, $"{change.Number}:run:{propagation.Runs + 1}");
+            var context = Context(principal, propagation.CorrelationId, $"{change.Number}:run:{propagation.Runs + 1}", releaseEventId);
             await finish.Outbox.EnqueueAsync(pipeline.Event(new PropagationFinished(change.Number, status.ToString(), steps.Count, unresolved), context, EngineeringService.SourceContext, "EngineeringChange", change.Number, change.ProgramId is { } p ? new ProgramId(p) : null), ct);
             await finish.CommitAsync(ct);
         }
@@ -255,9 +258,9 @@ public sealed class ChangePropagationRunner(
     }
 
     private async Task<(PropagationStepStatus Status, string Detail, string? Error)> ExecuteAsync(
-        ChangeInfo change, ChangePropagationInfo propagation, PropagationStepInfo step, ForgePrincipal principal, bool inForce, CancellationToken ct)
+        ChangeInfo change, ChangePropagationInfo propagation, PropagationStepInfo step, ForgePrincipal principal, bool inForce, Guid? releaseEventId, CancellationToken ct)
     {
-        var context = Context(principal, propagation.CorrelationId, $"{change.Number}:{step.StepKey}");
+        var context = Context(principal, propagation.CorrelationId, $"{change.Number}:{step.StepKey}", releaseEventId);
         try
         {
             faults.BeforeStep(change.Number, step);
@@ -383,6 +386,15 @@ public sealed class ChangePropagationRunner(
         }
     }
 
-    private static CommandContext Context(ForgePrincipal principal, Guid correlation, string key) =>
-        new(principal, correlation, "system:propagation:" + key, CommandSource.System, Reason, SystemActors.Propagation);
+    private async Task<Guid?> ReleaseEventIdAsync(string changeNumber, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var cmd = new NpgsqlCommand("SELECT event_id FROM kernel.event_log WHERE event_type='EngineeringChangeReleased' AND entity_type='EngineeringChange' AND entity_id=$1 ORDER BY sequence DESC LIMIT 1", connection);
+        cmd.Parameters.AddWithValue(changeNumber);
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return result is Guid id ? id : null;
+    }
+
+    private static CommandContext Context(ForgePrincipal principal, Guid correlation, string key, Guid? causationId = null) =>
+        new(principal, correlation, "system:propagation:" + key, CommandSource.System, Reason, SystemActors.Propagation, causationId);
 }
