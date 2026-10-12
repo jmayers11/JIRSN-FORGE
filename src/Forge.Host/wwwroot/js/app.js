@@ -22,6 +22,7 @@ import { reportsPage } from './pages/reports.js';
 import { engineeringPage } from './pages/engineering.js';
 import { analystPage } from './pages/analyst.js';
 import { shiftContinuityPage } from './pages/shift-continuity.js';
+import { notificationsPage } from './pages/notifications.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
@@ -38,6 +39,7 @@ const NAV = [
   { route: 'plant-setup', label: 'Plant Setup', icon: 'workorder', page: plantSetupPage },
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
   { route: 'shift-continuity', label: 'Shift Continuity', icon: 'timeline', page: shiftContinuityPage },
+  { route: 'notifications', label: 'Notifications', icon: 'bell', page: notificationsPage },
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
@@ -128,7 +130,7 @@ function renderShell() {
             <div class="search-results hidden" id="search-results"></div>
           </div>
           <div class="top-icons">
-            <button class="icon-btn" id="bell" aria-label="Open constraints">${icon('bell')}<span class="count hidden" id="bell-count"></span></button>
+            <button class="icon-btn" id="bell" aria-label="Open notifications">${icon('bell')}<span class="count hidden" id="bell-count"></span></button>
             <button class="icon-btn" id="help" aria-label="Help">${icon('help')}</button>
           </div>
           <div class="user-card" id="user-card" title="Settings">
@@ -142,20 +144,20 @@ function renderShell() {
     </div>`;
   $('#menu').onclick = () => $('#shell').classList.toggle('nav-open');
   $('#user-card').onclick = () => { location.hash = '#/settings'; };
-  $('#bell').onclick = () => { location.hash = '#/scheduling'; };
+  $('#bell').onclick = () => { location.hash = '#/notifications'; };
   $('#help').onclick = showHelp;
   wireSearch();
   refreshBell();
 }
 
 async function refreshBell() {
-  const { data } = await tryGet('/api/planning/constraints');
+  const { data } = await tryGet('/api/notifications/inbox?unreadOnly=true');
   const n = data?.length ?? 0;
   const el = $('#bell-count');
   if (!el) return;
   el.textContent = n > 99 ? '99+' : String(n);
   el.classList.toggle('hidden', !n);
-  $('#bell').title = data ? `${n} open constraint${n === 1 ? '' : 's'}` : 'Constraints are not visible with your roles';
+  $('#bell').title = data ? `${n} unread notification${n === 1 ? '' : 's'}` : 'Notifications are not visible with your roles';
 }
 
 function showHelp() {

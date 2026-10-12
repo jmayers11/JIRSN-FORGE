@@ -47,6 +47,15 @@ V3.1–V3.9 are committed, with V3.9 full verification PASS at `411c3c9`. V3.10 
 14–16. Integration/failure/performance: notifications subscribe; missing source data is reported as unknown. Read one consistent snapshot, include only permitted records, aggregate by shift/timezone and paginate sources.
 17–20. Migration/tests/dependencies/decisions: additive tables; test G/K, inherited unresolved actions, DST boundaries, duplicate closeout and missing identity/signoff. Requires shared evidence, notifications and scoped authorization; product configures checklist and reconciliation tolerances. Core time authority must not be duplicated.
 
+## Notifications and alerting (V3.19)
+
+1–4. Existing: transactional event outbox/log, at-least-once subscription checkpoints, current constraints, dynamic role/program authorization and the application bell. Missing: configurable event-condition rules, alert history/acknowledgment, resolution notices, recipient/channel delivery state and email provider boundary.
+5. Owner: Kernel event log remains the integration spine; Host notification subscriber owns alert projections and delivery; source contexts retain operational state and resolution authority.
+6–9. Entities/DB/services/API: additive rule, alert, inbox and delivery records. Rules select event and clear-event types, simple payload equality, global/program/work-center/entity scope, severity, separate confidence, recipient and escalation roles, channels, templates, local deep link, delay, reminder, escalation, IANA quiet hours and deduplication. Expose inbox, acknowledgment, rule management and available event types.
+10–13. Events/UI/authorization/audit: rule changes and acknowledgments use the command pipeline; the subscriber is idempotent under replay. Each inbox read and acknowledgment rechecks active roles, program membership and markings. In-app alerts and header count link to notification UI. Deep links are app-local navigation only and confer no authority.
+14–16. Integration/failure/performance: mail dispatch is a separate leased worker with provider idempotency keys and bounded retries. Provider failure updates delivery state only; it cannot roll back the triggering source command. Quiet hours defer delivery in the configured IANA zone. A configured clear event updates the alert and emits a resolution notice; resolution acknowledgment is distinct from initial acknowledgment.
+17–20. Migration/tests/dependencies/decisions: additive Kernel migration; test rule scope, duplicate source-event replay, current access revocation, acknowledgment/resolution, delayed email failure and migration idempotency. Email address resolution and transport stay behind an HTTPS provider configured by deployment; no mail credential or address is stored in Forge.
+
 ## Priority and generalized holds (28–32)
 
 1–4. Existing: priorities influence deterministic scheduling; V3.9 production holds and separate quality/stock mechanisms. V3.10 package centralizes explicit holds and configures blocked activities/release authority; missing controlled priority proposals/impact, general downstream hold impact and signoff policies.

@@ -11,6 +11,7 @@ using Forge.Projects.Infrastructure;
 using Forge.Quality.Infrastructure;
 using Forge.Host.Api;
 using Forge.Host.Security;
+using Forge.Host.Notifications;
 using Forge.Kernel.Access;
 using Forge.Kernel.Postgres;
 using Microsoft.AspNetCore.Authentication;
@@ -28,6 +29,7 @@ var connectionString = builder.Configuration.GetConnectionString("Forge")
 
 // Bounded contexts in dependency order (migrations run in this order).
 builder.Services.AddForgeKernel(connectionString);
+builder.Services.AddForgeStore<INotificationStore>(uow => new NotificationStore(uow));
 builder.Services.AddForgeCompetency();
 builder.Services.AddForgeResources();
 builder.Services.AddForgeWorkforce();
@@ -45,6 +47,29 @@ builder.Services.AddForgeQuality();
 builder.Services.AddForgeProcurement();
 builder.Services.AddForgeInventory();
 builder.Services.AddForgePlanning();
+
+builder.Services.AddSingleton<NotificationCommands>();
+builder.Services.AddSingleton<NotificationReadStore>();
+builder.Services.AddSingleton<NotificationDeliveryService>();
+builder.Services.AddSingleton<NotificationEventSubscriber>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber>(sp => sp.GetRequiredService<NotificationEventSubscriber>());
+var notificationEmailEndpoint = builder.Configuration["Forge:Notifications:EmailEndpoint"];
+if (!string.IsNullOrWhiteSpace(notificationEmailEndpoint))
+{
+    var emailBearerToken = builder.Configuration["Forge:Notifications:EmailBearerToken"];
+    if (!Uri.TryCreate(notificationEmailEndpoint, UriKind.Absolute, out var emailUri)
+        || (emailUri.Scheme != Uri.UriSchemeHttps && !(builder.Environment.IsDevelopment() && emailUri.IsLoopback && emailUri.Scheme == Uri.UriSchemeHttp)))
+        throw new InvalidOperationException("Forge:Notifications:EmailEndpoint must be HTTPS (HTTP loopback is allowed only in Development).");
+    if (!string.IsNullOrWhiteSpace(emailBearerToken))
+        builder.Services.AddHttpClient("forge-notification-email", client => client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", emailBearerToken));
+    else
+        builder.Services.AddHttpClient("forge-notification-email");
+    builder.Services.AddSingleton<INotificationEmailProvider>(sp => new ConfiguredEmailProvider(sp.GetRequiredService<IHttpClientFactory>().CreateClient("forge-notification-email"), emailUri));
+}
+else
+{
+    builder.Services.AddSingleton<INotificationEmailProvider, UnconfiguredEmailProvider>();
+}
 
 // V2.5: propagation of released engineering changes (a subscriber, with retries of incomplete propagations).
 builder.Services.TryAddSingleton<Forge.Host.Propagation.IPropagationFaults, Forge.Host.Propagation.NoPropagationFaults>();
@@ -88,6 +113,7 @@ if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
 {
     builder.Services.AddForgeKernelBackgroundServices();
     builder.Services.AddHostedService<Forge.Host.Propagation.PropagationRetryService>();
+    builder.Services.AddHostedService<NotificationDeliveryWorker>();
 }
 
 builder.Services.AddSingleton<RequestPrincipal>();
@@ -187,6 +213,7 @@ app.MapPlanningEndpoints();
 app.MapShopFloorEndpoints();
 app.MapProductionActualsEndpoints();
 app.MapShiftContinuityEndpoints();
+app.MapNotificationEndpoints();
 app.MapShelfLifeEndpoints();
 app.MapGoalEndpoints();
 app.MapToolEndpoints();

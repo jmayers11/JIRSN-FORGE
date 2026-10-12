@@ -6,6 +6,9 @@ public static class Permissions
     public const string AccessManage = "kernel.access.manage";
     public const string PeopleRead = "kernel.people.read";
     public const string AuditRead = "kernel.audit.read";
+    public const string NotificationsRead = "notifications.read";
+    public const string NotificationsAcknowledge = "notifications.acknowledge";
+    public const string NotificationRulesManage = "notifications.rules.manage";
 
     public const string ResourcesManage = "resources.manage";
     public const string ResourcesRead = "resources.read";
@@ -260,6 +263,14 @@ public static class Roles
         [MaintenanceInstallation] = [Permissions.MaintenanceWork, Permissions.MaintenanceRead, Permissions.EngineeringRead, Permissions.InventoryRead],
         [ChangePropagation] = [Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.OrdersManage, Permissions.OrdersRelease, Permissions.PurchasingRead, Permissions.WorkforceRead, Permissions.ChangesManage],
     };
+
+    static Roles()
+    {
+        foreach (var role in Map.Keys.ToArray())
+            Map[role] = [.. Map[role], Permissions.NotificationsRead, Permissions.NotificationsAcknowledge];
+        Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.NotificationRulesManage];
+        Map[Supervisor] = [.. Map[Supervisor], Permissions.NotificationRulesManage];
+    }
 
     /// <summary>The system role the propagation of a released engineering change acts with (V2.5).</summary>
     public const string ChangePropagation = "system.ChangePropagation";
