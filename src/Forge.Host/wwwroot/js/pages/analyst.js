@@ -97,14 +97,16 @@ export async function analystPage(page, ctx) {
 
   const s = status.data;
   const shifts = resources.data?.shifts ?? [];
+  const initialQuestion = (ctx.query.get('q') ?? '').trim().slice(0, 500);
   let narrate = false;
+  let initialAsked = false;
 
   function render() {
     page.innerHTML = `
       <div class="page-head"><div><h1>Forge Analyst</h1><div class="sub">Ask about your operation in plain language. Forge works out what you mean, shows what it understood, and answers from its own records with your access. ${s.narration ? '' : 'No AI provider is configured: every answer is computed by Forge.'}</div></div></div>
       <section class="panel analyst-ask">
         <form id="ask" class="analyst-form">
-          <input class="input" id="q" placeholder="e.g. Why is order 10001 late?" autocomplete="off" maxlength="500">
+          <input class="input" id="q" value="${esc(initialQuestion)}" placeholder="e.g. Why is order 10001 late?" autocomplete="off" maxlength="500">
           <button class="btn primary" type="submit">Ask</button>
         </form>
         <div class="analyst-tools">
@@ -146,5 +148,9 @@ export async function analystPage(page, ctx) {
   }
 
   render();
+  if (initialQuestion && !initialAsked) {
+    initialAsked = true;
+    void ask(initialQuestion);
+  }
   return { dispose() {} };
 }

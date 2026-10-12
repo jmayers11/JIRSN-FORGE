@@ -248,6 +248,9 @@ async function changesView(page, ctx, head) {
   const at2 = ctx.query.get('at2') ?? localInput(now);
   const all = ctx.query.get('all') === '1';
   const iso = v => new Date(v).toISOString();
+  const presets = [
+    ['-8h', now - 8 * 36e5, now], ['-7d', now - 7 * 864e5, now], ['+2w', now, now + 14 * 864e5],
+  ];
   const res = await tryGet(`/api/planning/history/compare?at1=${encodeURIComponent(iso(at1))}&at2=${encodeURIComponent(iso(at2))}&includeUnchanged=${all}`);
   const c = res.data;
   const version = v => v ? `<a href="#/scheduling">version ${v.versionId}</a>, approved ${esc(fmtDateTime(v.approvedAt))}${v.approvedBy ? ` by ${esc(who(v.approvedBy))}` : ''}` : '<span class="muted">none</span>';
@@ -267,6 +270,7 @@ async function changesView(page, ctx, head) {
     <section class="panel no-print">
       <header><h2>What changed?</h2></header>
       <p class="muted" style="margin:0 0 10px">Compares the approved schedule in force at each moment, order by order, and lists recorded events in between. Constraints observed in the same period are correlated evidence; timing alone does not establish cause. Recorded cause links appear separately below. Evidence includes downtime, shop-floor reports, NCRs${c?.auditIncluded ? ' and audit entries' : ''}.</p>
+      <div class="toolbar" aria-label="Horizon time windows">${presets.map(([label, from, to]) => `<button class="btn small" type="button" data-period="${label}">${label === '-8h' ? 'Last 8 hours' : label === '-7d' ? 'Last 7 days' : 'Next 2 weeks'}</button>`).join('')}</div>
       <form id="cmp" class="report-filters">
         <div class="field"><label>From (${esc(timeZone() ?? 'local')})</label><input class="input" type="datetime-local" name="at1" value="${esc(at1)}"></div>
         <div class="field"><label>To</label><input class="input" type="datetime-local" name="at2" value="${esc(at2)}"></div>
@@ -303,5 +307,9 @@ async function changesView(page, ctx, head) {
     const f = e.target;
     location.hash = `#/reports?view=changes&at1=${encodeURIComponent(f.at1.value)}&at2=${encodeURIComponent(f.at2.value)}${f.all.checked ? '&all=1' : ''}`;
   });
+  $$('[data-period]', page).forEach(button => button.addEventListener('click', () => {
+    const [, from, to] = presets.find(p => p[0] === button.dataset.period);
+    location.hash = `#/reports?view=changes&at1=${encodeURIComponent(localInput(from))}&at2=${encodeURIComponent(localInput(to))}${all ? '&all=1' : ''}`;
+  }));
   $('#print', page)?.addEventListener('click', () => window.print());
 }

@@ -969,3 +969,7 @@ Scenarios (`#/scenarios`) are saved privately under their owner's Forge identity
 ### V3.24 — Indirect and support work
 
 Attendance remains a badge or supervisor-confirmed presence record; direct labor remains a separate shop-floor operation record. When moving a worker would leave machine work unable to run, the reallocation preview offers configured machine-free activities at that work center if their safety rules permit them, alongside the consequences for the stopped operation. Support assignments do not report production quantity or become direct labor. Existing full-suite coverage includes `Attendance_and_direct_labor_stay_separate_and_reporting_completes_the_order` and `Spec_79_options_cover_replacement_one_person_work_moving_michael_and_the_schedule`. See ADR 0048 and the Phase 5/reallocation tests.
+
+### V3.25 — Horizon lenses and universal questions
+
+Horizon links to Factory, Program, Contract, Work center, Machine, Order and Workforce views, which continue to read through their owning services and permissions. “What changed?” provides −8h, −7d and +2w comparison windows; its past side is the approved schedule in force at the selected earlier instant. The global search can send a plain-language question to Forge Analyst, which shows its interpretation, evidence traces and any ambiguity. Unsupported or unclear questions remain explicit. See ADR 0049.

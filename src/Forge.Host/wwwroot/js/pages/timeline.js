@@ -34,6 +34,12 @@ export async function timelinePage(page, ctx) {
       <div class="page-head">
         <div><h1>Horizon</h1><div class="sub">The schedule over time: every operation on its machine, with downtime and the reason each one starts when it does.</div></div>
         <div class="spacer"></div>
+        <nav class="toolbar horizon-lenses" aria-label="Horizon lenses">
+          <a class="btn small" href="#/home">Factory</a><a class="btn small" href="#/programs">Program</a><a class="btn small" href="#/programs">Contract</a>
+          <a class="btn small" href="#/work-centers">Work center</a><a class="btn small" href="#/maintenance">Machine</a>
+          <a class="btn small" href="#/orders">Order</a><a class="btn small" href="#/workforce">Workforce</a>
+          <a class="btn small" href="#/reports?view=changes">What changed?</a>
+        </nav>
         <div class="head-controls">
           <div class="seg">${['approved', 'proposed'].map(k => `<button data-which="${k}" class="${k === which ? 'on' : ''}">${k === 'approved' ? 'Approved' : 'Proposal'}</button>`).join('')}</div>
           <div class="seg">${[1, 3, 7, 14].map(d => `<button data-days="${d}" class="${d === span ? 'on' : ''}">${d === 1 ? '24h' : d === 7 ? '1w' : d === 14 ? '2w' : `${d}d`}</button>`).join('')}</div>

@@ -101,6 +101,15 @@ V3.1–V3.9 are committed, with V3.9 full verification PASS at `411c3c9`. V3.10 
 14–16. Failure/performance: an activity is offered only when configured at the work center and its safety composition is satisfied or no rule applies. The preview does not report output or silently reassign a person.
 17–20. Tests/dependencies/decisions: full integration tests cover attendance/direct-labor separation, and Planning tests cover support activity choices and consequence visibility. No schema/dependency change. Existing tests are the acceptance evidence for this roadmap increment.
 
+## Horizon lenses and universal questions (V3.25)
+
+1–4. Existing: Factory Horizon, Program Horizon/contracts, work-center, machine, order, workforce and contract source views already exist. `HorizonHistoryService` compares approved schedule snapshots as of two instants; the deterministic Analyst routes questions to shared Planning and source-domain engines. Risk: a past range could accidentally use the present schedule, or a second parser/view could expose records under weaker scope.
+5. Owner: Planning owns schedule history and comparisons; each source domain owns its lens/read model; Analyst owns interpretation and dispatch, not the underlying facts.
+6–9. Entities/API: no new persistence or lens API. Add −8h, −7d and +2w windows to the existing comparison UI. Past projection continues to come from `ApprovedAsOfAsync`; future state is only a newer approved version if effective at that instant.
+10–13. Events/UI/authorization/audit: Horizon links to all seven existing views. A phrase from global search routes into Forge Analyst and uses its standard interpretation, service reads, traces and access filters. No search link grants access.
+14–16. Failure/performance: no schedule at the selected past instant is shown as absent, not backfilled from today. Existing one-year comparison bound remains. Unsupported or ambiguous questions are returned as such.
+17–20. Tests/dependencies/decisions: existing Phase8 integration test proves the old approved schedule is returned as the before projection after replanning; Analyst and program-segregation tests exercise shared access. UI syntax and full verification gate are required. No new dependency. Lenses remain navigational, so counts must be compared using the same scope and instant rather than summed across overlapping scopes.
+
 ## Priority and generalized holds (28–32)
 
 1–4. Existing: priorities influence deterministic scheduling; V3.9 production holds and separate quality/stock mechanisms. V3.10 package centralizes explicit holds and configures blocked activities/release authority; missing controlled priority proposals/impact, general downstream hold impact and signoff policies.

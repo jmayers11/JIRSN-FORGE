@@ -203,10 +203,10 @@ async function runSearch(text) {
     ...(lookups.resources.workCenters ?? []).filter(w => hit(w.code, w.name)).map(w => ['Work center', `${w.code} — ${w.name}`, `#/work-centers/${encodeURIComponent(w.code)}`]),
     ...lookups.people.filter(p => hit(p.displayName, p.idpSubject)).map(p => ['Employee', p.displayName, `#/workforce`]),
   ].slice(0, 12);
-  const ask = `<div class="empty" style="border:0;text-align:left">Asking Forge in plain language arrives with Forge Analyst (Phase 9). Search covers orders, parts, machines, work centers and people.</div>`;
+  const ask = q.includes(' ') ? `<a href="#/analyst?q=${encodeURIComponent(text.trim())}"><span class="kind">Ask Forge</span><span>${esc(text.trim())}</span></a>` : '';
   box.innerHTML = rows.length
-    ? rows.map(([k, label, href]) => `<a href="${esc(href)}"><span class="kind">${esc(k)}</span><span>${esc(label)}</span></a>`).join('') + (q.includes(' ') ? ask : '')
-    : `<div class="empty" style="border:0">No orders, parts, machines or people match “${esc(text)}”.</div>${q.includes(' ') ? ask : ''}`;
+    ? rows.map(([k, label, href]) => `<a href="${esc(href)}"><span class="kind">${esc(k)}</span><span>${esc(label)}</span></a>`).join('') + ask
+    : `<div class="empty" style="border:0">No orders, parts, machines or people match “${esc(text)}”.</div>${ask}`;
   box.classList.remove('hidden');
 }
 
