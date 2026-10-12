@@ -1,4 +1,5 @@
 import { esc, $, $$, toast, confirmWithReason } from './ui.js';
+export { canAction } from './ui-authority.mjs';
 
 // Small form builder shared by the materials pages: a field list in, values out, sent with a reason.
 
@@ -68,8 +69,6 @@ export function qty(n, digits = 3) {
   if (n == null || Number.isNaN(Number(n))) return '—';
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: digits });
 }
-
-export const can = (me, ...roles) => roles.some(r => me.roles.includes(r));
 
 export const today = () => {
   const d = new Date();

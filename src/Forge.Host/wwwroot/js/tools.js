@@ -1,7 +1,7 @@
 import { tryGet, command } from './api.js';
 import { who } from './people.js';
 import { esc, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, drawer } from './ui.js';
-import { formModal, qty, can } from './forms.js';
+import { formModal, qty, canAction } from './forms.js';
 
 // Tools (V3.8): identity, type, place and custodian, condition, eligibility, uses against limits, calibration and
 // service cycles. Whether a tool may be used is judged at the moment of use from its history.
@@ -14,9 +14,9 @@ export async function appendTools(container, machines, me) {
   const section = document.createElement('section');
   section.className = 'panel';
   container.appendChild(section);
-  const manage = can(me, 'ManufacturingEngineer', 'QualityEngineer', 'MaintenancePlanner');
-  const calibrate = can(me, 'QualityEngineer', 'MaintenanceTechnician');
-  const handle = can(me, 'MaterialHandler', 'Supervisor', 'MaintenanceTechnician', 'MaintenancePlanner', 'QualityEngineer');
+  const manage = canAction(me, 'resources.tools.manage');
+  const calibrate = canAction(me, 'resources.tools.calibrate');
+  const handle = canAction(me, 'resources.tools.handle');
   const load = async () => {
     const [tools, types, activities] = await Promise.all([tryGet('/api/resources/tools'), tryGet('/api/resources/tool-types'), tryGet('/api/resources/')]);
     const list = tools.data ?? [];
@@ -92,7 +92,7 @@ export async function appendToolRequirements(container, me) {
   const section = document.createElement('section');
   section.className = 'panel';
   container.appendChild(section);
-  const manage = can(me, 'ManufacturingEngineer', 'QualityEngineer', 'MaintenancePlanner');
+  const manage = canAction(me, 'resources.tools.manage');
   const load = async () => {
     const [reqs, types] = await Promise.all([tryGet('/api/resources/tool-requirements'), tryGet('/api/resources/tool-types')]);
     const list = reqs.data ?? [];

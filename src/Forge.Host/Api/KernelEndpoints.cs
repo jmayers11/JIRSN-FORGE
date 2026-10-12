@@ -1,3 +1,4 @@
+using System.Globalization;
 using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Identity;
@@ -23,6 +24,9 @@ public sealed record ApprovalThresholdRequest(decimal? MaximumAmount, string? Cu
 
 public sealed record ProgramAccessRequest(Guid ProgramId, string? Reason);
 
+public sealed record ProposeDelegationRequest(Guid Recipient, string[]? Permissions, DelegationScope[]? Scopes,
+    DateTimeOffset StartsAt, DateTimeOffset ExpiresAt, string? Reason);
+
 public sealed record ReasonRequest(string? Reason);
 
 public static class KernelEndpoints
@@ -31,9 +35,11 @@ public static class KernelEndpoints
     {
         var api = app.MapGroup("/api/kernel").RequireAuthorization();
 
-        api.MapGet("/me", async (HttpContext http, CancellationToken _) =>
+        api.MapGet("/me", async (HttpContext http, IConfiguration configuration, CancellationToken _) =>
         {
             var principal = await PrincipalAsync(http);
+            var idleTimeoutSeconds = int.TryParse(configuration["Forge:ShopFloor:IdleTimeoutSeconds"], NumberStyles.Integer, CultureInfo.InvariantCulture, out var configuredIdleTimeoutSeconds)
+                && configuredIdleTimeoutSeconds is >= 1 and <= 3600 ? configuredIdleTimeoutSeconds : 60;
             return principal is null
                 ? NotRegistered()
                 : Results.Ok(new
@@ -43,6 +49,11 @@ public static class KernelEndpoints
                     roles = principal.Roles.Order(StringComparer.Ordinal),
                     programs = principal.Programs.Select(p => p.Value).Order(),
                     markings = principal.Markings.ToString(),
+                    permissions = (principal.EffectivePermissions ?? principal.Roles.SelectMany(Roles.PermissionsOf).ToHashSet(StringComparer.Ordinal)).Order(StringComparer.Ordinal),
+                    scopedPermissions = principal.ScopedPermissions ?? [],
+                    approvalThresholds = principal.ApprovalThresholds ?? [],
+                    delegatedPermissions = principal.DelegatedPermissions ?? [],
+                    shopFloorIdleTimeoutSeconds = idleTimeoutSeconds,
                 });
         });
 
@@ -81,6 +92,37 @@ public static class KernelEndpoints
 
         api.MapPost("/people/{personId:guid}/roles", (HttpContext http, Guid personId, RoleRequest body, AccessService access, CancellationToken ct) =>
             Command(http, body.Reason, context => access.AssignRoleAsync(new AssignRole(new PersonId(personId), body.Role, body.ExpiresAt), context, ct)));
+
+        api.MapGet("/delegations", async (HttpContext http, DelegationService service, TimeProvider time, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            var records = await service.ListAsync(principal, ct);
+            return Results.Ok(records.Select(record => new
+            {
+                record.DelegationId, grantor = record.Grantor.Value, recipient = record.Recipient.Value,
+                record.Permissions, record.Scopes, record.StartsAt, record.ExpiresAt, state = record.StateAt(time.GetUtcNow()),
+                record.ProposedAt, record.Reason, approver = record.Approver?.Value, record.ApprovedAt, record.ApprovalReason,
+                record.RevokedAt, record.RevocationReason,
+            }));
+        });
+        api.MapGet("/delegations/lendable", async (HttpContext http) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            return Results.Ok(new
+            {
+                permissions = (principal.EffectivePermissions ?? new HashSet<string>()).Concat(principal.ScopedPermissions?.Select(grant => grant.Permission) ?? [])
+                    .Where(permission => permission is not (Permissions.AccessManage or Permissions.DelegationPropose)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal),
+                principal.ScopedPermissions,
+            });
+        });
+        api.MapPost("/delegations", (HttpContext http, ProposeDelegationRequest body, DelegationService service, CancellationToken ct) =>
+            Command(http, body.Reason, context => service.ProposeAsync(new ProposeDelegation(new PersonId(body.Recipient), body.Permissions ?? [], body.Scopes ?? [], body.StartsAt, body.ExpiresAt), context, ct)));
+        api.MapPost("/delegations/{delegationId:guid}/approve", (HttpContext http, Guid delegationId, ReasonRequest body, DelegationService service, CancellationToken ct) =>
+            Command(http, body.Reason, context => service.ApproveAsync(new ApproveDelegation(delegationId), context, ct)));
+        api.MapPost("/delegations/{delegationId:guid}/revoke", (HttpContext http, Guid delegationId, ReasonRequest body, DelegationService service, CancellationToken ct) =>
+            Command(http, body.Reason, context => service.RevokeAsync(new RevokeDelegation(delegationId), context, ct)));
 
         api.MapPost("/roles", (HttpContext http, CreateRoleRequest body, AccessService access, CancellationToken ct) =>
             Command(http, body.Reason, context => access.CreateRoleAsync(new CreateRole(body.Role, body.DisplayName, body.Permissions), context, ct)));

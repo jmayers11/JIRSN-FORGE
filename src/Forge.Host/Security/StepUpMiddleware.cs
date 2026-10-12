@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Claims;
+using Forge.Kernel.Holds;
 
 namespace Forge.Host.Api;
 
@@ -17,6 +18,17 @@ public sealed class StepUpMiddleware(RequestDelegate next, IConfiguration config
             return;
         }
 
+        if (TryGetEvidence(context, configuration, time, Guid.Empty) is not null)
+        {
+            await next(context);
+            return;
+        }
+        await Challenge(context).ExecuteAsync(context);
+    }
+
+    /// <summary>Constructs assurance evidence from validated provider claims, using the same freshness policy as marked endpoints.</summary>
+    public static HoldReleaseAuthentication? TryGetEvidence(HttpContext context, IConfiguration configuration, TimeProvider time, Guid personId)
+    {
         var acceptedAcr = configuration.GetSection("Forge:Authentication:StepUp:AcceptedAcrValues")
             .Get<string[]>() ?? ["urn:forge:assurance:high"];
         var acr = context.User.FindFirstValue("acr");
@@ -28,19 +40,23 @@ public sealed class StepUpMiddleware(RequestDelegate next, IConfiguration config
             && DateTimeOffset.FromUnixTimeSeconds(seconds) <= now
             && now - DateTimeOffset.FromUnixTimeSeconds(seconds) <= TimeSpan.FromSeconds(Math.Clamp(maxAge, 1, 3600));
 
-        if (acr is not null && acceptedAcr.Contains(acr, StringComparer.Ordinal) && fresh)
-        {
-            await next(context);
-            return;
-        }
+        var subject = context.User.FindFirstValue("sub") ?? context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var issuer = context.User.FindFirstValue("iss");
+        if (context.User.Identity?.IsAuthenticated != true || acr is null || !acceptedAcr.Contains(acr, StringComparer.Ordinal) || !fresh
+            || string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(issuer)) return null;
+        var authenticatedAt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+        return new HoldReleaseAuthentication(personId, subject, issuer, acr, context.User.FindAll("amr").Select(c => c.Value).ToArray(),
+            authenticatedAt, authenticatedAt.AddSeconds(Math.Clamp(maxAge, 1, 3600)));
+    }
 
+    public static IResult Challenge(HttpContext context)
+    {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.Headers.WWWAuthenticate = "Bearer error=\"insufficient_user_authentication\", error_description=\"fresh_step_up_required\"";
-        await Results.Problem(
+        return Results.Problem(
             title: "Fresh step-up authentication required",
             detail: "Reauthenticate with the identity provider using an accepted assurance level, then retry this action.",
             statusCode: StatusCodes.Status401Unauthorized,
-            extensions: new Dictionary<string, object?> { ["code"] = "step_up_required" })
-            .ExecuteAsync(context);
+            extensions: new Dictionary<string, object?> { ["code"] = "step_up_required" });
     }
 }

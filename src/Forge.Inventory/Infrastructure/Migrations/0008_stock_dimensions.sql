@@ -35,7 +35,9 @@ BEGIN
         SELECT part_number, location_code, lot_number, sum(quantity) AS quantity
         FROM inventory.balance GROUP BY part_number, location_code, lot_number
     ) after
-    FULL JOIN v31_before before USING (part_number, location_code, lot_number)
+    FULL JOIN v31_before before ON after.part_number = before.part_number
+        AND after.location_code = before.location_code
+        AND after.lot_number IS NOT DISTINCT FROM before.lot_number
     WHERE after.quantity IS DISTINCT FROM before.quantity;
     SELECT count(*) INTO leftover FROM inventory.transaction WHERE from_status = 'Available' OR to_status = 'Available';
     IF differences > 0 OR leftover > 0 THEN

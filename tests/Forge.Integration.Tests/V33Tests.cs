@@ -10,12 +10,13 @@ namespace Forge.Integration.Tests;
 /// remnant, byproduct, remaining); issued = consumed + returned + scrap + loss + remnant + remaining within the
 /// yield tolerance, and anything else is flagged, never scrapped; a remnant is an ordinary new instance that can
 /// be moved and issued again; and the genealogy graph traces a supplier lot through the master roll, a remnant
-/// and a second order to what was made, and back. Moves never appear in it.
+/// and a second order to a component, serialized assembly and shipment, and back. Moves never appear in it.
 /// </summary>
 [Collection(PostgresCollection.Name)]
 public sealed class V33Tests(PostgresFixture postgres)
 {
     private const string Sarah = "B-SARAH-0303";
+    private const string Dana = "B-DANA-0303";
 
     private static string Day(int fromToday) => DateTime.UtcNow.AddDays(fromToday).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -40,6 +41,14 @@ public sealed class V33Tests(PostgresFixture postgres)
     private static async Task<JsonElement> Row(HttpClient client, long order, string lot) =>
         (await Get(client, $"/api/inventory/orders/{order}/reconciliation")).GetProperty("rows").EnumerateArray().Single(r => r.GetProperty("lotNumber").GetString() == lot);
 
+    private static void Edge(JsonElement trace, string from, string to, string relation, decimal quantity) =>
+        Assert.Contains(trace.GetProperty("edges").EnumerateArray(), edge =>
+            edge.GetProperty("from").GetString() == from && edge.GetProperty("to").GetString() == to &&
+            edge.GetProperty("relation").GetString() == relation && edge.GetProperty("quantity").GetDecimal() == quantity);
+
+    private static string[] Edges(JsonElement trace) =>
+        trace.GetProperty("edges").EnumerateArray().Select(edge => edge.GetRawText()).Order(StringComparer.Ordinal).ToArray();
+
     [Fact]
     public async Task Material_is_accounted_for_and_genealogy_traces_a_supplier_lot_through_a_remnant_and_back()
     {
@@ -50,6 +59,7 @@ public sealed class V33Tests(PostgresFixture postgres)
         await plant.Person("pat", "Buyer", "PurchasingManager");
         await plant.Person("mo", "MaterialHandler");
         await plant.Person("kiosk", "ShopFloorTerminal");
+        await plant.Person("ship", "Shipper");
         var (bob, pat, stores, mo, kiosk) = (plant.As("bob"), plant.As("pat"), plant.As("stores"), plant.As("mo"), plant.As("kiosk"));
 
         // Copper foil bought by the roll; strip made from it; trim is a byproduct.
@@ -123,21 +133,83 @@ public sealed class V33Tests(PostgresFixture postgres)
         await plant.Ok(kiosk, "/api/shopfloor/report", new { badge = Sarah, orderNumber = second, sequence = 10, good = 148m, scrap = 0m, complete = true });
         await plant.Ok(stores, "/api/inventory/production-receipts", new { orderNumber = second, quantity = 148m, locationCode = "STORES", lotNumber = "S-2" });
 
-        // Back from the strip: order 2, the remnant, the master roll, the receipt from Mill Company with its heat.
-        var back = await Get(planner, "/api/genealogy/trace?part=STRIP-9&lot=S-2&direction=Back");
+        // The strip produced from the remnant is consumed in an actual serialized assembly.
+        await plant.Ok(e, "/api/engineering/items", new { partNumber = "ASSY-9", description = "Serialized foil assembly", unitOfMeasure = "EA", makeBuy = "Make", leadTimeDays = 2, serialized = true });
+        await plant.Ok(e, "/api/engineering/items/ASSY-9/revisions", new { revision = "A" });
+        await plant.Ok(e, "/api/engineering/items/ASSY-9/revisions/A/bom", new { lineNumber = 1, componentPartNumber = "STRIP-9", quantityPer = 10m, scrapPercent = 0m });
+        await plant.Ok(e, "/api/engineering/items/ASSY-9/revisions/A/routing", new { sequence = 10, description = "Assemble foil unit", workCenterCode = "ASSY-WC", activityCode = "ASSEMBLE", setupMinutes = 0m, runMinutesPerUnit = 1m, crewSize = 1 });
+        await plant.Ok(plant.Approver, "/api/engineering/items/ASSY-9/revisions/A/release", new { reason = "Released serialized assembly baseline" });
+        var assembly = Id(await plant.Ok(e, "/api/orders/", new { partNumber = "ASSY-9", quantity = 1m, dueDate = Day(14), priority = 3 }));
+        await plant.Ok(planner, $"/api/orders/{assembly}/release", new { reason = "Customer serialized assembly" });
+        await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = assembly, partNumber = "STRIP-9", quantity = 10m, locationCode = "STORES", lotNumber = "S-2" });
+        await plant.Ok(mo, url, Record(assembly, null, new { role = "Consumed", partNumber = "STRIP-9", lotNumber = "S-2", quantity = 10m }));
+        Assert.Equal("Balanced", (await Row(mo, assembly, "S-2")).GetProperty("status").GetString());
+        await plant.Ok(e, "/api/resources/work-centers/ASSY-WC/shifts", new { shiftCode = "ALL" });
+        await plant.Ok(e, $"/api/workforce/workers/{plant.People["dana"]}/shift", new { shiftCode = "ALL" });
+        await plant.Ok(plant.Admin, $"/api/workforce/people/{plant.People["dana"]}/badge", new { badge = Dana });
+        await plant.Ok(kiosk, "/api/shopfloor/clock-in", new { badge = Dana });
+        await plant.Ok(kiosk, "/api/shopfloor/start", new { badge = Dana, orderNumber = assembly, sequence = 10 });
+        await plant.Ok(kiosk, "/api/shopfloor/report", new { badge = Dana, orderNumber = assembly, sequence = 10, good = 1m, scrap = 0m, complete = true });
+        const string serial = "ASSY-9-SN-1";
+        await plant.Ok(stores, "/api/inventory/production-receipts", new { orderNumber = assembly, quantity = 1m, locationCode = "STORES", serials = new[] { serial } });
+        var finished = (await Get(stores, "/api/inventory/lots?part=ASSY-9")).EnumerateArray().Single(l => l.GetProperty("lotNumber").GetString() == serial);
+        Assert.Equal(("Serial", "A"), (finished.GetProperty("identityKind").GetString(), finished.GetProperty("partRevision").GetString()));
+
+        // Moving the finished serial is a real inventory transaction with no new genealogy edge.
+        var beforeMove = await Get(planner, $"/api/genealogy/trace?part=ASSY-9&lot={serial}&direction=Both");
+        await plant.Ok(stores, "/api/inventory/locations", new { code = "FG-STAGE", siteCode = "PLANT1", name = "Finished assembly shipping staging", kind = "Stores" });
+        await plant.Ok(mo, "/api/inventory/transfers", new { partNumber = "ASSY-9", quantity = 1m, fromLocation = "STORES", toLocation = "FG-STAGE", lotNumber = serial, status = "Released", reason = "Stage finished serial for shipment" });
+        var afterMove = await Get(planner, $"/api/genealogy/trace?part=ASSY-9&lot={serial}&direction=Both");
+        Assert.Equal(Edges(beforeMove), Edges(afterMove));
+        Assert.Equal(beforeMove.GetProperty("nodes").GetRawText(), afterMove.GetProperty("nodes").GetRawText());
+
+        var shipment = Id(await plant.Ok(stores, "/api/inventory/shipments", new { customer = "Foil Systems", shipTo = "Assembly dock", lines = new[] { new { partNumber = "ASSY-9", quantity = 1m, locationCode = "FG-STAGE", lotNumber = serial } } }));
+        await plant.Ok(stores, $"/api/inventory/shipments/{shipment}/pack", new { });
+        await plant.Ok(plant.As("ship"), $"/api/inventory/shipments/{shipment}/ship", new { carrier = "UPS", tracking = "FOIL-0303" });
+
+        // Back from the finished serial: the assembly, strip, order 2, remnant, master roll and
+        // authoritative supplier receipt with the heat and purchase-order evidence.
+        var back = await Get(planner, $"/api/genealogy/trace?part=ASSY-9&lot={serial}&direction=Back");
         var labels = back.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("label").GetString()!).ToList();
         Assert.Contains(labels, l => l.Contains("M-1-R", StringComparison.Ordinal));
         Assert.Contains(labels, l => l.Contains("HEAT-77", StringComparison.Ordinal) && (l.Contains("Mill Company", StringComparison.Ordinal) || l.Contains("MILLCO", StringComparison.Ordinal)));
         var relations = back.GetProperty("edges").EnumerateArray().Select(x => x.GetProperty("relation").GetString()).ToHashSet();
         Assert.Superset(new HashSet<string?> { "Received", "Issued", "Consumed", "Remnant", "Produced" }, relations);
         Assert.DoesNotContain(labels, l => l.Contains("TRIM-9", StringComparison.Ordinal)); // a sibling of the strip's line, not an ancestor
+        var backIds = back.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("id").GetString()).ToHashSet();
+        Assert.Superset(new HashSet<string?> { $"order:{second}", $"order:{assembly}", "lot:FOIL-9/M-1", "lot:FOIL-9/M-1-R", "lot:STRIP-9/S-2", $"lot:ASSY-9/{serial}" }, backIds);
+        Assert.False(back.GetProperty("truncated").GetBoolean());
 
-        // Forward from the master roll: both orders, the trim byproduct and the strip; the move to the rack is not there.
+        // Forward from the master roll reaches the shipped serialized assembly through the
+        // remnant/component chain. Both inventory moves stay outside the graph.
         var forward = await Get(planner, "/api/genealogy/trace?part=FOIL-9&lot=M-1&direction=Forward");
         var to = forward.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("id").GetString()).ToHashSet();
-        Assert.Superset(new HashSet<string?> { $"order:{first}", $"order:{second}", "lot:TRIM-9/T-1", "lot:STRIP-9/S-2", "lot:FOIL-9/M-1-R" }, to);
+        Assert.Superset(new HashSet<string?> { $"order:{first}", $"order:{second}", $"order:{assembly}", "lot:TRIM-9/T-1", "lot:STRIP-9/S-2", "lot:FOIL-9/M-1-R", $"lot:ASSY-9/{serial}", $"shipment:{shipment}" }, to);
         Assert.Contains(forward.GetProperty("edges").EnumerateArray(), x => x.GetProperty("relation").GetString() == "Lost");
         Assert.DoesNotContain(forward.GetProperty("edges").EnumerateArray(), x => x.GetProperty("relation").GetString() is "Transfer" or "Received");
+        Assert.False(forward.GetProperty("truncated").GetBoolean());
+
+        // Shipment-back proves the same exact manufacturing path all the way to the supplier.
+        var shipmentBack = await Get(planner, $"/api/genealogy/trace?shipment={shipment}&direction=Back");
+        var receipt = Assert.Single(shipmentBack.GetProperty("nodes").EnumerateArray(), n =>
+            n.GetProperty("kind").GetString() == "Receipt" && n.GetProperty("partNumber").GetString() == "FOIL-9" && n.GetProperty("lotNumber").GetString() == "M-1");
+        Assert.Contains("Mill Company", receipt.GetProperty("label").GetString(), StringComparison.Ordinal);
+        Assert.Contains("HEAT-77", receipt.GetProperty("label").GetString(), StringComparison.Ordinal);
+        Assert.Contains($"PO {po}/1", receipt.GetProperty("label").GetString(), StringComparison.Ordinal);
+        Edge(shipmentBack, receipt.GetProperty("id").GetString()!, "lot:FOIL-9/M-1", "Received", 1000m);
+        foreach (var trace in new[] { forward, shipmentBack })
+        {
+            Edge(trace, "lot:FOIL-9/M-1", "lot:FOIL-9/M-1-R", "Remnant", 150m);
+            Edge(trace, "lot:FOIL-9/M-1-R", $"order:{second}", "Issued", 150m);
+            Edge(trace, "lot:FOIL-9/M-1-R", $"order:{second}", "Consumed", 148m);
+            Edge(trace, $"order:{second}", "lot:STRIP-9/S-2", "Produced", 148m);
+            Edge(trace, "lot:STRIP-9/S-2", $"order:{assembly}", "Issued", 10m);
+            Edge(trace, "lot:STRIP-9/S-2", $"order:{assembly}", "Consumed", 10m);
+            Edge(trace, $"order:{assembly}", $"lot:ASSY-9/{serial}", "Produced", 1m);
+            Edge(trace, $"lot:ASSY-9/{serial}", $"shipment:{shipment}", "Shipped", 1m);
+            Assert.DoesNotContain(trace.GetProperty("edges").EnumerateArray(), x => x.GetProperty("relation").GetString() == "Transfer");
+            Assert.False(trace.GetProperty("truncated").GetBoolean());
+        }
         var missing = await planner.GetAsync(new Uri("/api/genealogy/trace?lot=NOPE-1", UriKind.Relative));
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
 

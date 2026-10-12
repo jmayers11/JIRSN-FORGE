@@ -1,10 +1,11 @@
 import { get, command } from '../api.js';
 import { esc, toast } from '../ui.js';
+import { canAction } from '../forms.js';
 
 const field = (label, name, value = '', type = 'text', extra = '') => `<label class="field"><span>${esc(label)}</span><input class="input" name="${esc(name)}" type="${type}" value="${esc(value)}" ${extra}></label>`;
 
 export async function notificationsPage(root, { me, refreshBell }) {
-  const canManage = me.roles.includes('SecurityAdministrator') || me.roles.includes('Supervisor');
+  const canManage = canAction(me, 'notifications.rules.manage');
   const [inboxResult, rulesResult, eventResult] = await Promise.all([
     get('/api/notifications/inbox').catch(() => ({ data: [] })),
     canManage ? get('/api/notifications/rules').catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
@@ -16,7 +17,7 @@ export async function notificationsPage(root, { me, refreshBell }) {
   const renderAlert = a => {
     const needsAck = a.resolutionMessage ? !a.resolutionAcknowledgedAt : !a.acknowledgedAt;
     const acknowledgedAt = a.resolutionMessage ? a.resolutionAcknowledgedAt : a.acknowledgedAt;
-    return `<article class="card"><div class="card-head"><div><span class="badge">${esc(a.severity)}</span> <span class="muted">${esc(a.confidence)} confidence · ${esc(a.state)}</span><h3>${esc(a.title)}</h3></div><time>${esc(new Date(a.openedAt).toLocaleString())}</time></div><p>${esc(a.message)}</p>${a.resolutionMessage ? `<p class="notice">${esc(a.resolutionMessage)}</p>` : ''}<div class="actions"><a class="btn" href="${esc(a.deepLink)}">Open source</a>${needsAck ? `<button class="btn primary" data-ack="${esc(a.alertId)}">${a.resolutionMessage ? 'Acknowledge resolution' : 'Acknowledge'}</button>` : `<span class="muted">Acknowledged ${esc(new Date(acknowledgedAt).toLocaleString())}</span>`}</div></article>`;
+    return `<article class="card"><div class="card-head"><div><span class="badge">${esc(a.severity)}</span> <span class="muted">${esc(a.confidence)} confidence · ${esc(a.state)}</span><h3>${esc(a.title)}</h3></div><time>${esc(new Date(a.openedAt).toLocaleString())}</time></div><p>${esc(a.message)}</p>${a.resolutionMessage ? `<p class="notice">${esc(a.resolutionMessage)}</p>` : ''}<div class="actions"><a class="btn" href="${esc(a.deepLink)}">Open source</a>${needsAck && canAction(me, 'notifications.acknowledge', { programId: a.programId }) ? `<button class="btn primary" data-ack="${esc(a.alertId)}">${a.resolutionMessage ? 'Acknowledge resolution' : 'Acknowledge'}</button>` : `<span class="muted">${acknowledgedAt ? `Acknowledged ${esc(new Date(acknowledgedAt).toLocaleString())}` : 'Awaiting acknowledgment'}</span>`}</div></article>`;
   };
   const renderRule = r => `<article class="card"><div class="card-head"><div><h3>${esc(r.name)} ${r.active ? '<span class="badge">Active</span>' : '<span class="badge">Paused</span>'}</h3><p class="muted">${esc(r.triggerEventType)}${r.clearEventType ? ` → clears on ${esc(r.clearEventType)}` : ''} · ${esc(r.severity)} · ${esc(r.confidence)} confidence</p><p>${esc(r.recipientRoles.join(', '))} · ${esc(r.channels.join(', '))}</p></div><button class="btn" data-toggle-rule="${esc(r.ruleId)}">${r.active ? 'Pause' : 'Activate'}</button></div></article>`;
   root.innerHTML = `<section class="page-head"><div><h1>Notifications</h1><p class="muted">Role and scope aware alerts from Forge records. Opening a link applies normal authorization again.</p></div><button class="btn" id="refresh-alerts">Refresh</button></section>

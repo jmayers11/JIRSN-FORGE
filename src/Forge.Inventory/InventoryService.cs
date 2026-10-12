@@ -46,7 +46,8 @@ public sealed record ReturnFromOrder(long OrderNumber, string PartNumber, decima
 public sealed record TransferStock(string PartNumber, decimal Quantity, string FromLocation, string ToLocation, string? LotNumber, StockStatus Status);
 
 /// <summary>Send company-owned material to an approved outside processor without losing its identity.</summary>
-public sealed record DispatchOutsideProcess(string PartNumber, decimal Quantity, string FromLocation, string ProcessorLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine);
+public sealed record DispatchOutsideProcess(string PartNumber, decimal Quantity, string FromLocation, string ProcessorLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine,
+    string? MaterialRevision = null, string? SpecificationDocument = null, string? SpecificationRevision = null, DateOnly? ExpectedReturnDate = null, bool RequireCertificate = true);
 
 /// <summary>Return processed material under the same lot identity; the returned quantity awaits inspection.</summary>
 public sealed record ReturnFromOutsideProcess(string PartNumber, decimal Quantity, string ProcessorLocation, string ToLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine);
@@ -563,6 +564,17 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             var quantity = RequireQuantity(item, c.Quantity);
             var store = uow.Store<IInventoryStore>();
             await RequireStockAsync(uow, item.PartNumber, location.Code, lot, c.FromStatus, quantity, ct);
+            if (c.FromStatus == StockStatus.Inspection)
+            {
+                foreach (var returned in (await uow.Store<IOutsideProcessLookup>().ListReturnsAsync(null, ct))
+                    .Where(r => r.PartNumber == item.PartNumber && r.LotNumber == lot && r.LocationCode == location.Code))
+                {
+                    var receipt = await uow.Store<IReceivingLookup>().FindTransactionAsync(returned.TransactionId, ct);
+                    var state = await ReceivingQueries.ReceiptStateAsync(uow, receipt!, ct);
+                    if (state.Remaining > 0)
+                        throw new CommandRejectedException("outside_process_inspection_required", $"Inspect outside-process return {returned.TransactionId} with its results and required certificate before release.");
+                }
+            }
             if (await store.LastPlacedIntoAsync(item.PartNumber, location.Code, lot, c.FromStatus, ct) == context.Actor)
             {
                 throw new CommandRejectedException("separation_of_duties", $"You put this stock into {c.FromStatus}; a different person must release it.");

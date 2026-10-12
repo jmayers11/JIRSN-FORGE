@@ -1,7 +1,7 @@
 import { tryGet, command } from './api.js';
 import { who } from './people.js';
 import { esc, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from './ui.js';
-import { formModal, qty, can } from './forms.js';
+import { formModal, qty, canAction } from './forms.js';
 
 // Goals (V3.7): production and delivery goals broken down, required-by dates cascading from the goal above,
 // attainment against target, and a reforecast of the remaining work. Behind plan is not at risk.
@@ -14,7 +14,7 @@ export async function appendGoals(page, me) {
   const section = document.createElement('section');
   section.className = 'panel';
   page.appendChild(section);
-  const manage = can(me, 'Planner', 'ProgramManager');
+  const manage = canAction(me, 'planning.goals.manage');
   const load = async () => {
     const [res, orders, demand] = await Promise.all([tryGet('/api/planning/goals'), tryGet('/api/orders/'), tryGet('/api/planning/demand')]);
     const goals = res.data ?? [];

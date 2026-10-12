@@ -3,7 +3,7 @@ import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, drawer } from '../ui.js';
-import { formModal, qty, can, plusDays } from '../forms.js';
+import { formModal, qty, canAction, plusDays } from '../forms.js';
 
 // Purchase orders (spec §48): a buyer drafts, someone else approves, and only approved open lines
 // count as supply for MRP and material readiness. Supplier date changes carry a reason.
@@ -14,14 +14,13 @@ const SOURCE_LABEL = {
   Quality: 'Quality', Tooling: 'Tooling', Engineering: 'Engineering', CustomerOrder: 'Customer order', Forecast: 'Forecast', Service: 'Service', Internal: 'Internal',
   ContractDelivery: 'Contract delivery', SafetyStock: 'Safety stock', Mixed: 'Several sources',
 };
-const REQUESTERS = ['Planner', 'MaintenancePlanner', 'QualityEngineer', 'ManufacturingEngineer', 'Buyer', 'PurchasingManager', 'ProgramManager'];
 const SUPPLIER_TONE = { Active: 'ok', OnHold: 'warn', Inactive: 'none' };
 const SUPPLIER_LABEL = { Active: 'Active', OnHold: 'On hold', Inactive: 'Inactive' };
 
 export async function procurementPage(page, ctx) {
   const me = ctx.me;
-  const buyer = can(me, 'Buyer');
-  const approver = can(me, 'PurchasingManager');
+  const buyer = canAction(me, 'procurement.manage');
+  const approver = canAction(me, 'procurement.approve');
   let showClosed = false;
   let tab = ctx.query.get('tab') ?? 'orders';
   let data = {};
@@ -157,7 +156,7 @@ export async function procurementPage(page, ctx) {
     page.innerHTML = `
       <div class="page-head">
         <div><h1>Procurement</h1><div class="sub">Requisitions from every source in one queue. Each says what it is for; the purchase order line keeps that, so every receipt and issue can answer "why was this purchased?".</div></div>
-        <div class="spacer"></div>${can(me, ...REQUESTERS) ? '<button class="btn primary" id="raise">Raise a requisition</button>' : ''}
+        <div class="spacer"></div>${canAction(me, 'procurement.requisition.raise') ? '<button class="btn primary" id="raise">Raise a requisition</button>' : ''}
       </div>
       ${tabs()}
       ${res.error ? errorBlock(res.error, 'requisitions') : !groups.length ? emptyBlock('No open requisitions', 'Raise one here, or from a Buy recommendation on the Material Plan.') : groups.map(([k, rs]) => `

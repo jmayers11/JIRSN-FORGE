@@ -1,5 +1,7 @@
 # ADR 0030 — V3.6: aging, shelf life and selection
 
+Completion audit update: the selection API also applies the existing generalized hold gate for material issue, including configured factual descendant-lot propagation. A held candidate keeps its actual ledger status but receives rank zero and an exclusion reason. Remaining eligible candidates are ranked again. Shipping-only holds do not remove issue candidates. `SelectionHoldGovernanceTests` proves direct and descendant exclusion, independent stock, agreement with actual issue commands and restoration after release; final verification is recorded in the handoff.
+
 ## Context
 The V3 brief (M, N) asks Forge to track several things separately: age, shelf life, expiration, open-container
 life, retest, and storage conditions and excursions. A shelf-life extension needs authority and keeps the original

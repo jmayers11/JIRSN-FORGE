@@ -4,6 +4,7 @@ import { esc, toast } from '../ui.js';
 const labels = {
   NegativeStock: 'Negative ledger balance',
   DuplicateAssetSerial: 'Duplicate asset serial',
+  SerialInMultipleLocations: 'Material serial at multiple locations',
   ConsumptionBeforeIssue: 'Consumption without a prior issue',
   ExpiredCalibrationInUse: 'Tool use after calibration due date',
 };

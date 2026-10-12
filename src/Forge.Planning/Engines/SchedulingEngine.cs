@@ -37,7 +37,8 @@ public sealed record ScheduledOperation(
     IReadOnlyList<ScheduledSegment> Segments,
     IReadOnlyList<Interruption> Interruptions,
     IReadOnlyList<string> Operators,
-    Guid? ProgramId = null);
+    Guid? ProgramId = null,
+    string? SiteCode = null);
 
 public enum DeliveryStatus
 {
@@ -122,7 +123,8 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
                     ? Unscheduled(order, op, "Material", materialBlock)
                     : predecessorEnd is { } earliest
                         ? Schedule(timeline, state, order, op, earliest, predecessorSequence, waited)
-                        : Unscheduled(order, op, "Predecessor", $"Operation {predecessorSequence} could not be scheduled.")) with { ProgramId = order.ProgramId };
+                        : Unscheduled(order, op, "Predecessor", $"Operation {predecessorSequence} could not be scheduled.")) with { ProgramId = order.ProgramId,
+                            SiteCode = snapshot.SafetyAreas.FirstOrDefault(area => area.Code == snapshot.WorkCenters.FirstOrDefault(center => center.Code == op.WorkCenterCode)?.SafetyAreaCode)?.SiteCode };
                 orderOps.Add(scheduled);
                 predecessorEnd = scheduled.End;
                 predecessorSequence = op.Sequence;
@@ -173,6 +175,8 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
     private static ScheduledOperation Schedule(CapacityTimeline timeline, Bookings state, OrderInfo order, OrderOperationInfo op, DateTimeOffset earliest, int? predecessor, (string Limiting, string Detail)? waited = null)
     {
         var snapshot = timeline.Snapshot;
+        if (!snapshot.WorkCenters.Any(w => w.Code == op.WorkCenterCode && w.Active))
+            return Unscheduled(order, op, "Equipment", $"Work center {op.WorkCenterCode} is inactive or missing.");
         var minutes = TimeSpan.FromMinutes((double)RemainingMinutes(order, op));
         var options = new List<(WorkRequirement Requirement, Placement Placement)>();
         var holdBlocks = new List<string>();
@@ -306,11 +310,13 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
         var segments = new List<ScheduledSegment>();
         var interruptions = new List<Interruption>();
         (string Limiting, string Detail)? firstBlocker = null;
+        (string Limiting, string Detail)? lastExecutionBlocker = null;
         var cursor = earliest;
         var remaining = minutes;
 
         void Block(string limiting, string detail, DateTimeOffset until)
         {
+            if (limiting != "Calendar") lastExecutionBlocker = (limiting, detail);
             if (segments.Count == 0)
             {
                 firstBlocker ??= (limiting, detail);
@@ -331,7 +337,18 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
 
         if (remaining <= TimeSpan.Zero)
         {
-            return new Placement([new ScheduledSegment(earliest, earliest, [])], [], null, earliest);
+            // Zero-duration milestones still require an eligible resource and valid tooling;
+            // they cannot bypass the same execution gates as a timed operation.
+            var ready = intervals.FirstOrDefault(i => i.Executable && i.End > earliest);
+            if (ready is null)
+            {
+                var blocked = intervals.FirstOrDefault(i => i.End > earliest);
+                return new Placement([], [], blocked is null ? ("Calendar", $"{requirement.WorkCenterCode} has no working time left in the horizon.")
+                    : (blocked.Limiting ?? "Unknown", blocked.Detail), null);
+            }
+            var start = WorkCalendar.Max(earliest, ready.Start);
+            var first = intervals.FirstOrDefault(i => i.End > earliest && !i.Executable && i.Start < start);
+            return new Placement([new ScheduledSegment(start, start, [])], [], first is null ? null : (first.Limiting ?? "Unknown", first.Detail), start);
         }
 
         while (remaining > TimeSpan.Zero)
@@ -339,7 +356,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             var interval = intervals.FirstOrDefault(i => i.End > cursor);
             if (interval is null)
             {
-                return new Placement(segments, interruptions, firstBlocker ?? ("Calendar", $"{requirement.WorkCenterCode} has no working time left in the horizon."), null);
+                return new Placement(segments, interruptions, lastExecutionBlocker ?? firstBlocker ?? ("Calendar", $"{requirement.WorkCenterCode} has no working time left in the horizon."), null);
             }
 
             if (interval.Start > cursor)

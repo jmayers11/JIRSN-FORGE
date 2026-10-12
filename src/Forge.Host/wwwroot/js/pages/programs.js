@@ -1,7 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, confirmWithReason } from '../ui.js';
-import { formModal, qty, can, today, plusDays } from '../forms.js';
+import { formModal, qty, canAction, today, plusDays } from '../forms.js';
 
 // Programs (spec §7, §72): program → contract → CLIN/SLIN → delivery → demand → production orders.
 // Program Horizon counts from records: required = scheduled deliveries, delivered = shipped against
@@ -18,7 +18,7 @@ export async function programsPage(page, ctx) {
 }
 
 async function programList(page, ctx) {
-  const manager = can(ctx.me, 'ProgramManager');
+  const manager = canAction(ctx.me, 'programs.manage');
   const list = await tryGet('/api/programs/');
   page.innerHTML = `
     <div class="page-head"><div><h1>Programs</h1><div class="sub">Program Horizon: each program you have access to, from contract deliveries through orders and the approved schedule.</div></div>
@@ -54,8 +54,8 @@ function card(h) {
 
 async function programDetail(page, ctx, id) {
   const me = ctx.me;
-  const manager = can(me, 'ProgramManager');
-  const planner = can(me, 'Planner');
+  const manager = canAction(me, 'programs.manage');
+  const planner = canAction(me, 'planning.demand.manage');
   const [horizon, contracts, items] = await Promise.all([tryGet(`/api/programs/${id}`), tryGet(`/api/programs/${id}/contracts`), tryGet('/api/engineering/items')]);
   const back = '<a href="#/programs">← Programs</a>';
   if (horizon.error) { page.innerHTML = back + errorBlock(horizon.error, 'this program'); return; }

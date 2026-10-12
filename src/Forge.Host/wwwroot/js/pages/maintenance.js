@@ -2,7 +2,7 @@ import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, drawer } from '../ui.js';
-import { formModal, can, today, plusDays, qty } from '../forms.js';
+import { formModal, canAction, today, plusDays, qty } from '../forms.js';
 import { isDownAt } from '../model.js';
 import { serialDrawer } from '../genealogy.js';
 import { historyDrawer } from '../history.js';
@@ -30,14 +30,15 @@ const local = iso => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.
 
 export async function maintenancePage(page, ctx) {
   const me = ctx.me;
-  const report = can(me, 'MaintenanceTechnician', 'Supervisor', 'MaintenancePlanner');
-  const tech = can(me, 'MaintenanceTechnician');
-  const spares = can(me, 'MaintenanceTechnician', 'MaterialHandler');
-  const planner = can(me, 'MaintenancePlanner');
-  const schedule = can(me, 'MaintenanceTechnician', 'MaintenancePlanner');
-  const assetsManage = can(me, 'MaintenancePlanner', 'ManufacturingEngineer');
-  const outageApprover = can(me, 'MaintenancePlanner', 'Planner');
-  const requisitioner = can(me, 'MaintenancePlanner', 'Planner', 'Buyer');
+  const report = canAction(me, 'maintenance.downtime.report');
+  const tech = canAction(me, 'maintenance.work');
+  const spares = canAction(me, 'inventory.spares.issue');
+  const planner = canAction(me, 'maintenance.pm.manage');
+  const maintenanceApprover = canAction(me, 'maintenance.approve');
+  const schedule = canAction(me, 'maintenance.plan');
+  const assetsManage = canAction(me, 'maintenance.assets.manage');
+  const outageApprover = canAction(me, 'maintenance.outage.approve');
+  const requisitioner = canAction(me, 'procurement.requisition.raise');
   let tab = ctx.query.get('tab') ?? 'machines';
   let showClosed = false;
   let data = {};
@@ -73,7 +74,7 @@ export async function maintenancePage(page, ctx) {
         ${planner ? '<button class="btn primary" id="new-plan">New PM plan</button>' : ''}
         ${assetsManage && tab === 'assets' ? '<button class="btn" id="new-asset">Register asset</button>' : ''}</div>
       ${overdue.length ? `<div class="notice bad">${overdue.length} work order(s) are past due: ${overdue.map(o => `${o.workOrderId} (${esc(target(o))})`).join(', ')}.</div>` : ''}
-      ${signOff && planner ? `<div class="notice">${signOff} work order(s) are waiting for your sign-off.</div>` : ''}
+      ${signOff && maintenanceApprover ? `<div class="notice">${signOff} work order(s) are waiting for your sign-off.</div>` : ''}
       ${proposed.length && outageApprover ? `<div class="notice">${proposed.length} proposed outage(s) are waiting for a decision. Open each to see what it does to the schedule.</div>` : ''}
       <section class="panel">
         <header><div class="seg">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
@@ -155,7 +156,7 @@ export async function maintenancePage(page, ctx) {
           ${ready?.parts.some(p => !p.covered) && requisitioner ? `<button class="btn small" data-request-parts="${o.workOrderId}">Request parts</button>` : ''}
           ${['Open', 'Scheduled'].includes(o.status) && tech ? `<button class="btn primary small" data-start="${o.workOrderId}">Start</button>` : ''}
           ${o.status === 'InProgress' && tech ? `<button class="btn primary small" data-complete="${o.workOrderId}">Complete</button>` : ''}
-          ${o.status === 'Completed' && planner && !mine(o.completedBy) && !mine(o.startedBy) ? `<button class="btn primary small" data-signoff="${o.workOrderId}">Sign off</button> <button class="btn small" data-sendback="${o.workOrderId}">Send back</button>` : ''}
+          ${o.status === 'Completed' && maintenanceApprover && !mine(o.completedBy) && !mine(o.startedBy) ? `<button class="btn primary small" data-signoff="${o.workOrderId}">Sign off</button> <button class="btn small" data-sendback="${o.workOrderId}">Send back</button>` : ''}
           ${o.status === 'Completed' && (mine(o.completedBy) || mine(o.startedBy)) ? '<span class="faint">You did the work — someone else signs it off</span>' : ''}
           ${isOpen(o) && spares ? `<button class="btn small" data-issue="${o.workOrderId}">Issue part</button>` : ''}
           ${o.parts?.some(p => p.netIssued > 0) && spares ? `<button class="btn small ghost" data-return="${o.workOrderId}">Return part</button>` : ''}
@@ -372,7 +373,7 @@ export async function maintenancePage(page, ctx) {
         ${p.orders.length ? `<h3>Orders</h3><ul>${p.orders.map(o => `<li>Order ${o.orderNumber} (${esc(o.partNumber)}, due ${esc(fmtDate(o.dueDate))}): ${esc(o.statusBefore)} → <b class="${o.becomesLate ? 'c-bad' : ''}">${esc(o.statusAfter)}</b>${o.completionAfter ? `, finishes ${esc(fmtDateTime(o.completionAfter))}` : ''}</li>`).join('')}</ul>` : ''}` : ''}
       <div class="row-actions">
         ${x.status === 'Proposed' && outageApprover && !mineOutage ? '<button class="btn primary small" data-o="approve">Approve</button> <button class="btn small" data-o="reject">Reject</button>' : ''}
-        ${x.status === 'Proposed' && mineOutage ? '<span class="faint">You proposed this — someone else decides it.</span> <button class="btn small ghost" data-o="withdraw">Withdraw</button>' : ''}
+        ${x.status === 'Proposed' && mineOutage && schedule ? '<span class="faint">You proposed this — someone else decides it.</span> <button class="btn small ghost" data-o="withdraw">Withdraw</button>' : ''}
       </div>`);
     const act = async (verb, title, detail) => {
       const done = await confirmWithReason({ title: `${title} outage ${id}`, detail, confirmLabel: title }, reason => command(`/api/maintenance/outages/${id}/${verb}`, {}, reason));
@@ -417,7 +418,7 @@ export async function maintenancePage(page, ctx) {
       assetsManage && ['Restricted', 'Obsolete'].includes(a.status) ? '<button class="btn small" data-a="active">Return to service</button>' : '',
       assetsManage && ['Active', 'Restricted'].includes(a.status) ? '<button class="btn small ghost" data-a="obsolete">Mark obsolete</button>' : '',
       assetsManage && !a.decommissionRequestedBy ? '<button class="btn small ghost" data-a="decommission">Request decommissioning</button>' : '',
-      a.decommissionRequestedBy && planner && !mineRequest ? '<button class="btn small" data-a="approve-dec">Approve decommissioning</button> <button class="btn small ghost" data-a="reject-dec">Reject</button>' : '',
+      a.decommissionRequestedBy && maintenanceApprover && !mineRequest ? '<button class="btn small" data-a="approve-dec">Approve decommissioning</button> <button class="btn small ghost" data-a="reject-dec">Reject</button>' : '',
       (a.status === 'Planned' ? assetsManage : (tech && open.length)) ? '<button class="btn small" data-a="install">Install component</button>' : '',
     ].filter(Boolean).join(' ') : '';
     const d = drawer(`Asset ${a.assetCode}`, `

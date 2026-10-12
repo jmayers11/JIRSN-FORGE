@@ -1,7 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, confirmWithReason } from '../ui.js';
-import { formModal, qty, can, today, plusDays } from '../forms.js';
+import { formModal, qty, canAction, today, plusDays } from '../forms.js';
 import { historyDrawer } from '../history.js';
 
 // Facility and capital projects (V2.10): approved by a second person; after approval every change to the
@@ -14,7 +14,7 @@ const LINE_TONE = { Issued: 'ok', 'In stock': 'ok', 'On order': 'info', Requeste
 const CHANGE_TONE = { Pending: 'warn', Approved: 'ok', Rejected: 'bad' };
 const OUTAGE_TONE = { Proposed: 'warn', Approved: 'ok', Rejected: 'bad', Withdrawn: 'none' };
 const money = n => n == null ? '—' : Number(n).toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-const MANAGERS = ['FacilitiesManager', 'MaintenancePlanner', 'ManufacturingEngineer'];
+
 
 export async function projectsPage(page, ctx) {
   const code = ctx.params[0];
@@ -22,7 +22,7 @@ export async function projectsPage(page, ctx) {
 }
 
 async function projectList(page, ctx) {
-  const manage = can(ctx.me, ...MANAGERS);
+  const manage = canAction(ctx.me, 'projects.manage');
   const list = await tryGet('/api/projects/');
   page.innerHTML = `
     <div class="page-head"><div><h1>Projects</h1><div class="sub">Facility and capital projects: approval and budget, material bought and issued against each line, and the outages they need.</div></div>
@@ -54,14 +54,16 @@ async function projectList(page, ctx) {
 
 async function projectDetail(page, ctx, code) {
   const me = ctx.me;
-  const manage = can(me, ...MANAGERS);
-  const approve = can(me, 'FacilitiesManager');
-  const stores = can(me, 'MaterialHandler', 'InventoryController');
+  const manage = canAction(me, 'projects.manage');
+
+  const stores = canAction(me, 'inventory.transact');
   const back = '<a href="#/projects">← Projects</a>';
   const [res, items, locations, resources] = await Promise.all([tryGet(`/api/projects/${encodeURIComponent(code)}`), tryGet('/api/engineering/items'), tryGet('/api/inventory/locations'), tryGet('/api/resources/')]);
   if (res.error) { page.innerHTML = back + errorBlock(res.error, 'this project'); return; }
   const d = res.data;
   const p = d.project;
+  const approveBudget = budget => canAction(me, 'projects.approve', { amount: budget, currency: 'USD' });
+  const approve = approveBudget(p.budget);
   const reload = () => projectDetail(page, ctx, code);
   const draft = p.status === 'Draft';
   const open = p.status === 'Approved';
@@ -96,7 +98,7 @@ async function projectDetail(page, ctx, code) {
       <table class="table"><thead><tr><th>#</th><th>Change</th><th>Reason</th><th>Requested</th><th>Status</th><th></th></tr></thead><tbody>
       ${d.changes.map(c => `<tr><td>${c.changeId}</td><td>${esc(describe(c))}</td><td>${esc(c.reason)}</td><td class="nowrap">${esc(who(c.requestedBy))} <span class="faint">${esc(fmtDateTime(c.requestedAt))}</span></td>
         <td><span class="pill ${CHANGE_TONE[c.status] ?? 'none'}">${esc(c.status)}</span>${c.decidedBy ? ` <span class="faint">${esc(who(c.decidedBy))}: ${esc(c.decisionReason ?? '')}</span>` : ''}</td>
-        <td class="nowrap">${approve && c.status === 'Pending' && c.requestedBy !== `person:${me.personId}` ? `<button class="btn small primary" data-change-ok="${c.changeId}">Approve</button> <button class="btn small ghost" data-change-no="${c.changeId}">Reject</button>` : ''}</td></tr>`).join('')}
+        <td class="nowrap">${approveBudget(c.kind === 'Header' ? c.budget : p.budget) && c.status === 'Pending' && c.requestedBy !== `person:${me.personId}` ? `<button class="btn small primary" data-change-ok="${c.changeId}">Approve</button> <button class="btn small ghost" data-change-no="${c.changeId}">Reject</button>` : ''}</td></tr>`).join('')}
       </tbody></table></section>` : ''}
 
     <section class="panel"><header><h2>Material</h2><span class="spacer"></span><span class="muted">${esc(material.summary)}</span>

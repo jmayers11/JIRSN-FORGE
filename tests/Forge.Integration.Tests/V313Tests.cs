@@ -124,7 +124,15 @@ public sealed class V313Tests(PostgresFixture postgres)
         var hidden = await buyer.GetAsync(new Uri($"/api/procurement/rfqs/{rfq}/quotes", UriKind.Relative));
         Assert.False(hidden.IsSuccessStatusCode);
         var denied = await plant.Try(buyer, $"/api/procurement/rfqs/{rfq}/cancel", new { reason = "Attempt after revocation" });
-        Assert.False(denied.IsSuccessStatusCode);
-        Assert.Contains("requisition_not_found", await denied.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.DoesNotContain("Private sourcing", await denied.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        var currentRfq = Assert.Single((await Get(manager, "/api/procurement/rfqs")).EnumerateArray(), row => row.GetProperty("rfq").GetProperty("rfqId").GetInt64() == rfq).GetProperty("rfq");
+        Assert.Equal("Released", currentRfq.GetProperty("status").GetString());
+        await using var database = new NpgsqlConnection(app.ConnectionString);
+        await database.OpenAsync();
+        await using var audit = new NpgsqlCommand("SELECT count(*) FROM kernel.audit_log WHERE action='CancelRfq' AND outcome='Denied' AND entity_id=$1 AND actor=$2", database);
+        audit.Parameters.AddWithValue(rfq.ToString(CultureInfo.InvariantCulture));
+        audit.Parameters.AddWithValue("person:" + plant.People["buyer"].ToString("D"));
+        Assert.Equal(1L, await audit.ExecuteScalarAsync());
     }
 }

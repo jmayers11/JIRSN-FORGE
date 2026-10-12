@@ -51,13 +51,18 @@ public static class QualityEndpoints
             ReadStore<Forge.Resources.Contracts.IToolLookup>(http, Permissions.QualityRead, async (l, ct) => GaugeInfo.From(await l.ListToolsAsync(ct), await l.ListToolTypesAsync(ct))));
         api.MapGet("/capas", (HttpContext http, bool? includeVerified, CancellationToken _) =>
             ReadStore<IQualityLookup>(http, Permissions.QualityRead, async (l, ct) => await l.ListCapasAsync(includeVerified ?? false, ct)));
-        api.MapGet("/ncrs", (HttpContext http, bool? includeClosed, CancellationToken _) =>
-            Read(http, Permissions.QualityRead, async principal =>
+        api.MapGet("/ncrs", async (HttpContext http, bool? includeClosed, CancellationToken ct) =>
             {
+                var principal = await PrincipalAsync(http);
+                if (principal is null) return NotRegistered();
+                var authorizer = http.RequestServices.GetRequiredService<IForgeAuthorizer>();
+                if (!HasQualityRead(principal)) throw new ForgeAuthorizationException(authorizer.Authorize(principal, Permissions.QualityRead, ResourceRef.Of("Ncr")));
                 await using var uow = await Snapshot(http);
-                var hidden = await HiddenOrdersAsync(uow, principal, http.RequestAborted);
-                return (await uow.Store<IQualityLookup>().ListNcrsAsync(includeClosed ?? false, http.RequestAborted)).Where(n => n.OrderNumber is not { } o || !hidden.Contains(o)).ToList();
-            }));
+                var visible = new List<NcrInfo>();
+                foreach (var ncr in await uow.Store<IQualityLookup>().ListNcrsAsync(includeClosed ?? false, ct))
+                    if (authorizer.Authorize(principal, Permissions.QualityRead, await QualityService.ResourceForNcrAsync(uow, ncr, ct)).IsPermitted) visible.Add(ncr);
+                return Results.Ok(visible);
+            });
         api.MapGet("/inspections", (HttpContext http, long? order, int? take, CancellationToken _) =>
             Read(http, Permissions.QualityRead, async principal =>
             {
@@ -99,23 +104,39 @@ public static class QualityEndpoints
 
                 return due;
             }));
-        api.MapGet("/orders/{number:long}", (HttpContext http, long number, CancellationToken _) =>
-            Read(http, Permissions.QualityRead, async principal =>
+        api.MapGet("/orders/{number:long}", async (HttpContext http, long number, CancellationToken ct) =>
             {
+                var principal = await PrincipalAsync(http);
+                if (principal is null) return NotRegistered();
                 await using var uow = await Snapshot(http);
-                var ct = http.RequestAborted;
                 var order = await uow.Store<IExecutionLookup>().FindOrderAsync(number, ct);
                 if (order is null || (order.ProgramId is { } p && !principal.Programs.Contains(new ProgramId(p))))
                 {
                     throw new CommandRejectedException("order_not_found", $"Order {number} does not exist.");
                 }
-
+                var authorizer = http.RequestServices.GetRequiredService<IForgeAuthorizer>();
+                var resource = new ResourceRef("ProductionOrder", number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    order.ProgramId is { } program ? new ProgramId(program) : null, ContractId: order.ContractId?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                var centers = order.Operations.Select(operation => operation.WorkCenterCode).Distinct(StringComparer.Ordinal).ToList();
+                var contexts = new List<ResourceRef>();
+                foreach (var code in centers)
+                {
+                    var center = await uow.Store<Forge.Resources.Contracts.IResourcesLookup>().FindWorkCenterAsync(code, ct);
+                    var area = center is null ? null : await uow.Store<Forge.Resources.Contracts.IResourcesLookup>().FindSafetyAreaAsync(center.SafetyAreaCode, ct);
+                    contexts.Add(resource with { WorkCenterId = code, FacilityId = area?.SiteCode });
+                }
+                if (contexts.Count == 0) contexts.Add(resource);
+                if (contexts.Any(scope => !authorizer.Authorize(principal, Permissions.QualityRead, scope).IsPermitted))
+                    throw new CommandRejectedException("order_not_found", $"Order {number} does not exist.");
                 var quality = uow.Store<IQualityLookup>();
-                return new OrderQualityView(
-                    await quality.GetOrderQualityAsync(number, order.PartNumber, ct),
+                var state = await quality.GetOrderQualityAsync(number, order.PartNumber, ct);
+                foreach (var ncr in state.OpenNcrs)
+                    if (!authorizer.Authorize(principal, Permissions.QualityRead, await QualityService.ResourceForNcrAsync(uow, ncr, ct)).IsPermitted)
+                        throw new CommandRejectedException("order_not_found", $"Order {number} does not exist.");
+                return Results.Ok(new OrderQualityView(state,
                     InspectionPlans.For(await quality.ListPlansAsync(order.PartNumber, ct), order.PartNumber, order.Revision),
-                    await quality.ListInspectionsAsync(number, 200, ct));
-            }));
+                    await quality.ListInspectionsAsync(number, 200, ct)));
+            });
 
         api.MapPost("/gauges", (HttpContext http, GaugeRequest b, QualityService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DefineGaugeAsync(new DefineGauge(b.Code, b.Description, b.CalibrationDue, b.Certificate), c, ct)));
@@ -193,6 +214,12 @@ public static class QualityEndpoints
 
     private static Task<IKernelUnitOfWork> Snapshot(HttpContext http) =>
         http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+
+    private static bool HasQualityRead(ForgePrincipal principal) =>
+        (principal.EffectivePermissions is { } permissions ? permissions.Contains(Permissions.QualityRead)
+            : principal.Roles.Any(role => Roles.PermissionsOf(role).Contains(Permissions.QualityRead, StringComparer.Ordinal)))
+        || principal.ScopedPermissions?.Any(grant => grant.Permission == Permissions.QualityRead) == true
+        || principal.DelegatedPermissions?.Any(grant => grant.Permission == Permissions.QualityRead) == true;
 
     private static async Task<HashSet<long>> HiddenOrdersAsync(IKernelUnitOfWork uow, ForgePrincipal principal, CancellationToken ct) =>
         (await uow.Store<IExecutionLookup>().ListOrdersAsync(ct))

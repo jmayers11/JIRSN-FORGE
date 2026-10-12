@@ -14,7 +14,7 @@ public sealed record MigrationSource(Assembly Assembly, string Prefix);
 /// <summary>
 /// Applies embedded, numbered SQL migrations in order, each in its own transaction, under an
 /// advisory lock so concurrent hosts cannot race. A changed script that was already applied is an
-/// error: history is never rewritten.
+/// error except for an explicitly reviewed checksum pair: history is never rewritten.
 /// </summary>
 public sealed class MigrationRunner(NpgsqlDataSource dataSource, IEnumerable<MigrationSource> sources, ILogger<MigrationRunner> logger)
 {
@@ -70,7 +70,8 @@ public sealed class MigrationRunner(NpgsqlDataSource dataSource, IEnumerable<Mig
                 var checksum = CanonicalJson.Sha256Hex(sql);
                 if (existing.TryGetValue(id, out var appliedChecksum))
                 {
-                    if (!string.Equals(appliedChecksum, checksum, StringComparison.Ordinal))
+                    if (!string.Equals(appliedChecksum, checksum, StringComparison.Ordinal)
+                        && !IsCompatibleAppliedMigration(id, appliedChecksum, checksum))
                     {
                         throw new InvalidOperationException($"Migration {id} was modified after it was applied. Add a new migration instead.");
                     }
@@ -99,6 +100,15 @@ public sealed class MigrationRunner(NpgsqlDataSource dataSource, IEnumerable<Mig
 
         return applied;
     }
+
+    private static bool IsCompatibleAppliedMigration(string id, string appliedChecksum, string currentChecksum) =>
+        // The original V3.1 balance proof compared NULL lot ids with SQL equality and aborted
+        // upgrades containing untracked stock. The corrected proof changes no stock semantics.
+        // Databases that already applied the original keep their checksum and never rerun it.
+        // Only this exact reviewed old/new pair is compatible; any other edit still fails.
+        id == "inventory/0008_stock_dimensions"
+        && appliedChecksum == "8cd2b06fb72df876362dcc3b7cf542011af9b7616cde8cfdf701572158265b32"
+        && currentChecksum == "aeec3f3c44f3e2c94fbd47ca2ad49cbcfb520e2969854f28576511092a0e3aba";
 
     private static async Task Execute(NpgsqlConnection connection, NpgsqlTransaction? tx, string sql, CancellationToken ct)
     {

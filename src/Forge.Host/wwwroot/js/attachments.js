@@ -1,13 +1,12 @@
 import { tryGet, command, upload, download } from './api.js';
 import { who } from './people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, drawer } from './ui.js';
-import { formModal, can } from './forms.js';
+import { formModal, canAction } from './forms.js';
 
 // Documents attached to a record (V2.2): an order, purchase order, work order, NCR, supplier, item or
 // program. A file is attached as a reference document — kept, never production authority. A controlled
 // document is attached to follow or for information. Detaching needs a reason and keeps the history.
 
-export const ATTACHERS = ['ManufacturingEngineer', 'Planner', 'Buyer', 'PurchasingManager', 'QualityEngineer', 'Inspector', 'MaintenancePlanner', 'MaintenanceTechnician', 'ProgramManager', 'Supervisor', 'DocumentController'];
 export const TYPE_LABEL = {
   Drawing: 'Drawing', Specification: 'Specification', Procedure: 'Procedure', WorkInstruction: 'Work instruction', InspectionPlan: 'Inspection plan',
   Standard: 'Standard', Datasheet: 'Datasheet', Certificate: 'Certificate', PurchaseDocument: 'Purchase document', Contract: 'Contract', Photo: 'Photo', Other: 'Other',
@@ -28,7 +27,7 @@ export const fileUrl = (number, revision) => `/api/engineering/documents/${encod
 export async function attachmentsPanel(section, { type, id, me, title = 'Documents', note }) {
   let history = false;
   const base = `/api/engineering/attachments/${type}/${encodeURIComponent(id)}`;
-  const mayAttach = can(me, ...ATTACHERS);
+  const mayAttach = canAction(me, 'engineering.documents.attach');
   const evidence = ['Receipt', 'ReceivingInspection', 'Inspection', 'Shipment', 'OutsideProcess', 'Fai', 'SupplierQuote'].includes(type);
 
   async function render() {
@@ -60,7 +59,7 @@ export async function attachmentsPanel(section, { type, id, me, title = 'Documen
           <td>${r?.fileName ? `<button class="btn small ghost" data-file="${esc(a.documentNumber)}|${esc(r.revision)}|${esc(r.fileName)}">${esc(r.fileName)}</button><div class="faint">${esc(fileSize(r.fileSize))}</div>` : '<span class="faint">—</span>'}</td>
           <td>${esc(who(a.linkedBy))}<div class="faint">${esc(fmtDateTime(a.linkedAt))}</div>
             ${detached ? `<div class="faint">Detached by ${esc(who(a.detachedBy))} ${esc(fmtDateTime(a.detachedAt))}: ${esc(a.detachReason)}</div>` : ''}</td>
-          <td>${!detached && mayAttach ? `<button class="btn small ghost" data-detach="${a.linkId}">Detach</button>` : ''}${!detached && a.authority === 'Reference' && r?.fileSha256 && can(me, 'Inspector', 'QualityEngineer') ? `<button class="btn small ghost" data-verify-evidence="${esc(a.documentNumber)}" data-revision="${esc(r.revision)}">Verify source signature</button>` : ''}</td></tr>`;
+          <td>${!detached && mayAttach ? `<button class="btn small ghost" data-detach="${a.linkId}">Detach</button>` : ''}${!detached && a.authority === 'Reference' && r?.fileSha256 && canAction(me, 'quality.inspect') ? `<button class="btn small ghost" data-verify-evidence="${esc(a.documentNumber)}" data-revision="${esc(r.revision)}">Verify source signature</button>` : ''}</td></tr>`;
       }).join('')}
       </tbody></table></div>`}`;
 
@@ -148,7 +147,7 @@ async function renderApplicability(section, orderNumber, me) {
   section.innerHTML = `
     <header><h2>Applicable documentation</h2><span class="spacer"></span>
       <span class="pill ${d.enforced ? 'info' : 'none'}">${d.enforced ? 'Blocks readiness' : `Not enforced for ${esc(d.itemClass)} items`}</span>
-      ${d.documents.some(x => x.state === 'Mismatch') && can(me, 'Planner') ? '<button class="btn small primary" data-reissue>Reissue documentation</button>' : ''}</header>
+      ${d.documents.some(x => x.state === 'Mismatch') && canAction(me, 'execution.orders.release') ? '<button class="btn small primary" data-reissue>Reissue documentation</button>' : ''}</header>
     <div class="muted" style="margin-bottom:8px">${esc(d.summary)} Released orders are compared with the revision that applied when they were released.</div>
     ${!d.documents.length ? emptyBlock('No documents required', `${d.partNumber} rev ${d.revision} lists no documents and nothing is attached to follow.`) : `
     <div class="table-wrap"><table class="table"><thead><tr><th>Document</th><th>Required by</th><th>Released with</th><th>Applies now</th><th>State</th><th>Why</th></tr></thead><tbody>

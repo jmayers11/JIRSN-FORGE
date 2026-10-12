@@ -57,6 +57,8 @@ public interface IProjectsStore
 {
     Task<bool> InsertProjectAsync(ProjectInfo project, CancellationToken ct);
 
+    Task LockProjectAsync(string code, CancellationToken ct);
+
     Task UpdateProjectAsync(ProjectInfo project, CancellationToken ct);
 
     Task InsertLineAsync(ProjectLine line, CancellationToken ct);
@@ -83,7 +85,7 @@ public interface IProjectsStore
 /// applied only when someone other than the requester approves it. Material lines carry the source key that
 /// demand, requisitions, purchase lines, receipts and issues are recorded against.
 /// </summary>
-public sealed class ProjectService(CommandPipeline pipeline)
+public sealed class ProjectService(CommandPipeline pipeline, IKernelUnitOfWorkFactory unitOfWork)
 {
     public const string SourceContext = "Projects";
     private const string Entity = "Project";
@@ -203,14 +205,20 @@ public sealed class ProjectService(CommandPipeline pipeline)
         }, ct);
     }
 
-    public Task<CommandResult> ApproveAsync(ApproveProject c, CommandContext context, CancellationToken ct)
+    public async Task<CommandResult> ApproveAsync(ApproveProject c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
         var code = BusinessCode.Require(c.Code, "Project");
-        var spec = new CommandSpec(SourceContext, nameof(ApproveProject), Permissions.ProjectsApprove, ResourceRef.Of(Entity, code), ReasonRequired: true);
-        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        decimal? budget;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+            budget = (await read.Store<IProjectLookup>().FindProjectAsync(code, ct))?.Budget;
+        var spec = new CommandSpec(SourceContext, nameof(ApproveProject), Permissions.ProjectsApprove,
+            new ResourceRef(Entity, code, Amount: budget, Currency: "USD"), ReasonRequired: true);
+        return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var project = await FindAsync(uow, code, ct);
+            if (project.Budget != budget)
+                throw new CommandRejectedException("project_budget_changed", "The project budget changed during approval. Review its current amount and retry.");
             if (project.Status != ProjectStatus.Draft)
             {
                 throw new CommandRejectedException("not_draft", $"Project {code} is {project.Status}; only a draft is approved.");
@@ -241,12 +249,23 @@ public sealed class ProjectService(CommandPipeline pipeline)
         }, ct);
     }
 
-    public Task<CommandResult> DecideChangeAsync(DecideProjectChange c, CommandContext context, CancellationToken ct)
+    public async Task<CommandResult> DecideChangeAsync(DecideProjectChange c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
         var key = c.ChangeId.ToString(CultureInfo.InvariantCulture);
-        var spec = new CommandSpec(SourceContext, nameof(DecideProjectChange), Permissions.ProjectsApprove, ResourceRef.Of(ChangeEntity, key), ReasonRequired: true);
-        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        decimal? budget = null;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            var proposed = await read.Store<IProjectsStore>().FindChangeAsync(c.ChangeId, ct);
+            if (proposed is not null)
+            {
+                var project = await read.Store<IProjectLookup>().FindProjectAsync(proposed.ProjectCode, ct);
+                budget = proposed.Kind == ProjectChangeKind.Header ? proposed.Budget : project?.Budget;
+            }
+        }
+        var spec = new CommandSpec(SourceContext, nameof(DecideProjectChange), Permissions.ProjectsApprove,
+            new ResourceRef(ChangeEntity, key, Amount: budget, Currency: "USD"), ReasonRequired: true);
+        return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var store = uow.Store<IProjectsStore>();
             var change = await store.FindChangeAsync(c.ChangeId, ct) ?? throw new CommandRejectedException("change_not_found", $"Project change {key} does not exist.");
@@ -261,6 +280,12 @@ public sealed class ProjectService(CommandPipeline pipeline)
             }
 
             var project = await FindAsync(uow, change.ProjectCode, ct);
+            // The project lock also serializes decisions on its pending changes.
+            change = await store.FindChangeAsync(c.ChangeId, ct) ?? throw new CommandRejectedException("change_not_found", $"Project change {key} does not exist.");
+            if (change.Status != ProjectChangeStatus.Pending)
+                throw new CommandRejectedException("change_decided", $"Project change {key} is {change.Status}.");
+            if ((change.Kind == ProjectChangeKind.Header ? change.Budget : project.Budget) != budget)
+                throw new CommandRejectedException("project_budget_changed", "The approval amount changed. Review the current project and retry.");
             if (project.Status != ProjectStatus.Approved)
             {
                 throw new CommandRejectedException("project_closed", $"Project {project.Code} is {project.Status}.");
@@ -337,14 +362,20 @@ public sealed class ProjectService(CommandPipeline pipeline)
         }, ct);
     }
 
-    public Task<CommandResult> CloseAsync(CloseProject c, CommandContext context, CancellationToken ct)
+    public async Task<CommandResult> CloseAsync(CloseProject c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
         var code = BusinessCode.Require(c.Code, "Project");
-        var spec = new CommandSpec(SourceContext, nameof(CloseProject), c.Cancel ? Permissions.ProjectsApprove : Permissions.ProjectsManage, ResourceRef.Of(Entity, code), ReasonRequired: true);
-        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        decimal? budget;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+            budget = (await read.Store<IProjectLookup>().FindProjectAsync(code, ct))?.Budget;
+        var spec = new CommandSpec(SourceContext, nameof(CloseProject), c.Cancel ? Permissions.ProjectsApprove : Permissions.ProjectsManage,
+            new ResourceRef(Entity, code, Amount: budget, Currency: "USD"), ReasonRequired: true);
+        return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var project = await FindAsync(uow, code, ct);
+            if (project.Budget != budget)
+                throw new CommandRejectedException("project_budget_changed", "The project budget changed during closeout. Review its current amount and retry.");
             if (project.Status is ProjectStatus.Completed or ProjectStatus.Cancelled)
             {
                 throw new CommandRejectedException("project_closed", $"Project {code} is already {project.Status}.");
@@ -460,8 +491,12 @@ public sealed class ProjectService(CommandPipeline pipeline)
         _ => $"cancel line {c.LineNumber} ({c.PartNumber})",
     };
 
-    private static async Task<ProjectInfo> FindAsync(IKernelUnitOfWork uow, string code, CancellationToken ct) =>
-        await uow.Store<IProjectLookup>().FindProjectAsync(code, ct) ?? throw new CommandRejectedException("project_not_found", $"Project {code} does not exist.");
+    private static async Task<ProjectInfo> FindAsync(IKernelUnitOfWork uow, string code, CancellationToken ct)
+    {
+        await uow.Store<IProjectsStore>().LockProjectAsync(code, ct);
+        return await uow.Store<IProjectLookup>().FindProjectAsync(code, ct)
+            ?? throw new CommandRejectedException("project_not_found", $"Project {code} does not exist.");
+    }
 
     private static async Task<ProjectLine> ActiveLineAsync(IKernelUnitOfWork uow, string code, int number, CancellationToken ct) =>
         (await uow.Store<IProjectLookup>().ListLinesAsync(code, ct)).FirstOrDefault(l => l.LineNumber == number) is { } line

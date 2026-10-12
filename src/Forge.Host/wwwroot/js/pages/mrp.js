@@ -1,7 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { img } from '../icons.js';
 import { esc, $, $$, fmtDate, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from '../ui.js';
-import { formModal, qty, can, plusDays } from '../forms.js';
+import { formModal, qty, canAction, plusDays } from '../forms.js';
 
 // Material Plan (spec §12-13): independent demand, item planning parameters and a deterministic MRP
 // whose every recommendation shows its arithmetic and the requirements it is pegged to.
@@ -16,9 +16,9 @@ const POLICIES = [['LotForLot', 'Lot-for-lot (exactly what is needed)'], ['Fixed
 
 export async function mrpPage(page, ctx) {
   const me = ctx.me;
-  const planner = can(me, 'Planner');
-  const engineer = can(me, 'ManufacturingEngineer');
-  const buyer = can(me, 'Buyer');
+  const planner = canAction(me, 'planning.demand.manage');
+  const engineer = canAction(me, 'execution.orders.manage');
+  const buyer = canAction(me, 'procurement.manage');
   let tab = ctx.query.get('tab') ?? 'planned';
   const focus = ctx.query.get('part');
   let data = {};
@@ -56,7 +56,7 @@ export async function mrpPage(page, ctx) {
         <td class="muted">${esc(p.pegging.map(g => g.description).filter((v, j, a) => a.indexOf(v) === j).slice(0, 2).join('; '))}${p.pegging.length > 2 ? '…' : ''}</td>
         <td class="nowrap"><button class="btn small" data-why="${i}">Why?</button>
           ${p.makeBuy === 'Buy' ? `<button class="btn small ghost" data-alts="${esc(p.partNumber)}" title="Approved alternates and those requiring approval, kept apart">Alternates</button>` : ''}
-          ${p.makeBuy === 'Buy' && (planner || buyer) ? `<button class="btn small" data-req="${i}" title="A requisition that keeps what this purchase is for">Requisition</button>` : ''}
+          ${p.makeBuy === 'Buy' && canAction(me, 'procurement.requisition.raise') ? `<button class="btn small" data-req="${i}" title="A requisition that keeps what this purchase is for">Requisition</button>` : ''}
           ${p.makeBuy === 'Buy' && buyer ? `<button class="btn small primary" data-buy="${i}">Draft PO</button>` : ''}
           ${p.makeBuy === 'Make' && engineer ? `<button class="btn small primary" data-make="${i}">Create order</button>` : ''}</td></tr>`).join('')}
       </tbody></table>
@@ -99,7 +99,7 @@ export async function mrpPage(page, ctx) {
   function itemsTab() {
     if (data.mrp.error) return errorBlock(data.mrp.error, 'the material plan');
     const list = out().items;
-    const canEdit = planner || engineer;
+    const canEdit = canAction(me, 'engineering.planning.manage');
     if (!list.length) return emptyBlock('Nothing to plan yet', 'Items appear here once they have demand, stock, supply or safety stock.');
     return `<table class="table"><thead><tr><th>Part</th><th>Level</th><th class="num">Available</th><th class="num">Insp./hold</th><th class="num">Safety stock</th><th>Lot policy</th><th class="num">Lead time</th><th class="num">Ends at</th><th></th></tr></thead><tbody>
       ${list.map(i => `<tr class="click" data-item="${esc(i.partNumber)}">

@@ -2,11 +2,11 @@ import { tryGet, command } from '../api.js';
 import { esc, $, $$, fmtDateTime, fmtDate, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 import { categoryInfo } from '../model.js';
 import { who } from '../people.js';
+import { canAction } from '../forms.js';
 import { appendGoals } from '../goals.js';
 
 const DELIVERY_TONE = { OnTime: 'ok', AtRisk: 'warn', Late: 'bad', Unschedulable: 'bad' };
 const CONSTRAINT_TONE = { Open: 'bad', Investigating: 'warn', Resolved: 'info', Verified: 'ok' };
-const can = (me, ...roles) => roles.some(r => me.roles.includes(r));
 
 export async function schedulingPage(page, ctx) {
   let showClosed = ctx.query.get('closed') === '1';
@@ -20,7 +20,7 @@ export async function schedulingPage(page, ctx) {
     const me = ctx.me;
     const version = (which === 'approved' ? approved : proposed).data;
     const prop = proposed.data;
-    const canApprove = can(me, 'Planner') && prop?.status === 'Proposed';
+    const canApprove = canAction(me, 'planning.schedule.approve') && prop?.status === 'Proposed';
     const selfProposed = prop && prop.proposedBy === `person:${me.personId}`;
 
     const card = (title, r) => `
@@ -43,7 +43,7 @@ export async function schedulingPage(page, ctx) {
         <div><h1>Scheduling</h1><div class="sub">Finite-capacity schedules: proposed by one planner, approved by another. Every start time records what fixed it.</div></div>
         <div class="spacer"></div>
         <div class="head-controls">
-          ${can(me, 'Planner') ? '<button class="btn" id="propose">Propose schedule</button>' : ''}
+          ${canAction(me, 'planning.schedule.propose') ? '<button class="btn" id="propose">Propose schedule</button>' : ''}
           ${canApprove ? `<button class="btn primary" id="approve" ${selfProposed ? 'title="You proposed this one; another planner approves it."' : ''}>Approve #${prop.versionId}</button>` : ''}
         </div>
       </div>
@@ -103,7 +103,7 @@ export async function schedulingPage(page, ctx) {
 }
 
 function constraintActions(c, me) {
-  if (!can(me, 'Planner', 'Supervisor')) return '';
+  if (!canAction(me, 'planning.constraints.manage')) return '';
   const b = (act, label) => `<button class="btn" data-c="${c.constraintId}:${act}">${label}</button>`;
   if (c.status === 'Open') return b('investigate', 'Investigate') + ' ' + b('resolve', 'Resolve');
   if (c.status === 'Investigating') return b('resolve', 'Resolve');

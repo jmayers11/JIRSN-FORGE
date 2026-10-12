@@ -45,7 +45,7 @@ internal sealed class PostgresPeopleStore(PostgresUnitOfWork uow) : IPeopleStore
     public async Task<bool> AddRoleAsync(PersonId id, string role, DateTimeOffset at, string actor, DateTimeOffset? expiresAt, CancellationToken ct)
     {
         await using var cmd = uow.Command(
-            "INSERT INTO kernel.role_assignment (person_id, role, granted_at, granted_by, expires_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (person_id, role) DO UPDATE SET granted_at = EXCLUDED.granted_at, granted_by = EXCLUDED.granted_by, expires_at = EXCLUDED.expires_at WHERE kernel.role_assignment.expires_at IS NOT NULL AND kernel.role_assignment.expires_at <= now()",
+            "INSERT INTO kernel.role_assignment (person_id, role, granted_at, granted_by, expires_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (person_id, role) DO UPDATE SET granted_at = EXCLUDED.granted_at, granted_by = EXCLUDED.granted_by, expires_at = EXCLUDED.expires_at WHERE kernel.role_assignment.expires_at IS NOT NULL AND kernel.role_assignment.expires_at <= $3",
             id.Value, role, at, actor, expiresAt);
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
@@ -90,6 +90,34 @@ internal sealed class PostgresPeopleStore(PostgresUnitOfWork uow) : IPeopleStore
 
     public async Task<ForgePrincipal?> LoadPrincipalAsync(PersonId id, CancellationToken ct)
     {
+        var principal = await LoadBasePrincipalAsync(id, ct);
+        if (principal is null) return null;
+        var delegated = new List<DelegatedPermission>();
+        var store = new PostgresDelegationStore(uow);
+        foreach (var record in await store.ActiveForRecipientAsync(id, uow.Now, ct))
+        {
+            var grantor = await LoadBasePrincipalAsync(record.Grantor, ct);
+            if (grantor is null) continue;
+            foreach (var permission in record.Permissions)
+            {
+                if (DelegationAuthority.CanLend(grantor, permission, record.Scopes))
+                    delegated.Add(new(record.DelegationId, permission, record.Scopes, record.StartsAt, record.ExpiresAt,
+                        grantor.ApprovalThresholds?.FirstOrDefault(threshold => threshold.Permission == permission)));
+            }
+        }
+        // Thresholds remain action policy even when the action is received temporarily.
+        var thresholds = principal.ApprovalThresholds?.ToHashSet() ?? [];
+        if (delegated.Count > 0)
+        {
+            await using var cmd = uow.Command("SELECT permission, maximum_amount, currency FROM kernel.approval_threshold_policy WHERE permission = ANY($1)", (object)delegated.Select(grant => grant.Permission).Distinct().ToArray());
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct)) thresholds.Add(new(reader.GetString(0), reader.GetDecimal(1), reader.GetString(2)));
+        }
+        return principal with { DelegatedPermissions = delegated, ApprovalThresholds = thresholds.ToList() };
+    }
+
+    private async Task<ForgePrincipal?> LoadBasePrincipalAsync(PersonId id, CancellationToken ct)
+    {
         var person = await FindAsync(id, ct);
         if (person is null)
         {
@@ -97,7 +125,7 @@ internal sealed class PostgresPeopleStore(PostgresUnitOfWork uow) : IPeopleStore
         }
 
         var roles = new HashSet<string>(StringComparer.Ordinal);
-        await using (var cmd = uow.Command("SELECT role FROM kernel.role_assignment WHERE person_id = $1 AND (expires_at IS NULL OR expires_at > now())", id.Value))
+        await using (var cmd = uow.Command("SELECT role FROM kernel.role_assignment WHERE person_id = $1 AND (expires_at IS NULL OR expires_at > $2)", id.Value, uow.Now))
         await using (var reader = await cmd.ExecuteReaderAsync(ct))
         {
             while (await reader.ReadAsync(ct))
@@ -120,8 +148,8 @@ internal sealed class PostgresPeopleStore(PostgresUnitOfWork uow) : IPeopleStore
         var scopedPermissions = new List<ScopedPermission>();
         var approvalThresholds = new HashSet<ApprovalThreshold>();
         await using (var cmd = uow.Command(
-            "SELECT rp.permission, rps.scope_type, rps.scope_id, atp.maximum_amount, atp.currency FROM kernel.role_assignment ra JOIN kernel.role_permission rp ON rp.role_name = ra.role JOIN kernel.role_definition rd ON rd.role_name = ra.role LEFT JOIN kernel.role_permission_scope rps ON rps.role_name = rp.role_name AND rps.permission = rp.permission LEFT JOIN kernel.approval_threshold_policy atp ON atp.permission = rp.permission WHERE ra.person_id = $1 AND (ra.expires_at IS NULL OR ra.expires_at > now()) AND rd.is_active AND (rps.scope_type IS NOT NULL OR NOT EXISTS (SELECT 1 FROM kernel.role_permission_scope s WHERE s.role_name = rp.role_name AND s.permission = rp.permission))",
-            id.Value))
+            "SELECT rp.permission, rps.scope_type, rps.scope_id, atp.maximum_amount, atp.currency FROM kernel.role_assignment ra JOIN kernel.role_permission rp ON rp.role_name = ra.role JOIN kernel.role_definition rd ON rd.role_name = ra.role LEFT JOIN kernel.role_permission_scope rps ON rps.role_name = rp.role_name AND rps.permission = rp.permission LEFT JOIN kernel.approval_threshold_policy atp ON atp.permission = rp.permission WHERE ra.person_id = $1 AND (ra.expires_at IS NULL OR ra.expires_at > $2) AND rd.is_active AND (rps.scope_type IS NOT NULL OR NOT EXISTS (SELECT 1 FROM kernel.role_permission_scope s WHERE s.role_name = rp.role_name AND s.permission = rp.permission))",
+            id.Value, uow.Now))
         await using (var reader = await cmd.ExecuteReaderAsync(ct))
         {
             while (await reader.ReadAsync(ct))
@@ -148,8 +176,8 @@ internal sealed class PostgresPeopleStore(PostgresUnitOfWork uow) : IPeopleStore
     public async Task<int> CountActiveWithRoleAsync(string role, CancellationToken ct)
     {
         await using var cmd = uow.Command(
-            "SELECT count(*) FROM kernel.role_assignment r JOIN kernel.person p ON p.person_id = r.person_id WHERE r.role = $1 AND p.is_active AND (r.expires_at IS NULL OR r.expires_at > now())",
-            role);
+            "SELECT count(*) FROM kernel.role_assignment r JOIN kernel.person p ON p.person_id = r.person_id WHERE r.role = $1 AND p.is_active AND (r.expires_at IS NULL OR r.expires_at > $2)",
+            role, uow.Now);
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
     }
 

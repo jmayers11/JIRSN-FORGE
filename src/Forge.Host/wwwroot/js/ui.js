@@ -53,9 +53,69 @@ export function emptyBlock(title, detail) {
 export function toast(message, bad = false) {
   const t = document.createElement('div');
   t.className = `toast${bad ? ' bad' : ''}`;
+  t.setAttribute('role', bad ? 'alert' : 'status');
+  t.setAttribute('aria-live', bad ? 'assertive' : 'polite');
+  t.setAttribute('aria-atomic', 'true');
   t.textContent = message;
   document.body.append(t);
   setTimeout(() => t.remove(), bad ? 7000 : 3500);
+}
+
+/** Keeps a modal's keyboard focus inside it, then restores focus when its owner closes it. */
+export function manageDialogFocus(element, onClose, opener = document.activeElement) {
+  const doc = element.ownerDocument ?? document;
+  const heading = element.querySelector('h2');
+  element.setAttribute('role', 'dialog');
+  element.setAttribute('aria-modal', 'true');
+  element.tabIndex = -1;
+  if (heading) {
+    heading.id ||= `forge-dialog-${Math.random().toString(36).slice(2)}`;
+    element.setAttribute('aria-labelledby', heading.id);
+  }
+  const focusable = () => [...element.querySelectorAll('button,input,select,textarea,a[href],[tabindex]')]
+    .filter(el => !el.matches(':disabled') && el.tabIndex >= 0
+      && !el.closest('[hidden],[aria-hidden="true"],.hidden') && el.getClientRects().length);
+  const focusFirst = () => (focusable()[0] ?? element).focus();
+  let closed = false;
+  const release = (restore = true) => {
+    if (closed) return;
+    closed = true;
+    doc.removeEventListener('keydown', onKey);
+    doc.removeEventListener('focusin', onFocus);
+    if (restore && opener?.isConnected && !opener.matches(':disabled')) opener.focus();
+  };
+  const onKey = e => {
+    if (!element.isConnected) { release(false); return; }
+    if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
+    if (e.key !== 'Tab') return;
+    const controls = focusable();
+    if (!controls.length) { e.preventDefault(); element.focus(); return; }
+    const first = controls[0], last = controls.at(-1), active = doc.activeElement;
+    if (!element.contains(active) || active === element) {
+      e.preventDefault(); (e.shiftKey ? last : first).focus();
+    } else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+  };
+  const onFocus = e => {
+    if (!element.isConnected) { release(false); return; }
+    if (!element.contains(e.target)) focusFirst();
+  };
+  doc.addEventListener('keydown', onKey);
+  doc.addEventListener('focusin', onFocus);
+  focusFirst();
+  return release;
+}
+
+/** A persistent region: changing its text can announce an operator switch or terminal lock. */
+export function liveRegion(label) {
+  const region = document.createElement('div');
+  region.setAttribute('role', 'status');
+  region.setAttribute('aria-live', 'polite');
+  region.setAttribute('aria-atomic', 'true');
+  region.setAttribute('aria-label', label);
+  Object.assign(region.style, { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clipPath: 'inset(50%)' });
+  document.body.append(region);
+  return region;
 }
 
 export function drawer(title, bodyHtml) {

@@ -58,7 +58,23 @@ public sealed record RecoveryOption(
     string Feasibility,
     IReadOnlyList<string> Consequences,
     string? ApplyPath,
-    string RequiredPermission);
+    string RequiredPermission,
+    string Status,
+    IReadOnlyList<long> AffectedOrders,
+    IReadOnlyList<ScenarioOrderImpact> Projections,
+    IReadOnlyList<string> Constraints,
+    IReadOnlyList<string> RequiredInputs,
+    IReadOnlyList<string> Evidence,
+    IReadOnlyList<RecoveryMachineAlternative> MachineAlternatives);
+
+public sealed record RecoveryMachineAlternative(
+    long OrderNumber,
+    int Sequence,
+    string MachineCode,
+    bool Feasible,
+    DateTimeOffset? ProjectedCompletion,
+    IReadOnlyList<string> Constraints,
+    IReadOnlyList<string> Evidence);
 
 public sealed record PlanningScenarioResult(
     Guid ScenarioId,

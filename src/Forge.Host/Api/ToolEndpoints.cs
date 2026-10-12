@@ -45,7 +45,13 @@ internal static class ToolEndpoints
                 return (await l.ListToolsAsync(ct)).Select(t => new ToolView(t, types[t.TypeCode], ToolValidity.At(t, types[t.TypeCode], events[t.Code], when, Code(machine), Code(activity)))).ToList();
             }));
         api.MapGet("/tools/{code}/history", (HttpContext http, string code, CancellationToken _) =>
-            ReadStore<IToolLookup>(http, Permissions.ResourcesRead, async (l, ct) => await l.ListToolEventsAsync(code.Trim().ToUpperInvariant(), ct)));
+            Read(http, Permissions.ResourcesRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var events = await uow.Store<IToolLookup>().ListToolEventsAsync(code.Trim().ToUpperInvariant(), http.RequestAborted);
+                return await Forge.Planning.ToolUseVisibility.FilterAsync(uow, principal, events,
+                    http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow(), http.RequestAborted);
+            }));
 
         api.MapGet("/tool-requirements", (HttpContext http, CancellationToken _) =>
             ReadStore<IToolLookup>(http, Permissions.ResourcesRead, async (l, ct) => await l.ListToolRequirementsAsync(ct)));

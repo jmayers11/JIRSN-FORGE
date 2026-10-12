@@ -143,6 +143,10 @@ public sealed class DocumentTargetResolver : IDocumentTargetResolver
 
             case DocumentTargetType.OutsideProcess:
                 {
+                    var configurations = await uow.Store<IOutsideProcessLookup>().ListDispatchesAsync(key, ct);
+                    var configured = configurations.Count == 0 ? null : configurations[0];
+                    if (configured is not null)
+                        return new DocumentTarget(type, key, $"Outside processing {configured.PartNumber} lot {configured.LotNumber} PO {configured.PurchaseOrder}/{configured.PurchaseOrderLine}", configured.ProgramId, Permissions.InventoryRead, configured.Markings);
                     var transactions = await uow.Store<IInventoryLookup>().ListTransactionsAsync(null, null, 100_000, ct);
                     var matched = transactions.FirstOrDefault(t => t.Kind == InventoryTransactionKind.Transfer && t.PoNumber is not null && t.PoLine is not null &&
                         t.Reason?.StartsWith("Outside processing ", StringComparison.Ordinal) == true && $"{t.PartNumber}:{t.LotNumber}:PO{t.PoNumber}-L{t.PoLine}" == key);

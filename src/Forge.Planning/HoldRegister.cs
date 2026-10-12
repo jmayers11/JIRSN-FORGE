@@ -36,7 +36,14 @@ public sealed record HoldEntry(
     DateTimeOffset? ReleasedAt,
     string? ReleasedBy,
     string? ReleaseReason,
-    Guid? ProgramId);
+    Guid? ProgramId,
+    int RecordVersion = 1,
+    bool RequireFreshAssurance = false,
+    bool RequireSignature = false,
+    string? SignatureMeaning = null,
+    bool PropagateDownstream = false,
+    IReadOnlyList<HoldImpactRecord>? DownstreamImpact = null,
+    HoldReleaseSignoff? ReleaseSignature = null);
 
 /// <summary>The hold register: kernel holds and the holds Quality and Inventory keep, in one list (V3.10).</summary>
 public static class HoldRegister
@@ -63,7 +70,10 @@ public static class HoldRegister
             };
             var policy = HoldService.PolicyOf(policies, h.Kind);
             entries.Add(new HoldEntry(h.HoldId, h.HoldId.ToString(CultureInfo.InvariantCulture), h.Kind, h.TargetType, h.Target, h.Source, h.Reason, h.Evidence, h.AffectedRecords,
-                h.RequiredResolution, policy.Blocks, policy.ReleasePermission, "Release (hold)", h.Active, h.PlacedAt, h.PlacedBy, h.ReleasedAt, h.ReleasedBy, h.ReleaseReason, program));
+                h.RequiredResolution, policy.Blocks, policy.ReleasePermission, "Release (hold)", h.Active, h.PlacedAt, h.PlacedBy, h.ReleasedAt, h.ReleasedBy, h.ReleaseReason, program,
+                h.RecordVersion, policy.RequireFreshAssurance, policy.RequireSignature, policy.SignatureMeaning, policy.PropagateDownstream,
+                h.TargetType == HoldTargetType.Lot ? await uow.Store<IHoldPropagationLookup>().ListImpactAsync(h, principal, ct) : [],
+                await lookup.FindReleaseSignoffAsync(h.HoldId, ct)));
         }
 
         // Holds other contexts keep by their own rules: shown as kinds of hold, released through their own process.

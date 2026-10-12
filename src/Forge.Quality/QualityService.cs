@@ -90,7 +90,7 @@ public interface IQualityStore
 /// nonconformance; accepting nonconforming material "use as is" needs a second person, and so does
 /// verifying a corrective action. Open nonconformances and uninspected operations hold the order.
 /// </summary>
-public sealed class QualityService(CommandPipeline pipeline)
+public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFactory unitOfWork)
 {
     public const string SourceContext = "Quality";
     private const string GaugeType = "GAUGE";
@@ -444,21 +444,48 @@ public sealed class QualityService(CommandPipeline pipeline)
                 : capa with { Status = CapaStatus.Verified, VerifiedBy = context.Actor }, ct);
     }
 
-    private Task<CommandResult> NcrAsync<TCommand>(string commandType, long ncrId, TCommand command, CommandContext context, string permission, Func<NcrInfo, (NcrInfo Next, string Message)> change, CancellationToken ct)
+    private async Task<CommandResult> NcrAsync<TCommand>(string commandType, long ncrId, TCommand command, CommandContext context, string permission, Func<NcrInfo, (NcrInfo Next, string Message)> change, CancellationToken ct)
     {
         var id = ncrId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var spec = new CommandSpec(SourceContext, commandType, permission, ResourceRef.Of("Ncr", id), ReasonRequired: true);
-        return pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
+        ResourceRef resource;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            var ncr = await read.Store<IQualityLookup>().FindNcrAsync(ncrId, ct);
+            resource = ncr is null ? ResourceRef.Of("Ncr", id) : await ResourceForNcrAsync(read, ncr, ct);
+        }
+        var spec = new CommandSpec(SourceContext, commandType, permission, resource, ReasonRequired: true);
+        return await pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
         {
             var ncr = await uow.Store<IQualityLookup>().FindNcrAsync(ncrId, ct)
                 ?? throw new CommandRejectedException("ncr_not_found", $"NCR {id} does not exist.");
+            if (await ResourceForNcrAsync(uow, ncr, ct) != resource)
+                throw new CommandRejectedException("ncr_context_changed", "The NCR's operational context changed. Review its current source records and retry.");
             var (next, message) = change(ncr);
             await uow.Store<IQualityStore>().UpdateNcrAsync(next, now, context.Actor, ct);
             return new CommandOutcome(
                 CommandResult.Ok(id, $"NCR {id}: {message}."),
-                [pipeline.Event(new NcrChanged(ncrId, ncr.PartNumber, ncr.OrderNumber, next.Status.ToString()), context, SourceContext, "Ncr", id)],
-                new AuditChange("Ncr", id, CanonicalJson.Serialize(ncr), CanonicalJson.Serialize(next)));
+                [pipeline.Event(new NcrChanged(ncrId, ncr.PartNumber, ncr.OrderNumber, next.Status.ToString()), context, SourceContext, "Ncr", id, resource.Program)],
+                new AuditChange("Ncr", id, CanonicalJson.Serialize(ncr), CanonicalJson.Serialize(next), resource.Program));
         }, ct);
+    }
+
+    /// <summary>The NCR's recorded order and operation supply its current authorization context.</summary>
+    public static async Task<ResourceRef> ResourceForNcrAsync(IKernelUnitOfWork uow, NcrInfo ncr, CancellationToken ct)
+    {
+        var order = ncr.OrderNumber is { } number ? await uow.Store<IExecutionLookup>().FindOrderAsync(number, ct) : null;
+        var workCenter = ncr.Sequence is { } sequence ? order?.Operations.FirstOrDefault(operation => operation.Sequence == sequence)?.WorkCenterCode : null;
+        string? facility = null;
+        if (workCenter is not null)
+        {
+            var resources = uow.Store<IResourcesLookup>();
+            var center = await resources.FindWorkCenterAsync(workCenter, ct);
+            if (center is not null)
+                facility = (await resources.FindSafetyAreaAsync(center.SafetyAreaCode, ct))?.SiteCode;
+        }
+        return new ResourceRef("Ncr", ncr.NcrId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            order?.ProgramId is { } program ? new ProgramId(program) : null,
+            FacilityId: facility, WorkCenterId: workCenter,
+            ContractId: order?.ContractId?.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     private Task<CommandResult> CapaAsync<TCommand>(string commandType, long capaId, TCommand command, CommandContext context, string permission, bool reasonRequired, Func<CapaInfo, CapaInfo> change, CancellationToken ct)

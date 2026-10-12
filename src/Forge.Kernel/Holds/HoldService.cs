@@ -30,10 +30,11 @@ public sealed record PlaceHold(
     IReadOnlyList<string>? AffectedRecords = null,
     string? RequiredResolution = null);
 
-public sealed record ReleaseHold(long HoldId);
+public sealed record ReleaseHold(long HoldId, int? ExpectedVersion = null, bool SignatureConfirmed = false, string? SignatureMeaning = null);
 
 /// <summary>Change what a kind of hold blocks (V3.10: the configured downstream activities).</summary>
-public sealed record SetHoldKindPolicy(HoldKind Kind, IReadOnlyList<HoldActivity> Blocks);
+public sealed record SetHoldKindPolicy(HoldKind Kind, IReadOnlyList<HoldActivity> Blocks, bool RequireFreshAssurance = false,
+    bool RequireSignature = false, string? SignatureMeaning = null, bool PropagateDownstream = false);
 
 public sealed record HoldChanged(long HoldId, string Kind, string Target, bool Active) : IDomainEvent
 {
@@ -42,7 +43,7 @@ public sealed record HoldChanged(long HoldId, string Kind, string Target, bool A
     public static int SchemaVersion => 1;
 }
 
-public sealed record HoldKindPolicyChanged(string Kind, IReadOnlyList<string> Blocks) : IDomainEvent
+public sealed record HoldKindPolicyChanged(string Kind, IReadOnlyList<string> Blocks, bool RequireFreshAssurance = false, bool RequireSignature = false, bool PropagateDownstream = false) : IDomainEvent
 {
     public static string EventType => nameof(HoldKindPolicyChanged);
 
@@ -92,7 +93,7 @@ public sealed class HoldService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
     }
 
     /// <summary>Releases a hold. The permission checked is the release authority of the hold's kind.</summary>
-    public async Task<CommandResult> ReleaseAsync(ReleaseHold c, CommandContext context, CancellationToken ct)
+    public async Task<CommandResult> ReleaseAsync(ReleaseHold c, CommandContext context, CancellationToken ct, HoldReleaseAuthentication? authentication = null)
     {
         ArgumentNullException.ThrowIfNull(c);
         ArgumentNullException.ThrowIfNull(context);
@@ -109,7 +110,7 @@ public sealed class HoldService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
         var spec = new CommandSpec(SourceContext, nameof(ReleaseHold), permission, ResourceRef.Of(Entity, key), ReasonRequired: true);
         return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
-            var hold = (await uow.Store<IHoldLookup>().ListHoldsAsync(true, ct)).FirstOrDefault(h => h.HoldId == c.HoldId)
+            var hold = await uow.Store<IHoldStore>().LockHoldAsync(c.HoldId, ct)
                 ?? throw new CommandRejectedException("hold_not_found", $"Hold {key} does not exist.");
             var target = await targets.ResolveAsync(uow, hold.TargetType, hold.TargetId, hold.TargetPart, ct);
             if (target is null || (target.ProgramId is { } p && !context.Principal.Programs.Contains(new ProgramId(p))))
@@ -123,13 +124,34 @@ public sealed class HoldService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
                 return CommandOutcome.NoChange(CommandResult.NoChange(key, $"Hold {key} was already released."));
             }
 
+            var policy = PolicyOf(await uow.Store<IHoldLookup>().ListKindPoliciesAsync(ct), hold.Kind);
+            if (policy.RequireFreshAssurance || policy.RequireSignature)
+            {
+                if (authentication is null || authentication.PersonId != context.Principal.PersonId.Value
+                    || authentication.AuthenticatedAt > now || authentication.StepUpExpiresAt < now)
+                    throw new CommandRejectedException("step_up_required", "This hold kind requires fresh identity-provider assurance before release.");
+            }
+            HoldReleaseSignoff? signoff = null;
+            if (policy.RequireSignature)
+            {
+                if (c.ExpectedVersion != hold.RecordVersion)
+                    throw new CommandRejectedException("stale_hold_version", "Review the current hold version before signing its release.");
+                if (!c.SignatureConfirmed || !string.Equals(c.SignatureMeaning, policy.SignatureMeaning, StringComparison.Ordinal))
+                    throw new CommandRejectedException("signature_required", "Explicitly confirm the configured signature meaning for this release.");
+                var proof = authentication!;
+                signoff = new HoldReleaseSignoff(hold.HoldId, context.Principal.PersonId.Value, proof.Subject, proof.Issuer,
+                    context.Principal.Roles.Order(StringComparer.Ordinal).ToArray(), policy.ReleasePermission, proof.Assurance, proof.Methods,
+                    proof.AuthenticatedAt, now, hold.RecordVersion, CanonicalJson.Fingerprint(hold), CanonicalJson.Fingerprint(policy),
+                    nameof(ReleaseHold), policy.SignatureMeaning, "Released", context.CorrelationId, context.Actor);
+                await uow.Store<IHoldStore>().InsertReleaseSignoffAsync(signoff, ct);
+            }
             var reason = context.Reason!.Trim();
             await uow.Store<IHoldStore>().ReleaseHoldAsync(c.HoldId, now, context.Actor, reason, ct);
             var released = hold with { ReleasedAt = now, ReleasedBy = context.Actor, ReleaseReason = reason };
             return new CommandOutcome(
                 CommandResult.Ok(key, $"{hold.Kind} hold {key} on {hold.Target} released."),
                 [pipeline.Event(new HoldChanged(c.HoldId, hold.Kind.ToString(), hold.Target, false), context, SourceContext, Entity, key, program)],
-                new AuditChange(Entity, key, CanonicalJson.Serialize(hold), CanonicalJson.Serialize(released), program));
+                new AuditChange(Entity, key, CanonicalJson.Serialize(hold), CanonicalJson.Serialize(new { hold = released, signoff }), program));
         }, ct);
     }
 
@@ -146,17 +168,22 @@ public sealed class HoldService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
             }
 
             var before = PolicyOf(await uow.Store<IHoldLookup>().ListKindPoliciesAsync(ct), c.Kind);
-            if (blocks.SequenceEqual(before.Blocks.Order()))
+            var meaning = Optional(c.SignatureMeaning) ?? before.SignatureMeaning;
+            if (meaning.Length > 500) throw new CommandRejectedException("invalid_signature_meaning", "Signature meaning must be at most 500 characters.");
+            var fresh = c.RequireFreshAssurance || c.RequireSignature;
+            if (blocks.SequenceEqual(before.Blocks.Order()) && fresh == before.RequireFreshAssurance && c.RequireSignature == before.RequireSignature
+                && meaning == before.SignatureMeaning && c.PropagateDownstream == before.PropagateDownstream)
             {
                 return CommandOutcome.NoChange(CommandResult.NoChange(c.Kind.ToString(), $"{c.Kind} holds already block {string.Join(", ", blocks)}."));
             }
 
-            var policy = before with { Blocks = blocks, ChangedAt = now, ChangedBy = context.Actor };
+            var policy = before with { Blocks = blocks, ChangedAt = now, ChangedBy = context.Actor, RequireFreshAssurance = fresh,
+                RequireSignature = c.RequireSignature, SignatureMeaning = meaning, PropagateDownstream = c.PropagateDownstream };
             await uow.Store<IHoldStore>().SetKindPolicyAsync(policy, ct);
             var names = blocks.Select(b => b.ToString()).ToList();
             return new CommandOutcome(
                 CommandResult.Ok(c.Kind.ToString(), $"{c.Kind} holds now block {string.Join(", ", names)}."),
-                [pipeline.Event(new HoldKindPolicyChanged(c.Kind.ToString(), names), context, SourceContext, "HoldKind", c.Kind.ToString())],
+                [pipeline.Event(new HoldKindPolicyChanged(c.Kind.ToString(), names, fresh, c.RequireSignature, c.PropagateDownstream), context, SourceContext, "HoldKind", c.Kind.ToString())],
                 new AuditChange("HoldKind", c.Kind.ToString(), CanonicalJson.Serialize(before), CanonicalJson.Serialize(policy)));
         }, ct);
     }

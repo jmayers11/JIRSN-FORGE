@@ -46,3 +46,21 @@ custody.
 - Location kind and site cannot change. A location is retired and replaced instead, so history keeps meaning
   what it said.
 - Clients sending `"Available"` as a status are refused. The web UI and the sample script send `"Released"`.
+
+## Upgrade correction — 2026-10-12
+
+The original balance proof joined nullable lot identifiers with SQL equality. Untracked stock has a null lot,
+so unchanged before/after balances failed to join and the migration aborted. The proof now uses
+`IS NOT DISTINCT FROM` for lot identity. Quantity, status-rename semantics and append-only protection stay
+the same. A later migration cannot repair this error because the original upgrade fails before reaching it.
+
+The runner recognizes only the reviewed checksum pair for `inventory/0008_stock_dimensions`: original
+`8cd2b06fb72df876362dcc3b7cf542011af9b7616cde8cfdf701572158265b32`, corrected
+`aeec3f3c44f3e2c94fbd47ca2ad49cbcfb520e2969854f28576511092a0e3aba`. An already applied original
+script is not rerun and its stored checksum is preserved. Every other checksum mismatch still fails.
+
+`StockDimensionsMigrationTests` builds the actual pre-V3.1 inventory schema from embedded migrations,
+seeds tracked and untracked receipts/moves plus inspection and held stock, reproduces and rolls back the
+historical failure, and runs the real runner through the remaining upgrades. It compares every balance and
+ledger record, verifies retries are idempotent and append-only protection is restored, and checks that the
+historical pair is accepted while unreviewed checksums and the same hash on another migration are refused.

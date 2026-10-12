@@ -19,10 +19,19 @@ public enum DowntimeKind
     /// lifecycle, from the change until the asset is made active again.
     /// </summary>
     AssetOutOfService,
+
+    // Observed production stoppages are projected from Execution; they are not maintenance ledger rows.
+    Setup,
+    Changeover,
+    Maintenance,
+    Waiting,
+    Starved,
+    Blocked,
 }
 
 /// <summary>A period a machine cannot run. <see cref="EndsAt"/> is null while an unplanned outage is open.</summary>
-public sealed record DowntimeWindow(long Id, string MachineCode, DowntimeKind Kind, DateTimeOffset StartsAt, DateTimeOffset? EndsAt, string Reason)
+public sealed record DowntimeWindow(long Id, string MachineCode, DowntimeKind Kind, DateTimeOffset StartsAt, DateTimeOffset? EndsAt, string Reason,
+    bool IsHypothetical = false, string SourceContext = "Maintenance", string? SourceReference = null)
 {
     public bool Covers(DateTimeOffset at) => StartsAt <= at && (EndsAt is null || at < EndsAt);
 }

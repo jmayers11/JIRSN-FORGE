@@ -1,5 +1,6 @@
 import { tryGet, command } from '../api.js';
 import { esc, $, toast, errorBlock, fmtDateTime } from '../ui.js';
+import { canAction } from '../forms.js';
 
 const enc = encodeURIComponent;
 const localDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -21,10 +22,9 @@ function zonedIso(value, zone) {
 }
 
 export async function shiftContinuityPage(page, ctx) {
-  const roles = ctx.me.roles;
-  const supervisor = roles.includes('Supervisor');
-  const canManageChecklist = roles.includes('ManufacturingEngineer');
-  const canRecord = roles.some(r => ['Supervisor', 'ShopFloorTerminal'].includes(r));
+  const supervisor = canAction(ctx.me, 'workforce.supervise');
+  const canManageChecklist = canAction(ctx.me, 'resources.manage');
+  const canRecord = canAction(ctx.me, 'execution.shopfloor.record');
   const resourcesResult = await tryGet('/api/resources/?includeRetired=false');
   if (resourcesResult.error) { page.innerHTML = `<div class="page-head"><h1>Shift continuity</h1></div>${errorBlock(resourcesResult.error, 'shift resources')}`; return; }
   const resources = resourcesResult.data;
@@ -79,7 +79,7 @@ export async function shiftContinuityPage(page, ctx) {
       <section class="panel"><header><h2>Recent handoffs</h2></header>${handoffs.length ? `<div class="stack">${handoffs.map(h => `<article class="card"><div class="row"><b>${esc(h.shiftCode)} · ${esc(h.workCenterCode)}</b><span class="spacer"></span><span class="pill ${h.reviewedAt ? 'ok' : 'warn'}">${h.reviewedAt ? 'Reviewed' : 'Awaiting review'}</span><button class="btn small" data-open="${h.handoffId}">Open</button></div><div class="muted">${esc(fmtDateTime(h.shiftFrom))} – ${esc(fmtDateTime(h.shiftUntil))} · by ${esc(h.createdBy)}</div><div>${esc(h.context ?? '')}</div></article>`).join('')}</div>` : '<div class="muted">No handoffs recorded for this work center.</div>'}</section>
       <section class="panel"><header><h2>Shift closeout</h2><span class="spacer"></span>${supervisor ? '<button id="close-shift" class="btn primary" ' + (selectedShift ? '' : 'disabled') + '>Capture closeout for selected window</button>' : ''}</header>
         <div class="muted">Closeout records production reports, current WIP, order-linked material movements, downtime, maintenance and any source sections unavailable to your access. It never rewrites those records.</div>
-        ${closeouts.length ? `<div class="stack">${closeouts.map(c => `<article class="card"><b>${esc(c.shiftCode)} · ${esc(c.workCenterCode)}</b><div class="muted">${esc(fmtDateTime(c.shiftFrom))} – ${esc(fmtDateTime(c.shiftUntil))} · closed ${esc(fmtDateTime(c.closedAt))}</div><div>${c.facts.production.reportCount} reports · ${c.facts.production.goodQuantity} good · ${c.facts.production.scrapQuantity} scrap · ${c.facts.production.openOperations} open operations</div>${c.facts.unknowns?.length ? `<div class="notice warn">${c.facts.unknowns.map(esc).join('<br>')}</div>` : ''}</article>`).join('')}</div>` : '<div class="muted">No closeouts recorded for this work center.</div>'}</section>
+        ${closeouts.length ? `<div class="stack">${closeouts.map(c => `<article class="card"><b>${esc(c.shiftCode)} · ${esc(c.workCenterCode)}</b><div class="muted">${esc(fmtDateTime(c.shiftFrom))} – ${esc(fmtDateTime(c.shiftUntil))} · closed ${esc(fmtDateTime(c.closedAt))}</div><div>${c.facts.production.reportCount} reports · ${c.facts.production.goodQuantity} good · ${c.facts.production.scrapQuantity} scrap · ${c.facts.production.openOperations} open operations</div><details><summary>Operational facts and unresolved exceptions (${c.facts.facts.filter(f => f.kind === 'Reconciliation').length})</summary><ul class="evidence">${c.facts.facts.map(f => `<li><b>${esc(f.kind)}</b> · ${esc(f.summary)} <span class="muted">${esc(f.status)}</span></li>`).join('') || '<li class="muted">No visible source facts.</li>'}</ul></details>${c.facts.unknowns?.length ? `<div class="notice warn">${c.facts.unknowns.map(esc).join('<br>')}</div>` : ''}</article>`).join('')}</div>` : '<div class="muted">No closeouts recorded for this work center.</div>'}</section>
       <div id="handoff-detail"></div>`;
 
     $('#shift-wc', page)?.addEventListener('change', async e => { selected = e.target.value; selectedShift = ''; await render(); });
@@ -121,7 +121,7 @@ export async function shiftContinuityPage(page, ctx) {
         <h3>Checklist</h3><ul class="evidence">${h.checklist.map(x => `<li>${esc(x.description)} — <b>${esc(x.state)}</b>${x.note ? ` · ${esc(x.note)}` : ''}</li>`).join('') || '<li class="muted">No checklist configured.</li>'}</ul>
         <h3>Actions</h3>${actions.map(a => {
           const next = ({ Assigned: 'Acknowledged', Acknowledged: 'InProgress', InProgress: 'Completed' })[a.status];
-          const allowed = next && (a.assignee === ctx.me.personId || supervisor);
+          const allowed = next && ((a.assignee === ctx.me.personId && canRecord) || supervisor);
           return `<div class="row"><span>${esc(a.description)}${a.sourceKind ? `<div class="muted">Linked ${esc(a.sourceKind)} ${esc(a.sourceReference)}</div>` : ''}</span><span class="spacer"></span><span class="pill ${a.status === 'Completed' ? 'ok' : 'warn'}">${esc(a.status)}</span>${allowed ? `<button class="btn small" data-action-next="${a.actionId}" data-status="${esc(a.status)}" data-next="${esc(next)}">Mark ${esc(next)}</button>` : ''}</div>`;
         }).join('') || '<div class="muted">No assigned actions.</div>'}
         ${supervisor ? `<form data-action-form class="toolbar"><input name="description" class="input" placeholder="Action to follow up" required><input name="sourceKind" class="input" placeholder="Source: Order, Machine, WorkOrder or Tool"><input name="sourceReference" class="input" placeholder="Source record ID or code"><input name="assignee" class="input" placeholder="Assignee person ID" required><button class="btn" type="submit">Assign action</button></form>` : ''}

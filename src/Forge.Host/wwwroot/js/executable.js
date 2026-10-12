@@ -1,13 +1,14 @@
 import { tryGet, command } from './api.js';
 import { who } from './people.js';
 import { esc, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock } from './ui.js';
-import { formModal, can } from './forms.js';
+import { formModal, canAction } from './forms.js';
 
 // Executable capacity and presence (V3.9): every open operation answers "can this happen now, and why not?";
 // production holds; each worker's presence level (a schedule is never presence); training on controlled documents.
 
 const KINDS = ['Quality', 'Material', 'Production', 'Engineering', 'Customer', 'Shipping', 'Procurement', 'Configuration', 'Safety', 'Administrative'];
 const TARGETS = [['Order', 'Order'], ['Operation', 'Operation'], ['Part', 'Part'], ['Lot', 'Lot'], ['WorkCenter', 'Work center'], ['Machine', 'Machine'], ['Supplier', 'Supplier'], ['PurchaseOrder', 'Purchase order'], ['Shipment', 'Shipment'], ['Program', 'Program']];
+const HOLD_ACTIVITIES = ['ReleaseOrder', 'StartWork', 'ReportOutput', 'IssueMaterial', 'Ship', 'Purchase', 'Receive'];
 const LEVEL = {
   ActiveOnOperation: ['ok', 'On an operation'], AssignedToWorkCenter: ['ok', 'Assigned'], ClockedIn: ['info', 'Clocked in'],
   Scheduled: ['warn', 'Scheduled only'], NotPresent: ['none', 'Not present'],
@@ -34,25 +35,25 @@ export async function appendHolds(container, me, order) {
   const section = document.createElement('section');
   section.className = 'panel';
   container.appendChild(section);
-  const place = can(me, 'ManufacturingEngineer', 'Supervisor', 'Planner', 'QualityEngineer', 'QualityManager', 'Inspector', 'InventoryController', 'Buyer', 'PurchasingManager',
-    'Shipper', 'SafetyEngineer', 'SafetyApprover', 'ProgramManager', 'ChangeBoard', 'EngineeringApprover', 'SecurityAdministrator');
+  const place = canAction(me, 'holds.place');
   const load = async () => {
-    const { data, error } = await tryGet('/api/holds?includeReleased=true');
+    const [{ data, error }, { data: policies }] = await Promise.all([tryGet('/api/holds?includeReleased=true'), tryGet('/api/holds/kinds')]);
     const ops = order ? order.operations : [];
     const list = (data ?? []).filter(h => !order
       || (h.targetType === 'Order' && h.target === `order ${order.orderNumber}`) || h.target.startsWith(`order ${order.orderNumber} `)
       || (h.targetType === 'Operation' && h.target.startsWith(`operation ${order.orderNumber}/`))
+      || (h.downstreamImpact ?? []).some(i => i.recordId === `order:${order.orderNumber}`)
       || (h.targetType === 'Part' && h.target.startsWith(`part ${order.partNumber}`))
       || (h.targetType === 'WorkCenter' && ops.some(op => h.target === `work center ${op.workCenterCode}`))
       || (h.targetType === 'Machine' && ops.some(op => op.eligibleMachines.some(m => h.target === `machine ${m}`))));
-    section.innerHTML = `<header><h2>Holds</h2><span class="spacer"></span>${place ? '<button class="btn small" data-hold-add>+ Hold</button>' : ''}</header>
+    section.innerHTML = `<header><h2>Holds</h2><span class="spacer"></span>${canAction(me, 'kernel.access.manage') ? `<select class="select" aria-label="Hold kind policy" data-hold-policy-kind>${KINDS.map(k => `<option value="${k}">${k}</option>`).join('')}</select><button class="btn small ghost" data-hold-policy>Release and propagation policy</button>` : ''}${place ? '<button class="btn small" data-hold-add>+ Hold</button>' : ''}</header>
       ${error ? errorBlock(error, 'holds') : !list.length ? emptyBlock('No holds', 'A hold of any kind stops the activities its kind blocks until someone with that kind\'s release authority releases it.') : `
       <table class="table"><thead><tr><th>Hold</th><th>Kind</th><th>On</th><th>Why</th><th>Stops</th><th>To release</th><th>Status</th><th></th></tr></thead><tbody>
-      ${list.map(h => `<tr><td>${esc(h.reference)}<div class="faint">${esc(h.source)}</div></td><td>${esc(h.kind)}</td><td>${esc(h.target)}</td>
+      ${list.map(h => `<tr><td>${esc(h.reference)}<div class="faint">${esc(h.source)}</div></td><td>${esc(h.kind)}</td><td>${esc(h.target)}${h.downstreamImpact?.length ? `<details><summary>Recorded downstream impact (${h.downstreamImpact.length})</summary>${h.downstreamImpact.map(i => `<div><b>${esc(i.recordType)} ${esc(i.recordId)}</b>${i.quantity == null ? '' : ` · ${esc(i.quantity)}`} ${esc(i.status ?? '')}<div class="faint">${esc(i.relationship)} · ${esc(i.evidence)}</div></div>`).join('')}<div class="faint">${h.propagateDownstream ? 'Configured blocked activities also apply to these recorded dependencies.' : 'Impact is shown for review; downstream enforcement is disabled by this kind policy.'}</div></details>` : ''}</td>
         <td>${esc(h.reason)}${h.evidence ? `<div class="faint">${esc(h.evidence)}</div>` : ''}</td><td>${esc(h.blocks.join(', '))}</td>
-        <td>${esc(h.requiredResolution)}<div class="faint">${esc(h.releasedThrough)} · ${esc(h.releaseAuthority)}</div></td>
-        <td>${h.active ? '<span class="pill bad">Active</span>' : `<span class="pill ok">Released</span><div class="faint">${esc(fmtDateTime(h.releasedAt))} ${esc(who(h.releasedBy))}: ${esc(h.releaseReason)}</div>`}</td>
-        <td>${h.active && h.holdId ? `<button class="btn small ghost" data-hold-release="${h.holdId}">Release</button>` : ''}</td></tr>`).join('')}
+        <td>${esc(h.requiredResolution)}<div class="faint">${esc(h.releasedThrough)} · ${esc(h.releaseAuthority)}</div>${h.requireFreshAssurance ? '<div class="faint">Fresh provider step-up required</div>' : ''}${h.requireSignature ? '<div class="faint">Explicit release signature required</div>' : ''}</td>
+        <td>${h.active ? '<span class="pill bad">Active</span>' : `<span class="pill ok">Released</span><div class="faint">${esc(fmtDateTime(h.releasedAt))} ${esc(who(h.releasedBy))}: ${esc(h.releaseReason)}</div>${h.releaseSignature ? `<div class="faint">Signed version ${esc(h.releaseSignature.recordVersion)} · ${esc(h.releaseSignature.assurance)} · ${esc(h.releaseSignature.meaning)}</div>` : ''}`}</td>
+        <td>${h.active && h.holdId && canAction(me, h.releaseAuthority, { programId: h.programId }) ? `<button class="btn small ghost" data-hold-release="${h.holdId}">Release</button>` : ''}</td></tr>`).join('')}
       </tbody></table>`}`;
     $$('[data-hold-add]', section).forEach(b => b.addEventListener('click', () => formModal({
       title: 'Place a hold', detail: 'It stops what its kind blocks. Releasing needs the kind\'s release authority.', confirmLabel: 'Place hold', reasonRequired: true,
@@ -66,9 +67,26 @@ export async function appendHolds(container, me, order) {
         { name: 'requiredResolution', label: 'To release (optional)' },
       ],
     }, (v, reason) => command('/api/holds', { ...v, targetPart: v.targetPart || null, source: v.source || null, evidence: v.evidence || null, requiredResolution: v.requiredResolution || null }, reason), load)));
-    $$('[data-hold-release]', section).forEach(b => b.addEventListener('click', () => formModal({
-      title: `Release hold ${b.dataset.holdRelease}`, detail: 'You need the release authority of its kind.', confirmLabel: 'Release', reasonRequired: true, fields: [],
-    }, (v, reason) => command(`/api/holds/${b.dataset.holdRelease}/release`, {}, reason), load)));
+    $$('[data-hold-release]', section).forEach(b => b.addEventListener('click', () => {
+      const h = list.find(item => String(item.holdId) === b.dataset.holdRelease);
+      formModal({
+        title: `Release hold ${b.dataset.holdRelease}`, detail: `${h.target}: ${h.reason}. ${h.requiredResolution}${h.requireFreshAssurance ? ' Reauthenticate with the identity provider before signing.' : ''}`, confirmLabel: h.requireSignature ? 'Sign and release' : 'Release', reasonRequired: true,
+        fields: h.requireSignature ? [{ name: 'signatureConfirmed', label: 'Release signature', type: 'check', text: h.signatureMeaning, value: false }] : [],
+      }, (v, reason) => command(`/api/holds/${b.dataset.holdRelease}/release`, { expectedVersion: h.recordVersion, signatureConfirmed: v.signatureConfirmed ?? false, signatureMeaning: h.requireSignature ? h.signatureMeaning : null }, reason), load);
+    }));
+    $$('[data-hold-policy]', section).forEach(b => b.addEventListener('click', () => {
+      const kind = section.querySelector('[data-hold-policy-kind]').value;
+      const p = (policies ?? []).find(p => p.kind === kind);
+      formModal({ title: `${kind} hold policy`, detail: 'Configure prohibited actions and the evidence required for release. Propagation follows recorded genealogy and material allocations.', confirmLabel: 'Save policy', reasonRequired: true,
+        fields: [
+          ...HOLD_ACTIVITIES.map(a => ({ name: `block_${a}`, label: a, type: 'check', text: `Block ${a}`, value: p?.blocks?.includes(a) ?? false })),
+          { name: 'requireFreshAssurance', label: 'Authentication', type: 'check', text: 'Require fresh identity-provider step-up', value: p?.requireFreshAssurance },
+          { name: 'requireSignature', label: 'Signature', type: 'check', text: 'Require explicit release signature (also requires step-up)', value: p?.requireSignature },
+          { name: 'signatureMeaning', label: 'Signature meaning', required: true, value: p?.signatureMeaning },
+          { name: 'propagateDownstream', label: 'Lot propagation', type: 'check', text: 'Enforce blocked activities on recorded descendants and allocated orders', value: p?.propagateDownstream },
+        ],
+      }, (values, reason) => command(`/api/holds/kinds/${kind}`, { blocks: HOLD_ACTIVITIES.filter(a => values[`block_${a}`]), requireFreshAssurance: values.requireFreshAssurance, requireSignature: values.requireSignature, signatureMeaning: values.signatureMeaning, propagateDownstream: values.propagateDownstream }, reason), load);
+    }));
   };
   await load();
 }
@@ -95,7 +113,7 @@ export async function appendDocumentTraining(container, me) {
   const section = document.createElement('section');
   section.className = 'panel';
   container.appendChild(section);
-  const manage = can(me, 'TrainingCoordinator');
+  const manage = canAction(me, 'competency.manage');
   const load = async () => {
     const { data, error } = await tryGet('/api/engineering/document-training');
     const records = data?.records ?? [];

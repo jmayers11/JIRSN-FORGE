@@ -61,9 +61,15 @@ public sealed partial class InventoryService
         {
             var receiving = uow.Store<IReceivingLookup>();
             var receipt = await receiving.FindTransactionAsync(c.ReceiptTransactionId, ct);
-            if (receipt is null || receipt.Kind != InventoryTransactionKind.Receipt || receipt.ToStatus != StockStatus.Inspection)
+            var outsideReturn = await uow.Store<IOutsideProcessLookup>().FindReturnAsync(c.ReceiptTransactionId, ct);
+            if (receipt is null || (receipt.Kind != InventoryTransactionKind.Receipt && outsideReturn is null) || receipt.ToStatus != StockStatus.Inspection)
             {
                 throw new CommandRejectedException("receipt_not_found", $"Transaction {key} is not a receipt into inspection.");
+            }
+            if (outsideReturn is not null)
+            {
+                var sent = await uow.Store<IOutsideProcessLookup>().ListDispatchesAsync(outsideReturn.Key, ct);
+                RequireOutsideProcessAccess(sent.Count == 0 ? null : sent[0], context.Principal);
             }
 
             var store = uow.Store<IInventoryStore>();
@@ -87,6 +93,12 @@ public sealed partial class InventoryService
             }
 
             var results = (c.Results ?? []).Where(r => !string.IsNullOrWhiteSpace(r.Characteristic)).ToList();
+            if (outsideReturn is not null && c.Accepted > 0)
+            {
+                if (results.Count == 0)
+                    throw new CommandRejectedException("process_inspection_results_required", "Record the outside-process inspection characteristics before accepting the returned material.");
+                await RequireOutsideProcessCertificateAsync(uow, outsideReturn.Key, context.Principal, ct);
+            }
             if (c.Rejected == 0 && results.Any(r => !r.Pass))
             {
                 throw new CommandRejectedException("results_disagree", "A characteristic failed; reject the quantity it applies to.");

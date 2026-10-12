@@ -4,6 +4,7 @@ namespace Forge.Kernel.Security;
 public static class Permissions
 {
     public const string AccessManage = "kernel.access.manage";
+    public const string DelegationPropose = "kernel.delegations.propose";
     public const string PeopleRead = "kernel.people.read";
     public const string AuditRead = "kernel.audit.read";
     public const string NotificationsRead = "notifications.read";
@@ -268,7 +269,7 @@ public static class Roles
     static Roles()
     {
         foreach (var role in Map.Keys.ToArray())
-            Map[role] = [.. Map[role], Permissions.NotificationsRead, Permissions.NotificationsAcknowledge];
+            Map[role] = [.. Map[role], Permissions.NotificationsRead, Permissions.NotificationsAcknowledge, Permissions.DelegationPropose];
         Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.NotificationRulesManage];
         Map[Supervisor] = [.. Map[Supervisor], Permissions.NotificationRulesManage];
         Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.WorkAssignmentsManage];

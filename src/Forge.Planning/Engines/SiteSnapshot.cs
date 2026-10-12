@@ -88,8 +88,13 @@ public sealed record SiteSnapshot(
 
     public IReadOnlyList<HoldKindPolicy> HoldPolicies { get; init; } = HoldKindPolicy.Defaults;
 
+    /// <summary>Recorded genealogy/allocation dependencies, captured with the same snapshot as the holds.</summary>
+    public IReadOnlyDictionary<long, HoldPropagationScope> HoldPropagation { get; init; } = new Dictionary<long, HoldPropagationScope>();
+
     /// <summary>The active holds that stop an activity on these records.</summary>
-    public IReadOnlyList<Hold> Stopping(HoldCheck check) => Holds.Where(h => h.Stops(check, HoldPolicies)).OrderBy(h => h.HoldId).ToList();
+    public IReadOnlyList<Hold> Stopping(HoldCheck check) => Holds.Where(h => h.Active && HoldService.PolicyOf(HoldPolicies, h.Kind).Blocks.Contains(check.Activity)
+        && (h.Touches(check) || (HoldService.PolicyOf(HoldPolicies, h.Kind).PropagateDownstream && HoldPropagation.TryGetValue(h.HoldId, out var propagated) && propagated.Touches(check))))
+        .OrderBy(h => h.HoldId).ToList();
 
     /// <summary>Whether the tools <paramref name="activity"/> needs on <paramref name="machine"/> are valid at <paramref name="at"/> (V3.9).</summary>
     public ToolingCheck Tooling(string? machine, string activity, DateTimeOffset at) =>

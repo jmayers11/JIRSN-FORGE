@@ -51,7 +51,8 @@ public enum HoldActivity
 }
 
 /// <summary>What a kind of hold stops, and the permission needed to release one (its release authority).</summary>
-public sealed record HoldKindPolicy(HoldKind Kind, IReadOnlyList<HoldActivity> Blocks, string ReleasePermission, DateTimeOffset? ChangedAt = null, string? ChangedBy = null)
+public sealed record HoldKindPolicy(HoldKind Kind, IReadOnlyList<HoldActivity> Blocks, string ReleasePermission, DateTimeOffset? ChangedAt = null, string? ChangedBy = null,
+    bool RequireFreshAssurance = false, bool RequireSignature = false, string SignatureMeaning = "I authorize release of this hold after reviewing the resolution evidence.", bool PropagateDownstream = false)
 {
     /// <summary>The policies a new plant starts with. A security administrator can change what each kind blocks.</summary>
     public static IReadOnlyList<HoldKindPolicy> Defaults { get; } =
@@ -93,6 +94,9 @@ public sealed record Hold(
     string? ReleaseReason = null)
 {
     public bool Active => ReleasedAt is null;
+
+    /// <summary>A hold is immutable until its single release; versions distinguish these two states.</summary>
+    public int RecordVersion => Active ? 1 : 2;
 
     public string Target => TargetType switch
     {
@@ -168,6 +172,8 @@ public interface IHoldLookup
     Task<IReadOnlyList<Hold>> ListHoldsAsync(bool includeReleased, CancellationToken ct);
 
     Task<IReadOnlyList<HoldKindPolicy>> ListKindPoliciesAsync(CancellationToken ct);
+
+    Task<HoldReleaseSignoff?> FindReleaseSignoffAsync(long holdId, CancellationToken ct);
 }
 
 public interface IHoldStore
@@ -177,6 +183,36 @@ public interface IHoldStore
     Task ReleaseHoldAsync(long holdId, DateTimeOffset at, string actor, string reason, CancellationToken ct);
 
     Task SetKindPolicyAsync(HoldKindPolicy policy, CancellationToken ct);
+
+    Task<Hold?> LockHoldAsync(long holdId, CancellationToken ct);
+
+    Task InsertReleaseSignoffAsync(HoldReleaseSignoff signoff, CancellationToken ct);
+}
+
+/// <summary>Provider evidence constructed only by the authenticated Host, never from release request fields.</summary>
+public sealed record HoldReleaseAuthentication(Guid PersonId, string Subject, string Issuer, string Assurance, IReadOnlyList<string> Methods,
+    DateTimeOffset AuthenticatedAt, DateTimeOffset StepUpExpiresAt);
+
+/// <summary>Append-only explicit signature, bound to the hold and policy reviewed by the signer.</summary>
+public sealed record HoldReleaseSignoff(long HoldId, Guid PersonId, string Subject, string Issuer, IReadOnlyList<string> SignerRoles,
+    string AuthorityPermission, string Assurance, IReadOnlyList<string> AuthenticationMethods, DateTimeOffset AuthenticatedAt, DateTimeOffset SignedAt,
+    int RecordVersion, string RecordFingerprint, string PolicyFingerprint, string Action, string Meaning, string Result, Guid CorrelationId, string Actor);
+
+public sealed record HoldImpactRecord(string RecordType, string RecordId, string Relationship, string Evidence, Guid? ProgramId = null, decimal? Quantity = null, string? Status = null);
+
+public sealed record HoldPropagationScope(IReadOnlySet<long> Orders, IReadOnlyList<HoldLot> Lots, IReadOnlySet<long> Shipments)
+{
+    public bool Touches(HoldCheck check) => (check.OrderNumber is { } order && Orders.Contains(order))
+        || (check.ShipmentId is { } shipment && Shipments.Contains(shipment))
+        || check.Lots.Any(l => Lots.Contains(l));
+}
+
+/// <summary>A read projection over the existing ledger, genealogy and allocations; it owns no source state.</summary>
+public interface IHoldPropagationLookup
+{
+    Task<bool> TouchesDownstreamAsync(Hold hold, HoldCheck check, CancellationToken ct);
+    Task<HoldPropagationScope> ScopeAsync(Hold hold, CancellationToken ct);
+    Task<IReadOnlyList<HoldImpactRecord>> ListImpactAsync(Hold hold, ForgePrincipal principal, CancellationToken ct);
 }
 
 /// <summary>Checks used by every context before an activity a hold can stop.</summary>
@@ -188,7 +224,15 @@ public static class HoldGate
         ArgumentNullException.ThrowIfNull(uow);
         var lookup = uow.Store<IHoldLookup>();
         var policies = await lookup.ListKindPoliciesAsync(ct);
-        return (await lookup.ListHoldsAsync(false, ct)).Where(h => h.Stops(check, policies)).OrderBy(h => h.HoldId).ToList();
+        var stopping = new List<Hold>();
+        foreach (var hold in await lookup.ListHoldsAsync(false, ct))
+        {
+            var policy = HoldService.PolicyOf(policies, hold.Kind);
+            if (!policy.Blocks.Contains(check.Activity)) continue;
+            if (hold.Touches(check) || (hold.TargetType == HoldTargetType.Lot && policy.PropagateDownstream
+                && await uow.Store<IHoldPropagationLookup>().TouchesDownstreamAsync(hold, check, ct))) stopping.Add(hold);
+        }
+        return stopping.OrderBy(h => h.HoldId).ToList();
     }
 
     /// <summary>Refuses the activity with "on_hold" when an active hold stops it, naming each hold and what releases it.</summary>

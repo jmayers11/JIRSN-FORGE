@@ -8,8 +8,13 @@ namespace Forge.Execution.Contracts;
 public sealed record ShiftChecklistItem(string Code, string Description, bool Required, int SortOrder, bool Active = true);
 public sealed record ShiftChecklistEntry(string Code, string Description, bool Required, string State, string? Note, string? RecordedBy, DateTimeOffset? RecordedAt);
 public sealed record ShiftChecklistResponse(string Code, string State, string? Note);
+/// <summary>A snapshot of Inventory's cumulative issued-material reconciliation; no source quantities are altered.</summary>
+public sealed record ShiftMaterialBalance(long OrderNumber, string PartNumber, string? LotNumber, decimal Issued, decimal Returned,
+    decimal? Consumed, decimal? Scrap, decimal? Loss, decimal? Remnant, decimal? Remaining, decimal TolerancePercent, decimal? Unexplained,
+    string? IdentityKind);
 public sealed record ShiftOperationalFact(string Kind, string Reference, string Status, string Summary, Guid? ProgramId = null,
-    decimal? GoodQuantity = null, decimal? ScrapQuantity = null, bool? CompletedOperation = null);
+    decimal? GoodQuantity = null, decimal? ScrapQuantity = null, bool? CompletedOperation = null,
+    int? Priority = null, ShiftMaterialBalance? MaterialBalance = null);
 public sealed record ShiftProductionTotals(int ReportCount, decimal GoodQuantity, decimal ScrapQuantity, int CompletedOperations, int OpenOperations);
 public sealed record ShiftCloseoutFacts(
     string WorkCenterCode,

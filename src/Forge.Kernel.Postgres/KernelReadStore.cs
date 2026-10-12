@@ -11,7 +11,7 @@ public sealed record PersonView(Guid PersonId, string IdpSubject, string Display
 public sealed record AuditChainStatus(bool Intact, long EntriesChecked, long? FirstBrokenSequence);
 
 /// <summary>Read-only queries for the kernel. Callers must authorize before calling.</summary>
-public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWorkFactory unitOfWork)
+public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWorkFactory unitOfWork, TimeProvider time)
 {
     public async Task<ForgePrincipal?> ResolvePrincipalBySubjectAsync(string idpSubject, CancellationToken ct)
     {
@@ -25,7 +25,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
         await using var cmd = dataSource.CreateCommand(
             """
             SELECT p.person_id, p.idp_subject, p.display_name, p.is_active, p.markings,
-                   COALESCE(array_agg(DISTINCT r.role) FILTER (WHERE r.role IS NOT NULL AND (r.expires_at IS NULL OR r.expires_at > now())), '{}') AS roles,
+                   COALESCE(array_agg(DISTINCT r.role) FILTER (WHERE r.role IS NOT NULL AND (r.expires_at IS NULL OR r.expires_at > $1)), '{}') AS roles,
                    COALESCE(array_agg(DISTINCT a.program_id) FILTER (WHERE a.program_id IS NOT NULL), '{}') AS programs
             FROM kernel.person p
             LEFT JOIN kernel.role_assignment r ON r.person_id = p.person_id
@@ -33,6 +33,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
             GROUP BY p.person_id
             ORDER BY p.display_name, p.person_id
             """);
+        cmd.Parameters.AddWithValue(time.GetUtcNow());
         var people = new List<PersonView>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))

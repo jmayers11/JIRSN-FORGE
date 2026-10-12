@@ -1,7 +1,7 @@
 import { tryGet, command, upload, download } from '../api.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, drawer, confirmWithReason } from '../ui.js';
-import { formModal, can, today } from '../forms.js';
+import { formModal, canAction, today } from '../forms.js';
 import { historyButton } from '../history.js';
 import { appendAttachments, TYPE_LABEL, MARKING_LABEL, markings, markingPills, fileSize, fileUrl } from '../attachments.js';
 
@@ -69,9 +69,9 @@ async function itemList(page, ctx) {
 
 async function itemDetail(page, ctx, partNumber) {
   const me = ctx.me;
-  const engineer = can(me, 'ManufacturingEngineer');
-  const proposer = can(me, 'ManufacturingEngineer', 'Buyer', 'MaintenancePlanner');
-  const approver = can(me, 'EngineeringApprover');
+  const engineer = canAction(me, 'engineering.manage');
+  const proposer = canAction(me, 'engineering.cots.propose');
+  const approver = canAction(me, 'engineering.cots.manage');
   const [items, mpns] = await Promise.all([tryGet('/api/engineering/items'), tryGet(`/api/engineering/manufacturer-parts?part=${encodeURIComponent(partNumber)}`)]);
   if (items.error) { page.innerHTML = errorBlock(items.error, 'items'); return; }
   const item = items.data.find(i => i.partNumber === partNumber);
@@ -157,8 +157,6 @@ async function itemDetail(page, ctx, partNumber) {
 const AUTHORITY_LABEL = { Internal: 'Internal', External: 'External', Reference: 'Reference' };
 const REV_TONE = { Draft: 'none', InReview: 'info', Approved: 'info', Released: 'ok', Applicable: 'ok', Superseded: 'warn', Obsolete: 'bad', Uncontrolled: 'none' };
 const REV_LABEL = { InReview: 'In review' };
-const MANAGERS = ['ManufacturingEngineer', 'QualityEngineer', 'DocumentController'];
-const APPROVERS = ['EngineeringApprover', 'DocumentController'];
 const TARGET_HREF = {
   ProductionOrder: id => `#/orders/${id}`, PurchaseOrder: () => '#/procurement', Supplier: () => '#/procurement?tab=suppliers', Item: id => `#/engineering/${encodeURIComponent(id)}`,
   ItemRevision: id => `#/engineering/${encodeURIComponent(id.split(':')[0])}`, WorkOrder: () => '#/maintenance', Ncr: () => '#/quality', Program: () => '#/programs', WorkCenter: () => '#/workcenters',
@@ -180,7 +178,7 @@ async function documentList(page, ctx) {
   const waiting = all.filter(d => open(d)?.status === 'InReview' || open(d)?.status === 'Approved');
   page.innerHTML = `
     <div class="page-head"><div><h1>Engineering</h1><div class="sub">Controlled documents: drawings, specifications, procedures and work instructions, with who wrote, approved and released each revision.</div></div>
-      <div class="spacer"></div>${can(ctx.me, ...MANAGERS) ? '<button class="btn primary" id="new-doc">New document</button>' : ''}</div>
+      <div class="spacer"></div>${canAction(ctx.me, 'engineering.documents.manage') ? '<button class="btn primary" id="new-doc">New document</button>' : ''}</div>
     ${tabs('documents')}
     ${waiting.length ? `<div class="notice">${waiting.length} revision(s) waiting for approval or release: ${waiting.map(d => `<a href="#/engineering/documents/${encodeURIComponent(d.number)}">${esc(d.number)}</a>`).join(', ')}.</div>` : ''}
     ${overdue.length ? `<div class="notice warn">${overdue.length} document(s) are past their review date: ${overdue.map(d => `<a href="#/engineering/documents/${encodeURIComponent(d.number)}">${esc(d.number)}</a>`).join(', ')}.</div>` : ''}
@@ -223,8 +221,9 @@ async function documentDetail(page, ctx, number) {
   const res = await tryGet(`/api/engineering/documents/${encodeURIComponent(number)}`);
   if (res.error) { page.innerHTML = `<a href="#/engineering/documents" class="faint">← Documents</a>${errorBlock(res.error, `document ${number}`)}`; return; }
   const { document: d, links } = res.data;
-  const manager = can(me, ...MANAGERS);
-  const approver = can(me, ...APPROVERS);
+  const manager = canAction(me, 'engineering.documents.manage');
+  const approver = canAction(me, 'engineering.documents.approve');
+  const releaser = canAction(me, 'engineering.documents.release');
   const mine = r => r.author === `person:${me.personId}`;
   const reload = () => documentDetail(page, ctx, number);
   const base = `/api/engineering/documents/${encodeURIComponent(d.number)}`;
@@ -236,11 +235,11 @@ async function documentDetail(page, ctx, number) {
     const out = [];
     if (r.status === 'Draft' && manager) out.push(['edit', 'Edit']);
     if (r.status === 'Draft' && d.authority === 'Internal' && manager) out.push(['submit', 'Submit for review']);
-    if (r.status === 'Draft' && d.authority === 'External' && approver && !mine(r)) out.push(['release', 'Record as applicable']);
+    if (r.status === 'Draft' && d.authority === 'External' && releaser && !mine(r)) out.push(['release', 'Record as applicable']);
     if (r.status === 'InReview' && approver && !mine(r)) out.push(['approve', 'Approve']);
     if (r.status === 'InReview' && approver) out.push(['return', 'Return']);
-    if (r.status === 'Approved' && approver && !mine(r)) out.push(['release', 'Release']);
-    if (!['Superseded', 'Obsolete'].includes(r.status) && approver) out.push(['obsolete', 'Obsolete']);
+    if (r.status === 'Approved' && releaser && !mine(r)) out.push(['release', 'Release']);
+    if (!['Superseded', 'Obsolete'].includes(r.status) && releaser) out.push(['obsolete', 'Obsolete']);
     return out;
   };
 
@@ -353,7 +352,7 @@ async function appendRequirements(page, ctx, item) {
   const now = new Date();
   const inForce = list.find(r => r.status === 'Released' && new Date(r.effectiveFrom) <= now && (!r.effectiveTo || new Date(r.effectiveTo) > now));
   let selected = inForce?.revision ?? list[list.length - 1].revision;
-  const manager = can(ctx.me, ...MANAGERS);
+  const manager = canAction(ctx.me, 'engineering.documents.manage');
 
   async function render() {
     const rev = list.find(r => r.revision === selected);
@@ -409,7 +408,7 @@ async function appendRules(page, ctx, d) {
   const section = document.createElement('section');
   section.className = 'panel';
   page.append(section);
-  const approver = can(ctx.me, ...APPROVERS);
+  const approver = canAction(ctx.me, 'engineering.documents.release');
   let history = false;
 
   async function render() {
@@ -460,7 +459,7 @@ async function appendEnforcement(page, ctx) {
   const section = document.createElement('section');
   section.className = 'panel';
   page.append(section);
-  const approver = can(ctx.me, ...APPROVERS);
+  const approver = canAction(ctx.me, 'engineering.documents.release');
   const render = async () => {
     const res = await tryGet('/api/engineering/documentation-policy');
     const enforced = new Map((res.data ?? []).map(p => [p.itemClass, p]));
@@ -492,9 +491,6 @@ async function appendEnforcement(page, ctx) {
 const CHANGE_TONE = { Draft: 'none', InReview: 'info', Approved: 'info', Released: 'ok', Rejected: 'bad', Cancelled: 'none' };
 const CHANGE_LABEL = { InReview: 'In review' };
 const DECISION_LABEL = { Approve: 'Approved', ApproveWithComments: 'Approved with comments', Reject: 'Rejected' };
-const CHANGE_MANAGERS = ['ManufacturingEngineer', 'DocumentController'];
-const BOARD = ['EngineeringApprover', 'ChangeBoard'];
-const RELEASERS = ['EngineeringApprover', 'DocumentController'];
 const IMPACT_LABEL = {
   FutureOrder: 'Future orders', ReleasedNotStarted: 'Released, not started', WorkInProgress: 'Work in progress', Completed: 'Completed (unchanged)',
   OpenPurchase: 'Open purchase lines', Stock: 'Stock', WhereUsed: 'Used in', InspectionPlan: 'Inspection plans', Document: 'Documents built to',
@@ -521,7 +517,7 @@ async function changeList(page, ctx) {
   const list = filter === 'open' ? all.filter(isOpen) : filter === 'all' ? all : all.filter(c => c.status === filter);
   page.innerHTML = `
     <div class="page-head"><div><h1>Engineering</h1><div class="sub">Engineering changes: what changes, who reviewed it, who approved and released it, and what it touches.</div></div>
-      <div class="spacer"></div>${can(ctx.me, ...CHANGE_MANAGERS) ? '<button class="btn primary" id="new-change">New change</button>' : ''}</div>
+      <div class="spacer"></div>${canAction(ctx.me, 'engineering.changes.manage') ? '<button class="btn primary" id="new-change">New change</button>' : ''}</div>
     ${tabs('changes')}
     <section class="panel"><header><h2>Changes</h2><span class="spacer"></span>
       <select class="select" id="change-filter">${[['open', `Open (${all.filter(isOpen).length})`], ['all', `All (${all.length})`], ...['Released', 'Rejected', 'Cancelled'].map(s => [s, `${s} (${all.filter(c => c.status === s).length})`])]
@@ -550,7 +546,7 @@ async function appendPolicies(page, ctx) {
   const section = document.createElement('section');
   section.className = 'panel';
   page.append(section);
-  const board = can(ctx.me, ...BOARD);
+  const board = canAction(ctx.me, 'engineering.changes.approve');
   const render = async () => {
     const res = await tryGet('/api/engineering/review-policies');
     const list = res.data ?? [];
@@ -594,19 +590,19 @@ async function changeDetail(page, ctx, number) {
   if (res.error) { page.innerHTML = `<a href="#/engineering/changes" class="faint">← Changes</a>${errorBlock(res.error, `change ${number}`)}`; return; }
   const { change: c, required, reviewers } = res.data;
   const mine = c.originator === `person:${me.personId}`;
-  const manager = can(me, ...CHANGE_MANAGERS);
+  const manager = canAction(me, 'engineering.changes.manage', { programId: c.programId });
   const base = `/api/engineering/changes/${encodeURIComponent(c.number)}`;
   const reload = () => changeDetail(page, ctx, number);
   const lines = c.lines.filter(l => !l.removedAt);
   const current = c.reviews.filter(r => r.round === c.reviewRound);
   const history = c.reviews.filter(r => r.round !== c.reviewRound);
-  const canReview = kind => (reviewers[kind] ?? []).some(r => me.roles.includes(r));
+  const canReview = kind => canAction(me, 'engineering.changes.review', { programId: c.programId }) && (reviewers[kind] ?? []).some(r => me.roles.includes(r));
 
   const actions = [];
   if (c.status === 'Draft' && manager) actions.push(['edit', 'Edit', ''], ['submit', 'Submit for review', 'primary']);
-  if (c.status === 'InReview' && can(me, ...BOARD) && !mine && current.every(r => r.decision)) actions.push(['approve', 'Approve (change board)', 'primary']);
-  if (c.status === 'Approved' && can(me, ...RELEASERS) && !mine && (required.combineApprovalRelease || c.approvedBy !== `person:${me.personId}`)) actions.push(['release', 'Release', 'primary']);
-  if (['InReview', 'Approved'].includes(c.status) && can(me, ...BOARD)) actions.push(['reject', 'Reject', 'danger']);
+  if (c.status === 'InReview' && canAction(me, 'engineering.changes.approve', { programId: c.programId }) && !mine && current.every(r => r.decision)) actions.push(['approve', 'Approve (change board)', 'primary']);
+  if (c.status === 'Approved' && canAction(me, 'engineering.release', { programId: c.programId }) && !mine && (required.combineApprovalRelease || c.approvedBy !== `person:${me.personId}`)) actions.push(['release', 'Release', 'primary']);
+  if (['InReview', 'Approved'].includes(c.status) && canAction(me, 'engineering.changes.approve', { programId: c.programId })) actions.push(['reject', 'Reject', 'danger']);
   if (['Draft', 'InReview', 'Approved'].includes(c.status) && manager) actions.push(['cancel', 'Cancel', 'ghost']);
 
   page.innerHTML = `
@@ -710,7 +706,7 @@ const STEP_LABEL = {
 const STEP_TONE = { Done: 'ok', Pending: 'info', Waiting: 'warn', Failed: 'bad' };
 const PROPAGATION_TONE = { Complete: 'ok', Running: 'info', Incomplete: 'warn' };
 const ACTION_LABEL = { WipDisposition: 'WIP disposition', PurchaseReview: 'Purchase review', TrainingAcknowledgment: 'Training acknowledgment' };
-const ACTION_ROLES = { WipDisposition: ['QualityEngineer'], PurchaseReview: ['Buyer'], TrainingAcknowledgment: ['TrainingCoordinator'] };
+const ACTION_PERMISSIONS = { WipDisposition: 'quality.disposition', PurchaseReview: 'procurement.manage', TrainingAcknowledgment: 'competency.manage' };
 const RESOLUTIONS = {
   WipDisposition: [['CompleteAtOldRevision', 'Complete at the old revision (deviation)'], ['ReworkToNewRevision', 'Rework to the new revision'], ['Scrap', 'Scrap'], ['ReplanAtNewRevision', 'Cancel and re-plan at the new revision']],
   PurchaseReview: [['NoImpact', 'No impact on what the supplier makes'], ['SupplierNotified', 'Supplier sent the new revision'], ['LineAmended', 'Line amended or replaced'], ['LineCancelled', 'Line cancelled']],
@@ -726,7 +722,7 @@ function actionRows(list, me, reload, showChange) {
     ${list.map(a => `<tr>${showChange ? `<td><a href="#/engineering/changes/${encodeURIComponent(a.changeNumber)}"><b>${esc(a.changeNumber)}</b></a></td>` : ''}<td>${esc(ACTION_LABEL[a.kind])}</td><td>${actionTarget(a)}</td>
       <td class="muted">${esc(a.detail)}</td>
       <td>${a.status === 'Open' ? '<span class="pill warn">Open</span>' : `<span class="pill ok">${esc(RESOLUTION_LABEL[a.resolution] ?? a.resolution)}</span><div class="faint">${esc(who(a.resolvedBy))} ${esc(fmtDateTime(a.resolvedAt))}${a.notes ? ` — ${esc(a.notes)}` : ''}</div>`}</td>
-      <td>${a.status === 'Open' && can(me, ...ACTION_ROLES[a.kind]) ? `<button class="btn small primary" data-resolve="${a.actionId}">Resolve</button>` : ''}</td></tr>`).join('')}
+      <td>${a.status === 'Open' && canAction(me, ACTION_PERMISSIONS[a.kind], { programId: a.programId }) ? `<button class="btn small primary" data-resolve="${a.actionId}">Resolve</button>` : ''}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
 
@@ -753,7 +749,7 @@ async function appendPropagation(page, ctx, c, reload) {
   if (!p) { section.innerHTML = `<header><h2>Propagation</h2></header>${emptyBlock('Not recorded', 'Changes released before V2.5 have no propagation record.')}`; return; }
   section.innerHTML = `
     <header><h2>Propagation</h2> <span class="pill ${PROPAGATION_TONE[p.status] ?? 'none'}">${esc(p.status)}</span><span class="spacer"></span>
-      ${p.status !== 'Complete' && can(ctx.me, ...RELEASERS) ? '<button class="btn small" id="retry-propagation">Run again</button>' : ''}</header>
+      ${p.status !== 'Complete' && canAction(ctx.me, 'engineering.release') ? '<button class="btn small" id="retry-propagation">Run again</button>' : ''}</header>
     <p>${esc(v.summary)}</p>
     <div class="faint" style="margin-bottom:8px">Runs as Forge propagation under the release's correlation id; ${p.runs} run(s), last ${esc(fmtDateTime(p.lastRunAt))}.</div>
     <h3 style="margin:8px 0 4px">Verification</h3>
@@ -803,9 +799,7 @@ const ALT_KIND_LABEL = {
 };
 const ALT_TONE = { Proposed: 'warn', Approved: 'ok', Rejected: 'bad', Expired: 'none' };
 const POLICY_LABEL = { Never: 'Never', Suggest: 'Suggest (default)', Automatic: 'Automatic for approved equivalents' };
-const ALT_PROPOSERS = ['ManufacturingEngineer', 'Buyer', 'PurchasingManager', 'QualityEngineer', 'MaintenancePlanner'];
-const ALT_APPROVERS = ['EngineeringApprover', 'ChangeBoard'];
-const altApprover = (me, a) => a.kind === 'MaintenanceOnly' ? can(me, 'MaintenancePlanner') : can(me, ...ALT_APPROVERS);
+const altApprover = (me, a) => canAction(me, a.kind === 'MaintenanceOnly' ? 'maintenance.alternates.approve' : 'engineering.alternates.approve', { programId: a.programId });
 
 function alternateRows(list, me, showParts) {
   return `<div class="table-wrap"><table class="table"><thead><tr><th>#</th>${showParts ? '<th>Primary</th>' : ''}<th>Alternate</th><th>Kind</th><th>Per 1</th><th>Where</th><th>Status</th><th>Proposed / decided</th><th></th></tr></thead><tbody>
@@ -865,11 +859,11 @@ async function appendAlternates(page, ctx, item, items) {
   const approved = data.alternates.filter(a => a.status !== 'Proposed');
   const proposed = data.alternates.filter(a => a.status === 'Proposed');
   section.innerHTML = `
-    <header><h2>Where used and alternates</h2><span class="spacer"></span>${can(me, ...ALT_PROPOSERS) ? '<button class="btn small primary" id="propose-alt">Propose an alternate</button>' : ''}</header>
+    <header><h2>Where used and alternates</h2><span class="spacer"></span>${canAction(me, 'engineering.alternates.propose') ? '<button class="btn small primary" id="propose-alt">Propose an alternate</button>' : ''}</header>
     <h3 style="margin:4px 0 6px">Used in (${data.usedIn.length})</h3>
     ${!data.usedIn.length ? '<div class="muted">No released bill of materials uses it.</div>' : `<table class="table"><thead><tr><th>Assembly</th><th>Rev</th><th>Line</th><th>Qty per</th><th>Alternates on this line</th><th></th></tr></thead><tbody>
       ${data.usedIn.map(w => `<tr class="${w.inForce ? '' : 'retired'}"><td><a href="#/engineering/${encodeURIComponent(w.parentPart)}"><b>${esc(w.parentPart)}</b></a></td><td>${esc(w.revision)}${w.inForce ? '' : ' <span class="faint">not in force</span>'}</td><td>${w.lineNumber}</td><td>${esc(String(w.quantityPer))}</td>
-        <td>${esc(POLICY_LABEL[w.policy] ?? w.policy)}</td><td>${can(me, ...ALT_APPROVERS) ? `<button class="btn small ghost" data-policy="${esc(w.parentPart)}|${esc(w.revision)}|${w.lineNumber}|${w.policy}">Policy</button>` : ''}</td></tr>`).join('')}</tbody></table>`}
+        <td>${esc(POLICY_LABEL[w.policy] ?? w.policy)}</td><td>${canAction(me, 'engineering.alternates.approve') ? `<button class="btn small ghost" data-policy="${esc(w.parentPart)}|${esc(w.revision)}|${w.lineNumber}|${w.policy}">Policy</button>` : ''}</td></tr>`).join('')}</tbody></table>`}
     <h3 style="margin:14px 0 6px">Alternates for ${esc(item.partNumber)} (${approved.length})</h3>
     ${approved.length ? alternateRows(approved, me, false) : '<div class="muted">None approved.</div>'}
     ${proposed.length ? `<div class="notice warn" style="margin-top:10px"><b>Proposed — not usable until approved (${proposed.length})</b>${alternateRows(proposed, me, false)}</div>` : ''}
@@ -894,7 +888,7 @@ async function alternateList(page, ctx) {
   const rest = all.filter(a => a.status !== 'Proposed');
   page.innerHTML = `
     <div class="page-head"><div><h1>Engineering</h1><div class="sub">Alternate parts: who proposed them, who approved them, and where they apply. Proposed alternates are never used anywhere.</div></div>
-      <div class="spacer"></div>${can(me, ...ALT_PROPOSERS) ? '<button class="btn primary" id="propose-alt">Propose an alternate</button>' : ''}</div>
+      <div class="spacer"></div>${canAction(me, 'engineering.alternates.propose') ? '<button class="btn primary" id="propose-alt">Propose an alternate</button>' : ''}</div>
     ${tabs('alternates')}
     ${res.error ? errorBlock(res.error, 'alternates') : `
     <section class="panel" style="border-left:3px solid var(--warn)"><header><h2>Proposed — requires approval (${proposed.length})</h2></header>
@@ -914,8 +908,8 @@ const REPL_TONE = { None: 'bad', Proposed: 'info', Approved: 'ok', Rejected: 'ba
 
 async function obsolescenceList(page, ctx) {
   const me = ctx.me;
-  const recorder = can(me, 'ManufacturingEngineer', 'Buyer', 'PurchasingManager', 'MaintenancePlanner');
-  const approver = can(me, 'EngineeringApprover');
+  const recorder = canAction(me, 'engineering.obsolescence.record');
+  const approver = canAction(me, 'engineering.alternates.approve');
   const showAll = ctx.query.get('all') === '1';
   const [records, items] = await Promise.all([tryGet(`/api/engineering/obsolescence${showAll ? '?all=true' : ''}`), tryGet('/api/engineering/items')]);
   if (records.error) { page.innerHTML = errorBlock(records.error, 'obsolescence records'); return; }

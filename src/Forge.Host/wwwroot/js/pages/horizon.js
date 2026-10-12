@@ -3,6 +3,7 @@ import { icon, img, stagePhoto } from '../icons.js';
 import { esc, $, $$, fmtNumber, fmtTime, fmtDateTime, timeZone, errorBlock, emptyBlock, drawer } from '../ui.js';
 import { who } from '../people.js';
 import { WINDOWS, buildHorizon, categoryInfo, plannedOutput, actualOutput, localDays, myAssignments } from '../model.js';
+import { timelinePage } from './timeline.js';
 
 const H = 36e5;
 const STATUS = {
@@ -13,6 +14,8 @@ const STATUS = {
 };
 
 export async function horizonPage(page, ctx) {
+  const requested = ctx.query.get('t');
+  if (requested?.startsWith('-') || requested === '+2w') return timelinePage(page, ctx);
   const state = {
     windowKey: ctx.query.get('t') ?? 'now',
     safetyArea: ctx.query.get('area') ?? '',
@@ -110,7 +113,10 @@ export async function horizonPage(page, ctx) {
 
   function wireHeader() {
     $('#view', page)?.addEventListener('change', e => { state.safetyArea = e.target.value; render(); });
-    $$('[data-window]', page).forEach(b => b.addEventListener('click', async () => { state.windowKey = b.dataset.window; await load(); }));
+    $$('[data-window]', page).forEach(b => b.addEventListener('click', async () => {
+      if (b.dataset.window.startsWith('-') || b.dataset.window === '+2w') { location.hash = `#/horizon?t=${b.dataset.window}`; return; }
+      state.windowKey = b.dataset.window; await load();
+    }));
     $('#filters', page)?.addEventListener('click', () => { state.hideIdle = !state.hideIdle; render(); });
   }
 

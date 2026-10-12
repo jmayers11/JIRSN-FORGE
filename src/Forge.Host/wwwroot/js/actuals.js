@@ -1,7 +1,7 @@
 import { tryGet, command } from './api.js';
 import { who } from './people.js';
 import { esc, $$, fmtDateTime, errorBlock, confirmWithReason, toast } from './ui.js';
-import { formModal, qty, can } from './forms.js';
+import { formModal, qty, canAction } from './forms.js';
 
 // Production actuals (V3.5): stoppages with one category and one reason code each, setups and changeovers against
 // the minutes the routing expected, root causes proven only by a second person; an order's quantity through its
@@ -9,8 +9,8 @@ import { formModal, qty, can } from './forms.js';
 
 const CATEGORIES = ['Planned', 'Unplanned', 'Setup', 'Changeover', 'Maintenance', 'Waiting', 'Starved', 'Blocked'];
 const CATEGORY_TONE = { Planned: 'info', Unplanned: 'bad', Setup: 'info', Changeover: 'info', Maintenance: 'warn', Waiting: 'warn', Starved: 'warn', Blocked: 'warn' };
-const reporter = me => can(me, 'Supervisor', 'MaintenanceTechnician', 'MaintenancePlanner');
-const confirmer = me => can(me, 'ManufacturingEngineer', 'QualityEngineer', 'MaintenancePlanner');
+const reporter = me => canAction(me, 'maintenance.downtime.report');
+const confirmer = me => canAction(me, 'execution.rootcause.confirm');
 const mine = (me, actor) => actor === `person:${me.personId}`;
 
 function rootCauseText(v) {
@@ -72,7 +72,7 @@ export async function appendStoppages(container, machines, me) {
 
 /** The plant's reason codes; manufacturing engineers define, change and retire them. */
 export async function appendReasonCodes(container, me) {
-  const manage = can(me, 'ManufacturingEngineer');
+  const manage = canAction(me, 'execution.reasons.manage');
   const section = document.createElement('section');
   section.className = 'panel';
   container.appendChild(section);
@@ -107,7 +107,7 @@ export async function appendOrderQuantityStates(page, order, me) {
   const section = document.createElement('section');
   section.className = 'panel';
   page.appendChild(section);
-  const supervisor = can(me, 'Supervisor');
+  const supervisor = canAction(me, 'execution.shopfloor.record');
   const load = async () => {
     const [states, rework, reasons] = await Promise.all([tryGet(`/api/orders/${order.orderNumber}/quantity-states`), tryGet(`/api/quality/rework?order=${order.orderNumber}`), tryGet('/api/execution/reason-codes')]);
     if (states.error) { section.innerHTML = `<header><h2>Quantity states</h2></header>${errorBlock(states.error, 'quantity states')}`; return; }

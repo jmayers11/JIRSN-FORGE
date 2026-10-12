@@ -68,7 +68,8 @@ public sealed record MergePolicyRequest(bool Allowed, bool SameRevisionRequired,
 public sealed record OrderMaterialRequest(long OrderNumber, string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, string? Reason, string? AlternateFor = null);
 
 public sealed record TransferRequest(string PartNumber, decimal Quantity, string FromLocation, string ToLocation, string? LotNumber, StockStatus? Status, string? Reason);
-public sealed record OutsideProcessDispatchRequest(string PartNumber, decimal Quantity, string FromLocation, string ProcessorLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine, string? Reason);
+public sealed record OutsideProcessDispatchRequest(string PartNumber, decimal Quantity, string FromLocation, string ProcessorLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine, string? Reason,
+    string? MaterialRevision = null, string? SpecificationDocument = null, string? SpecificationRevision = null, DateOnly? ExpectedReturnDate = null, bool RequireCertificate = true);
 public sealed record OutsideProcessReturnRequest(string PartNumber, decimal Quantity, string ProcessorLocation, string ToLocation, string LotNumber, long PurchaseOrder, int PurchaseOrderLine, string? Reason);
 public sealed record ContainerRequest(string Code, ContainerKind Kind, string? Reason);
 public sealed record ContainerContentRequest(string PartNumber, decimal Quantity, string LocationCode, string? LotNumber, StockStatus? Status, string? Reason);
@@ -313,7 +314,18 @@ public static class MaterialsEndpoints
         api.MapPost("/transfers", (HttpContext http, TransferRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.TransferAsync(new TransferStock(b.PartNumber, b.Quantity, b.FromLocation, b.ToLocation, b.LotNumber, b.Status ?? StockStatus.Released), c, ct)));
         api.MapPost("/outside-processing/dispatch", (HttpContext http, OutsideProcessDispatchRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.DispatchOutsideProcessAsync(new DispatchOutsideProcess(b.PartNumber, b.Quantity, b.FromLocation, b.ProcessorLocation, b.LotNumber, b.PurchaseOrder, b.PurchaseOrderLine), c, ct)));
+            Command(http, b.Reason, c => s.DispatchOutsideProcessAsync(new DispatchOutsideProcess(b.PartNumber, b.Quantity, b.FromLocation, b.ProcessorLocation, b.LotNumber, b.PurchaseOrder, b.PurchaseOrderLine,
+                b.MaterialRevision, b.SpecificationDocument, b.SpecificationRevision, b.ExpectedReturnDate, b.RequireCertificate), c, ct)));
+        api.MapGet("/outside-processing", (HttpContext http, CancellationToken _) =>
+            Read(http, Permissions.InventoryRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var lookup = uow.Store<IOutsideProcessLookup>();
+                var dispatches = (await lookup.ListDispatchesAsync(null, http.RequestAborted))
+                    .Where(d => (d.ProgramId is not { } program || principal.Programs.Contains(new ProgramId(program))) && (d.Markings & ~principal.Markings) == DataMarking.None).ToList();
+                var keys = dispatches.Select(d => d.Key).ToHashSet(StringComparer.Ordinal);
+                return new { dispatches, returns = (await lookup.ListReturnsAsync(null, http.RequestAborted)).Where(r => keys.Contains(r.Key)).ToList() };
+            }));
         api.MapPost("/outside-processing/return", (HttpContext http, OutsideProcessReturnRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReturnFromOutsideProcessAsync(new ReturnFromOutsideProcess(b.PartNumber, b.Quantity, b.ProcessorLocation, b.ToLocation, b.LotNumber, b.PurchaseOrder, b.PurchaseOrderLine), c, ct)));
         api.MapGet("/containers", (HttpContext http, CancellationToken _) =>
@@ -368,29 +380,40 @@ public static class MaterialsEndpoints
 
     private static void MapProcurement(RouteGroupBuilder api)
     {
-        api.MapGet("/purchase-orders", (HttpContext http, CancellationToken _) =>
-            Read(http, Permissions.PurchasingRead, async _ =>
+        api.MapGet("/purchase-orders", async (HttpContext http, CancellationToken ct) =>
             {
+                var principal = await PrincipalAsync(http);
+                if (principal is null) return NotRegistered();
+                BusinessSourceReadAccess.Demand(http, principal, Permissions.PurchasingRead);
+                var authorizer = http.RequestServices.GetRequiredService<IForgeAuthorizer>();
                 await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
                 var received = (await uow.Store<IInventoryLookup>().ListPurchaseReceiptsAsync(http.RequestAborted)).ToDictionary(r => (r.PoNumber, r.LineNumber), r => r.Received);
-                return (await uow.Store<IProcurementLookup>().ListPurchaseOrdersAsync(http.RequestAborted))
-                    .Select(po => new PurchaseOrderView(po.PoNumber, po.Supplier, po.Status, po.CreatedBy, po.CreatedAt, po.ApprovedBy, po.ApprovedAt, po.Lines.Select(l =>
+                var visible = new List<PurchaseOrderView>();
+                foreach (var po in await uow.Store<IProcurementLookup>().ListPurchaseOrdersAsync(ct))
+                {
+                    if (!await CanReadPurchaseOrderAsync(uow, principal, authorizer, po, ct)) continue;
+                    visible.Add(new PurchaseOrderView(po.PoNumber, po.Supplier, po.Status, po.CreatedBy, po.CreatedAt, po.ApprovedBy, po.ApprovedAt, po.Lines.Select(l =>
                     {
                         var got = received.GetValueOrDefault((po.PoNumber, l.LineNumber));
                         var open = po.Status == PurchaseOrderStatus.Approved && l.Status == PurchaseLineStatus.Open ? Math.Max(0, l.Quantity - got) : 0;
                         return new PurchaseLineView(l.LineNumber, l.PartNumber, l.Quantity, l.UnitOfMeasure, l.PromisedDate, l.Status, got, open, l.RequisitionId, l.SourceKind, l.SourceKey, l.SourceLabel);
-                    }).ToList(), po.SupplierCode))
-                    .ToList();
-            }));
+                    }).ToList(), po.SupplierCode));
+                }
+                return Results.Ok(visible);
+            });
 
         // V2.7: requisitions from every source, and why each purchase was made.
-        api.MapGet("/requisitions", (HttpContext http, bool? open, CancellationToken _) =>
-            Read(http, Permissions.RequisitionRaise, async principal =>
+        api.MapGet("/requisitions", async (HttpContext http, bool? open, CancellationToken ct) =>
             {
+                var principal = await PrincipalAsync(http);
+                if (principal is null) return NotRegistered();
+                BusinessSourceReadAccess.Demand(http, principal, Permissions.RequisitionRaise);
+                var authorizer = http.RequestServices.GetRequiredService<IForgeAuthorizer>();
                 await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
-                return (await uow.Store<IRequisitionLookup>().ListRequisitionsAsync(open != false, http.RequestAborted))
-                    .Where(r => r.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))).ToList();
-            }));
+                var visible = (await uow.Store<IRequisitionLookup>().ListRequisitionsAsync(open != false, ct))
+                    .Where(need => authorizer.Authorize(principal, Permissions.RequisitionRaise, SourcingService.ResourceForRequisition(need)).IsPermitted).ToList();
+                return Results.Ok(visible);
+            });
         api.MapPost("/requisitions", (HttpContext http, RequisitionRequest b, RequisitionService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RaiseAsync(new RaiseRequisition(b.PartNumber, b.Quantity, b.NeedDate, b.SourceKind, b.SourceKey, b.SourceLabel, null, null, b.RequiredRevision, b.SupplierCode, b.ProgramId), c, ct)));
         api.MapPost("/requisitions/{id:long}/cancel", (HttpContext http, long id, ReasonRequest b, RequisitionService s, CancellationToken ct) =>
@@ -402,10 +425,16 @@ public static class MaterialsEndpoints
         });
 
         // V2.5: the technical package each line was approved with. Documents the reader may not see stay counted, unnamed.
-        api.MapGet("/purchase-orders/{po:long}/lines/{line:int}/package", (HttpContext http, long po, int line, CancellationToken _) =>
-            Read(http, Permissions.PurchasingRead, async principal =>
+        api.MapGet("/purchase-orders/{po:long}/lines/{line:int}/package", async (HttpContext http, long po, int line, CancellationToken ct) =>
             {
+                var principal = await PrincipalAsync(http);
+                if (principal is null) return NotRegistered();
+                BusinessSourceReadAccess.Demand(http, principal, Permissions.PurchasingRead);
+                var authorizer = http.RequestServices.GetRequiredService<IForgeAuthorizer>();
                 await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var source = await uow.Store<IProcurementLookup>().FindPurchaseOrderAsync(po, ct);
+                if (source is null || !await CanReadPurchaseOrderAsync(uow, principal, authorizer, source, ct))
+                    throw new CommandRejectedException("package_not_found", "The purchase source does not exist.");
                 var package = await uow.Store<ITechnicalPackageLookup>().FindPackageAsync(po, line, http.RequestAborted)
                     ?? throw new CommandRejectedException("package_not_found", $"No technical package was recorded for PO {po} line {line} (it is recorded when the order is approved).");
                 var documents = uow.Store<Forge.Engineering.Contracts.IDocumentLookup>();
@@ -418,8 +447,8 @@ public static class MaterialsEndpoints
                         : d with { DocumentNumber = Forge.Planning.DocumentationService.Restricted, Title = string.Empty, Revision = null, FileSha256 = null, FileName = null });
                 }
 
-                return package with { Documents = shown };
-            }));
+                return Results.Ok(package with { Documents = shown });
+            });
 
         api.MapGet("/suppliers", (HttpContext http, CancellationToken _) =>
             ReadStore<IProcurementLookup>(http, Permissions.PurchasingRead, async (l, ct) => await l.ListSuppliersAsync(ct)));
@@ -454,6 +483,19 @@ public static class MaterialsEndpoints
     }
 
     private static string? Part(string? part) => string.IsNullOrWhiteSpace(part) ? null : part.Trim().ToUpperInvariant();
+
+    private static async Task<bool> CanReadPurchaseOrderAsync(IKernelUnitOfWork uow, ForgePrincipal principal, IForgeAuthorizer authorizer, PurchaseOrderInfo po, CancellationToken ct)
+    {
+        try
+        {
+            return (await PurchasingService.ResourcesForPurchaseOrderAsync(uow, po, ct))
+                .All(resource => authorizer.Authorize(principal, Permissions.PurchasingRead, resource).IsPermitted);
+        }
+        catch (CommandRejectedException rejected) when (rejected.Code == "requisition_not_found")
+        {
+            return false;
+        }
+    }
 
     private static async Task<HashSet<long>> HiddenOrdersAsync(IKernelUnitOfWork uow, ForgePrincipal principal, CancellationToken ct) =>
         (await uow.Store<IExecutionLookup>().ListOrdersAsync(ct))

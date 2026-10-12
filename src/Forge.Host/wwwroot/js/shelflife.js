@@ -1,7 +1,7 @@
 import { tryGet, command } from './api.js';
 import { who } from './people.js';
 import { esc, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from './ui.js';
-import { formModal, qty, can } from './forms.js';
+import { formModal, qty, canAction } from './forms.js';
 
 // Aging, shelf life and selection (V3.6): age, expiry, open life, retest and storage are separate facts. A lot keeps
 // the dates it was given; an extension (one person asks, another approves) and a retest are their own records.
@@ -18,10 +18,10 @@ export async function loadShelfLife() {
 
 export function shelfLifeTab(shelf, me) {
   if (shelf.lots.error) return errorBlock(shelf.lots.error, 'shelf life');
-  const approver = can(me, 'QualityManager');
+  const approver = canAction(me, 'quality.approve');
   const pending = shelf.pending.data ?? [];
   const lots = shelf.lots.data ?? [];
-  return `${can(me, 'MaterialHandler', 'InventoryController') ? '<div class="toolbar"><button class="btn small" data-excursion>Record a storage excursion</button></div>' : ''}
+  return `${canAction(me, 'inventory.transact') ? '<div class="toolbar"><button class="btn small" data-excursion>Record a storage excursion</button></div>' : ''}
     ${pending.length ? `<h3 style="margin:0">Extensions waiting for a decision</h3><table class="table"><thead><tr><th>#</th><th>Lot</th><th>From</th><th>To</th><th>Evidence</th><th>Asked by</th><th></th></tr></thead><tbody>
       ${pending.map(e => `<tr><td>${e.extensionId}</td><td>${esc(e.partNumber)} ${esc(e.lotNumber)}</td><td>${esc(fmtDate(e.previousExpires))}</td><td><b>${esc(fmtDate(e.newExpires))}</b></td><td class="muted">${esc(e.evidence)}</td>
         <td>${esc(who(e.requestedBy))}</td><td class="nowrap">${approver && e.requestedBy !== `person:${me.personId}` ? `<button class="btn small primary" data-ext-approve="${e.extensionId}">Approve</button> <button class="btn small" data-ext-reject="${e.extensionId}">Reject</button>` : '<span class="faint">someone else decides</span>'}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -65,11 +65,11 @@ export async function appendPartShelfLife(container, part, item, me, refresh) {
   section.style.marginTop = '8px';
   const states = lots.data ?? [];
   section.innerHTML = `<div class="notice">Shelf life: ${r ? `${r.shelfLifeDays ? `${r.shelfLifeDays} days from ${r.basis === 'Manufacture' ? 'manufacture' : 'receipt'}` : 'no expiry'}${r.retestDays ? `, retest every ${r.retestDays} days` : ''}${r.openLifeHours ? `, ${r.openLifeHours} h once opened` : ''}${r.storageMinC != null || r.storageMaxC != null ? `, store ${r.storageMinC ?? '…'} to ${r.storageMaxC ?? '…'} °C` : ''}; ${r.selection === 'Fefo' ? 'first expired, first out' : 'first in, first out'} <span class="faint">· set by ${esc(who(r.setBy))}: ${esc(r.reason)}</span>` : 'not set — first in, first out'}
-      ${can(me, 'QualityEngineer') ? ' <button class="btn small" data-shelf-rule>Change</button>' : ''}</div>
+      ${canAction(me, 'quality.plan') ? ' <button class="btn small" data-shelf-rule>Change</button>' : ''}</div>
     ${states.length ? `<table class="table"><thead><tr><th>Lot</th><th class="num">Age (d)</th><th>Expires</th><th>Retest due</th><th>Opened</th><th>Status</th><th></th></tr></thead><tbody>
       ${states.map(v => { const s = v.shelfLife; return `<tr><td>${esc(s.lotNumber)}</td><td class="num">${s.ageDays}</td><td>${s.expires ? esc(fmtDate(s.expires)) : '—'}${s.originalExpires && s.originalExpires !== s.expires ? `<div class="faint">given ${esc(fmtDate(s.originalExpires))}</div>` : ''}</td>
         <td>${s.retestDue ? esc(fmtDate(s.retestDue)) : '—'}</td><td>${s.openedAt ? `${esc(fmtDateTime(s.openedAt))}<div class="faint">until ${esc(fmtDateTime(s.openExpiresAt))}</div>` : '—'}</td><td>${pill(s)}<div class="faint">${esc(s.explanation)}</div></td>
-        <td class="nowrap">${r?.openLifeHours && !s.openedAt && can(me, 'MaterialHandler') ? `<button class="btn small ghost" data-open-lot="${esc(s.lotNumber)}">Open</button> ` : ''}${can(me, 'Inspector', 'QualityEngineer') ? `<button class="btn small ghost" data-retest="${esc(s.lotNumber)}">Retest</button> ` : ''}${s.expires && can(me, 'QualityEngineer') ? `<button class="btn small ghost" data-extend="${esc(s.lotNumber)}|${esc(s.expires)}">Extend</button>` : ''}</td></tr>`; }).join('')}</tbody></table>` : ''}`;
+        <td class="nowrap">${r?.openLifeHours && !s.openedAt && canAction(me, 'inventory.transact') ? `<button class="btn small ghost" data-open-lot="${esc(s.lotNumber)}">Open</button> ` : ''}${canAction(me, 'quality.inspect') ? `<button class="btn small ghost" data-retest="${esc(s.lotNumber)}">Retest</button> ` : ''}${s.expires && canAction(me, 'quality.plan') ? `<button class="btn small ghost" data-extend="${esc(s.lotNumber)}|${esc(s.expires)}">Extend</button>` : ''}</td></tr>`; }).join('')}</tbody></table>` : ''}`;
   container.appendChild(section);
   $$('[data-shelf-rule]', section).forEach(b => b.addEventListener('click', () => formModal({
     title: `Shelf life of ${part}`, detail: 'Applies to lots received from now on; lots already received keep their dates. Every setting is kept.', confirmLabel: 'Save', reasonRequired: true,

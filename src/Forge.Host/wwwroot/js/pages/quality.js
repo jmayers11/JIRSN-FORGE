@@ -2,7 +2,7 @@ import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
-import { formModal, qty, can, plusDays, today } from '../forms.js';
+import { formModal, qty, canAction, plusDays, today } from '../forms.js';
 
 // Quality (spec §45-46): inspection points after routing operations, inspections by someone who did
 // not do the work, with a calibrated gauge for anything measured. A failure raises an NCR that holds
@@ -18,9 +18,10 @@ const limits = c => c.kind === 'Attribute' ? 'Accept / reject'
 
 export async function qualityPage(page, ctx) {
   const me = ctx.me;
-  const inspector = can(me, 'Inspector', 'QualityEngineer');
-  const engineer = can(me, 'QualityEngineer');
-  const manager = can(me, 'QualityManager');
+  const inspector = canAction(me, 'quality.inspect');
+  const engineer = canAction(me, 'quality.plan');
+  const disposition = canAction(me, 'quality.disposition');
+  const manager = canAction(me, 'quality.approve');
   let tab = ctx.query.get('tab') ?? 'due';
   let showClosed = false;
   let data = {};
@@ -102,10 +103,10 @@ export async function qualityPage(page, ctx) {
         <div class="faint">Raised by ${esc(who(n.raisedBy))} ${esc(fmtDateTime(n.raisedAt))}${n.dispositionedBy ? ` · dispositioned by ${esc(who(n.dispositionedBy))}: ${esc(n.dispositionNote ?? '')}` : ''}${n.approvedBy ? ` · approved by ${esc(who(n.approvedBy))}` : ''}${n.closedBy ? ` · closed by ${esc(who(n.closedBy))} ${esc(fmtDateTime(n.closedAt))}: ${esc(n.closureNote ?? '')}` : ''}</div>
       </div>
       <div class="nowrap">
-        ${n.status === 'Open' && engineer ? `<button class="btn primary small" data-dispose="${n.ncrId}">Disposition</button>` : ''}
+        ${n.status === 'Open' && disposition ? `<button class="btn primary small" data-dispose="${n.ncrId}">Disposition</button>` : ''}
         ${n.status === 'AwaitingApproval' && manager && !mine(n.dispositionedBy) ? `<button class="btn primary small" data-approve="${n.ncrId}">Approve ${n.disposition === 'Repair' ? 'repair' : 'use as is'}</button> <button class="btn small" data-reject="${n.ncrId}">Reject</button>` : ''}
         ${n.status === 'AwaitingApproval' && mine(n.dispositionedBy) ? '<span class="faint">You proposed it — someone else approves</span>' : ''}
-        ${n.status === 'Dispositioned' && engineer ? `<button class="btn small" data-close="${n.ncrId}">Close</button> <button class="btn small ghost" data-capa-for="${n.ncrId}">Corrective action</button>` : ''}
+        ${n.status === 'Dispositioned' && disposition ? `<button class="btn small" data-close="${n.ncrId}">Close</button> <button class="btn small ghost" data-capa-for="${n.ncrId}">Corrective action</button>` : ''}
         <button class="btn small ghost" data-docs-ncr="${n.ncrId}">Documents</button>
       </div></div>`).join('');
   }
@@ -113,7 +114,7 @@ export async function qualityPage(page, ctx) {
   function capaTab() {
     if (data.capas.error) return errorBlock(data.capas.error, 'corrective actions');
     const rows = data.capas.data;
-    const add = engineer ? '<div style="margin-bottom:8px"><button class="btn small" id="new-capa">New corrective action</button></div>' : '';
+    const add = disposition ? '<div style="margin-bottom:8px"><button class="btn small" id="new-capa">New corrective action</button></div>' : '';
     if (!rows.length) return add + emptyBlock('No corrective actions', 'Open one from an NCR to fix the cause, not just the part.');
     return add + rows.map(c => {
       const late = c.status === 'Open' && c.dueDate < today();
@@ -122,7 +123,7 @@ export async function qualityPage(page, ctx) {
           <div><span class="faint">Root cause:</span> ${esc(c.rootCause)} · <span class="faint">Action:</span> ${esc(c.action)}</div>
           <div class="faint ${late ? 'c-bad' : ''}">Due ${esc(fmtDate(c.dueDate))}${late ? ' · overdue' : ''} · opened by ${esc(who(c.openedBy))}${c.implementedBy ? ` · implemented by ${esc(who(c.implementedBy))}: ${esc(c.implementationNote ?? '')}` : ''}${c.verifiedBy ? ` · verified by ${esc(who(c.verifiedBy))} ${esc(fmtDateTime(c.verifiedAt))}` : ''}</div></div>
         <div class="nowrap">
-          ${c.status === 'Open' && engineer ? `<button class="btn small" data-implement="${c.capaId}">Mark implemented</button>` : ''}
+          ${c.status === 'Open' && disposition ? `<button class="btn small" data-implement="${c.capaId}">Mark implemented</button>` : ''}
           ${c.status === 'Implemented' && manager && !mine(c.implementedBy) ? `<button class="btn primary small" data-verify="${c.capaId}">Verify effective</button>` : ''}
           ${c.status === 'Implemented' && mine(c.implementedBy) ? '<span class="faint">You implemented it — someone else verifies</span>' : ''}
         </div></div>`;

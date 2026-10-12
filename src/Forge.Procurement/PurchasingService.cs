@@ -1,4 +1,5 @@
 using Forge.Engineering.Contracts;
+using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
@@ -76,16 +77,29 @@ public interface IProcurementStore
 /// lines count as scheduled receipts. Supplier date changes are recorded with a reason so MRP and
 /// readiness can explain why material moved.
 /// </summary>
-public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackageResolver packages)
+public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackageResolver packages, IKernelUnitOfWorkFactory unitOfWork, IForgeAuthorizer authorizer)
 {
     public const string SourceContext = "Procurement";
     private const string Entity = "PurchaseOrder";
 
-    public Task<CommandResult> CreateAsync(CreatePurchaseOrder c, CommandContext context, CancellationToken ct)
+    public async Task<CommandResult> CreateAsync(CreatePurchaseOrder c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        var spec = new CommandSpec(SourceContext, nameof(CreatePurchaseOrder), Permissions.PurchasingManage, ResourceRef.Of(Entity));
-        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        IReadOnlyList<ResourceRef> resources;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            try
+            {
+                resources = await ResourcesForRequisitionsAsync(read, null, (c.Lines ?? []).Select(line => line.RequisitionId), ct);
+            }
+            catch (CommandRejectedException rejected) when (rejected.Code == "requisition_not_found")
+            {
+                resources = [ResourceRef.Of(Entity)]; // The audited body rejects the missing source; no program is invented.
+            }
+        }
+        var resource = resources.FirstOrDefault(item => !authorizer.Authorize(context.Principal, Permissions.PurchasingManage, item).IsPermitted) ?? resources[0];
+        var spec = new CommandSpec(SourceContext, nameof(CreatePurchaseOrder), Permissions.PurchasingManage, resource);
+        return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var supplier = await SupplierService.RequireOrderableAsync(uow, c.Supplier, ct);
             if (c.Lines is null || c.Lines.Count is 0 or > 999)
@@ -99,6 +113,8 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
                 var valid = await ValidLineAsync(uow, index + 1, line.PartNumber, line.Quantity, line.PromisedDate, now, supplier.Code, ct);
                 lines.Add(await WithSourceAsync(uow, valid, line.RequisitionId, context, lines, supplier.Code, now, ct));
             }
+            if (!(await ResourcesForRequisitionsAsync(uow, null, lines.Select(line => line.RequisitionId), ct)).SequenceEqual(resources))
+                throw new CommandRejectedException("purchase_context_changed", "The purchase source context changed. Review the current requisitions before retrying.");
 
             var store = uow.Store<IProcurementStore>();
             var number = await store.InsertOrderAsync(supplier, now, context.Actor, ct);
@@ -112,10 +128,11 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             }
 
             var id = Id(number);
+            var program = resources.Count == 1 ? resources[0].Program : null;
             return new CommandOutcome(
                 CommandResult.Ok(id, $"Purchase order {id} drafted for {supplier.Name} ({supplier.Code}): {lines.Count} line(s). A different person must approve it."),
-                [pipeline.Event(new PurchaseOrderChanged(number, "Drafted"), context, SourceContext, Entity, id)],
-                new AuditChange(Entity, id, null, CanonicalJson.Serialize(new { supplier = supplier.Name, supplierCode = supplier.Code, lines })));
+                [pipeline.Event(new PurchaseOrderChanged(number, "Drafted"), context, SourceContext, Entity, id, program)],
+                new AuditChange(Entity, id, null, CanonicalJson.Serialize(new { supplier = supplier.Name, supplierCode = supplier.Code, lines }), program));
         }, ct);
     }
 
@@ -343,7 +360,7 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
         return new PurchaseLineInfo(lineNumber, part, quantity, item.UnitOfMeasure, promised, PurchaseLineStatus.Open);
     }
 
-    private Task<CommandResult> ChangeAsync<TCommand>(
+    private async Task<CommandResult> ChangeAsync<TCommand>(
         string commandType,
         long poNumber,
         TCommand command,
@@ -354,18 +371,45 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
         CancellationToken ct)
     {
         var id = Id(poNumber);
-        var spec = new CommandSpec(SourceContext, commandType, permission, ResourceRef.Of(Entity, id), reasonRequired);
-        return pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
+        IReadOnlyList<ResourceRef> recordedResources;
+        IReadOnlyList<ResourceRef> proposedResources = [];
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            var po = await read.Store<IProcurementLookup>().FindPurchaseOrderAsync(poNumber, ct);
+            recordedResources = po is null ? [ResourceRef.Of(Entity, id)] : await ResourcesForPurchaseOrderAsync(read, po, ct);
+            if (command is AddPurchaseLine added)
+            {
+                try
+                {
+                    proposedResources = await ResourcesForRequisitionsAsync(read, id, [added.RequisitionId], ct);
+                }
+                catch (CommandRejectedException rejected) when (rejected.Code == "requisition_not_found")
+                {
+                    proposedResources = [ResourceRef.Of(Entity, id)];
+                }
+            }
+        }
+        var resources = recordedResources.Concat(proposedResources).Distinct().OrderBy(item => item.Program?.Value).ToArray();
+        // A PO may buy for multiple programs. Send the first denied context through the common
+        // pipeline so every denial is audited, and require every recorded context before acting.
+        var resource = resources.FirstOrDefault(item => !authorizer.Authorize(context.Principal, permission, item).IsPermitted) ?? resources[0];
+        var spec = new CommandSpec(SourceContext, commandType, permission, resource, reasonRequired);
+        return await pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
         {
             var po = await uow.Store<IProcurementLookup>().FindPurchaseOrderAsync(poNumber, ct)
                 ?? throw new CommandRejectedException("purchase_order_not_found", $"Purchase order {id} does not exist.");
+            if (!(await ResourcesForPurchaseOrderAsync(uow, po, ct)).SequenceEqual(recordedResources))
+                throw new CommandRejectedException("purchase_context_changed", "The purchase order's source context changed. Review its current requisitions and retry.");
+            if (command is AddPurchaseLine added && !(await ResourcesForRequisitionsAsync(uow, id, [added.RequisitionId], ct)).SequenceEqual(proposedResources))
+                throw new CommandRejectedException("purchase_context_changed", "The proposed line's source context changed. Review its current requisition and retry.");
             var result = await change(uow, po, now);
             if (result is not { } r)
             {
                 return CommandOutcome.NoChange(CommandResult.NoChange(id, "Nothing changed."));
             }
 
-            var events = new List<EventEnvelope> { pipeline.Event(new PurchaseOrderChanged(poNumber, r.Change), context, SourceContext, Entity, id) };
+            var program = resources.Length == 1 ? resources[0].Program : null;
+            var events = new List<EventEnvelope> { pipeline.Event(new PurchaseOrderChanged(poNumber, r.Change), context, SourceContext, Entity, id, program) };
             if (r.Extra is { } extra)
             {
                 events.Add(extra);
@@ -373,7 +417,14 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             return new CommandOutcome(
                 CommandResult.Ok(id, $"Purchase order {id}: {r.Message}."),
                 events,
-                new AuditChange(Entity, id, r.Old, r.New));
+                new AuditChange(Entity, id, r.Old, r.New, program));
         }, ct);
     }
+
+    /// <summary>Each actual requisition program is a required PO context; unsourced lines remain unscoped.</summary>
+    public static Task<IReadOnlyList<ResourceRef>> ResourcesForPurchaseOrderAsync(IKernelUnitOfWork uow, PurchaseOrderInfo po, CancellationToken ct) =>
+        PurchaseOrderAuthority.ResourcesAsync(uow, po, ct);
+
+    private static Task<IReadOnlyList<ResourceRef>> ResourcesForRequisitionsAsync(IKernelUnitOfWork uow, string? subjectId, IEnumerable<long?> requisitionIds, CancellationToken ct) =>
+        PurchaseOrderAuthority.ResourcesForRequisitionsAsync(uow, subjectId, requisitionIds, ct);
 }

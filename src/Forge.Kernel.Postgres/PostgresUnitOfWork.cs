@@ -6,7 +6,7 @@ namespace Forge.Kernel.Postgres;
 /// <summary>How a bounded context's store is created for a unit of work.</summary>
 public sealed record StoreRegistration(Type StoreType, Func<PostgresUnitOfWork, object> Create);
 
-public sealed class PostgresUnitOfWorkFactory(NpgsqlDataSource dataSource, IEnumerable<StoreRegistration> stores) : IKernelUnitOfWorkFactory
+public sealed class PostgresUnitOfWorkFactory(NpgsqlDataSource dataSource, IEnumerable<StoreRegistration> stores, TimeProvider time) : IKernelUnitOfWorkFactory
 {
     private readonly Dictionary<Type, Func<PostgresUnitOfWork, object>> registrations =
         stores.ToDictionary(s => s.StoreType, s => s.Create);
@@ -27,7 +27,7 @@ public sealed class PostgresUnitOfWorkFactory(NpgsqlDataSource dataSource, IEnum
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
-            return new PostgresUnitOfWork(connection, transaction, registrations);
+            return new PostgresUnitOfWork(connection, transaction, registrations, time.GetUtcNow());
         }
         catch
         {
@@ -46,11 +46,12 @@ public sealed class PostgresUnitOfWork : IKernelUnitOfWork
     private readonly Dictionary<Type, object> created = [];
     private bool completed;
 
-    internal PostgresUnitOfWork(NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyDictionary<Type, Func<PostgresUnitOfWork, object>> registrations)
+    internal PostgresUnitOfWork(NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyDictionary<Type, Func<PostgresUnitOfWork, object>> registrations, DateTimeOffset now)
     {
         this.connection = connection;
         this.transaction = transaction;
         this.registrations = registrations;
+        Now = now;
         People = new PostgresPeopleStore(this);
         Outbox = new PostgresOutbox(this);
         Audit = new PostgresAuditWriter(this);
@@ -58,6 +59,8 @@ public sealed class PostgresUnitOfWork : IKernelUnitOfWork
     }
 
     public IPeopleStore People { get; }
+
+    public DateTimeOffset Now { get; }
 
     public IEventOutbox Outbox { get; }
 

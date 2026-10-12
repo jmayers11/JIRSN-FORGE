@@ -2,10 +2,11 @@ import { tryGet, command } from '../api.js';
 import { img } from '../icons.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from '../ui.js';
-import { formModal, qty, can } from '../forms.js';
+import { formModal, qty, canAction } from '../forms.js';
 import { serialDrawer, traceDrawer } from '../genealogy.js';
 import { loadShelfLife, shelfLifeTab, bindShelfLifeTab, appendPartShelfLife } from '../shelflife.js';
 import { loadReceiving, receivingTab, bindReceivingTab, receivingCount } from '../receiving.js';
+import { outsideProcessingTab, bindOutsideProcessingTab } from '../outside-processing.js';
 
 // Inventory (spec §11, §49): every quantity is the sum of ledger entries, and every entry says who,
 // when, why and what it relates to. Adjustments, count variances and quality releases need a second person.
@@ -24,9 +25,10 @@ const custodyText = l => l.custody === 'Supplier' ? `Outside processor ${l.custo
 
 export async function inventoryPage(page, ctx) {
   const me = ctx.me;
-  const handler = can(me, 'MaterialHandler');
-  const controller = can(me, 'InventoryController');
-  const mroManager = can(me, 'MaintenancePlanner', 'InventoryController', 'Planner');
+  const handler = canAction(me, 'inventory.transact');
+  const controller = canAction(me, 'inventory.approve');
+  const inventoryManager = canAction(me, 'inventory.manage');
+  const mroManager = canAction(me, 'inventory.mro.manage');
   let tab = ctx.query.get('tab') ?? 'stock';
   let data = {};
 
@@ -38,7 +40,8 @@ export async function inventoryPage(page, ctx) {
     ]);
     const shelf = await loadShelfLife();
     const receiving = await loadReceiving();
-    data = { shelf, receiving, summary, locations, requests, ledger, items, orders, mro, tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
+    const outside = await tryGet('/api/inventory/outside-processing');
+    data = { shelf, receiving, outside, summary, locations, requests, ledger, items, orders, mro, tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
   }
 
   const locs = (active = true, ours = true) => (data.locations.data ?? []).filter(l => (!active || l.active) && (!ours || l.inCompanyCustody)).map(l => [l.code, `${l.code} — ${l.name} (${l.kind})`]);
@@ -314,7 +317,7 @@ export async function inventoryPage(page, ctx) {
   function locationsTab() {
     const l = data.locations;
     if (l.error) return errorBlock(l.error, 'locations');
-    if (!l.data.length) return emptyBlock('No locations yet', controller ? 'Add the places stock is kept: stores, receiving, inspection, quarantine, staging, beside machines, outside processors.' : 'An inventory controller adds locations.');
+    if (!l.data.length) return emptyBlock('No locations yet', inventoryManager ? 'Add the places stock is kept: stores, receiving, inspection, quarantine, staging, beside machines, outside processors.' : 'An inventory controller adds locations.');
     const byParent = new Map();
     for (const x of l.data) { const k = x.parentCode ?? ''; byParent.set(k, [...(byParent.get(k) ?? []), x]); }
     const known = new Set(l.data.map(x => x.code));
@@ -327,7 +330,7 @@ export async function inventoryPage(page, ctx) {
         <td>${x.nettable ? 'Yes' : '<span class="pill none">No</span>'}</td>
         <td>${x.pointOfUse ? `${esc(x.workCenterCode)}${x.machineCode ? ` · ${esc(x.machineCode)}` : ''}` : x.workCenterCode ? `<span class="faint">${esc(x.workCenterCode)}</span>` : '—'}</td>
         <td>${x.custody === 'Company' ? 'Company' : `<span class="pill warn">${esc(custodyText(x))}</span>`}</td><td>${esc(x.siteCode)}</td>
-        <td class="nowrap">${!x.active ? '<span class="pill none">Retired</span>' : controller ? `<button class="btn small" data-change-loc="${esc(x.code)}">Change</button> <button class="btn small ghost" data-retire="${esc(x.code)}">Retire</button>` : ''}</td></tr>`).join('')}
+        <td class="nowrap">${!x.active ? '<span class="pill none">Retired</span>' : inventoryManager ? `<button class="btn small" data-change-loc="${esc(x.code)}">Change</button> <button class="btn small ghost" data-retire="${esc(x.code)}">Retire</button>` : ''}</td></tr>`).join('')}
       </tbody></table>`;
   }
 
@@ -353,10 +356,10 @@ export async function inventoryPage(page, ctx) {
   function countsTab() {
     const p = data.programs, d = data.due;
     if (p.error) return errorBlock(p.error, 'count programs');
-    const add = controller ? '<div class="toolbar"><button class="btn small" data-act="program">+ Count program</button></div>' : '';
+    const add = inventoryManager ? '<div class="toolbar"><button class="btn small" data-act="program">+ Count program</button></div>' : '';
     const programs = p.data.length ? `<table class="table"><thead><tr><th>Program</th><th>Location</th><th>Part</th><th class="num">Every (days)</th><th>Set up by</th><th></th></tr></thead><tbody>
       ${p.data.map(x => `<tr class="${x.active ? '' : 'retired'}"><td><b>${esc(x.programCode)}</b> ${esc(x.name)}</td><td>${esc(x.locationCode ?? 'every')}</td><td>${esc(x.partNumber ?? 'every')}</td><td class="num">${x.frequencyDays}</td>
-        <td class="faint">${esc(who(x.createdBy))} · ${esc(fmtDateTime(x.createdAt))}</td><td>${!x.active ? '<span class="pill none">Retired</span>' : controller ? `<button class="btn small ghost" data-retire-program="${esc(x.programCode)}">Retire</button>` : ''}</td></tr>`).join('')}</tbody></table>`
+        <td class="faint">${esc(who(x.createdBy))} · ${esc(fmtDateTime(x.createdAt))}</td><td>${!x.active ? '<span class="pill none">Retired</span>' : inventoryManager ? `<button class="btn small ghost" data-retire-program="${esc(x.programCode)}">Retire</button>` : ''}</td></tr>`).join('')}</tbody></table>`
       : emptyBlock('No count programs', 'Say what is counted how often; due counts then appear here.');
     const dueRows = d.error ? errorBlock(d.error, 'counts due') : !d.data.length ? '<p class="muted">Nothing is due for counting.</p>' : `<table class="table"><thead><tr><th>Due</th><th>Program</th><th>Location</th><th>Part</th><th>Lot</th><th>Status</th><th class="num">On record</th><th>Last counted</th><th></th></tr></thead><tbody>
       ${d.data.map((x, i) => `<tr><td>${esc(x.dueOn)}</td><td>${esc(x.programCode)}</td><td>${esc(x.locationCode)}</td><td>${esc(x.partNumber)}</td><td>${esc(x.lotNumber ?? '—')}</td><td>${esc(x.status)}</td><td class="num">${qty(x.quantity)}</td>
@@ -400,7 +403,7 @@ export async function inventoryPage(page, ctx) {
     const buttons = [
       handler && ['receive', 'Receive'], handler && ['issue', 'Issue to order'], handler && ['return', 'Return'], handler && ['move', 'Move'],
       handler && ['produced', 'From production'], handler && ['split', 'Split'], handler && ['merge', 'Merge'], handler && ['request', 'Request material'], handler && ['hold', 'Hold'], controller && ['release', 'Release'], handler && ['scrap', 'Scrap'],
-      handler && ['count', 'Count'], handler && ['adjust', 'Adjust'], controller && ['location', '+ Location'],
+      handler && ['count', 'Count'], handler && ['adjust', 'Adjust'], inventoryManager && ['location', '+ Location'],
     ].filter(Boolean);
     page.innerHTML = `
       <div class="page-head">
@@ -410,8 +413,8 @@ export async function inventoryPage(page, ctx) {
       ${buttons.length ? `<div class="toolbar">${buttons.map(([k, l]) => `<button class="btn ${k === 'receive' ? 'primary' : ''}" data-act="${k}">${esc(l)}</button>`).join('')}</div>` : '<div class="notice">You can look at stock. Material handlers move it; inventory controllers approve changes.</div>'}
       ${kpis()}
       <section class="panel">
-        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`], ['receiving', `Receiving${receivingCount(data.receiving) ? ` (${receivingCount(data.receiving)})` : ''}`], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : stockTab()}
+        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`], ['receiving', `Receiving${receivingCount(data.receiving) ? ` (${receivingCount(data.receiving)})` : ''}`], ['outside', 'Outside processing'], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        ${tab === 'outside' ? outsideProcessingTab(data.outside, me) : tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : stockTab()}
       </section>`;
     $('#trace-q', page)?.addEventListener('click', () => { const q = $('#serial-q', page).value.trim(); if (q) traceDrawer({ lot: q.toUpperCase() }); });
     $('#serial-find', page)?.addEventListener('submit', ev => { ev.preventDefault(); const q = $('#serial-q', page).value.trim(); if (q) serialDrawer(q.toUpperCase()); });
@@ -424,6 +427,7 @@ export async function inventoryPage(page, ctx) {
     $$('[data-part]', page).forEach(r => r.addEventListener('click', () => partDrawer(r.dataset.part)));
     if (tab === 'shelf') bindShelfLifeTab(page, locs(true, false), reload);
     if (tab === 'receiving') bindReceivingTab(page, locs(), reload, me);
+    if (tab === 'outside') bindOutsideProcessingTab(page, data.locations.data ?? [], reload, me);
     $$('[data-mro-set]', page).forEach(b => b.addEventListener('click', () => setMro(b.dataset.mroSet)));
     $$('[data-mro-clear]', page).forEach(b => b.addEventListener('click', async () => {
       const done = await confirmWithReason({ title: `Clear MRO levels for ${b.dataset.mroClear}`, detail: 'MRP stops replenishing it to a maximum. The old levels stay in the history.', confirmLabel: 'Clear' },

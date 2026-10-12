@@ -39,13 +39,13 @@ public sealed record PlannedSource(PurchaseSourceKind Kind, string Key, string L
 /// back to the requisition, its source and the demand behind it, and forward to the receipts and where the
 /// stock went. Stock of parts that are not lot-tracked is traced to the receipt only; it is said, not guessed.
 /// </summary>
-public sealed class PurchaseTraceService(IKernelUnitOfWorkFactory unitOfWork)
+public sealed class PurchaseTraceService(IKernelUnitOfWorkFactory unitOfWork, IForgeAuthorizer authorizer, TimeProvider time)
 {
     public async Task<PurchaseWhy> WhyLineAsync(ForgePrincipal principal, long poNumber, int lineNumber, CancellationToken ct)
     {
-        Demand(principal);
+        Demand(principal, allowScoped: true);
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
-        return await LineAsync(uow, principal, poNumber, lineNumber, ct)
+        return await LineAsync(uow, principal, poNumber, lineNumber, ct, requireContext: true)
             ?? throw new CommandRejectedException("line_not_found", $"Purchase order {poNumber} has no line {lineNumber}.");
     }
 
@@ -150,13 +150,25 @@ public sealed class PurchaseTraceService(IKernelUnitOfWorkFactory unitOfWork)
             : new PlannedSource(distinct.Select(d => d.Kind).Distinct().Count() == 1 ? distinct[0].Kind : PurchaseSourceKind.Mixed, $"mrp:{planned.Key}@{planned.DueDate:yyyy-MM-dd}", label, null, labels);
     }
 
-    private static async Task<PurchaseWhy?> LineAsync(IKernelUnitOfWork uow, ForgePrincipal principal, long poNumber, int lineNumber, CancellationToken ct)
+    private async Task<PurchaseWhy?> LineAsync(IKernelUnitOfWork uow, ForgePrincipal principal, long poNumber, int lineNumber, CancellationToken ct, bool requireContext = false)
     {
         var po = await uow.Store<IProcurementLookup>().FindPurchaseOrderAsync(poNumber, ct);
         var line = po?.Lines.FirstOrDefault(l => l.LineNumber == lineNumber);
         if (po is null || line is null)
         {
             return null;
+        }
+        if (requireContext)
+        {
+            try
+            {
+                var contexts = await PurchaseOrderAuthority.ResourcesAsync(uow, po, ct);
+                if (!contexts.All(resource => ReadPermissions.Any(permission => authorizer.Authorize(principal, permission, resource).IsPermitted))) return null;
+            }
+            catch (CommandRejectedException rejected) when (rejected.Code == "requisition_not_found")
+            {
+                return null;
+            }
         }
 
         var requisition = line.RequisitionId is { } rid ? await uow.Store<IRequisitionLookup>().FindRequisitionAsync(rid, ct) : null;
@@ -201,10 +213,16 @@ public sealed class PurchaseTraceService(IKernelUnitOfWorkFactory unitOfWork)
     private static TraceEntry Entry(InventoryTransaction t) =>
         new(t.TransactionId, t.Kind, t.PartNumber, t.Quantity, t.LotNumber, t.ToLocation ?? t.FromLocation, t.OrderNumber, t.WorkOrderId, t.At);
 
-    private static void Demand(ForgePrincipal principal)
+    private static readonly string[] ReadPermissions = [Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.RequisitionRaise];
+
+    private void Demand(ForgePrincipal principal, bool allowScoped = false)
     {
         ArgumentNullException.ThrowIfNull(principal);
-        if (!principal.HasPermission(Permissions.PurchasingRead) && !principal.HasPermission(Permissions.InventoryRead) && !principal.HasPermission(Permissions.RequisitionRaise))
+        var now = time.GetUtcNow();
+        var shared = ReadPermissions.Any(permission => principal.HasPermission(permission, at: now));
+        var contextual = allowScoped && (principal.ScopedPermissions?.Any(grant => ReadPermissions.Contains(grant.Permission, StringComparer.Ordinal)) == true
+            || principal.DelegatedPermissions?.Any(grant => ReadPermissions.Contains(grant.Permission, StringComparer.Ordinal) && grant.StartsAt <= now && now < grant.ExpiresAt) == true);
+        if (!shared && !contextual)
         {
             throw new ForgeAuthorizationException(new AuthorizationDecision(false, ["Reading why something was purchased needs purchasing, inventory or requisition access."]));
         }

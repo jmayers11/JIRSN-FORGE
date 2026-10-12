@@ -108,7 +108,9 @@ public sealed class PlanningScenarioService(
 
         var asOf = snapshot.AsOf;
         var horizon = asOf.AddDays(14);
-        var (proposedSnapshot, proposedOrders, proposedMaterial, description) = Apply(scenario.Change, snapshot, orders, material, principal, asOf);
+        if (scenario.Change.OrderNumber is { } selectedOrder)
+            Require(orders.FirstOrDefault(o => o.OrderNumber == selectedOrder), "order_not_found", "The selected released order is outside the current visible order set.");
+        var (proposedSnapshot, proposedOrders, proposedMaterial, description) = Apply(scenario.Change, snapshot, orders, material, principal, asOf, scenario.ScenarioId);
         var request = new ScheduleRequest(asOf, horizon, orders, material, quality);
         var proposedRequest = new ScheduleRequest(asOf, horizon, proposedOrders, proposedMaterial, quality);
         var baseline = EngineRunner.Run(new SchedulingEngine(), snapshot, request, asOf).Output;
@@ -139,12 +141,13 @@ public sealed class PlanningScenarioService(
                     : Array.Empty<string>())))
             .Where(x => x.BaselineHours != x.ProposedHours).Take(100).ToArray();
 
-        return new PlanningScenarioResult(id, asOf, 14, description, impacts, skills, RecoveryOptions(scenario.Change, snapshot, orders, principal),
+        return new PlanningScenarioResult(id, asOf, 14, description, impacts, skills,
+            RecoveryOptionEvaluator.Evaluate(scenario.Change, proposedSnapshot, proposedOrders, proposedMaterial, quality, baseline, proposed, principal, authorizer),
             "Scenario-only comparison. Both plans use the same authorized current snapshot, released-order set, MRP material readiness, quality gates and finite-capacity engines. No source record or approved schedule was changed.");
     }
 
     private static (SiteSnapshot Snapshot, List<OrderInfo> Orders, IReadOnlyList<OrderMaterialStatus> Material, string Description) Apply(
-        ScenarioChange change, SiteSnapshot snapshot, List<OrderInfo> orders, IReadOnlyList<OrderMaterialStatus> material, ForgePrincipal principal, DateTimeOffset at)
+        ScenarioChange change, SiteSnapshot snapshot, List<OrderInfo> orders, IReadOnlyList<OrderMaterialStatus> material, ForgePrincipal principal, DateTimeOffset at, Guid scenarioId)
     {
         switch (change.Kind)
         {
@@ -154,7 +157,8 @@ public sealed class PlanningScenarioService(
                     var start = change.StartsAt!.Value;
                     var end = start.AddHours(change.DurationHours!.Value);
                     RequireWindow(start, end, at);
-                    return (snapshot with { Downtime = [.. snapshot.Downtime, new DowntimeWindow(long.MinValue, machine.Code, DowntimeKind.Unplanned, start, end, "Scenario: machine unavailable")] }, orders, material,
+                    return (snapshot with { Downtime = [.. snapshot.Downtime, new DowntimeWindow(long.MinValue, machine.Code, DowntimeKind.Unplanned, start, end, "Scenario: machine unavailable",
+                        IsHypothetical: true, SourceContext: "Planning", SourceReference: $"Scenario/{scenarioId:D}")] }, orders, material,
                         $"{machine.Code} unavailable from {start:u} for {change.DurationHours} hour(s).");
                 }
             case ScenarioChangeKind.PersonUnavailable:
@@ -211,37 +215,6 @@ public sealed class PlanningScenarioService(
                 throw new CommandRejectedException("unsupported_scenario", "This scenario change is not supported.");
         }
     }
-
-    private static IReadOnlyList<RecoveryOption> RecoveryOptions(ScenarioChange change, SiteSnapshot snapshot, IReadOnlyList<OrderInfo> orders, ForgePrincipal principal)
-    {
-        var hasAlternateMachine = orders.Any(o => o.Operations.Any(op => op.EligibleMachines.Count > 1));
-        var canSeePeople = principal.HasPermission(Permissions.WorkforceRead);
-        var hasQualifiedPeople = canSeePeople && snapshot.People.Any(p => p.Active && p.ValidQualifications.Count > 0);
-        var canSchedule = principal.HasPermission(Permissions.SchedulePropose);
-        var canReallocate = principal.HasPermission(Permissions.WorkforceManage) && hasQualifiedPeople;
-        var result = new[]
-        {
-            Option("resequence", "Re-sequence the released work", canSchedule, canSchedule ? "A fresh schedule can compare due dates, priority and finite capacity." : "Requires SchedulePropose.", ["Projected completion dates can move for other orders; the approved plan remains unchanged until a planner proposes it."], "#/scheduling", Permissions.SchedulePropose),
-            Option("priority", "Change the affected order priority", principal.HasPermission(Permissions.OrdersManage) && change.OrderNumber is not null, principal.HasPermission(Permissions.OrdersManage) ? "The source order is available for a controlled priority preview." : "Requires OrdersManage and the source order's current impact preview.", ["A higher priority can delay other released orders; a fresh impact preview is required before commit."], change.OrderNumber is { } pn ? $"#/orders/{pn}" : null, Permissions.OrdersManage),
-            Option("alternate-machine", "Use another eligible machine", hasAlternateMachine && canSchedule, hasAlternateMachine ? canSchedule ? "The released routing lists more than one eligible machine." : "Requires SchedulePropose." : "No released operation with multiple eligible machines was identified.", ["Machine eligibility, qualification, tooling and safety gates still apply."], "#/scheduling", Permissions.SchedulePropose),
-            Option("reallocate", "Reallocate a qualified operator", canReallocate, canReallocate ? "The snapshot contains active people with current qualifications; validate presence and assignment at the target time." : principal.HasPermission(Permissions.WorkforceManage) ? "No currently qualified person was identified in the visible snapshot." : "Requires WorkforceManage." , ["Moving a person can stop work at the source station; use the workforce assignment command and review its impact."], "#/workforce", Permissions.WorkforceManage),
-            Option("add-operator", "Add a qualified operator to the work", canReallocate, canReallocate ? "Qualified people appear in the visible workforce snapshot; availability must be checked at the target time." : principal.HasPermission(Permissions.WorkforceManage) ? "No currently qualified person was identified." : "Requires WorkforceManage.", ["Crew coverage may improve, but safety staffing, presence and overlapping assignments remain binding."], "#/workforce", Permissions.WorkforceManage),
-            Option("add-trainer", "Add a trainer for supervised work", principal.HasPermission(Permissions.WorkforceManage), principal.HasPermission(Permissions.WorkforceManage) ? "Workforce assignment is available to this principal." : "Requires WorkforceManage.", ["A qualified trainer must remain present, satisfy the applicable rule and avoid double-booking."], "#/workforce", Permissions.WorkforceManage),
-            Option("overtime", "Extend a shift", principal.HasPermission(Permissions.ResourcesManage), principal.HasPermission(Permissions.ResourcesManage) ? "Shift changes are available to this principal." : "Requires ResourcesManage.", ["Overtime changes resource calendars for every affected order and must be approved as a real shift change."], "#/plant-setup", Permissions.ResourcesManage),
-            Option("second-shift", "Add or assign a second shift", principal.HasPermission(Permissions.ResourcesManage), principal.HasPermission(Permissions.ResourcesManage) ? "Shift configuration is available to this principal." : "Requires ResourcesManage.", ["Additional calendar time does not create qualified labor or override equipment, material, quality or safety gates."], "#/plant-setup", Permissions.ResourcesManage),
-            Option("expedite-supplier", "Ask the supplier to advance a promised date", principal.HasPermission(Permissions.PurchasingManage), principal.HasPermission(Permissions.PurchasingManage) ? "Purchasing can record a supplier-confirmed date through its source command." : "Requires PurchasingManage.", ["MRP and schedule projections change only after the supplier date is recorded on the purchase line."], "#/procurement", Permissions.PurchasingManage),
-            Option("approved-alternate", "Use an approved material alternate", principal.HasPermission(Permissions.AlternatesApprove), principal.HasPermission(Permissions.AlternatesApprove) ? "Alternate governance is available; the BOM line policy must also permit use." : "Requires alternate approval authority; unapproved or disallowed substitutes remain infeasible.", ["Approved substitution preserves peg and quantity evidence; it cannot be applied as an unrecorded planning override."], "#/engineering", Permissions.AlternatesApprove),
-            Option("transfer-material", "Transfer released material to point of use", principal.HasPermission(Permissions.InventoryTransact), principal.HasPermission(Permissions.InventoryTransact) ? "Inventory movement is available to this principal." : "Requires InventoryTransact.", ["A transfer changes location and custody only; quality hold, availability and net quantity remain separate."], "#/inventory", Permissions.InventoryTransact),
-            Option("request-shortage", "Request the uncovered material shortage", principal.HasPermission(Permissions.RequisitionRaise), principal.HasPermission(Permissions.RequisitionRaise) ? "The requisition workflow is available to this principal." : "Requires RequisitionRaise.", ["A requisition records a request; it is not supply until a purchase order is approved."], "#/procurement", Permissions.RequisitionRaise),
-            Option("maintenance-window", "Reschedule or shorten planned maintenance", principal.HasPermission(Permissions.MaintenancePlan), principal.HasPermission(Permissions.MaintenancePlan) ? "Maintenance planning is available to this principal." : "Requires MaintenancePlan.", ["Changing a planned window requires maintenance authority; unplanned outages cannot be cleared by a scenario."], "#/maintenance", Permissions.MaintenancePlan),
-            Option("split-order", "Consider a partial build or split", false, "No split is applied by this preview; validate quantity states, material, routing and customer commitment before creating separate orders.", ["Separate orders create distinct commitments and may change traceability; do not assume partial completion is accepted."], null, Permissions.OrdersManage),
-            Option("customer-date", "Coordinate a revised delivery date", principal.HasPermission(Permissions.ProgramsManage), principal.HasPermission(Permissions.ProgramsManage) ? "Program authority can review delivery commitments." : "Requires program authority; customer approval must be recorded at the source.", ["A revised date changes the commitment and its downstream goal projections; it does not create capacity."], "#/programs", Permissions.ProgramsManage),
-        };
-        return result;
-    }
-
-    private static RecoveryOption Option(string id, string title, bool feasible, string feasibility, IReadOnlyList<string> consequences, string? path, string permission) =>
-        new(id, title, feasible, feasibility, consequences, path, permission);
 
     private static void RequireWindow(DateTimeOffset start, DateTimeOffset end, DateTimeOffset asOf)
     {

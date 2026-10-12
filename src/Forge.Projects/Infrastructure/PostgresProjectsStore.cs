@@ -49,6 +49,12 @@ internal sealed class PostgresProjectsStore(PostgresUnitOfWork uow) : IProjectsS
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task LockProjectAsync(string code, CancellationToken ct)
+    {
+        await using var command = uow.Command("SELECT code FROM projects.project WHERE code=$1 FOR UPDATE", code);
+        await command.ExecuteScalarAsync(ct);
+    }
+
     public async Task InsertLineAsync(ProjectLine line, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(line);

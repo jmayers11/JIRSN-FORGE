@@ -54,6 +54,7 @@ builder.Services.AddForgePlanning();
 builder.Services.AddSingleton<NotificationCommands>();
 builder.Services.AddSingleton<NotificationReadStore>();
 builder.Services.AddSingleton<WorkInboxStore>();
+builder.Services.AddSingleton<Forge.Kernel.WorkAssignments.IWorkSourceResolver, WorkSourceResolver>();
 builder.Services.AddSingleton<IntegrityExceptionReadStore>();
 builder.Services.AddSingleton<CauseMapReadStore>();
 builder.Services.AddSingleton<NotificationDeliveryService>();
@@ -236,6 +237,7 @@ app.MapProgramsEndpoints();
 app.MapProjectEndpoints();
 app.MapGenealogyEndpoints();
 app.MapHistoryEndpoints();
+app.MapHorizonLensEndpoints();
 app.MapReportsEndpoints();
 app.MapAnalystEndpoints();
 

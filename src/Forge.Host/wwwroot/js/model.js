@@ -5,11 +5,14 @@
 const H = 36e5;
 
 export const WINDOWS = {
+  '-7d': { label: '-7d', describe: 'the last seven days', from: now => now - 7 * 24 * H, to: now => now },
   '-24h': { label: '-24h', describe: 'the last 24 hours', from: now => now - 24 * H, to: now => now },
+  '-8h': { label: '-8h', describe: 'the last eight hours', from: now => now - 8 * H, to: now => now },
   now: { label: 'Now', describe: 'the next 8 hours', from: now => now, to: now => now + 8 * H },
   '+24h': { label: '+24h', describe: 'the next 24 hours', from: now => now, to: now => now + 24 * H },
   '+3d': { label: '+3d', describe: 'the next 3 days', from: now => now, to: now => now + 72 * H },
   '+1w': { label: '+1w', describe: 'the next 7 days', from: now => now, to: now => now + 168 * H },
+  '+2w': { label: '+2w', describe: 'the next two weeks', from: now => now, to: now => now + 14 * 24 * H },
 };
 
 export const CATEGORY = {

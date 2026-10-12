@@ -66,12 +66,27 @@ internal static class SnapshotLoader
 
         var from = at.AddDays(-1);
         var to = at + Reach;
+        // Production stoppages and maintenance outages remain their own source records. Both
+        // remove executable machine time; ending one never closes the other. The source category,
+        // observed reason code and note are evidence, without a claim about a proven root cause.
+        var downtime = await uow.Store<IMaintenanceLookup>().ListDowntimeAsync(from, to, ct);
+        var stoppages = await uow.Store<IProductionActualsLookup>().ListStoppagesAsync(from, to, false, ct);
+        var productionDowntime = stoppages.Select(stoppage => new DowntimeWindow(
+            -2000000000000 - stoppage.StoppageId, stoppage.MachineCode,
+            Enum.Parse<DowntimeKind>(stoppage.Category.ToString()), stoppage.StartedAt, stoppage.EndedAt,
+            $"Production stoppage {stoppage.StoppageId}: {stoppage.Category}; observed reason {stoppage.ReasonCode}{(stoppage.Note is { Length: > 0 } note ? $": {note}" : string.Empty)}",
+            SourceContext: "Execution", SourceReference: $"Stoppage/{stoppage.StoppageId}"));
 
         // Retired records stay in Resources for history; planning only sees what can still be used.
         var workCenters = (await resources.ListWorkCentersAsync(ct)).Where(w => w.Active).ToList();
         var machines = (await resources.ListMachinesAsync(ct)).Where(m => m.Active).ToList();
         var machineCodes = machines.Select(m => m.Code).ToHashSet(StringComparer.Ordinal);
         var workCenterCodes = workCenters.Select(w => w.Code).ToHashSet(StringComparer.Ordinal);
+        var holds = await uow.Store<Forge.Kernel.Holds.IHoldLookup>().ListHoldsAsync(false, ct);
+        var holdPolicies = await uow.Store<Forge.Kernel.Holds.IHoldLookup>().ListKindPoliciesAsync(ct);
+        var propagation = new Dictionary<long, Forge.Kernel.Holds.HoldPropagationScope>();
+        foreach (var hold in holds.Where(h => h.TargetType == Forge.Kernel.Holds.HoldTargetType.Lot && Forge.Kernel.Holds.HoldService.PolicyOf(holdPolicies, h.Kind).PropagateDownstream))
+            propagation[hold.HoldId] = await uow.Store<Forge.Kernel.Holds.IHoldPropagationLookup>().ScopeAsync(hold, ct);
         return new SiteSnapshot(
             at,
             (await resources.ListSafetyAreasAsync(ct)).Where(a => a.Active).ToList(),
@@ -87,14 +102,15 @@ internal static class SnapshotLoader
             Shifts = await resources.ListShiftsAsync(ct),
             WorkCenterShifts = await resources.ListWorkCenterShiftsAsync(ct),
             Closures = await resources.ListSiteClosuresAsync(ct),
-            Downtime = await uow.Store<IMaintenanceLookup>().ListDowntimeAsync(from, to, ct),
+            Downtime = downtime.Concat(productionDowntime).OrderBy(window => window.MachineCode, StringComparer.Ordinal).ThenBy(window => window.StartsAt).ThenBy(window => window.Id).ToArray(),
             Unavailability = await workforce.ListUnavailabilityAsync(from, to, ct),
             ToolTypes = await tools.ListToolTypesAsync(ct),
             Tools = await tools.ListToolsAsync(ct),
             ToolEvents = await tools.ListToolEventsAsync(null, ct),
             ToolRequirements = await tools.ListToolRequirementsAsync(ct),
-            Holds = await uow.Store<Forge.Kernel.Holds.IHoldLookup>().ListHoldsAsync(false, ct),
-            HoldPolicies = await uow.Store<Forge.Kernel.Holds.IHoldLookup>().ListKindPoliciesAsync(ct),
+            Holds = holds,
+            HoldPolicies = holdPolicies,
+            HoldPropagation = propagation,
         };
     }
 }

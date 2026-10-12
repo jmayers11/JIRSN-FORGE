@@ -1,7 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
-import { formModal, qty, can } from '../forms.js';
+import { formModal, qty, canAction } from '../forms.js';
 import { attachmentsDrawer } from '../attachments.js';
 
 // Shipping (spec §47): a shipment is put together and packed by one person, who confirms the stock is
@@ -12,9 +12,9 @@ const TONE = { Open: 'none', Packed: 'info', Shipped: 'ok', Cancelled: 'bad' };
 
 export async function shippingPage(page, ctx) {
   const me = ctx.me;
-  const handler = can(me, 'MaterialHandler');
-  const shipper = can(me, 'Shipper');
-  const planner = can(me, 'Planner');
+  const handler = canAction(me, 'inventory.transact');
+  const shipper = canAction(me, 'inventory.shipping.ship');
+  const planner = canAction(me, 'planning.demand.manage');
   let showClosed = false;
   let data = {};
 

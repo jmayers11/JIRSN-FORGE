@@ -2,10 +2,10 @@ import { tryGet, command, upload } from './api.js';
 import { attachmentsDrawer } from './attachments.js';
 import { esc, $, $$ } from './ui.js';
 import { fmtDate, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from './ui.js';
-import { formModal, qty, can, plusDays } from './forms.js';
+import { formModal, qty, canAction, plusDays } from './forms.js';
 
 export function sourcingQueue(page, { me, data, tabs, bindTabs, reload }) {
-  const buyer = can(me, 'Buyer'), approver = can(me, 'PurchasingManager');
+  const buyer = canAction(me, 'procurement.manage'), approver = canAction(me, 'procurement.approve');
   const list = data.rfqs.data ?? [];
   page.innerHTML = `<div class="page-head"><div><h1>Procurement</h1><div class="sub">Request supplier responses, compare factual terms and record a human source decision. RFQs and quotes do not count as supply.</div></div><span class="spacer"></span>${buyer ? '<button class="btn primary" id="new-rfq">New RFQ</button>' : ''}</div>${tabs()}
     ${data.rfqs.error ? errorBlock(data.rfqs.error, 'RFQs') : !list.length ? emptyBlock('No RFQs', 'Create one for an existing open requisition.') : list.map(({ rfq: r, need: n }) => `<section class="panel"><header><h2>RFQ ${r.rfqId} · ${esc(r.title)}</h2><span class="pill">${esc(r.status)}</span><span class="spacer"></span>

@@ -1,21 +1,23 @@
 import { command, tryGet } from '../api.js';
 import { img } from '../icons.js';
-import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, relative, toast, emptyBlock } from '../ui.js';
+import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, relative, toast, emptyBlock, manageDialogFocus, liveRegion } from '../ui.js';
 import { who } from '../people.js';
+import { isServiceUnavailable, createTerminalSession } from '../terminal-state.mjs';
 
 // The shop-floor terminal. A badge scanner types the badge and presses Enter (keyboard wedge); any
 // reader that does that works. The badge is held in memory only for this interaction and is
-// forgotten after a minute without activity, or when the next person scans.
+// forgotten after the configured inactivity timeout, or when the next person scans.
 
-const IDLE_MS = 60_000;
 const SCRAP_REASONS = ['Edge wave', 'Surface defect', 'Out of tolerance', 'Setup', 'Material defect', 'Damaged in handling'];
 
 export async function shopFloorPage(page, ctx) {
   // V3.5: the plant's scrap reason codes come first; the fixed words remain for plants without codes.
   const scrapCodes = ((await tryGet('/api/execution/reason-codes')).data ?? []).filter(r => r.kind === 'Scrap' && r.active);
-  let badge = null;
-  let person = null;
+  const terminal = createTerminalSession();
+  const idleTimeoutSeconds = ctx.me.shopFloorIdleTimeoutSeconds;
+  const idleMs = (Number.isInteger(idleTimeoutSeconds) && idleTimeoutSeconds >= 1 && idleTimeoutSeconds <= 3600 ? idleTimeoutSeconds : 60) * 1000;
   let idle = null;
+  const dialogs = new Set();
 
   const canUse = ctx.me.roles.some(r => ['ShopFloorTerminal', 'Supervisor'].includes(r));
   if (!canUse) {
@@ -25,9 +27,33 @@ export async function shopFloorPage(page, ctx) {
     return;
   }
 
-  function resetIdle() {
+  const operatorStatus = liveRegion('Current shop-floor operator');
+  const onActivity = () => { if (terminal.person) resetIdle(); };
+  page.addEventListener('click', onActivity);
+  page.addEventListener('keydown', onActivity);
+  page.addEventListener('input', onActivity);
+
+  function closeDialogs() { for (const close of [...dialogs]) close(); }
+
+  function lockTerminal() {
     clearTimeout(idle);
-    idle = setTimeout(() => { badge = null; person = null; render(); }, IDLE_MS);
+    terminal.clear();
+    closeDialogs();
+    render();
+  }
+
+  function resetIdle() {
+    if (terminal.disposed) return;
+    clearTimeout(idle);
+    idle = setTimeout(lockTerminal, idleMs);
+  }
+
+  function lockForOutage(error) {
+    if (!isServiceUnavailable(error)) return false;
+    if (terminal.disposed) return true;
+    lockTerminal();
+    toast('Forge could not confirm that action. The terminal is locked; ask a supervisor to check the record before retrying.', true);
+    return true;
   }
 
   function scanBox(label, id = 'badge') {
@@ -37,32 +63,50 @@ export async function shopFloorPage(page, ctx) {
     </form>`;
   }
 
-  async function identify(value) {
+  async function identify(value, existingSession = null) {
+    const token = existingSession ?? terminal.beginIdentification(value);
+    if (!terminal.isCurrent(token)) return;
+    if (!existingSession) {
+      closeDialogs();
+      resetIdle();
+      render();
+    }
     try {
-      person = await command('/api/shopfloor/identify', { badge: value });
-      badge = value;
+      const person = await command('/api/shopfloor/identify', { badge: token.badge });
+      if (!terminal.acceptIdentification(token, person)) return;
       resetIdle();
     } catch (e) {
-      badge = null; person = null;
+      if (lockForOutage(e)) return;
+      if (!terminal.isCurrent(token)) return;
+      terminal.clear();
       toast(e.message, true);
     }
     render();
   }
 
-  async function act(path, body, ok, quiet = false) {
+  async function act(path, body, ok, quiet = false, session = terminal.capture()) {
+    const token = terminal.beginAction(session);
+    if (!token) return null;
     try {
       const r = await command(path, body);
+      if (!terminal.isCurrent(token)) return null;
       toast(r?.message ?? r?.clockedOut?.message ?? ok ?? 'Done.');
-      if (badge) await identify(badge);
+      await identify(token.badge, token);
       return r;
     } catch (e) {
+      if (lockForOutage(e)) return e;
+      if (!terminal.isCurrent(token)) return null;
       if (!quiet) toast(e.message, true);
       return e;
+    } finally {
+      terminal.endAction(token);
     }
   }
 
   function render() {
-    if (!person) {
+    if (terminal.disposed) return;
+    operatorStatus.textContent = terminal.person ? `Current operator: ${terminal.person.displayName}.` : 'Terminal locked. Scan your badge.';
+    if (!terminal.person) {
       page.innerHTML = `
         <div class="page-head"><div><h1>Shop Floor</h1><div class="sub">Scan your badge to clock in, start work, report quantities or supervise training.</div></div></div>
         <section class="panel kiosk-start">${img('operator', 'kiosk-ico')}${scanBox('Scan your badge')}
@@ -72,14 +116,15 @@ export async function shopFloorPage(page, ctx) {
       return;
     }
 
-    const p = person;
+    const p = terminal.person;
+    const session = terminal.capture();
     const labor = p.labor;
     const clocked = p.clockedInSince;
     const myOp = labor ? p.queue.find(q => q.orderNumber === labor.orderNumber && q.operation.sequence === labor.sequence) : null;
     const awaiting = (p.training ?? []).filter(t => t.trainerId === p.personId && !t.evaluation);
     page.innerHTML = `
       <div class="page-head">
-        <div aria-live="polite" aria-label="Current shop-floor operator"><h1>${esc(p.displayName)}</h1>
+        <div><h1>${esc(p.displayName)}</h1>
           <div class="sub">${clocked ? `<span class="pill ok">Clocked in ${esc(relative(clocked))}</span>` : '<span class="pill none">Not clocked in</span>'}
             ${p.homeWorkCenter ? ` · Home: ${esc(p.homeWorkCenter)}` : ''}${p.hasPin ? '' : ' · <span class="c-warn">No PIN set</span>'}</div></div>
         <div class="spacer"></div>
@@ -121,7 +166,7 @@ export async function shopFloorPage(page, ctx) {
           <td><b>#${q.orderNumber}</b><br><span class="muted">${esc(q.partNumber)} · due ${esc(fmtDate(q.dueDate))}</span></td>
           <td>${q.operation.sequence} ${esc(q.operation.description)}<br><span class="muted">${esc(q.operation.workCenterCode)}</span></td>
           <td>${q.operation.eligibleMachines.length > 1
-            ? `<select class="select" data-machine="${i}">${q.operation.eligibleMachines.map(m => `<option ${m === q.scheduledMachine ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>`
+            ? `<select class="select" data-machine="${i}" aria-label="Machine for order ${q.orderNumber} operation ${q.operation.sequence}">${q.operation.eligibleMachines.map(m => `<option ${m === q.scheduledMachine ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>`
             : esc(q.operation.eligibleMachines[0] ?? '—')}</td>
           <td>${fmtNumber(q.operation.goodQuantity, 3)} / ${fmtNumber(q.orderQuantity, 3)}</td>
           <td>${q.scheduledStart ? esc(fmtDateTime(q.scheduledStart)) : '<span class="faint">—</span>'}${q.scheduledForYou ? '<br><span class="pill info">Scheduled for you</span>' : ''}</td>
@@ -129,55 +174,70 @@ export async function shopFloorPage(page, ctx) {
         </tbody></table>` : emptyBlock('Nothing to start', 'No released work at your work center, your assignment or in the schedule for you.')}
       </section>` : ''}`;
 
-    $('#clock-in', page)?.addEventListener('click', () => act('/api/shopfloor/clock-in', { badge }));
+    $('#clock-in', page)?.addEventListener('click', () => act('/api/shopfloor/clock-in', { badge: session.badge }, null, false, session));
     $('#clock-out', page)?.addEventListener('click', async () => {
-      const r = await act('/api/shopfloor/clock-out', { badge }, 'Clocked out.');
-      if (!(r instanceof Error)) { badge = null; person = null; render(); }
+      const r = await act('/api/shopfloor/clock-out', { badge: session.badge }, 'Clocked out.', false, session);
+      if (r !== null && !(r instanceof Error) && terminal.isCurrent(session)) lockTerminal();
     });
-    $('#done', page).addEventListener('click', () => { badge = null; person = null; render(); });
-    $('#lock-terminal', page).addEventListener('click', () => { clearTimeout(idle); badge = null; person = null; render(); });
-    $('#stop', page)?.addEventListener('click', () => act('/api/shopfloor/stop', { badge }));
-    $('#pin', page).addEventListener('click', () => pinDialog());
+    $('#done', page).addEventListener('click', lockTerminal);
+    $('#lock-terminal', page).addEventListener('click', lockTerminal);
+    $('#stop', page)?.addEventListener('click', () => act('/api/shopfloor/stop', { badge: session.badge }, null, false, session));
+    $('#pin', page).addEventListener('click', () => pinDialog(session));
     $('#report', page)?.addEventListener('submit', async e => {
       e.preventDefault();
       const good = Number($('#good', page).value || 0), scrap = Number($('#scrap', page).value || 0);
       await act('/api/shopfloor/report', {
-        badge, orderNumber: labor.orderNumber, sequence: labor.sequence, good, scrap,
+        badge: session.badge, orderNumber: labor.orderNumber, sequence: labor.sequence, good, scrap,
         scrapReason: $('#reason', page).value.startsWith('code:') ? null : $('#reason', page).value || null,
         scrapReasonCode: $('#reason', page).value.startsWith('code:') ? $('#reason', page).value.slice(5) : null, complete: $('#complete', page).checked,
-      });
+      }, null, false, session);
     });
     $$('[data-start]', page).forEach(b => b.addEventListener('click', () => {
       const q = p.queue[Number(b.dataset.start)];
       const sel = $(`[data-machine="${b.dataset.start}"]`, page);
-      start(q, sel ? sel.value : null);
+      start(q, sel ? sel.value : null, null, session);
     }));
-    $$('[data-evaluate]', page).forEach(b => b.addEventListener('click', () => evaluate(Number(b.dataset.evaluate))));
-    page.onclick = resetIdle;
+    $$('[data-evaluate]', page).forEach(b => b.addEventListener('click', () => evaluate(Number(b.dataset.evaluate), session)));
   }
 
-  async function start(q, machine, trainerBadge) {
-    const r = await act('/api/shopfloor/start', { badge, orderNumber: q.orderNumber, sequence: q.operation.sequence, machineCode: machine, trainerBadge: trainerBadge ?? null }, null, true);
+  async function start(q, machine, trainerBadge, session) {
+    const r = await act('/api/shopfloor/start', { badge: session.badge, orderNumber: q.orderNumber, sequence: q.operation.sequence, machineCode: machine, trainerBadge: trainerBadge ?? null }, null, true, session);
+    if (!terminal.isCurrent(session)) return;
     if (!(r instanceof Error)) return;
+    if (isServiceUnavailable(r)) return;
     const code = r.problem?.code;
-    if (code === 'trainer_required') trainerDialog(q, machine, r.message);
+    if (code === 'trainer_required') trainerDialog(q, machine, r.message, session);
     else toast(r.message, true);
   }
 
   function modal(html) {
+    closeDialogs();
     const scrim = document.createElement('div'); scrim.className = 'scrim';
+    scrim.setAttribute('aria-hidden', 'true');
     const m = document.createElement('div'); m.className = 'modal'; m.innerHTML = html;
-    const close = () => { scrim.remove(); m.remove(); };
+    let releaseFocus = () => {};
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      scrim.remove(); m.remove(); dialogs.delete(close); releaseFocus();
+    };
+    dialogs.add(close);
     scrim.onclick = close;
     document.body.append(scrim, m);
+    releaseFocus = manageDialogFocus(m, close);
+    m.addEventListener('click', onActivity);
+    m.addEventListener('keydown', onActivity);
+    m.addEventListener('input', onActivity);
     $('[data-cancel]', m)?.addEventListener('click', close);
     return { m, close };
   }
 
-  function trainerDialog(q, machine, message) {
+  function trainerDialog(q, machine, message, session) {
+    if (!terminal.isCurrent(session)) return;
     const { m, close } = modal(`
       <h2>Training supervision required</h2>
-      <div class="notice warn">${esc(message)}</div>
+      <div class="notice warn" role="alert">${esc(message)}</div>
       ${scanBox('Trainer: scan your badge', 'trainer')}
       <div class="faint">The trainer's qualifications, trainer certification and presence are checked. Supervised work does not grant the qualification.</div>
       <div class="actions"><button class="btn" data-cancel>Cancel</button></div>`);
@@ -189,31 +249,45 @@ export async function shopFloorPage(page, ctx) {
       input.value = '';
       if (!trainer) return;
       close();
-      await start(q, machine, trainer);
+      await start(q, machine, trainer, session);
     });
   }
 
-  function pinDialog() {
+  function pinDialog(session) {
+    if (!terminal.isCurrent(session)) return;
     const { m, close } = modal(`
-      <h2>${person.hasPin ? 'Change your PIN' : 'Set your PIN'}</h2>
+      <h2>${terminal.person.hasPin ? 'Change your PIN' : 'Set your PIN'}</h2>
       <div class="muted">Your PIN signs consequential actions, such as a trainer's evaluation. 4 to 8 digits.</div>
-      ${person.hasPin ? '<div class="field"><label for="cur">Current PIN</label><input id="cur" class="input" type="password" inputmode="numeric" autocomplete="off"></div>' : ''}
+      ${terminal.person.hasPin ? '<div class="field"><label for="cur">Current PIN</label><input id="cur" class="input" type="password" inputmode="numeric" autocomplete="off"></div>' : ''}
       <div class="field"><label for="new">New PIN</label><input id="new" class="input" type="password" inputmode="numeric" autocomplete="off"></div>
       <div class="field"><label for="new2">Repeat new PIN</label><input id="new2" class="input" type="password" inputmode="numeric" autocomplete="off"></div>
-      <div class="notice bad hidden" data-error></div>
+      <div class="notice bad hidden" data-error role="alert" aria-live="assertive"></div>
       <div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-ok>Save PIN</button></div>`);
     $('[data-ok]', m).addEventListener('click', async () => {
       const err = $('[data-error]', m);
       const nw = $('#new', m).value, nw2 = $('#new2', m).value;
       if (nw !== nw2) { err.textContent = 'The two PINs differ.'; err.classList.remove('hidden'); return; }
+      const token = terminal.beginAction(session);
+      if (!token) return;
+      const ok = $('[data-ok]', m);
+      ok.disabled = true;
       try {
-        await command('/api/shopfloor/pin', { badge, currentPin: $('#cur', m)?.value || null, newPin: nw });
-        close(); toast('PIN saved.'); await identify(badge);
-      } catch (e) { err.textContent = e.message; err.classList.remove('hidden'); }
+        await command('/api/shopfloor/pin', { badge: token.badge, currentPin: $('#cur', m)?.value || null, newPin: nw });
+        if (!terminal.isCurrent(token)) return;
+        close(); toast('PIN saved.'); await identify(token.badge, token);
+      } catch (e) {
+        if (lockForOutage(e)) return;
+        if (!terminal.isCurrent(token) || !m.isConnected) return;
+        err.textContent = e.message; err.classList.remove('hidden');
+      } finally {
+        terminal.endAction(token);
+        if (m.isConnected) ok.disabled = false;
+      }
     });
   }
 
-  function evaluate(sessionId) {
+  function evaluate(sessionId, session) {
+    if (!terminal.isCurrent(session)) return;
     const { m, close } = modal(`
       <h2>Evaluate supervised training</h2>
       <div class="muted">Your evaluation is signed with your badge and PIN. It is not certification: a certifier records the qualification separately.</div>
@@ -221,13 +295,25 @@ export async function shopFloorPage(page, ctx) {
         <option value="ReadyForAssessment">Ready for practical assessment</option><option value="NeedsMoreTraining">Needs more training</option></select></div>
       <div class="field"><label for="notes">Notes</label><textarea id="notes" class="input" rows="3"></textarea></div>
       <div class="field"><label for="epin">Your PIN</label><input id="epin" class="input" type="password" inputmode="numeric" autocomplete="off"></div>
-      <div class="notice bad hidden" data-error></div>
+      <div class="notice bad hidden" data-error role="alert" aria-live="assertive"></div>
       <div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-ok>Sign evaluation</button></div>`);
     $('[data-ok]', m).addEventListener('click', async () => {
+      const token = terminal.beginAction(session);
+      if (!token) return;
+      const ok = $('[data-ok]', m);
+      ok.disabled = true;
       try {
-        const r = await command(`/api/shopfloor/training/${sessionId}/evaluate`, { trainerBadge: badge, pin: $('#epin', m).value, evaluation: $('#ev', m).value, notes: $('#notes', m).value || null });
-        close(); toast(r.message); await identify(badge);
-      } catch (e) { const err = $('[data-error]', m); err.textContent = e.message; err.classList.remove('hidden'); }
+        const r = await command(`/api/shopfloor/training/${sessionId}/evaluate`, { trainerBadge: token.badge, pin: $('#epin', m).value, evaluation: $('#ev', m).value, notes: $('#notes', m).value || null });
+        if (!terminal.isCurrent(token)) return;
+        close(); toast(r.message); await identify(token.badge, token);
+      } catch (e) {
+        if (lockForOutage(e)) return;
+        if (!terminal.isCurrent(token) || !m.isConnected) return;
+        const err = $('[data-error]', m); err.textContent = e.message; err.classList.remove('hidden');
+      } finally {
+        terminal.endAction(token);
+        if (m.isConnected) ok.disabled = false;
+      }
     });
   }
 
@@ -242,6 +328,14 @@ export async function shopFloorPage(page, ctx) {
   }
 
   render();
-  return { dispose: () => { clearTimeout(idle); badge = null; person = null; } };
+  return { dispose: () => {
+    clearTimeout(idle);
+    terminal.dispose();
+    closeDialogs();
+    operatorStatus.remove();
+    page.removeEventListener('click', onActivity);
+    page.removeEventListener('keydown', onActivity);
+    page.removeEventListener('input', onActivity);
+  } };
 }
 

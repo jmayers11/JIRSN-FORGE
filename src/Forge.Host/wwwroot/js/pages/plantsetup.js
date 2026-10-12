@@ -1,5 +1,6 @@
 import { tryGet, command } from '../api.js';
 import { img, PICTURES, pictureUrl, stagePhoto } from '../icons.js';
+import { canAction } from '../forms.js';
 import { esc, $, $$, toast, emptyBlock, errorBlock, confirmWithReason } from '../ui.js';
 
 // Plant setup: build the plant the way it really is — sites, safety areas, work centers, machines and the
@@ -12,7 +13,7 @@ const KIND = { Site: 'site', SafetyArea: 'safety area', WorkCenter: 'work center
 const enc = encodeURIComponent;
 
 export async function plantSetupPage(page, ctx) {
-  const canManage = ctx.me.roles.includes('ManufacturingEngineer');
+  const canManage = canAction(ctx.me, 'resources.manage');
   let showRetired = false;
   let r, quals;
 

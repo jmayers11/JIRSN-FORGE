@@ -13,6 +13,7 @@ public static class PlanningRegistration
         services.AddForgeMigrations(typeof(PlanningRegistration).Assembly, "planning");
         services.AddForgeStore<IPlanningStore>(uow => new PostgresPlanningStore(uow));
         services.AddForgeStore<IResourceUsage>(uow => new ResourceUsage(uow));
+        services.AddForgeStore<Forge.Kernel.Holds.IHoldPropagationLookup>(uow => new HoldPropagationLookup(uow));
         services.AddForgeStore<IDemandStore>(uow => new PostgresDemandStore(uow));
         services.AddForgeStore<IGoalStore>(uow => new PostgresGoalStore(uow));
         services.AddForgeStore<IPlanningScenarioStore>(uow => new PostgresPlanningScenarioStore(uow));
@@ -40,6 +41,7 @@ public static class PlanningRegistration
         services.AddSingleton<Reporting.ReportService>();
         services.AddSingleton<Reporting.ReportDefinitionService>();
         services.AddSingleton<Reporting.HorizonHistoryService>();
+        services.AddSingleton<Reporting.HorizonLensService>();
         services.AddSingleton<Analyst.BriefService>();
         services.AddSingleton<Analyst.AnalystService>();
         services.TryAddSingleton<Analyst.IAnalystNarrator, Analyst.DisabledNarrator>();

@@ -5,10 +5,10 @@ using Npgsql;
 
 namespace Forge.Execution.Infrastructure;
 
-internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutionStore, IExecutionLookup, IShopFloorStore
+internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutionStore, IExecutionLookup, IShopFloorStore, IOrderCommitmentStore
 {
     private const string OrderSql =
-        "SELECT order_number, part_number, revision, quantity, due_date, priority, status, held_from, program_id, released_at, created_by, released_by, wbs_code FROM execution.production_order";
+        "SELECT order_number, part_number, revision, quantity, due_date, priority, status, held_from, program_id, released_at, created_by, released_by, wbs_code, contract_id, contract_clin FROM execution.production_order";
 
     public async Task<long> InsertOrderAsync(string partNumber, string revision, decimal quantity, DateOnly dueDate, int priority, Guid? programId, DateTimeOffset at, string actor, CancellationToken ct)
     {
@@ -153,6 +153,28 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
     }
 
     public Task<IReadOnlyList<OrderInfo>> ListOrdersAsync(CancellationToken ct) => Read(OrderSql + " ORDER BY order_number DESC", ReadOrder, ct);
+
+    public async Task SetAsync(long orderNumber, long? contractId, string? clin, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using (var change = uow.Command("UPDATE execution.production_order SET contract_id=$2,contract_clin=$3,updated_at=$4,updated_by=$5 WHERE order_number=$1", orderNumber,
+            new NpgsqlParameter { Value = (object?)contractId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
+            new NpgsqlParameter { Value = (object?)clin ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text }, at, actor))
+            await change.ExecuteNonQueryAsync(ct);
+        await using var history = uow.Command("INSERT INTO execution.order_contract_commitment(order_number,contract_id,clin,recorded_at,actor) VALUES($1,$2,$3,$4,$5)", orderNumber,
+            new NpgsqlParameter { Value = (object?)contractId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
+            new NpgsqlParameter { Value = (object?)clin ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text }, at, actor);
+        await history.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task LockAsync(long orderNumber, CancellationToken ct)
+    {
+        await using var command = uow.Command("SELECT order_number FROM execution.production_order WHERE order_number=$1 FOR UPDATE", orderNumber);
+        await command.ExecuteScalarAsync(ct);
+    }
+
+    public Task<IReadOnlyList<OrderCommitment>> AsOfAsync(DateTimeOffset at, CancellationToken ct) => Read(
+        "SELECT DISTINCT ON(order_number) order_number,contract_id,clin,recorded_at,actor FROM execution.order_contract_commitment WHERE recorded_at <= $1 ORDER BY order_number,recorded_at DESC,commitment_id DESC",
+        reader => new OrderCommitment(reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetFieldValue<DateTimeOffset>(3), reader.GetString(4)), ct, at);
 
     private const string OperationColumns =
         "sequence, description, work_center_code, activity_code, eligible_machines, required_qualifications, planned_minutes, crew_size, status, good_quantity, scrap_quantity, started_at, completed_at";
@@ -334,7 +356,9 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         [],
         r.GetString(10),
         r.IsDBNull(11) ? null : r.GetString(11),
-        r.IsDBNull(12) ? null : r.GetString(12));
+        r.IsDBNull(12) ? null : r.GetString(12),
+        r.IsDBNull(13) ? null : r.GetInt64(13),
+        r.IsDBNull(14) ? null : r.GetString(14));
 
     private static NpgsqlParameter TextArray(IEnumerable<string> values) =>
         new() { Value = values.ToArray(), NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text };
@@ -421,11 +445,14 @@ public static class ExecutionRegistration
         services.AddForgeMigrations(typeof(ExecutionRegistration).Assembly, "execution");
         services.AddForgeStore<IExecutionStore>(uow => new PostgresExecutionStore(uow));
         services.AddForgeStore<IExecutionLookup>(uow => new PostgresExecutionStore(uow));
+        services.AddForgeStore<IOrderCommitmentLookup>(uow => new PostgresExecutionStore(uow));
+        services.AddForgeStore<IOrderCommitmentStore>(uow => new PostgresExecutionStore(uow));
         services.AddForgeStore<IShopFloorStore>(uow => new PostgresExecutionStore(uow));
         services.AddForgeStore<IAsBuiltRecord>(uow => new PostgresAsBuiltRecord(uow));
         services.AddForgeStore<IShiftContinuityStore>(uow => new PostgresShiftContinuityStore(uow));
         services.AddForgeStore<Forge.Maintenance.Contracts.IMachineUsageLookup>(uow => new MachineUsage(uow));
         services.AddSingleton<ProductionOrderService>();
+        services.AddSingleton<OrderCommitmentService>();
         services.AddSingleton<PriorityGovernanceService>();
         services.AddSingleton<ShiftContinuityService>();
         services.AddSingleton<Engines.OperatorAuthorizationEngine>();

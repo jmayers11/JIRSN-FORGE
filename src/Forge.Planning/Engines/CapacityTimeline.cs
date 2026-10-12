@@ -20,7 +20,7 @@ public sealed record WorkRequirement(
 
 /// <summary>
 /// One span of working time for a requirement, with whether the work could run and, if not, the
-/// first limiting dimension (Equipment, then Safety, then Workforce). <see cref="Candidates"/> are the
+/// first limiting dimension (Equipment, Tooling, then Safety and Workforce). <see cref="Candidates"/> are the
 /// projected qualified people, in person-id order.
 /// </summary>
 public sealed record CapacityInterval(DateTimeOffset Start, DateTimeOffset End, bool Executable, string? Limiting, string Detail, IReadOnlyList<Guid> Candidates)
@@ -31,7 +31,7 @@ public sealed record CapacityInterval(DateTimeOffset Start, DateTimeOffset End, 
 /// <summary>
 /// Builds executable-capacity timelines. Working time comes from shift calendars; inside it, the
 /// state can only change at known instants (shift edges, downtime edges, absence edges,
-/// qualification expiries), so each requirement is evaluated once per span between those instants.
+/// qualification expiries and tooling validity changes), so each requirement is evaluated once per span between those instants.
 /// </summary>
 internal sealed class CapacityTimeline
 {
@@ -52,6 +52,10 @@ internal sealed class CapacityTimeline
             schedules.Values.SelectMany(spans => spans.SelectMany(s => new[] { s.Start, s.End }))
                 .Concat(snapshot.Downtime.SelectMany(d => new[] { d.StartsAt, d.EndsAt ?? horizon.End }))
                 .Concat(snapshot.People.SelectMany(p => p.QualificationExpiry.Values.OfType<DateTimeOffset>()))
+                .Concat(snapshot.ToolEvents.Select(e => e.At))
+                .Concat(snapshot.ToolEvents.Select(e => e.DueOn).OfType<DateOnly>()
+                    .Where(d => d < DateOnly.MaxValue)
+                    .Select(d => new DateTimeOffset(d.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))))
                 .Where(horizon.Contains));
     }
 
@@ -120,14 +124,22 @@ internal sealed class CapacityTimeline
 
     private CapacityInterval Evaluate(WorkRequirement requirement, string area, Span span)
     {
+        if (!snapshot.WorkCenters.Any(w => w.Code == requirement.WorkCenterCode && w.Active))
+            return new CapacityInterval(span.Start, span.End, false, "Equipment", $"Work center {requirement.WorkCenterCode} is inactive or missing.", []);
         if (requirement.MachineCode is { } machine)
         {
+            if (!snapshot.Machines.Any(m => m.Code == machine && m.Active && m.WorkCenterCode == requirement.WorkCenterCode))
+                return new CapacityInterval(span.Start, span.End, false, "Equipment", $"Machine {machine} is inactive, missing or outside work center {requirement.WorkCenterCode}.", []);
             var equipment = OperationReadinessEngine.EquipmentCheck(snapshot, machine, span.Start);
             if (equipment.Outcome == EvidenceOutcome.Fail)
             {
                 return new CapacityInterval(span.Start, span.End, false, "Equipment", equipment.Detail, []);
             }
         }
+
+        var tooling = ExecutableChecks.Tooling(snapshot, requirement.MachineCode, requirement.ActivityCode, span.Start);
+        if (tooling.Outcome is EvidenceOutcome.Fail or EvidenceOutcome.Indeterminate)
+            return new CapacityInterval(span.Start, span.End, false, "Tooling", tooling.Detail, []);
 
         var projected = ProjectedAt(span.Start);
         var safety = composition.Evaluate(projected, new WorkItem(area, requirement.WorkCenterCode, requirement.MachineCode, requirement.ActivityCode), span.Start).Output;

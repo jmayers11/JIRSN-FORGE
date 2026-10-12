@@ -26,6 +26,13 @@ public sealed class IntegrityExceptionReadStore(NpgsqlDataSource dataSource)
             FROM maintenance.asset WHERE serial_number IS NOT NULL AND trim(serial_number)<>''
             GROUP BY serial_number HAVING count(*)>1
             UNION ALL
+            SELECT 'serial-locations:'||b.part_number||':'||b.lot_number,'SerialInMultipleLocations','One material serial is recorded at multiple locations',
+                   b.part_number||' serial '||b.lot_number||' has positive stock at '||string_agg(DISTINCT b.location_code, ', ' ORDER BY b.location_code),
+                   'inventory',now(),'inventory.read'
+            FROM inventory.balance b JOIN inventory.lot l USING(part_number,lot_number)
+            WHERE l.identity_kind='Serial' AND b.quantity>0
+            GROUP BY b.part_number,b.lot_number HAVING count(DISTINCT b.location_code)>1
+            UNION ALL
             SELECT 'consumption-before-issue:'||t.transformation_id||':'||l.line_number,'ConsumptionBeforeIssue','Consumed material has no prior matching issue',
                    'Transformation '||t.transformation_id||' order '||t.order_number||' consumes '||l.quantity::text||' '||l.part_number||coalesce(' lot '||l.lot_number,'')||' at '||t.recorded_at::text,
                    'inventory',t.recorded_at,'inventory.read'

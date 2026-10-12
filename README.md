@@ -4,7 +4,7 @@ A manufacturing operations platform that answers whether work can actually happe
 equipment, materials, qualifications and safety conditions available, at the time it is needed.
 
 Architecture: **JIRSN Forge Software Architecture v0.1** (approved 2026-09-30). The phase plan is
-in section 31. Implemented so far: Phases 1–9 — kernel, readiness, engineering and orders, capacity and scheduling, shop floor, materials and MRP, quality and shipping, programs and maintenance, reporting with Horizon history, and Forge Analyst.
+in section 31. Implemented scope now includes Phases 1–9, V2 and V3.1–V3.28: kernel, readiness, engineering/orders, capacity/scheduling, shop floor, materials/MRP, quality/shipping, programs/maintenance, reporting/Horizon and Forge Analyst. See the [completion checklist](docs/v3-completion-checklist.md) and [AI handoff](AI_HANDOFF.md) for actual verification state and source/deployment limits.
 
 ## What Phase 1 contains
 
@@ -914,7 +914,7 @@ API: existing /api/engineering/attachments routes now accept Receipt, ReceivingI
 
 Buyers can raise an RFQ from an existing requisition. Forge freezes the applicable item/document package when the RFQ is released; a later engineering revision does not rewrite what suppliers received. Supplier responses retain their original reference file alongside structured quantity, price, currency, promised date, validity and proposed alternate data. Quote selection requires approval by someone other than the quote recorder, and any proposed alternate remains subject to Engineering approval. A quote alone creates no supply; a PO can be raised only from the selected supplier and covered quantity. Program access applies to RFQs, reports, original documents and commands. The sourcing report and Analyst expose the same scoped facts.
 
-API: `/api/procurement/rfqs`, `/api/procurement/rfqs/{id}/release`, `/quotes`, `/select`, and `/api/reports/sourcing`. Selected source validation is enforced when creating purchase orders, preserving requisitions and approved PO receipts as the supply system of record.
+API: `/api/procurement/rfqs`, `/api/procurement/rfqs/{id}/release`, `/quotes`, `/select`, and `/api/reports/sourcing`. Selected source validation is enforced when creating purchase orders, preserving requisitions and approved PO receipts as the supply system of record. RFQ/quote/PO writes authorize their actual requisition programs and recheck those contexts before mutation, including a proposed PO line. Scoped readers can review their authorized RFQs, quotes, requisitions, POs, frozen packages and purchase explanations; B/mixed sources and revoked access remain hidden or denied.
 
 ### V3.14 — Outside processing, packaging and shipping
 
@@ -926,7 +926,7 @@ API: `/api/inventory/outside-processing/dispatch` and `/return`; `/api/inventory
 
 Roles and business-action permissions are persisted policy data seeded from the exact existing code map, so the migration preserves all current role capabilities. Security administrators can create roles, grant/revoke catalogued permissions, attach a permission to facility, work-center, program, contract, customer or shift scopes, configure currency-aware approval limits, and maintain separation-of-duty rules. Role assignments can carry a bounded expiry (maximum one year); effective permissions and `/people` role lists stop including them automatically after expiry. SecurityAdministrator policy is protected from being scoped or edited, and self-role changes stay prohibited to prevent administrative lockout.
 
-API: `POST /api/kernel/roles`, `/roles/{role}/permissions`, `/roles/{role}/permissions/{permission}/revoke`, `/roles/{role}/permission-scopes`, `/roles/{role}/permission-scopes/revoke`, `/approval-thresholds/{permission}`, `/separation-policies/{policy}`, and role assignment accepts `expiresAt`. A configured amount limit applies when an authorized command provides both amount and currency in its resource reference; existing approval flows without pricing data are not yet wired to a monetary threshold.
+API: `POST /api/kernel/roles`, `/roles/{role}/permissions`, `/roles/{role}/permissions/{permission}/revoke`, `/roles/{role}/permission-scopes`, `/roles/{role}/permission-scopes/revoke`, `/approval-thresholds/{permission}`, `/separation-policies/{policy}`, and role assignment accepts `expiresAt`. Configured monetary limits require a known value in the matching currency. Projects supply recorded USD budgets; source selection supplies actual quote totals. Unpriced POs/RFQ releases remain unknown and fail closed under a configured threshold. Delegated actions must satisfy both source and recipient ceilings.
 
 ### V3.16 — Identity, step-up, shared terminals and signatures
 
@@ -934,7 +934,7 @@ Approval routes marked for step-up require a configured accepted `acr` claim and
 
 When `Forge:Authentication:Scim:Enabled=true`, `PATCH /api/scim/v2/Users/{subject}` accepts SCIM PatchOp `replace active=false` from a bearer-authenticated identity with the configured `forge.provisioning` scope. Deactivation updates the Forge person record and blocks both API and badge identification. Production must validate Nexus-issued JWTs against its configured issuer/audience and provisioner scope; the automated tests use Forge's development authentication and do not establish a live Nexus connection.
 
-Shop-floor signoff now records the signer's role, `Badge+PIN` assurance method, and the execution-record version. Shared kiosk state displays the selected operator, clears that identity on lock, and offers explicit lock and switch-user actions; the idle timeout remains 60 seconds. PIN verification tracks failed attempts durably and locks a badge for ten minutes after five failures. Failed verification and identity deactivation are durable security events.
+Shop-floor signoff records the signer's role, `Badge+PIN` assurance and execution-record version. Shared kiosk state displays the selected operator and clears identity/dialogs on lock or switch. Configure inactivity with `Forge:ShopFloor:IdleTimeoutSeconds` (environment variable `Forge__ShopFloor__IdleTimeoutSeconds`): whole seconds from 1 through 3600, default 60 when absent or invalid. PIN verification tracks failures durably and locks a badge for ten minutes after five failures. Failed verification and identity deactivation are durable security events.
 
 Forge can forward `AuthorizationDenied`, `BadgePinVerificationFailed` and `IdentityDeactivated` events to a configured HTTPS `Forge:Sentinel:SecurityEventsEndpoint`, using `Forge:Sentinel:SecurityEventsBearerToken` for authentication and an event-derived idempotency key. In Development, HTTP loopback endpoints are allowed for local tests. The Forge adapter is covered with a fake receiver; configure a compatible receiver before deployment. No live Nexus or Sentinel service was available during verification.
 
@@ -952,11 +952,11 @@ Notification rules subscribe to Forge's committed event log and can define trigg
 
 ### V3.20 — Approvals inbox and assignments
 
-My Work (`#/my-work`) and `GET /api/work-inbox` show pending second-person decisions from mapped quality, planning, procurement, projects, maintenance and engineering source records, subject to the current principal's permission. The requester never sees their own request as a decision item. The source page and API perform normal authorization again when opened. Supervisor and Security Administrator can assign supported NCR, inspection, work-order, RFQ, project-review and material-task records to an active Forge person with an audit reason. Assignees progress work through Assigned → Acknowledged → InProgress → Completed; every transition is reasoned and historized. Assignment completion does not approve or complete the source record. See ADR 0044.
+My Work (`#/my-work`) and `GET /api/work-inbox` show genuine pending second-person decisions from their owning records. The projection checks current source access, scoped decision authority, markings and actual approval values, and excludes the requester. Source pages and commands check again when opened. Authorized assignment managers can assign supported NCR, inspection, work-order, RFQ, project-review and material-task records to an active person with source access. Assignees progress through Assigned → Acknowledged → InProgress → Completed through audited, reasoned and idempotent commands. Access revocation hides the assignment; assigning it again preserves progress. Assignment completion does not approve or complete its source. See ADR 0044.
 
 ### V3.21 — Data-integrity exceptions
 
-Data Integrity (`#/integrity`) and `GET /api/integrity/exceptions` report four evidence-backed anomalies: negative inventory ledger balances, duplicate asset serials, material consumption without a prior matching issue, and tool use recorded after its calibration due date. Findings are filtered by the source-domain read permission and labelled as data or process exceptions; they do not infer misconduct or modify source data. The view recomputes from authoritative ledgers and histories, so source corrections continue through the normal domain APIs. See ADR 0045.
+Data Integrity (`#/integrity`) and `GET /api/integrity/exceptions` report evidence-backed anomalies: negative inventory balances, duplicate asset serials, an inventory serial in multiple locations, consumption without a matching prior issue, and tool use after recorded calibration expiry. Legitimate serial moves and divisible lots in multiple locations remain valid. Findings are access-filtered data or process exceptions and never infer misconduct or modify source data. Corrections continue through the owning domain APIs. See ADR 0045.
 
 ### V3.22 — What changed and CauseMap
 
@@ -964,7 +964,7 @@ The schedule comparison (`#/reports?view=changes`) now includes a CauseMap built
 
 ### V3.23 — Scenarios and recovery options
 
-Scenarios (`#/scenarios`) are saved privately under their owner's Forge identity. Machine outage, worker absence, order priority, eligible operation machine, overtime, expected-supply delay, operator and trainer changes run against copied current inputs. The preview compares released-order dates and status, material readiness and Skills MRP capacity. Its 15 recovery cards state feasibility, consequences and required permission. “Open workflow” moves to the source domain; the user commits through that domain's existing command and authorization checks. Preview never changes production state or the approved schedule. Expected-supply delay is a scenario-only input. See ADR 0047.
+Scenarios (`#/scenarios`) are private to their owner. Changes run against copied current inputs and compare released-order dates, status, material readiness and Skills MRP capacity. The 15 recovery cards show affected orders, current/proposed dates, blockers, evidence, missing inputs and authority. Alternate-machine feasibility is evaluated through the shared scheduler; unspecified options explicitly require inputs. “Open workflow” moves to the owning domain, where the user commits through its normal commands and checks. Preview never changes production or the approved schedule. Expected-supply delay remains a scenario input. See ADR 0047.
 
 ### V3.24 — Indirect and support work
 
@@ -972,7 +972,7 @@ Attendance remains a badge or supervisor-confirmed presence record; direct labor
 
 ### V3.25 — Horizon lenses and universal questions
 
-Horizon links to Factory, Program, Contract, Work center, Machine, Order and Workforce views, which continue to read through their owning services and permissions. “What changed?” provides −8h, −7d and +2w comparison windows; its past side is the approved schedule in force at the selected earlier instant. The global search can send a plain-language question to Forge Analyst, which shows its interpretation, evidence traces and any ambiguity. Unsupported or unclear questions remain explicit. See ADR 0049.
+Factory, Program, Contract, Work center, Machine, Order and Workforce Horizon lenses share one scoped archived schedule and agree on counts for the same filters/window. Windows cover −7d through +2w; a past projection is the approved version recorded at that instant. Contract attribution uses explicit order/CLIN commitment history. Missing historical facility or shift context fails closed. Global search sends questions to the existing Analyst, with interpretation, evidence and ambiguity shown. See ADR 0049.
 
 ### V3.26 — Analyst and reporting surfaces
 
@@ -981,3 +981,9 @@ Forge Analyst can locate custody and outside-processor material through stock po
 ### V3.27 — Reference factories and extensibility
 
 The PostgreSQL integration suite generates healthy, constrained and unusual-but-valid reference factories through normal API commands. Each has at least 200 order and inventory records, runs common Analyst questions against the shared services, and checks the data-integrity exception projection; the constrained case includes an injected production hold. The undescribed customer-fixture repair/use/return workflow is exercised with the existing tool identity, custody, service and use history. ADR 0051 records that legal ownership, structured loan terms, receipt directly into customer custody and customer acceptance are not represented, and that the factory generators are test fixtures rather than a production seed command. The supplied project copy does not include the original BN question catalog, so the tested question set is recorded as a proxy for reconciliation.
+
+### V3.28 — Hardening
+
+The V3.27 factory questions have a 10-second per-answer budget. A seeded integration drill backs up a disposable PostgreSQL database, restores a generated clone and reads saved records through Forge. `verify.cmd` additionally runs the full integration suite on individually restored migrated databases. API outages lock the shop-floor terminal and clear operator/dialog state; stale responses cannot act as the next operator, and commands are never queued offline. Targeted Node checks cover terminal handlers, keyboard/focus/accessibility and business-action UI authority. The NuGet direct/transitive scan reported no vulnerable packages. See ADR 0052 for the local restore, workload and accessibility limits.
+
+Final local verification (2026-10-12): clean Release build; Planning 278, Kernel 33, Architecture 32, restored PostgreSQL Integration 148, Node 34 — all PASS. See the completion checklist and AI handoff for verified commits, evidence and unavailable original-source/deployment limits.

@@ -283,7 +283,8 @@ internal static class StandardReports
                 [StatusFilter(Enum.GetNames<Forge.Kernel.Holds.HoldKind>()), SearchFilter],
                 [C("hold", "Hold", ReportColumnKind.Text), C("status", "Kind", ReportColumnKind.Text), C("target", "On", ReportColumnKind.Text), C("source", "Source", ReportColumnKind.Text),
                  C("reason", "Reason", ReportColumnKind.Text), C("blocks", "Stops", ReportColumnKind.Text), C("authority", "Release authority", ReportColumnKind.Text),
-                 C("resolution", "To release", ReportColumnKind.Text), C("placed", "Placed", ReportColumnKind.DateTime), C("active", "Active", ReportColumnKind.Text)],
+                 C("resolution", "To release", ReportColumnKind.Text), C("placed", "Placed", ReportColumnKind.DateTime), C("active", "Active", ReportColumnKind.Text),
+                 C("downstream", "Recorded downstream impact", ReportColumnKind.Text), C("assurance", "Release assurance", ReportColumnKind.Text), C("signature", "Release signature", ReportColumnKind.Text)],
                 ["status", "active", "source"], "status", 3660,
                 "Holds as they stand now; the period does not apply. Released holds stay in the register (filter Active = No)."),
             Permissions.HoldsRead, null, HoldsAsync),
@@ -943,8 +944,10 @@ internal static class StandardReports
             }
 
             rows.Add(new ReportRow(
-                [h.Reference, h.Kind.ToString(), h.Target, h.Source, h.Reason, string.Join(", ", h.Blocks), h.ReleaseAuthority, h.RequiredResolution, h.PlacedAt, h.Active ? "Yes" : "No"],
-                h.HoldId is { } id ? new List<string> { "hold:" + Id(id) } : h.AffectedRecords.ToList()));
+                [h.Reference, h.Kind.ToString(), h.Target, h.Source, h.Reason, string.Join(", ", h.Blocks), h.ReleaseAuthority, h.RequiredResolution, h.PlacedAt, h.Active ? "Yes" : "No",
+                 string.Join(", ", (h.DownstreamImpact ?? []).Select(i => i.RecordId)), h.RequireFreshAssurance ? "Fresh provider step-up required" : "Standard authenticated authority",
+                 h.ReleaseSignature is { } signature ? $"{signature.Subject}; version {signature.RecordVersion}; {signature.Meaning}" : h.RequireSignature ? "Explicit signature required" : "Not required by kind policy"],
+                (h.HoldId is { } id ? new List<string> { "hold:" + Id(id) } : h.AffectedRecords.ToList()).Concat((h.DownstreamImpact ?? []).Select(i => i.RecordId)).ToList()));
         }
 
         var active = rows.Count(r => (string)r.Cells[9]! == "Yes");
@@ -1010,7 +1013,9 @@ internal static class StandardReports
         var types = (await tools.ListToolTypesAsync(ct)).ToDictionary(t => t.Code, StringComparer.Ordinal);
         var events = (await tools.ListToolEventsAsync(null, ct)).GroupBy(e => e.ToolCode, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.OrderBy(e => e.At).ThenBy(e => e.EventId).ToList(), StringComparer.Ordinal);
         var rows = new List<ReportRow>();
-        foreach (var use in events.Values.SelectMany(e => e).Where(e => e.Kind == Forge.Resources.Contracts.ToolEventKind.Used && run.InPeriod(e.At)).OrderBy(e => e.At).ThenBy(e => e.EventId))
+        var visibleUses = await ToolUseVisibility.FilterAsync(run.Uow, run.Principal,
+            events.Values.SelectMany(history => history).Where(use => use.Kind == Forge.Resources.Contracts.ToolEventKind.Used && run.InPeriod(use.At)), run.Now, ct);
+        foreach (var use in visibleUses.OrderBy(e => e.At).ThenBy(e => e.EventId))
         {
             if (!registered.TryGetValue(use.ToolCode, out var tool) || !types.TryGetValue(tool.TypeCode, out var type)
                 || !run.Matches(use.ToolCode, use.Reference, type.Name))

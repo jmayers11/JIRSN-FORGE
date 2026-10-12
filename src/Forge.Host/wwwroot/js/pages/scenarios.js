@@ -1,7 +1,15 @@
 import { command, get } from '../api.js';
-import { $, esc, fmtDateTime, toast, confirmWithReason } from '../ui.js';
+import { $, $$, esc, fmtDateTime, toast, confirmWithReason } from '../ui.js';
 
 const KINDS = ['MachineUnavailable', 'PersonUnavailable', 'PriorityChange', 'OperationMachine', 'Overtime', 'SupplierDelay', 'AddOperator', 'AddTrainer'];
+
+const renderRecovery = o => {
+  const status = { Feasible: 'Projected feasible', Infeasible: 'Blocked', RequiresInputs: 'More inputs needed', NotAuthorized: 'Authority required' }[o.status] || o.status;
+  const lines = (title, values) => values?.length ? `<h5>${title}</h5><ul>${values.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+  const candidates = o.machineAlternatives?.length ? `<h5>Evaluated machines</h5><div class="table-wrap"><table class="table"><thead><tr><th>Order / operation</th><th>Machine</th><th>Completion</th><th>Evidence</th></tr></thead><tbody>${o.machineAlternatives.map(a => `<tr><td>#${a.orderNumber} / ${a.sequence}</td><td>${esc(a.machineCode)}</td><td>${a.feasible ? esc(fmtDateTime(a.projectedCompletion)) : 'Blocked'}</td><td>${[...a.constraints, ...a.evidence].map(esc).join('<br>')}</td></tr>`).join('')}</tbody></table></div>` : '';
+  const projections = o.projections?.length ? `<h5>Affected commitments</h5><div class="table-wrap"><table class="table"><thead><tr><th>Order</th><th>Current projection</th><th>Scenario projection</th></tr></thead><tbody>${o.projections.map(p => `<tr><td><a href="#/orders/${p.orderNumber}">#${p.orderNumber}</a></td><td>${esc(fmtDateTime(p.baselineCompletion))}<br>${esc(p.baselineStatus)}</td><td>${esc(fmtDateTime(p.proposedCompletion))}<br>${esc(p.proposedStatus)}</td></tr>`).join('')}</tbody></table></div>` : '';
+  return `<article class="card"><div class="card-head"><h4>${esc(o.title)}</h4><span class="pill ${o.feasible ? 'ok' : 'warn'}">${esc(status)}</span><span class="spacer"></span>${o.applyPath && o.status !== 'NotAuthorized' ? `<a class="btn" href="${esc(o.applyPath)}">Open workflow</a>` : ''}</div><p>${esc(o.feasibility)}</p><p class="muted small">Required permission: <code>${esc(o.requiredPermission)}</code></p>${lines('Consequences', o.consequences)}${lines('Required inputs', o.requiredInputs)}${lines('Current blockers', o.constraints)}${projections}${candidates}<details><summary>Source evidence</summary>${lines('Evidence', o.evidence)}</details></article>`;
+};
 
 export async function scenariosPage(root) {
   let scenarios = [];
@@ -33,7 +41,7 @@ export async function scenariosPage(root) {
     <h3>Schedule impact</h3>${r.orders.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Order</th><th>Part</th><th>Change</th><th>Baseline</th><th>Scenario</th><th>Hours</th><th>Evidence</th></tr></thead><tbody>${r.orders.map(o => `<tr><td><a href="#/orders/${o.orderNumber}">#${o.orderNumber}</a></td><td>${esc(o.partNumber)}</td><td>${esc(o.change)}</td><td>${esc(fmtDateTime(o.baselineCompletion))}<br>${esc(o.baselineStatus)}</td><td>${esc(fmtDateTime(o.proposedCompletion))}<br>${esc(o.proposedStatus)}</td><td>${o.shiftHours == null ? '—' : esc(String(o.shiftHours))}</td><td>${o.evidence.map(esc).join('<br>')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No released order projection changed in this comparison.</div>'}
     <h3>Skills MRP</h3>${r.skillsCapacity.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Day</th><th>Qualification</th><th>Baseline hours</th><th>Scenario hours</th></tr></thead><tbody>${r.skillsCapacity.map(x => `<tr><td>${esc(x.day)}</td><td>${esc(x.qualification)}</td><td>${esc(String(x.baselineHours))}</td><td>${esc(String(x.proposedHours))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No qualification-hour difference was projected.</p>'}
     <h3>Recovery options (${r.recoveryOptions.length})</h3><p class="muted">Each option states its current feasibility and consequences. “Open workflow” takes you to the owning domain, which applies its own permissions and command checks.</p>
-    <div class="stack">${r.recoveryOptions.map(o => `<article class="card"><div class="card-head"><h4>${esc(o.title)}</h4><span class="pill ${o.feasible ? 'ok' : 'warn'}">${o.feasible ? 'Feasible to review' : 'Not currently feasible'}</span><span class="spacer"></span>${o.feasible && o.applyPath ? `<a class="btn" href="${esc(o.applyPath)}">Open workflow</a>` : ''}</div><p>${esc(o.feasibility)}</p><p class="muted small">Required permission: <code>${esc(o.requiredPermission)}</code></p><ul>${o.consequences.map(c => `<li>${esc(c)}</li>`).join('')}</ul></article>`).join('')}</div></section>`;
+    <div class="stack">${r.recoveryOptions.map(renderRecovery).join('')}</div></section>`;
 
   async function saveScenario(event) {
     event.preventDefault();

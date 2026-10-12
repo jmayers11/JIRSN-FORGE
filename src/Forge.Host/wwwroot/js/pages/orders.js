@@ -1,6 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { icon } from '../icons.js';
 import { who } from '../people.js';
+import { canAction, formModal } from '../forms.js';
 import { appendAttachments, appendApplicability } from '../attachments.js';
 import { appendOrderGenealogy, appendOrderReconciliation } from '../genealogy.js';
 import { appendOrderMaterialFlow } from '../materialflow.js';
@@ -10,14 +11,14 @@ import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, co
 
 const STATUS_TONE = { Planned: 'none', FirmPlanned: 'info', Released: 'ok', Held: 'warn', Cancelled: 'bad', Completed: 'ok' };
 const DELIVERY_TONE = { OnTime: 'ok', AtRisk: 'warn', Late: 'bad', Unschedulable: 'bad' };
-const can = (me, ...roles) => roles.some(r => me.roles.includes(r));
+
 
 export async function ordersPage(page, ctx) {
   if (ctx.params[0]) return orderDetail(page, ctx, Number(ctx.params[0]));
   const part = ctx.query.get('part') ?? '';
   const [orders, schedule] = await Promise.all([tryGet('/api/orders/'), tryGet('/api/planning/schedules/approved')]);
   const delivery = new Map((schedule.data?.result?.orders ?? []).map(o => [o.orderNumber, o]));
-  const canCreate = can(ctx.me, 'ManufacturingEngineer', 'Planner');
+  const canCreate = canAction(ctx.me, 'execution.orders.manage');
   const list = (orders.data ?? []).filter(o => !part || o.partNumber === part);
 
   page.innerHTML = `
@@ -75,11 +76,11 @@ async function orderDetail(page, ctx, number) {
   const o = order.data;
   const me = ctx.me;
   const actions = [];
-  if (can(me, 'ManufacturingEngineer', 'Planner') && o.status === 'Planned') actions.push(['firm', 'Firm']);
-  if (can(me, 'Planner') && ['Planned', 'FirmPlanned'].includes(o.status)) actions.push(['release', 'Release']);
-  if (can(me, 'Planner', 'ManufacturingEngineer') && o.status === 'Released') actions.push(['hold', 'Hold']);
-  if (can(me, 'Planner', 'ManufacturingEngineer') && o.status === 'Held') actions.push(['resume', 'Resume']);
-  if (can(me, 'Planner', 'ManufacturingEngineer') && !['Cancelled', 'Completed'].includes(o.status)) actions.push(['cancel', 'Cancel order']);
+  if (canAction(me, 'execution.orders.manage') && o.status === 'Planned') actions.push(['firm', 'Firm']);
+  if (canAction(me, 'execution.orders.release') && ['Planned', 'FirmPlanned'].includes(o.status)) actions.push(['release', 'Release']);
+  if (canAction(me, 'execution.orders.manage') && o.status === 'Released') actions.push(['hold', 'Hold']);
+  if (canAction(me, 'execution.orders.manage') && o.status === 'Held') actions.push(['resume', 'Resume']);
+  if (canAction(me, 'execution.orders.manage') && !['Cancelled', 'Completed'].includes(o.status)) actions.push(['cancel', 'Cancel order']);
 
   const r = readiness.data?.output;
   const dd = dropDead.data?.output;
@@ -90,7 +91,7 @@ async function orderDetail(page, ctx, number) {
       <div class="spacer"></div>
       <span class="pill ${STATUS_TONE[o.status]}" style="font-size:13px">${esc(o.status)}</span>
       <div class="head-controls">${actions.map(([k, label]) => `<button class="btn ${k === 'release' ? 'primary' : k === 'cancel' ? 'danger' : ''}" data-act="${k}">${esc(label)}</button>`).join('')}
-        ${can(me, 'Planner', 'ManufacturingEngineer') && !['Cancelled', 'Completed'].includes(o.status) ? '<button class="btn outline" id="change-priority">Change priority</button>' : ''}</div>
+        ${canAction(me, 'execution.orders.manage') && !['Cancelled', 'Completed'].includes(o.status) ? '<button class="btn outline" id="change-priority">Change priority</button>' : ''}</div>
     </div>
     <div class="notice">Created by ${esc(who(o.createdBy))}${o.releasedBy ? ` · released by ${esc(who(o.releasedBy))} at ${esc(fmtDateTime(o.releasedAt))}` : ''}. The person who sets up an order cannot release it.</div>
     <section class="grid-2">
@@ -166,11 +167,12 @@ async function orderDetail(page, ctx, number) {
     page.append(section);
   }
 
+  if (o.programId) await appendOrderCommitment(page, o, ctx);
   await appendOrderGenealogy(page, o.orderNumber);
   if (o.status !== 'Planned' && o.status !== 'FirmPlanned') await appendOrderQuantityStates(page, o, me);
   if (o.status !== 'Planned' && o.status !== 'FirmPlanned') await appendHolds(page, me, o);
-  await appendOrderMaterialFlow(page, o.orderNumber, can(me, 'MaterialHandler'));
-  await appendOrderReconciliation(page, o.orderNumber, can(me, 'MaterialHandler'));
+  await appendOrderMaterialFlow(page, o.orderNumber, canAction(me, 'inventory.transact'));
+  await appendOrderReconciliation(page, o.orderNumber, canAction(me, 'inventory.transact'));
   await appendApplicability(page, o.orderNumber, me);
   appendAttachments(page, { type: 'ProductionOrder', id: o.orderNumber, me, title: 'Documentation',
     note: 'Documents this order must also follow, and files kept with it (customer PO, certificates, photos). Attaching never changes which revision of the item applies.' });
@@ -182,6 +184,32 @@ async function orderDetail(page, ctx, number) {
     if (done) { toast(`Order #${number}: ${b.textContent.toLowerCase()} recorded.`); await orderDetail(page, ctx, number); }
   }));
   $('#change-priority', page)?.addEventListener('click', () => changePriority(number, o, page, ctx));
+}
+
+async function appendOrderCommitment(page, order, ctx) {
+  const result = await tryGet(`/api/programs/${order.programId}/contracts`);
+  const eligible = (result.data ?? []).filter(contract => contract.status === 'Active')
+    .flatMap(contract => contract.clins.filter(line => line.partNumber === order.partNumber)
+      .map(line => [JSON.stringify({ contractId: contract.contractId, clin: line.clin }), `${contract.number} · CLIN ${line.clin} · ${line.description}`]));
+  const selected = order.contractId == null ? '' : JSON.stringify({ contractId: order.contractId, clin: order.contractClin });
+  const current = (result.data ?? []).find(contract => contract.contractId === order.contractId);
+  const allowed = canAction(ctx.me, 'execution.orders.manage', order) && !['Cancelled', 'Completed'].includes(order.status);
+  const section = document.createElement('section');
+  section.className = 'panel';
+  section.innerHTML = `<header><h2>Contract commitment</h2><span class="spacer"></span>${allowed ? '<button class="btn small" data-commitment>Set commitment</button>' : ''}</header>
+    <p>${order.contractId == null ? 'This order has no recorded contract commitment.' : `${esc(current?.number ?? `Contract ${order.contractId}`)} · CLIN ${esc(order.contractClin)}`}</p>
+    <div class="faint">A production order belongs to a contract line only when an authorized person records that link. Changes keep their history so a past Horizon view uses the commitment recorded then.</div>`;
+  page.append(section);
+  $('[data-commitment]', section)?.addEventListener('click', () => formModal({
+    title: `Set contract commitment for order #${order.orderNumber}`, detail: 'Select the existing contract line for this part and program. Clearing the current link keeps its history.', confirmLabel: 'Record commitment', reasonRequired: true,
+    fields: result.error ? [
+      { name: 'contractId', label: 'Existing contract ID (blank to clear)', type: 'number', min: 1 },
+      { name: 'clin', label: 'Existing contract line' },
+    ] : [{ name: 'commitment', label: 'Contract line', type: 'select', blank: 'No contract commitment', value: selected, options: eligible }],
+  }, (values, reason) => {
+    const commitment = result.error ? { contractId: values.contractId, clin: values.clin } : values.commitment ? JSON.parse(values.commitment) : { contractId: null, clin: null };
+    return command(`/api/orders/${order.orderNumber}/contract-commitment`, commitment, reason);
+  }, () => orderDetail(page, ctx, order.orderNumber)));
 }
 
 async function changePriority(number, order, page, ctx) {

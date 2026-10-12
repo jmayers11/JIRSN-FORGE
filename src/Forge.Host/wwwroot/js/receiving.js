@@ -1,6 +1,6 @@
 import { tryGet, command } from './api.js';
 import { esc, $$, fmtDateTime, errorBlock, emptyBlock } from './ui.js';
-import { formModal, qty, can } from './forms.js';
+import { formModal, qty, canAction } from './forms.js';
 import { attachmentsDrawer } from './attachments.js';
 
 // Receiving inspection, supplier dispositions, returns to vendor and customer returns (V3.11).
@@ -22,10 +22,10 @@ export function receivingCount(rec) {
 }
 
 export function receivingTab(rec, me) {
-  const inspect = can(me, 'Inspector', 'QualityEngineer');
-  const disposition = can(me, 'QualityEngineer');
-  const approve = can(me, 'QualityManager');
-  const move = can(me, 'MaterialHandler');
+  const inspect = canAction(me, 'quality.inspect');
+  const disposition = canAction(me, 'quality.disposition');
+  const approve = canAction(me, 'quality.approve');
+  const move = canAction(me, 'inventory.transact');
   const open = (rec.receipts.data ?? []).filter(r => r.remaining > 0 || r.inspections.length === 0);
   const pendingReturns = (rec.returns.data ?? []).filter(r => !r.disposition);
   return `

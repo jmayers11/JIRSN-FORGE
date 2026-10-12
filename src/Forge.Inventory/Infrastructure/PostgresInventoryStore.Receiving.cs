@@ -44,7 +44,7 @@ internal sealed partial class PostgresInventoryStore : IReceivingLookup, IReceiv
         ReadAsync(InspectionSql + " WHERE $1::bigint IS NULL OR receipt_transaction_id = $1 ORDER BY inspection_id", ReadInspection, ct, Long(receiptTransactionId));
 
     public Task<IReadOnlyList<InventoryTransaction>> ListInspectionReceiptsAsync(int take, CancellationToken ct) =>
-        ReadAsync(TransactionSql + " WHERE kind = 'Receipt' AND to_status = 'Inspection' ORDER BY transaction_id DESC LIMIT $1", ReadTransaction, ct, Math.Clamp(take, 1, 1000));
+        ReadAsync(TransactionSql + " WHERE (kind = 'Receipt' OR transaction_id IN (SELECT transaction_id FROM inventory.outside_process_return)) AND to_status = 'Inspection' ORDER BY transaction_id DESC LIMIT $1", ReadTransaction, ct, Math.Clamp(take, 1, 1000));
 
     public Task<IReadOnlyList<SupplierRejection>> ListRejectionsAsync(bool openOnly, CancellationToken ct) =>
         ReadAsync(RejectionSql + " WHERE NOT $1 OR disposition = 'Pending' OR (disposition = 'UseAsIs' AND approved_by IS NULL) ORDER BY rejection_id", ReadRejection, ct, openOnly);

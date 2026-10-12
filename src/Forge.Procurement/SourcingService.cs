@@ -24,18 +24,26 @@ public sealed record SourcingChanged(long RfqId, string Change, long? QuoteId) :
 }
 
 /// <summary>RFQ and immutable supplier responses extend requisitions, technical applicability, evidence and the shared command pipeline.</summary>
-public sealed class SourcingService(CommandPipeline pipeline, ISourcingPackageResolver packages)
+public sealed class SourcingService(CommandPipeline pipeline, ISourcingPackageResolver packages, IKernelUnitOfWorkFactory unitOfWork)
 {
     private const string Source = "Procurement";
 
-    public Task<CommandResult> CreateAsync(CreateRfq c, CommandContext context, CancellationToken ct)
+    public async Task<CommandResult> CreateAsync(CreateRfq c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        var spec = new CommandSpec(Source, nameof(CreateRfq), Permissions.PurchasingManage, ResourceRef.Of("Requisition", c.RequisitionId));
-        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        ResourceRef resource;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            var need = await read.Store<IRequisitionLookup>().FindRequisitionAsync(c.RequisitionId, ct);
+            resource = need is null ? ResourceRef.Of("Requisition", c.RequisitionId) : ResourceForRequisition(need);
+        }
+        var spec = new CommandSpec(Source, nameof(CreateRfq), Permissions.PurchasingManage, resource);
+        return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             await uow.Store<ISourcingStore>().LockRfqAsync(-c.RequisitionId, ct);
             var need = await NeedAsync(uow, c.RequisitionId, context, ct);
+            if (ResourceForRequisition(need) != resource)
+                throw new CommandRejectedException("sourcing_context_changed", "The sourcing need's program changed. Review its current source before retrying.");
             var title = (c.Title ?? string.Empty).Trim();
             if (title.Length is < 1 or > 200) throw new CommandRejectedException("title_required", "Give the RFQ a title of at most 200 characters.");
             var suppliers = (c.SupplierCodes ?? []).Select(s => BusinessCode.Require(s, "Supplier")).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
@@ -75,13 +83,21 @@ public sealed class SourcingService(CommandPipeline pipeline, ISourcingPackageRe
         }, ct);
     }
 
-    public Task<CommandResult> RecordQuoteAsync(RecordSupplierQuote c, CommandContext context, CancellationToken ct)
+    public async Task<CommandResult> RecordQuoteAsync(RecordSupplierQuote c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        var spec = new CommandSpec(Source, nameof(RecordSupplierQuote), Permissions.PurchasingManage, ResourceRef.Of("Rfq", c.RfqId));
-        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        ResourceRef resource;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            var rfq = await read.Store<ISourcingLookup>().FindRfqAsync(c.RfqId, ct);
+            resource = rfq is null ? ResourceRef.Of("Rfq", c.RfqId) : await ResourceForQuoteRecordAsync(read, rfq, c.OriginalDocumentNumber, ct);
+        }
+        var spec = new CommandSpec(Source, nameof(RecordSupplierQuote), Permissions.PurchasingManage, resource);
+        return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var (rfq, need) = await RfqAsync(uow, c.RfqId, context, ct);
+            if (await ResourceForQuoteRecordAsync(uow, rfq, c.OriginalDocumentNumber, ct) != resource)
+                throw new CommandRejectedException("sourcing_context_changed", "The sourcing need or original response's authority context changed. Review it before retrying.");
             if (rfq.Status != RfqStatus.Released) throw new CommandRejectedException("rfq_not_released", "Supplier responses are recorded against a released RFQ.");
             var supplier = await SupplierService.RequireOrderableAsync(uow, c.SupplierCode, ct);
             if (!rfq.SupplierCodes.Contains(supplier.Code, StringComparer.Ordinal)) throw new CommandRejectedException("supplier_not_invited", "This supplier was not sent the RFQ.");
@@ -142,17 +158,47 @@ public sealed class SourcingService(CommandPipeline pipeline, ISourcingPackageRe
                 : Task.FromResult(rfq with { Status = RfqStatus.Cancelled }), ct);
     }
 
-    private Task<CommandResult> ChangeAsync<T>(string commandType, long id, T command, CommandContext context, string permission,
+    private async Task<CommandResult> ChangeAsync<T>(string commandType, long id, T command, CommandContext context, string permission,
         Func<IKernelUnitOfWork, RfqInfo, RequisitionInfo, DateTimeOffset, Task<RfqInfo>> change, CancellationToken ct)
     {
-        var spec = new CommandSpec(Source, commandType, permission, ResourceRef.Of("Rfq", id), ReasonRequired: true);
-        return pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
+        var quoteId = command is SelectSupplierQuote selection ? selection.QuoteId : (long?)null;
+        ResourceRef resource;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            var rfq = await read.Store<ISourcingLookup>().FindRfqAsync(id, ct);
+            var quote = quoteId is { } selected ? (await read.Store<ISourcingLookup>().ListQuotesAsync(id, ct)).FirstOrDefault(item => item.QuoteId == selected) : null;
+            resource = rfq is null ? ResourceRef.Of("Rfq", id) : await ResourceForRfqAsync(read, rfq, quote, ct);
+        }
+        var spec = new CommandSpec(Source, commandType, permission, resource, ReasonRequired: true);
+        return await pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
         {
             var (rfq, need) = await RfqAsync(uow, id, context, ct);
+            var quote = quoteId is { } selected ? (await uow.Store<ISourcingLookup>().ListQuotesAsync(id, ct)).FirstOrDefault(item => item.QuoteId == selected) : null;
+            if (await ResourceForRfqAsync(uow, rfq, quote, ct) != resource)
+                throw new CommandRejectedException("sourcing_context_changed", "The sourcing authority context changed. Review the current need and original response before retrying.");
             var changed = await change(uow, rfq, need, now);
             await uow.Store<ISourcingStore>().UpdateRfqAsync(changed, ct);
-            return Outcome(changed, rfq, need, context, changed.Status.ToString(), $"RFQ {id}: {changed.Status}; production state is unchanged.");
+            return Outcome(changed, rfq, need, context, changed.Status.ToString(), $"RFQ {id}: {changed.Status}; production state is unchanged.", resource.Markings);
         }, ct);
+    }
+
+    /// <summary>RFQ authority uses its actual need; source selection also uses the original response and quoted money.</summary>
+    public static async Task<ResourceRef> ResourceForRfqAsync(IKernelUnitOfWork uow, RfqInfo rfq, SupplierQuote? quote, CancellationToken ct)
+    {
+        var need = await uow.Store<IRequisitionLookup>().FindRequisitionAsync(rfq.RequisitionId, ct);
+        var original = quote is null ? null : await uow.Store<IDocumentLookup>().FindDocumentAsync(quote.OriginalDocumentNumber, ct);
+        return new ResourceRef("Rfq", Key(rfq.RfqId), need?.ProgramId is { } program ? new ProgramId(program) : null,
+            original?.Markings ?? DataMarking.None, Amount: quote is null ? null : quote.Quantity * quote.UnitPrice, Currency: quote?.Currency);
+    }
+
+    public static ResourceRef ResourceForRequisition(RequisitionInfo need) => new("Requisition", Key(need.RequisitionId), Program(need));
+
+    private static async Task<ResourceRef> ResourceForQuoteRecordAsync(IKernelUnitOfWork uow, RfqInfo rfq, string? originalNumber, CancellationToken ct)
+    {
+        var resource = await ResourceForRfqAsync(uow, rfq, null, ct);
+        var original = string.IsNullOrWhiteSpace(originalNumber) ? null
+            : await uow.Store<IDocumentLookup>().FindDocumentAsync(originalNumber.Trim().ToUpperInvariant(), ct);
+        return resource with { Markings = original?.Markings ?? DataMarking.None };
     }
 
     private static async Task<(RfqInfo Rfq, RequisitionInfo Need)> RfqAsync(IKernelUnitOfWork uow, long id, CommandContext context, CancellationToken ct)
@@ -170,9 +216,9 @@ public sealed class SourcingService(CommandPipeline pipeline, ISourcingPackageRe
         return need;
     }
 
-    private CommandOutcome Outcome(RfqInfo rfq, RfqInfo? before, RequisitionInfo need, CommandContext context, string change, string message) =>
+    private CommandOutcome Outcome(RfqInfo rfq, RfqInfo? before, RequisitionInfo need, CommandContext context, string change, string message, DataMarking markings = DataMarking.None) =>
         new(CommandResult.Ok(Key(rfq.RfqId), message),
-            [pipeline.Event(new SourcingChanged(rfq.RfqId, change, rfq.SelectedQuoteId), context, Source, "Rfq", Key(rfq.RfqId), Program(need))],
+            [pipeline.Event(new SourcingChanged(rfq.RfqId, change, rfq.SelectedQuoteId), context, Source, "Rfq", Key(rfq.RfqId), Program(need), markings)],
             new AuditChange("Rfq", Key(rfq.RfqId), before is null ? null : CanonicalJson.Serialize(before), CanonicalJson.Serialize(rfq), Program(need)));
 
     private static ProgramId? Program(RequisitionInfo need) => need.ProgramId is { } p ? new ProgramId(p) : null;

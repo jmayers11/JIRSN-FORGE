@@ -1,13 +1,94 @@
 import { tryGet } from '../api.js';
-import { esc, $$, fmtDateTime, timeZone, errorBlock, emptyBlock } from '../ui.js';
+import { esc, $, $$, fmtDateTime, timeZone, errorBlock, emptyBlock } from '../ui.js';
 import { futureEventsHtml } from '../history.js';
+import { WINDOWS } from '../model.js';
 
 const H = 36e5;
 const TONE = { OnTime: '#22C55E', AtRisk: '#F97316', Late: '#EF4444', Unschedulable: '#EF4444' };
 
 export async function timelinePage(page, ctx) {
+  if (ctx.query.get('source') === 'proposed') return proposalTimelinePage(page, ctx);
+  const lenses = ['Factory', 'Program', 'Contract', 'WorkCenter', 'Machine', 'Order', 'Workforce'];
+  const names = { WorkCenter: 'Work center' };
+  const fields = { Program: 'programId', Contract: 'contractId', WorkCenter: 'workCenter', Machine: 'machine', Order: 'orderNumber', Workforce: 'personId' };
+  const choices = { Program: 'programs', Contract: 'contracts', WorkCenter: 'workCenters', Machine: 'machines', Order: 'orders', Workforce: 'people' };
+  const state = { lens: ctx.query.get('lens') ?? 'Factory', window: ctx.query.get('t') ?? '+2w', anchor: ctx.query.get('anchor') ?? '', onlyCommitted: ctx.query.get('onlyCommitted') === 'true' };
+  const scope = Object.fromEntries(Object.values(fields).map(key => [key, ctx.query.get(key) ?? '']));
+  let data = null;
+  let generation = 0;
+  if (!lenses.includes(state.lens)) state.lens = 'Factory';
+  if (!WINDOWS[state.window]) state.window = '+2w';
+  if (state.lens === 'Contract') state.onlyCommitted = true;
+
+  async function load() {
+    const current = ++generation;
+    const anchor = state.anchor ? new Date(state.anchor).getTime() : Date.now();
+    if (!Number.isFinite(anchor)) { page.innerHTML = emptyBlock('Choose a valid date and time', 'The window anchor sets the past, current or future projection window.'); return; }
+    const window = WINDOWS[state.window];
+    const from = window.from(anchor), to = window.to(anchor);
+    const at = state.window.startsWith('-') ? from : anchor;
+    const query = new URLSearchParams({ lens: state.lens, at: new Date(at).toISOString(), from: new Date(from).toISOString(), to: new Date(to).toISOString(), onlyCommitted: String(state.onlyCommitted) });
+    for (const [key, value] of Object.entries(scope)) if (value) query.set(key, value);
+    const result = await tryGet(`/api/horizon/lenses?${query}`);
+    if (current !== generation) return;
+    data = result.data;
+    render(result.error);
+  }
+
+  function render(error) {
+    const field = fields[state.lens];
+    const options = data?.choices[choices[state.lens]] ?? [];
+    page.innerHTML = `<div class="page-head"><div><h1>Horizon</h1><div class="sub">The recorded approved plan at one instant, across the same manufacturing scope.</div></div><span class="spacer"></span><a class="btn small" href="#/horizon?source=proposed">Current proposal</a><a class="btn small" href="#/reports?view=changes">What changed?</a></div>
+      <nav class="toolbar horizon-lenses" aria-label="Horizon lenses">${lenses.map(lens => `<button class="btn small ${lens === state.lens ? 'primary' : ''}" data-lens="${lens}">${names[lens] ?? lens}</button>`).join('')}</nav>
+      <section class="panel"><div class="toolbar"><div class="seg" role="group" aria-label="Time window">${Object.entries(WINDOWS).map(([key, window]) => `<button data-window="${key}" class="${key === state.window ? 'on' : ''}">${esc(window.label)}</button>`).join('')}</div>
+        <label for="horizon-anchor">Window anchor</label><input class="input" id="horizon-anchor" type="datetime-local" value="${esc(state.anchor)}">
+        ${field ? `<label for="horizon-scope">${names[state.lens] ?? state.lens}</label><select class="select" id="horizon-scope"><option value="">All visible</option>${options.map(option => `<option value="${esc(option.key)}" ${scope[field] === option.key ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select>` : ''}
+        <label class="check"><input id="horizon-committed" type="checkbox" ${state.onlyCommitted ? 'checked' : ''}> Recorded contract commitments only</label><button class="btn small" id="clear-horizon-scope">Clear scope</button></div>
+        <div class="faint">${Object.entries(scope).filter(([, value]) => value).map(([key, value]) => `${esc(key)}: ${esc(value)}`).join(' · ') || 'All visible manufacturing records'}${state.onlyCommitted ? ' · only explicitly committed orders' : ''}</div></section>
+      ${error ? errorBlock(error, 'this Horizon snapshot') : data ? snapshotHtml(data) : ''}`;
+    $$('[data-lens]', page).forEach(button => button.onclick = () => { state.lens = button.dataset.lens; if (state.lens === 'Contract') state.onlyCommitted = true; load(); });
+    $$('[data-window]', page).forEach(button => button.onclick = () => { state.window = button.dataset.window; load(); });
+    $('#horizon-anchor', page).onchange = event => { state.anchor = event.target.value; load(); };
+    $('#horizon-scope', page)?.addEventListener('change', event => { scope[field] = event.target.value; load(); });
+    $('#horizon-committed', page).onchange = event => { state.onlyCommitted = event.target.checked; load(); };
+    $('#clear-horizon-scope', page).onclick = () => { for (const key of Object.keys(scope)) scope[key] = ''; state.onlyCommitted = state.lens === 'Contract'; load(); };
+  }
+
+  function snapshotHtml(snapshot) {
+    const counts = snapshot.counts;
+    const tile = (label, count) => `<div class="kpi"><div><div class="t">${label}</div><div class="v">${count}</div></div></div>`;
+    return `<section class="kpis">${tile('Distinct orders', counts.orders)}${tile('Operations', counts.operations)}${tile('Scheduled', counts.scheduled)}${tile('Not scheduled', counts.unscheduled)}${tile('Late', counts.late)}${tile('At risk', counts.atRisk)}</section>
+      <section class="panel"><header><h2>${names[state.lens] ?? state.lens} lens</h2><span class="spacer"></span><span class="muted">Projection as of ${esc(fmtDateTime(snapshot.at))}</span></header>
+        <p class="muted">${esc(snapshot.source)}</p><div class="faint">Window ${esc(fmtDateTime(snapshot.from))} – ${esc(fmtDateTime(snapshot.to))}. ${snapshot.excludedUnlinkedOperations ? `${snapshot.excludedUnlinkedOperations} operation(s) excluded because no contract commitment was recorded at this instant.` : ''}</div>
+        ${snapshot.groups.length ? `<table class="table"><thead><tr><th>Scope</th><th>Distinct orders</th><th>Operations</th><th>Scheduled</th><th>Not scheduled</th><th>Late</th><th>At risk</th></tr></thead><tbody>${snapshot.groups.map(group => `<tr><td>${esc(group.label)}</td><td>${group.counts.orders}</td><td>${group.counts.operations}</td><td>${group.counts.scheduled}</td><td>${group.counts.unscheduled}</td><td>${group.counts.late}</td><td>${group.counts.atRisk}</td></tr>`).join('')}</tbody></table>` : emptyBlock('No recorded work in this scope', 'Choose another window or scope. A missing past projection stays unknown.')}
+      </section>${ganttHtml(snapshot)}<section class="panel"><header><h2>Recorded operations</h2><span class="spacer"></span><span class="muted">Schedule #${esc(snapshot.scheduleVersion ?? 'unknown')}</span></header>
+        ${snapshot.operations.length ? `<table class="table"><thead><tr><th>Order/op</th><th>Work center</th><th>Machine</th><th>Start</th><th>Finish</th><th>Recorded constraint</th><th>Crew in this plan</th></tr></thead><tbody>${snapshot.operations.map(operation => `<tr><td><a href="#/orders/${operation.orderNumber}">#${operation.orderNumber}/${operation.sequence}</a></td><td>${esc(operation.workCenterCode)}</td><td>${esc(operation.machineCode ?? 'No machine')}</td><td>${esc(fmtDateTime(operation.start))}</td><td>${esc(fmtDateTime(operation.end))}</td><td>${esc(operation.bindingConstraint)}<div class="faint">${esc(operation.bindingDetail)}</div></td><td>${esc(operation.operators.join(', ') || 'Not assigned')}</td></tr>`).join('')}</tbody></table>` : ''}
+      </section>`;
+  }
+
+  function ganttHtml(snapshot) {
+    const operations = snapshot.operations.filter(operation => operation.scheduled);
+    if (!operations.length) return '';
+    const from = Date.parse(snapshot.from), to = Date.parse(snapshot.to);
+    const width = 1100, left = 165, rowHeight = 31, top = 32, height = top + operations.length * rowHeight + 10;
+    const x = instant => left + (instant - from) / (to - from) * (width - left - 8);
+    const status = new Map(snapshot.orders.map(order => [order.orderNumber, order.status]));
+    const rows = operations.map((operation, index) => `<rect x="0" y="${top + index * rowHeight}" width="${width}" height="${rowHeight}" fill="${index % 2 ? '#161B21' : '#1A2027'}"/><text x="8" y="${top + index * rowHeight + 20}">#${operation.orderNumber}/${operation.sequence} · ${esc(operation.machineCode ?? operation.workCenterCode)}</text>`).join('');
+    const bars = operations.flatMap((operation, index) => operation.segments.map(segment => {
+      const a = Math.max(from, Date.parse(segment.start)), b = Math.min(to, Date.parse(segment.end));
+      if (b <= a) return '';
+      return `<rect x="${x(a)}" y="${top + index * rowHeight + 7}" width="${Math.max(2, x(b) - x(a))}" height="17" rx="2" fill="${TONE[status.get(operation.orderNumber)] ?? '#6B7280'}"><title>${esc(`#${operation.orderNumber}/${operation.sequence} · ${fmtDateTime(segment.start)} – ${fmtDateTime(segment.end)} · ${operation.bindingDetail}`)}</title></rect>`;
+    })).join('');
+    const ticks = Array.from({ length: 6 }, (_, index) => from + (to - from) * index / 5).map(instant => `<line x1="${x(instant)}" x2="${x(instant)}" y1="${top}" y2="${height}" stroke="#2A3038"/><text x="${x(instant) + 3}" y="18">${esc(new Date(instant).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: timeZone() }))}</text>`).join('');
+    return `<section class="panel"><header><h2>Recorded timeline</h2><span class="muted">Approved schedule #${esc(snapshot.scheduleVersion)}</span></header><div class="gantt"><svg viewBox="0 0 ${width} ${height}" width="${width}" role="img" aria-label="Recorded schedule timeline">${rows}${ticks}${bars}</svg></div></section>`;
+  }
+  await load();
+  return { dispose: () => { generation++; } };
+}
+
+async function proposalTimelinePage(page, ctx) {
   let span = Number(ctx.query.get('days') ?? 3);
-  let which = 'approved';
+  let which = 'proposed';
   let farAhead = false;
   const now = Date.now();
   const iso = ms => new Date(ms).toISOString();

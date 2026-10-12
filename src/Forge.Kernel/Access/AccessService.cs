@@ -85,7 +85,7 @@ public sealed class AccessService(CommandPipeline pipeline, IKernelUnitOfWorkFac
 
             if (command.ExpiresAt is { } expiresAt && (expiresAt <= now || expiresAt > now.AddYears(1)))
             {
-                throw new CommandRejectedException("invalid_expiry", "Delegated role authority must expire in the future and within one year.");
+                throw new CommandRejectedException("invalid_expiry", "A temporary role assignment must expire in the future and within one year.");
             }
             await RequireNotSelfAsync(uow, context, command.PersonId, "access.self_role_change", ct);
             await RequireActivePersonAsync(uow, command.PersonId, ct);

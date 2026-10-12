@@ -4,6 +4,7 @@ using Forge.Inventory.Contracts;
 using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Identity;
+using Forge.Kernel.Holds;
 using Forge.Kernel.Security;
 using static Forge.Host.Api.ApiSupport;
 
@@ -70,6 +71,7 @@ internal static class ShelfLifeEndpoints
                 await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
                 var p = BusinessCode.Require(part, "Part");
                 string? revision = null;
+                OrderInfo? sourceOrder = null;
                 if (order is { } n)
                 {
                     var o = await uow.Store<IExecutionLookup>().FindOrderAsync(n, http.RequestAborted);
@@ -79,6 +81,7 @@ internal static class ShelfLifeEndpoints
                     }
 
                     revision = o.Materials.FirstOrDefault(m => m.ComponentPartNumber == p)?.ComponentRevision;
+                    sourceOrder = o;
                 }
 
                 var now = http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
@@ -86,12 +89,27 @@ internal static class ShelfLifeEndpoints
                 var states = (await ShelfLifeQueries.StatesAsync(uow, p, now, http.RequestAborted)).ToDictionary(s => s.LotNumber, StringComparer.Ordinal);
                 var rule = await uow.Store<IShelfLifeLookup>().FindRuleAsync(p, http.RequestAborted);
                 var positions = await ShelfLifeQueries.PositionsAsync(uow, p, now, http.RequestAborted);
+                var candidates = new List<SelectionCandidate>();
+                foreach (var candidate in LotSelection.Rank(positions, lots, states, rule?.Selection ?? SelectionRule.Fifo, revision))
+                {
+                    IReadOnlyList<Hold> stopping = candidate.ExcludedBecause is null ? await HoldGate.StoppingAsync(uow,
+                        new HoldCheck(HoldActivity.IssueMaterial, sourceOrder?.OrderNumber, Parts: [p],
+                            LotList: [new HoldLot(p, candidate.LotNumber)], ProgramId: sourceOrder?.ProgramId), http.RequestAborted) : [];
+                    candidates.Add(stopping.Count == 0 ? candidate : candidate with
+                    {
+                        Rank = 0,
+                        ExcludedBecause = "Not available for issue: " + string.Join("; ", stopping.Select(hold => hold.Describe())),
+                    });
+                }
+                var ranked = candidates.Where(candidate => candidate.ExcludedBecause is null)
+                    .Select((candidate, index) => candidate with { Rank = index + 1 })
+                    .Concat(candidates.Where(candidate => candidate.ExcludedBecause is not null)).ToArray();
                 return new
                 {
                     partNumber = p,
                     rule = (rule?.Selection ?? SelectionRule.Fifo).ToString(),
                     requiredRevision = revision,
-                    candidates = LotSelection.Rank(positions, lots, states, rule?.Selection ?? SelectionRule.Fifo, revision),
+                    candidates = ranked,
                 };
             }));
     }

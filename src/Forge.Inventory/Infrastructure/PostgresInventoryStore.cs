@@ -506,6 +506,8 @@ public static class InventoryRegistration
         services.AddForgeStore<IShelfLifeStore>(uow => new PostgresShelfLifeStore(uow));
         services.AddForgeStore<IReceivingLookup>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IReceivingStore>(uow => new PostgresInventoryStore(uow));
+        services.AddForgeStore<IOutsideProcessLookup>(uow => new PostgresInventoryStore(uow));
+        services.AddForgeStore<IOutsideProcessStore>(uow => new PostgresInventoryStore(uow));
         services.AddSingleton<InventoryService>();
         return services;
     }

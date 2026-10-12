@@ -1,7 +1,7 @@
 import { tryGet, command, session } from '../api.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, fmtNumber, errorBlock, emptyBlock, toast, confirmWithReason, timeZone } from '../ui.js';
-import { formModal } from '../forms.js';
+import { formModal, canAction } from '../forms.js';
 
 // Reports (spec §54) and Horizon history (§63–65). Every report row keeps the records it came from;
 // they show as links. Exports are made by the server from the same result, so CSV/XLSX match the screen.
@@ -54,7 +54,7 @@ export async function reportsPage(page, ctx) {
   const view = ctx.query.get('view') ?? (ctx.query.get('report') || ctx.query.get('definition') ? 'run' : 'catalog');
   const [catalog, definitions, programs, resources] = await Promise.all([tryGet('/api/reports/catalog'), tryGet('/api/reports/definitions'), tryGet('/api/programs/'), tryGet('/api/resources/')]);
   const state = { catalog: catalog.data ?? [], definitions: definitions.data ?? [], programs: programs.data?.map(p => p.program ?? p) ?? [], shifts: resources.data?.shifts ?? [] };
-  const canHistory = ctx.me.roles.some(r => ['Planner', 'Supervisor', 'ManufacturingEngineer', 'ProgramManager', 'MaintenancePlanner'].includes(r));
+  const canHistory = canAction(ctx.me, 'planning.schedule.read');
 
   const tabs = [['catalog', 'Standard reports'], ['saved', `Saved${state.definitions.length ? ` (${state.definitions.length})` : ''}`]];
   if (canHistory) tabs.push(['changes', 'What changed?']);

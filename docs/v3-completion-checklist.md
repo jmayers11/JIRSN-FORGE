@@ -2,9 +2,9 @@
 
 Owner request: complete V3 and record the result. Last checkpoint: 2026-10-12.
 
-This is the release checklist, not a completion declaration. The supplied `JIRSN Forge V3 Plan.md` defines the numbered roadmap and acceptance gates; use it together with the governance expansion.
+V3.1–V3.28 implementation and completion-audit corrections are locally verified against the available requirements. The 2026-10-12 audit reopened governance acceptance (D/F/G/I/J/K), historical execution proof (B/E), evaluated recovery (L), and common historical Horizon lenses (V3.25); the final gate below covers their corrections. The supplied `JIRSN Forge V3 Plan.md` defines the numbered roadmap; use it with the governance expansion. Exact parity with unavailable original BN/section54/recovery catalogs remains unverified, and deployment validation is separate.
 
-## Increment verification
+## Increment verification — historical checkpoints, final gate below
 
 | Increment | Current state | Remaining gate |
 | --- | --- | --- |
@@ -28,25 +28,46 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | V3.25 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 266/266, Architecture 32/32, Kernel 33/33, Integration 112/112 (25.4026 minutes); focused history test 1/1; Node syntax checks pass | Complete; ADR 0049 |
 | V3.26 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 272/272, Architecture 32/32, Kernel 33/33, Integration 112/112 (23.7949 minutes); focused PostgreSQL 3/3; JS syntax and diff checks pass | Complete; ADR 0050 |
 | V3.27 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 272/272, Architecture 32/32, Kernel 33/33, Integration 116/116 (25.0193 minutes); three 200-record factory variants and consigned-fixture workflow pass | Complete; ADR 0051 records ownership/loan limitation and missing canonical BN list |
-| V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each hardening gate and final restore verification |
+| V3.28 | Full verify PASS: clean Release, Planning 278/278, Architecture 32/32, Kernel 33/33, Integration 148/148 (36.2743minutes), Node 34/34; restored databases and seeded restore/readback/cleanup; three factory budgets; no vulnerable NuGet packages | Locally verified; exact missing-source parity and deployment limits below |
+
+## Reconciled completion-audit gate
+
+Final full `verify.cmd` PASS: Release build zero warnings/errors; Planning 278/278, Architecture 32/32, Kernel 33/33, PostgreSQL Integration 148/148 in 36.2743 minutes, Node behavior/accessibility/business-authority/inactivity 34/34. All 46 product JavaScript modules pass syntax checks; the refreshed direct/transitive NuGet scan reports no vulnerable packages. Migration idempotency passes at 88. The suite uses restored migrated databases and separately proves seeded backup readback/cleanup. Local evidence is `.forge-logs/verify-v3-final.log`/`.status` (PASS); the tracked handoff/session retain the counts and source commit.
+
+Earlier failed focused/full runs and the deliberately cancelled pre-scoped-correction run are preserved in the session log. Fixtures and assertions were corrected without weakening product gates. The final scoped sourcing focus passed API 10/10 in 3.8971 minutes and Architecture 32/32 before the full gate. Every reconciled requirement below is included in the final passing suite.
+
+| Corrected requirement | Fresh focused evidence |
+| --- | --- |
+| V3.1 upgrade | Real tracked/NULL-lot pre-V3.1 upgrade preserves every balance/ledger row; reviewed old checksum remains unchanged; wrong hashes/IDs reject |
+| V3.3 genealogy | Full supplier heat → roll → remnant → second transformation → component → finished serial → shipment, exact links both ways; transfer leaves graph unchanged |
+| V3.5 downtime | Actual setup/changeover remove capacity/projection and affect goals independently of Maintenance breakdowns |
+| V3.15 contextual decisions | Actual NCR program/operation context; all PO requisition programs; actual quote money/currency; delegated project budget and cancellation limits |
+| V3.13/V3.15 scoped purchasing flow | Actual-A RFQ/quote/PO creation and source/package/WhyLine review; B/mixed/prospective B-line/revoked sources denied; identical-key replay and reasoned audit/event proof; API 10/10 PASS |
+| V3.20 inbox/assignments | Current scopes/markings/amounts/SoD, genuine pending catalog, source-page access, revocation, retry-safe audit/events/history and preserved progress |
+| V3.21 integrity | An inventory serial in multiple locations is detected; valid moves/divisible lots remain silent |
+| V3.23 recovery | Real machine failure/goal/notification/human restoration; evaluated alternate gates; recorded versus hypothetical provenance |
+| V3.25 archived lenses | Seven lenses agree at a common scope/window; old projection and contract commitment retained; wrong facility/program excluded |
+| V3.26 tool history | Real private tool/gauge references appear only with current access in API/report/Analyst; revocation and missing sources hide them |
+| V3.6/V3.10 selection | Direct/descendant material-issue holds exclude candidates; unrelated and shipping-only held material remains eligible; release restores ranks |
 
 ## Governance expansion validation
 
 | Scenario | Current coverage | Remaining evidence |
 | --- | --- | --- |
-| A — expired required gauge | V39 unit/API tests pass in focused runs | Full suite/release checkpoint |
-| B — historical calibration | Existing ToolValidity and V38 tests | Confirm full-suite pass and relevant inspection-use linkage |
-| C — shared terminal actor protection | Selected operator is visible; idle/manual lock clears badge and identity; switch-user returns to scan | Live kiosk UX exercise on a shared physical terminal |
-| D — step-up hold release | Selected approval routes require fresh provider assurance; signer role/assurance/version are persisted and tested | Configure and exercise against the production identity provider; full release gate |
-| E — authenticated but unqualified | Existing operator authorization and trainee/qualification tests | Retain in full verification and contextual authorization migration |
-| F — temporary authority | Missing | Approved scoped timed delegation and expiry tests |
-| G — generated shift handoff | Analyst shift brief and authoritative source records exist | Persistent pass-on, checklist, acknowledgment/actions and scenario test |
-| H — controlled priority impact | Scheduler/what-if foundation exists | Audited proposal/impact/authorized human commit with displaced commitments |
-| I — downstream hold impact | Production holds plus staged generalized gates/register | Downstream impact read model, all activity gates, evidence/signoff policy |
-| J — outside-processing round-trip | Inventory ledger/custody/genealogy/PO foundation; staged receiving | External processing lifecycle, ownership/custody, evidence and acceptance test |
-| K — closeout 20-unit discrepancy | Material/production ledger facts exist | Shift reconciliation and explicit unresolved exception test |
-| L — failure/recovery/communications | Outages, capacity, goals and what-if foundation | General recovery options, notification rules and human decision trace |
+| A — expired required gauge | V39 API/executable readiness and planned-use tooling | Final full PASS |
+| B — historical calibration | Real inspection/use/timestamp evidence | Final full PASS |
+| C — shared terminal actor protection | Node 34/34 stale responses, overlap, idle/switch/disposal, focus and configured timeout | Final full PASS; physical terminal remains deployment validation |
+| D — step-up hold release | Configurable policy, trusted fresh provider claims and immutable version-bound signoff | Final full PASS; real Nexus remains deployment validation |
+| E — authenticated but unqualified | Same Supervisor denied after expiry, then recertified | Final full PASS |
+| F — temporary authority | Approved subset/scope/start/expiry, current grantor and source/recipient monetary limits | Final full PASS, including Node UI authority |
+| G — generated shift handoff | Actual downtime/priority/request/quality hold/partial roll; unresolved sources preserved | Final full PASS |
+| H — controlled priority impact | Current preview, displacement, human commit and source gates after shared capacity corrections | Final full PASS |
+| I — downstream hold impact | Factual genealogy/allocation/order/operation/shipment/goal impact and shared blocks | Final full PASS |
+| J — outside-processing round-trip | Sent revision/specification/PO snapshot, readiness, partial return/certificate/results/accepted/rejected quantities and same identity | Final full PASS |
+| K — closeout 20-unit discrepancy | Exact 1000/750/200/30 =20 unexplained; no inferred scrap; immutable closeout | Final full PASS |
+| L — failure/recovery/communications | Real failure/capacity/goal/notification/human command and factual versus hypothetical provenance; saved history immutable | Final full PASS |
 
+All reopened local gates listed in the reconciled matrix pass the final full restored-database suite. Original BN questions, the original section54 example chain and the original enumerated recovery-option catalog were not supplied locally; searches found no originals and the owner does not know BN's location. Available factual proxies, actual recorded causal propagation and the documented fifteen-option implementation have acceptance coverage, without an exact source-parity claim. ADR 0051 retains the consigned-fixture ownership/loan/customer-acceptance limits. Selected-question performance, targeted Node accessibility and local restore coverage do not certify every production workload, a full accessibility audit or deployed disaster recovery.
 ## Release rule
 
-Do not mark V3 done until the reconciled requirements are implemented, required migration paths and tests pass, source commits are recorded, and the handoff/session log contain final counts, limitations and deployment configuration. Staged code, a proposed architecture or an available package does not count as a finished increment. Real Nexus and Sentinel configuration must be distinguished from local contract tests. Forge's SCIM and Sentinel adapters have local acceptance coverage, but no live Nexus issuer or Sentinel intake was available for this checkpoint.
+The local implementation checkpoint requires implemented reconciled requirements, passing migration/regression gates, recorded source commits and final handoff/session evidence. These tests pass; commit references are recorded in the handoff. Do not claim every unavailable original acceptance criterion or a deployed release is proven. Forge's SCIM/Sentinel adapters have local contract coverage; live Nexus/Sentinel/email, physical terminals, production recovery and broader accessibility remain deployment validation. No push or deployment occurred.

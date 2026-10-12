@@ -1,4 +1,5 @@
 using Forge.Kernel.Identity;
+using Forge.Kernel.Access;
 
 namespace Forge.Kernel.Security;
 
@@ -32,6 +33,15 @@ public sealed record ApprovalThreshold(string Permission, decimal MaximumAmount,
         && amount <= MaximumAmount;
 }
 
+public sealed record DelegatedPermission(Guid DelegationId, string Permission, IReadOnlyList<DelegationScope> Scopes,
+    DateTimeOffset StartsAt, DateTimeOffset ExpiresAt, ApprovalThreshold? SourceThreshold = null)
+{
+    public bool MatchesScope(ResourceRef? resource) => Scopes.Count == 0 || resource is not null && Scopes.All(scope => scope.Matches(resource));
+    public bool Matches(ResourceRef? resource, DateTimeOffset? at = null) => MatchesScope(resource)
+        && (at is null || at >= StartsAt && at < ExpiresAt)
+        && (SourceThreshold is null || SourceThreshold.Allows(resource));
+}
+
 /// <summary>
 /// Who is acting, as Forge understands them: the identity provider vouches that the person exists
 /// and is active; Forge supplies roles, program access and markings.
@@ -45,20 +55,24 @@ public sealed record ForgePrincipal(
     DataMarking Markings,
     IReadOnlySet<string>? EffectivePermissions = null,
     IReadOnlyList<ScopedPermission>? ScopedPermissions = null,
-    IReadOnlyList<ApprovalThreshold>? ApprovalThresholds = null)
+    IReadOnlyList<ApprovalThreshold>? ApprovalThresholds = null,
+    IReadOnlyList<DelegatedPermission>? DelegatedPermissions = null)
 {
-    public bool HasPermission(string permission, ResourceRef? resource = null)
+    public bool HasPermission(string permission, ResourceRef? resource = null, DateTimeOffset? at = null)
     {
         var permissionGranted = (EffectivePermissions is { } configured
         ? configured.Contains(permission)
         : Roles.Any(r => Security.Roles.PermissionsOf(r).Contains(permission, StringComparer.Ordinal)))
-            || (ScopedPermissions?.Any(p => p.Permission == permission && p.Matches(resource)) ?? false);
+            || (ScopedPermissions?.Any(p => p.Permission == permission && p.Matches(resource)) ?? false)
+            || (DelegatedPermissions?.Any(p => p.Permission == permission && p.Matches(resource, at)) ?? false);
         var threshold = ApprovalThresholds?.FirstOrDefault(t => t.Permission == permission);
         return permissionGranted && (threshold is null || threshold.Allows(resource));
     }
 
     public bool ExceedsApprovalThreshold(string permission, ResourceRef resource) =>
-        ApprovalThresholds?.FirstOrDefault(t => t.Permission == permission) is { } threshold && !threshold.Allows(resource);
+        ApprovalThresholds?.FirstOrDefault(t => t.Permission == permission) is { } threshold && !threshold.Allows(resource)
+        || (DelegatedPermissions?.Any(grant => grant.Permission == permission && grant.MatchesScope(resource)
+            && grant.SourceThreshold is { } source && !source.Allows(resource)) ?? false);
 }
 
 /// <summary>An actor that is not a person: background relays, bootstrap, integrations.</summary>

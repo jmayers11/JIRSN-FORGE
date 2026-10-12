@@ -15,6 +15,7 @@ public sealed class V320Tests(PostgresFixture postgres)
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
         var (plant, _) = await SlittingPlant.BuildEngineeredAsync(app);
         var assigneeId = await plant.Person("v320-assignee", "Planner");
+        await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["eng"]}/roles", new { role = "FacilitiesManager", reason = "The creator has approval authority, so the inbox must apply separation of duties" });
 
         await plant.Ok(plant.Engineer, "/api/projects/", new
         {
@@ -26,7 +27,8 @@ public sealed class V320Tests(PostgresFixture postgres)
         var inbox = await plant.Engineer.GetFromJsonAsync<JsonElement>("/api/work-inbox");
         Assert.DoesNotContain(inbox!.GetProperty("approvals").EnumerateArray(), x => x.GetProperty("workId").GetString() == "V320-SELF");
 
-        await plant.Ok(plant.Admin, "/api/work-inbox/assignments", new
+        // The supervisor who reads this project routes it; identity administration alone grants no source access.
+        await plant.Ok(plant.Engineer, "/api/work-inbox/assignments", new
         {
             workType = "ProjectReview", workId = "V320-SELF", title = "Review V320-SELF", deepLink = "#/projects",
             assigneePersonId = assigneeId, reason = "Assign independent project review",

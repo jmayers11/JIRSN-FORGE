@@ -103,3 +103,9 @@ Until V3.10 Forge had three separate mechanisms:
 - Build and quick verification passed: zero warnings/errors, Planning 262 and architecture 32 tests. Selected API and full verification must pass before this increment is declared complete.
 
 Full verification passed: Planning 262, architecture 32, kernel 33, integration 85. Release build: zero warnings/errors. Selected API gate: 14/14. Saved .forge-logs/verify-v310.* and .forge-logs/codex-v310.*.
+
+## Completion audit: assured release and downstream impact
+
+Kernel migration 0007 extends each existing hold-kind policy with fresh-provider-assurance, explicit signature meaning and downstream-propagation settings. A signature-required release also requires fresh assurance. The host supplies validated authentication evidence; the request cannot manufacture subject, issuer or assurance. Release checks current Forge authority, expected hold version and policy, then records an append-only signoff containing signer identity/roles, authority, assurance/methods/time, record and policy fingerprints, action, meaning, result and correlation before releasing in the same audited transaction. Defaults preserve existing release behavior until policy is configured.
+
+Planning derives downstream lot impact from the existing genealogy graph, material allocations, production orders/operations, shipments and goal relationships. The register filters evidence by current access. The shared hold gate and scheduling/readiness inputs use the same configured factual propagation; no copied child holds or parallel genealogy are created. Releasing the original hold clears its derived effect. `GovernanceHoldTests` exercises actual denied assurance/signature paths, immutable signoff, descendant evidence and prohibited execution/planning behavior. Final verification is recorded in the completion checklist and handoff.

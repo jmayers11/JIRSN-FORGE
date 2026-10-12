@@ -2,6 +2,7 @@ using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Holds;
 using Forge.Kernel.Security;
+using Forge.Kernel.WorkAssignments;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
@@ -20,6 +21,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IForgeAuthorizer, ForgeAuthorizer>();
         services.AddSingleton<CommandPipeline>();
         services.AddSingleton<AccessService>();
+        services.AddSingleton<DelegationService>();
+        services.AddSingleton<WorkAssignmentService>();
+        services.AddForgeStore<IWorkAssignmentStore>(uow => new PostgresWorkAssignmentStore(uow));
+        services.AddForgeStore<IDelegationStore>(uow => new PostgresDelegationStore(uow));
         services.AddSingleton(new MigrationSource(typeof(MigrationRunner).Assembly, string.Empty));
         services.AddSingleton<KernelReadStore>();
         services.AddSingleton<MigrationRunner>();

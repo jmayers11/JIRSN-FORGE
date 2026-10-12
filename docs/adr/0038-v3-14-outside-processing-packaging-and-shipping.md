@@ -24,3 +24,9 @@ Partial fulfillment continues to use multiple shipments against one open demand.
 | Validation | `V314Tests` exercises dispatch, partial return, inspection status, supplier certificate, packaging block, container reservation/seal/shipment, return overage rejection and two partial shipments fulfilling a demand |
 
 Full verification: Release build 0 warnings/errors; Planning 266, architecture 32, kernel 33, integration 95; all passed. Focused V3.14 PostgreSQL test 1/1. Migration idempotency expected count updated from 72 to 77 for the five additive migrations.
+
+## Completion audit: sent configuration and actual inspection
+
+Inventory migration 0017 adds append-only dispatch/return metadata keyed to existing ledger transactions. The sent snapshot records material revision, applicable controlled process specification, processor/service PO and frozen technical package, expected return, certificate requirement, actor/time and access context. Quantity remains solely in the ledger. Dispatch validates released usable stock, configured shipping holds, processor custody, approved matching service PO and the accessible released specification. A certificate waiver requires quality disposition authority.
+
+A partial return links to that sent snapshot and preserves lot identity, revision and company ownership while moving only its returned quantity into receiving inspection. Existing receiving inspection now accepts these recorded return transfers, requires structured results and the configured processor certificate, enforces an independent inspector and retains accepted/rejected quantities. Generic stock release cannot bypass an outstanding outside-process inspection. `OutsideProcessingGovernanceTests` proves the coating workflow and exact partial balances through real commands; final results are in the handoff. A custody move still does not create a transformation or genealogy edge.
