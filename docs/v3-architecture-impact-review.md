@@ -119,6 +119,15 @@ V3.1–V3.9 are committed, with V3.9 full verification PASS at `411c3c9`. V3.10 
 14–16. Failure/performance: historical tool events cannot establish machine/activity eligibility because those facts are absent from the event. Recovery evaluation is capped at 20 scenarios per answer and reports the evaluated scope; each evaluation recomputes the current authorized snapshot.
 17–20. Tests/dependencies/decisions: Planning tests cover phrase routing, named-tool filtering, last completed configured shift and private-scenario intent. PostgreSQL acceptance covers historical validity and scenario ownership. No new dependency or migration. ADR 0050 records the limits.
 
+## Reference factories and extensibility (V3.27)
+
+1–4. Existing: integration tests build the reference plant through real commands; production domains already model order, inventory-lot, tool, service and custody histories. Risk: scale tests use only a tiny happy-path dataset, or an undescribed customer workflow creates a second identity or custody ledger.
+5. Owner: test fixtures compose existing APIs; Engineering owns item/order definition, Inventory owns material identity/custody, Resources owns operational tool history, and the source domains keep their existing authorization/audit paths.
+6–9. Entities/API: no production persistence or API change. Test generators create at least 100 orders and 100 receipt lots for each healthy, constrained and unusual-but-valid variant; the constrained fixture adds a machine production hold. The customer fixture uses one tool serial through moves, service, return and use.
+10–13. Events/UI/authorization/audit: all generator writes use regular commands and preserve idempotency, reason and permission enforcement. Analyst questions are run using the same services and caller scope. No new workflow screen or store.
+14–16. Failure/performance: each large fixture must remain free of integrity exceptions; the constrained hold is a valid disruption. Current Resources tools cannot express legal ownership, a structured loan agreement, receipt directly into customer custody or a customer acceptance event. Text references are evidence pointers, not a substitute for those semantics.
+17–20. Tests/dependencies/decisions: three PostgreSQL factory variants exercise shared Analyst question categories and an undescribed repair/use/return story. The original brief's BN question catalog is absent, so the tested set is a declared proxy. ADR 0051 records the gap and scope. No new dependency or migration.
+
 ## Priority and generalized holds (28–32)
 
 1–4. Existing: priorities influence deterministic scheduling; V3.9 production holds and separate quality/stock mechanisms. V3.10 package centralizes explicit holds and configures blocked activities/release authority; missing controlled priority proposals/impact, general downstream hold impact and signoff policies.

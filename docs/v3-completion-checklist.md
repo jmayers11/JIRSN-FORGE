@@ -27,7 +27,8 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | V3.24 | Full suite PASS; attendance/direct-labor separation and permitted support-work options pass; no migration needed; ADR 0048 | Complete; accepted against existing implementation |
 | V3.25 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 266/266, Architecture 32/32, Kernel 33/33, Integration 112/112 (25.4026 minutes); focused history test 1/1; Node syntax checks pass | Complete; ADR 0049 |
 | V3.26 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 272/272, Architecture 32/32, Kernel 33/33, Integration 112/112 (23.7949 minutes); focused PostgreSQL 3/3; JS syntax and diff checks pass | Complete; ADR 0050 |
-| V3.27–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
+| V3.27 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 272/272, Architecture 32/32, Kernel 33/33, Integration 116/116 (25.0193 minutes); three 200-record factory variants and consigned-fixture workflow pass | Complete; ADR 0051 records ownership/loan limitation and missing canonical BN list |
+| V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each hardening gate and final restore verification |
 
 ## Governance expansion validation
 
