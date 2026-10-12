@@ -224,6 +224,7 @@ app.MapWorkInboxEndpoints();
 app.MapIntegrityEndpoints();
 app.MapShelfLifeEndpoints();
 app.MapGoalEndpoints();
+app.MapPlanningScenarioEndpoints();
 app.MapToolEndpoints();
 app.MapHoldEndpoints();
 app.MapReceivingEndpoints();

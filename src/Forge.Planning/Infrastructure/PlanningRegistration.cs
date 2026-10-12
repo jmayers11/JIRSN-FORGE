@@ -15,6 +15,7 @@ public static class PlanningRegistration
         services.AddForgeStore<IResourceUsage>(uow => new ResourceUsage(uow));
         services.AddForgeStore<IDemandStore>(uow => new PostgresDemandStore(uow));
         services.AddForgeStore<IGoalStore>(uow => new PostgresGoalStore(uow));
+        services.AddForgeStore<IPlanningScenarioStore>(uow => new PostgresPlanningScenarioStore(uow));
         services.AddForgeStore<Reporting.IReportDefinitionStore>(uow => new PostgresReportStore(uow));
         services.AddSingleton<DemandService>();
         services.AddSingleton<MaterialPlanningService>();
@@ -34,6 +35,7 @@ public static class PlanningRegistration
         services.AddSingleton<IPriorityImpactProvider, PriorityImpactProvider>();
         services.AddSingleton<IShiftFactsProvider, ShiftFactsProvider>();
         services.AddSingleton<GoalService>();
+        services.AddSingleton<PlanningScenarioService>();
         services.AddSingleton<ProgramHorizonService>();
         services.AddSingleton<Reporting.ReportService>();
         services.AddSingleton<Reporting.ReportDefinitionService>();

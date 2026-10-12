@@ -36,7 +36,7 @@ public sealed class KernelRoundTripTests(PostgresFixture postgres)
         _ = app.Services; // starting the host applies every migration
         var again = await app.Services.GetRequiredService<MigrationRunner>().MigrateAsync(CancellationToken.None);
         Assert.Empty(again);
-        Assert.Equal(83, await Count(cs, "SELECT count(*) FROM public.forge_schema_migrations"));
+        Assert.Equal(84, await Count(cs, "SELECT count(*) FROM public.forge_schema_migrations"));
     }
 
     [Fact]

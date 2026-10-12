@@ -25,6 +25,7 @@ import { shiftContinuityPage } from './pages/shift-continuity.js';
 import { notificationsPage } from './pages/notifications.js';
 import { workInboxPage } from './pages/work-inbox.js';
 import { integrityPage } from './pages/integrity.js';
+import { scenariosPage } from './pages/scenarios.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
@@ -35,6 +36,7 @@ const NAV = [
   { route: 'orders', label: 'Production Orders', icon: 'orders', page: ordersPage },
   { route: 'engineering', label: 'Engineering', icon: 'blade', page: engineeringPage },
   { route: 'scheduling', label: 'Scheduling', icon: 'planning', page: schedulingPage },
+  { route: 'scenarios', label: 'Scenarios', icon: 'planning', page: scenariosPage },
   { route: 'material-plan', label: 'Material Plan', icon: 'material', page: mrpPage },
   { route: 'work-centers', label: 'Work Centers', icon: 'production', page: workCentersPage },
   { route: 'shop-floor', label: 'Shop Floor', icon: 'operator', page: shopFloorPage },

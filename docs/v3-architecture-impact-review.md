@@ -83,6 +83,24 @@ V3.1–V3.9 are committed, with V3.9 full verification PASS at `411c3c9`. V3.10 
 14–16. Failure/performance: missing root event leaves causation empty. The query caps seeds at 500 and ancestry at 20 links and guards cycles. Historical propagation is not rewritten.
 17–20. Tests/dependencies/decisions: PostgreSQL tests verify cause/effect and a same-correlation unlinked constraint; the V2.5 propagation scenario checks production event links. No new dependency. Missing or invisible causes stay unknown.
 
+## Scenarios and recovery options (V3.23)
+
+1–4. Existing: finite-capacity schedule engine, MRP/material readiness, and executable/Skills capacity are deterministic. Analyst what-if only models an outage or absence and discards the result. Recovery currently exists as separate source-domain workflows.
+5. Owner: Planning owns isolated scenario definitions and comparisons; Inventory, Workforce, Resources, Maintenance, Execution, Procurement and Programs continue owning the records changed by any accepted action.
+6–9. Entities/API: additive `planning.scenario` stores a private named input by Forge owner. Scenario endpoints list/create/read/run/delete; the run returns schedule, material-readiness, Skills MRP and option-card projections. It stores no copied production snapshot or run result.
+10–13. Events/UI/authorization/audit: save/delete use command, reason, event and audit. The run rechecks schedule, readiness, program, marking and workforce permissions. The scenario page shows before/after projections; action links open source workflows whose existing commands enforce current authority.
+14–16. Failure/performance: scenario changes apply only to immutable snapshot copies. Outage/absence requires overlap with the 62-day window. Schedule comparison is bounded to 14 days. Material-delay scenarios affect only expected material status and cannot modify supplier promise dates. No automatic action selection.
+17–20. Migration/tests/dependencies/decisions: Planning migration 0007 adds the owner-private scenario table. PostgreSQL acceptance verifies owner isolation, exactly 15 cards with feasibility/consequences, and no event/audit write from a preview. No new dependency. The master brief containing the canonical 15-option names was not present in the supplied Forge folder; ADR 0047 records the current roadmap-derived catalog for later reconciliation.
+
+## Indirect and support work (V3.24)
+
+1–4. Existing: badge and supervisor-confirmed presence are Workforce attendance records. Execution direct labor is separately started/stopped against an order operation; support assignments do not report production quantity. The finite-capacity reallocation preview already offers configured machine-free activities for operators on work that would stop, while checking applicable safety composition and showing that the original machine work stops.
+5. Owner: Workforce owns presence and assignments; Execution owns direct production labor; Resources owns configured support activities; Planning evaluates reallocation consequences.
+6–9. Entities/API: no new persistence or endpoint is required for this increment; existing workforce assignment, shop-floor execution, resource activity and reallocation preview contracts are authoritative.
+10–13. Events/UI/authorization/audit: attendance and production remain separately authorized/audited; a proposed support reassignment is a preview option, and any accepted assignment uses the Workforce command.
+14–16. Failure/performance: an activity is offered only when configured at the work center and its safety composition is satisfied or no rule applies. The preview does not report output or silently reassign a person.
+17–20. Tests/dependencies/decisions: full integration tests cover attendance/direct-labor separation, and Planning tests cover support activity choices and consequence visibility. No schema/dependency change. Existing tests are the acceptance evidence for this roadmap increment.
+
 ## Priority and generalized holds (28–32)
 
 1–4. Existing: priorities influence deterministic scheduling; V3.9 production holds and separate quality/stock mechanisms. V3.10 package centralizes explicit holds and configures blocked activities/release authority; missing controlled priority proposals/impact, general downstream hold impact and signoff policies.

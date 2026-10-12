@@ -961,3 +961,11 @@ Data Integrity (`#/integrity`) and `GET /api/integrity/exceptions` report four e
 ### V3.22 — What changed and CauseMap
 
 The schedule comparison (`#/reports?view=changes`) now includes a CauseMap built from the event log's explicit `causation_id` links. Engineering change propagation names the recorded release event as the cause of its downstream events. The view filters links using current program access and data markings, bounds history traversal, and lists constraints as correlated evidence; shared timing or correlation never creates a causal arrow. Historical propagation is not backfilled. See ADR 0046.
+
+### V3.23 — Scenarios and recovery options
+
+Scenarios (`#/scenarios`) are saved privately under their owner's Forge identity. Machine outage, worker absence, order priority, eligible operation machine, overtime, expected-supply delay, operator and trainer changes run against copied current inputs. The preview compares released-order dates and status, material readiness and Skills MRP capacity. Its 15 recovery cards state feasibility, consequences and required permission. “Open workflow” moves to the source domain; the user commits through that domain's existing command and authorization checks. Preview never changes production state or the approved schedule. Expected-supply delay is a scenario-only input. See ADR 0047.
+
+### V3.24 — Indirect and support work
+
+Attendance remains a badge or supervisor-confirmed presence record; direct labor remains a separate shop-floor operation record. When moving a worker would leave machine work unable to run, the reallocation preview offers configured machine-free activities at that work center if their safety rules permit them, alongside the consequences for the stopped operation. Support assignments do not report production quantity or become direct labor. Existing full-suite coverage includes `Attendance_and_direct_labor_stay_separate_and_reporting_completes_the_order` and `Spec_79_options_cover_replacement_one_person_work_moving_michael_and_the_schedule`. See ADR 0048 and the Phase 5/reallocation tests.
