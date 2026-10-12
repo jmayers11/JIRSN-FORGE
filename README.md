@@ -953,3 +953,7 @@ Notification rules subscribe to Forge's committed event log and can define trigg
 ### V3.20 — Approvals inbox and assignments
 
 My Work (`#/my-work`) and `GET /api/work-inbox` show pending second-person decisions from mapped quality, planning, procurement, projects, maintenance and engineering source records, subject to the current principal's permission. The requester never sees their own request as a decision item. The source page and API perform normal authorization again when opened. Supervisor and Security Administrator can assign supported NCR, inspection, work-order, RFQ, project-review and material-task records to an active Forge person with an audit reason. Assignees progress work through Assigned → Acknowledged → InProgress → Completed; every transition is reasoned and historized. Assignment completion does not approve or complete the source record. See ADR 0044.
+
+### V3.21 — Data-integrity exceptions
+
+Data Integrity (`#/integrity`) and `GET /api/integrity/exceptions` report four evidence-backed anomalies: negative inventory ledger balances, duplicate asset serials, material consumption without a prior matching issue, and tool use recorded after its calibration due date. Findings are filtered by the source-domain read permission and labelled as data or process exceptions; they do not infer misconduct or modify source data. The view recomputes from authoritative ledgers and histories, so source corrections continue through the normal domain APIs. See ADR 0045.

@@ -65,6 +65,15 @@ V3.1–V3.9 are committed, with V3.9 full verification PASS at `411c3c9`. V3.10 
 14–16. Integration/failure/performance: unsupported links/types, inactive assignees, missing source records, self-approval and skipped status transitions are rejected. Queries are bounded at 500 items; assignment status does not approve or complete the source record.
 17–20. Migration/tests/dependencies/decisions: migration 0005 is additive; PostgreSQL acceptance covers self-exclusion, sequential lifecycle and source-state separation. Current approval rows include the mapped source schemas; adding another approval flow requires mapping its source-specific requester, status and permission.
 
+## Data-integrity exceptions (V3.21)
+
+1–4. Existing: inventory append-only ledger and balance view, transformation records, asset history, and tool calibration/use events. Missing: one evidence-first read surface for impossible cross-record states and historical validity exceptions.
+5. Owner: source domains remain authoritative; Host composes read-only findings from their records. No exception workflow rewrites inventory, asset, transformation or tool history.
+6–9. Entities/DB/services/API: no new source table; `GET /api/integrity/exceptions` detects negative stock, duplicate asset serials, consumption without a prior matching issue and use after recorded calibration due date.
+10–13. Events/UI/authorization/audit: Data Integrity displays evidence, source and observed time. Each result uses the source-domain read permission and a neutral DataOrProcessException classification. Findings are not allegations or automatically assigned work.
+14–16. Integration/failure/performance: the read is bounded to 500 rows. Impossible states are injected in isolated test PostgreSQL fixtures; healthy reference data returns empty. The view neither repairs data nor bypasses source APIs.
+17–20. Migration/tests/dependencies/decisions: no migration required. V3.21 acceptance seeds every detector and verifies silence on the engineered reference plant. Any source-specific repair retains its normal owner and audit rules.
+
 ## Priority and generalized holds (28–32)
 
 1–4. Existing: priorities influence deterministic scheduling; V3.9 production holds and separate quality/stock mechanisms. V3.10 package centralizes explicit holds and configures blocked activities/release authority; missing controlled priority proposals/impact, general downstream hold impact and signoff policies.

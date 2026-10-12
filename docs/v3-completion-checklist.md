@@ -21,7 +21,8 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | V3.18 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 266/266, Architecture 32/32, Kernel 33/33, Integration 107/107; committed `af70b13` | Complete |
 | V3.19 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 266/266, Architecture 32/32, Kernel 33/33, Integration 108/108; focused PostgreSQL notification and migration-idempotency tests pass; committed `57448e6` | Complete |
 | V3.20 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 266/266, Architecture 32/32, Kernel 33/33, Integration 109/109 (23.5747 minutes); focused PostgreSQL V3.20/V3.19 checks pass; migration idempotency 83; committed in current checkpoint | Complete |
-| V3.21–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
+| V3.21 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 266/266, Architecture 32/32, Kernel 33/33, Integration 110/110 (23.4600 minutes); focused PostgreSQL detector acceptance 1/1; migration idempotency remains 83 | Complete |
+| V3.22–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
 
 ## Governance expansion validation
 
