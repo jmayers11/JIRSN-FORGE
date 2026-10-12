@@ -8,7 +8,7 @@ public sealed record VocabularyMachine(string Code, string Name, string WorkCent
 
 public sealed record VocabularyWorkCenter(string Code, string Name);
 
-public sealed record VocabularyShift(string Code, string Name, TimeOnly Start, int DurationMinutes);
+public sealed record VocabularyShift(string Code, string Name, TimeOnly Start, int DurationMinutes, IReadOnlyList<int>? Days = null);
 
 public sealed record VocabularyProgram(Guid ProgramId, string Code, string Name);
 
@@ -25,7 +25,10 @@ public sealed record AnalystVocabulary(
     IReadOnlyList<string> Parts,
     IReadOnlyList<VocabularyProgram> Programs,
     IReadOnlyList<VocabularyPerson> People,
-    IReadOnlySet<long> Orders);
+    IReadOnlySet<long> Orders)
+{
+    public IReadOnlyList<string> Tools { get; init; } = [];
+}
 
 /// <summary>"Now" at the site: the local date and time, and how to turn a local date and time into an instant.</summary>
 public sealed record AnalystClock(DateTimeOffset Now, DateOnly Today, TimeOnly TimeOfDay, Func<DateOnly, TimeOnly, DateTimeOffset> ToInstant);
@@ -117,6 +120,7 @@ public static partial class QueryParser
         }
 
         var part = vocabulary.Parts.FirstOrDefault(p => Contains(masked, p));
+        var tool = vocabulary.Tools.OrderByDescending(x => x.Length).FirstOrDefault(code => Contains(text, code));
         var program = vocabulary.Programs.FirstOrDefault(p => Contains(masked, p.Code) || Contains(masked, p.Name));
         var person = vocabulary.People.FirstOrDefault(p => Contains(masked, p.Name))
             ?? FirstNameMatch(vocabulary.People, masked, ambiguities);
@@ -133,7 +137,7 @@ public static partial class QueryParser
         AnalystReportRequest? report = null;
         if (intent == AnalystIntent.Report || (intent == AnalystIntent.Unsupported && ReportOf(text) is not null))
         {
-            report = BuildReport(text, clock, period, machine, workCenter, part, program, shift, ambiguities);
+            report = BuildReport(text, clock, period, machine, workCenter, part, tool, program, shift, vocabulary.Shifts, ambiguities);
             intent = report is null ? AnalystIntent.Unsupported : AnalystIntent.Report;
         }
 
@@ -200,6 +204,11 @@ public static partial class QueryParser
             return AnalystIntent.Simulate;
         }
 
+        if (Has("recovery options", "recovery option", "what are my options", "what options do i have", "what are the options"))
+        {
+            return AnalystIntent.RecoveryOptions;
+        }
+
         if (person is not null && Has("pto", "absence", "absent", "vacation", "leave", "out ", "off ", "unavailab", "affected", "impact"))
         {
             return AnalystIntent.PersonImpact;
@@ -226,7 +235,7 @@ public static partial class QueryParser
         }
 
         // V3.5: "How much of order 1042 is in rework?" asks for the order's quantity states, not its status.
-        if (order is not null && ReportOf(t) == "quantity-states")
+        if (order is not null && ReportOf(t) is { } requestedReport && requestedReport is "quantity-states" or "material-reconciliation" or "genealogy-trace" or "production-output" or "delivery-performance")
         {
             return AnalystIntent.Report;
         }
@@ -237,7 +246,7 @@ public static partial class QueryParser
         }
 
         // V3.5, V3.6: stoppage and shelf-life questions are reports even when they say "overdue" or "blocked".
-        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment" or "tool-status" or "executable-operations" or "presence" or "holds" or "receiving-inspection")
+        if (machine is null && ReportOf(t) is "shelf-life" or "stoppages" or "goal-attainment" or "tool-status" or "tool-use-history" or "executable-operations" or "presence" or "holds" or "receiving-inspection")
         {
             return AnalystIntent.Report;
         }
@@ -272,7 +281,7 @@ public static partial class QueryParser
             return AnalystIntent.AffectedOrders;
         }
 
-        return ReportOf(t) is not null && Has("show", "list", "find", "how many", "how much", "what", "which", "trace", "where did") ? AnalystIntent.Report : AnalystIntent.Unsupported;
+        return ReportOf(t) is not null && Has("show", "list", "find", "how many", "how much", "what", "which", "trace", "where did", "was", "were", "did", "is", "are") ? AnalystIntent.Report : AnalystIntent.Unsupported;
     }
 
     // ------------------------------------------------------------------ reports
@@ -284,7 +293,7 @@ public static partial class QueryParser
         return Has("obsolete", "obsolescence", "end of life", "end of support", "last time buy", "last-time buy") ? "obsolescence"
             : Has("maintenance readiness", "blocked work order", "work orders blocked", "work orders are blocked", "maintenance blocked", "not ready for maintenance", "ready for maintenance") ? "maintenance-readiness"
             : Has("trace lot", "trace roll", "trace batch", "trace serial", "trace the", "genealogy of lot", "genealogy of roll", "genealogy of batch", "what did lot", "what did roll", "what did batch", "what became of lot", "what became of roll", "what became of batch", "what became of serial", "came from lot", "where did lot", "where did roll", "where did batch") ? "genealogy-trace"
-            : Has("unexplained", "reconcil", "what became of the material", "material accounting", "remnant", "byproduct", "by-product", "yield tolerance", "scrap and loss", "material issued to order") ? "material-reconciliation"
+            : Has("unexplained", "reconcil", "what became of the material", "what became of material", "material accounting", "remnant", "byproduct", "by-product", "yield tolerance", "scrap and loss", "material issued to order") ? "material-reconciliation"
             : Has("lineage", "split from", "merged from", "merged into", "split into", "lot splits", "splits and merges", "was split", "were merged") ? "lot-lineage"
             : Has("not at the machine", "in the warehouse", "material flow", "staging", "staged", "kitting", "kitted", "pick list", "picked", "put away", "put-away", "delivered to the machine") ? "material-flow"
             : Has("counts due", "count due", "due for count", "due to be counted", "cycle count", "count program") ? "counts-due"
@@ -295,6 +304,8 @@ public static partial class QueryParser
             : Has("holds", "on hold", "hold register", "release authority") ? "holds"
             : Has("presence", "who is present", "who is here", "who is clocked in", "clocked in", "on site", "scheduled but not", "not clocked in", "who is working on", "active on an operation", "actually here") ? "presence"
             : Has("goal", "reforecast", "required by date", "required-by") ? "goal-attainment"
+            : (Has("calibrat", "tool", "gauge", "blade") && Has("when used", "at time of use", "when it was used", "at the time of use")) ? "tool-use-history"
+            : Has("last shift", "previous shift") ? "production-output"
             : Has("tool", "gauge", "blade", "sharpen", "calibrat", "out for service", "usage limit") && !Has("cert", "qualif", "training") ? "tool-status"
             : Has("shelf life", "shelf-life", "expir", "expiring", "retest", "open life", "excursion", "aging", "how old", "oldest lot", "fefo", "fifo") && !Has("cert", "qualif", "training", "alternate", "document", "drawing", "contract") ? "shelf-life"
             : Has("stoppage", "stopped", "changeover", "change over", "setup time", "setups", "starved", "blocked machine", "machines blocked", "were blocked", "root cause", "reason code", "downtime by category", "downtime category") ? "stoppages"
@@ -325,8 +336,9 @@ public static partial class QueryParser
             : null;
     }
 
-    private static AnalystReportRequest? BuildReport(string t, AnalystClock clock, AnalystPeriod? period, string? machine, string? workCenter, string? part, VocabularyProgram? program, VocabularyShift? shift, List<string> ambiguities)
+    private static AnalystReportRequest? BuildReport(string t, AnalystClock clock, AnalystPeriod? period, string? machine, string? workCenter, string? part, string? tool, VocabularyProgram? program, VocabularyShift? shift, IReadOnlyList<VocabularyShift> shifts, List<string> ambiguities)
     {
+        bool HasPhrase(params string[] words) => words.Any(w => t.Contains(" " + w + " ", StringComparison.Ordinal));
         var id = ReportOf(t);
         if (id is null)
         {
@@ -339,6 +351,7 @@ public static partial class QueryParser
 
         // Period: as asked, or the report's default; clamped to what the report allows.
         DateOnly? from = period?.From, to = period?.To;
+        var shiftCode = shift?.Code;
         if (period is null)
         {
             notes.Add(entry.Forward ? "No period given: the next 90 days." : "No period given: the last 30 days.");
@@ -347,6 +360,27 @@ public static partial class QueryParser
         {
             from = to.Value.AddDays(1 - entry.MaxDays);
             notes.Add($"{entry.Title} covers at most {entry.MaxDays} days, so the period starts {from:yyyy-MM-dd}.");
+        }
+
+        if (id == "production-output" && HasPhrase(t, "last shift", "previous shift"))
+        {
+            var last = shifts.SelectMany(s => Enumerable.Range(0, 8).Select(daysAgo => (Shift: s, Date: clock.Today.AddDays(-daysAgo)))
+                    .Where(x => x.Shift.Days is null || x.Shift.Days.Contains(((int)x.Date.DayOfWeek + 6) % 7 + 1))
+                    .Select(x => (x.Shift, x.Date, Start: clock.ToInstant(x.Date, x.Shift.Start))))
+                .Where(x => x.Start.AddMinutes(x.Shift.DurationMinutes) <= clock.Now)
+                .OrderByDescending(x => x.Start).FirstOrDefault();
+            if (last.Shift is not null)
+            {
+                from = last.Date;
+                var endMinute = last.Shift.Start.ToTimeSpan().TotalMinutes + last.Shift.DurationMinutes;
+                to = last.Date.AddDays((int)Math.Floor(Math.Max(0, endMinute - 1) / 1440));
+                shiftCode = last.Shift.Code;
+                notes.Add($"Resolved ‘last shift’ to completed {last.Shift.Name} on {last.Date:yyyy-MM-dd} using the configured shift calendar.");
+            }
+            else
+            {
+                notes.Add("No completed configured shift was found in the last seven days.");
+            }
         }
 
         // Grouping: "by machine", "per work center", "grouped by part"; "compare … shifts" groups by shift.
@@ -380,13 +414,13 @@ public static partial class QueryParser
             Filter("machine") ? machine : null,
             Filter("partNumber") ? part : null,
             Status(t, entry),
-            null,
+            Filter("search") ? tool : null,
             groupBy)
         {
-            Shift = Filter("shift") && !compareShifts ? shift?.Code : null,
+            Shift = Filter("shift") && !compareShifts ? shiftCode : null,
         };
 
-        foreach (var (given, key, what) in new[] { (workCenter, "workCenter", "work center"), (machine, "machine", "machine"), (part, "partNumber", "part"), (program?.Code, "programId", "program"), (shift?.Code, "shift", "shift") })
+        foreach (var (given, key, what) in new[] { (workCenter, "workCenter", "work center"), (machine, "machine", "machine"), (part, "partNumber", "part"), (program?.Code, "programId", "program"), (shiftCode, "shift", "shift") })
         {
             if (given is not null && !Filter(key) && !(key == "shift" && compareShifts))
             {
@@ -790,6 +824,7 @@ public static partial class QueryParser
             AnalystIntent.AffectedOrders => $"Orders affected by {i.Machine ?? i.WorkCenter ?? Person() ?? (i.Category is { } c ? c.ToLowerInvariant() + " constraints" : "…")}",
             AnalystIntent.PersonImpact => $"Orders that depend on {Person()} being available",
             AnalystIntent.Simulate => $"Scenario: {i.Machine ?? Person() ?? "…"} unavailable" + (i.Hours is { } h ? $" for {h:0.#} h" : string.Empty),
+            AnalystIntent.RecoveryOptions => "Feasibility and consequences for your private planning scenarios",
             AnalystIntent.Report => $"Report: {i.Report!.Title}",
             AnalystIntent.Brief => "Operational brief",
             AnalystIntent.OrderDocumentation => i.OrderNumber is { } od ? $"Documentation that applies to order {od}" : "Documentation that applies to an order",

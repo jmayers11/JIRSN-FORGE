@@ -22,7 +22,7 @@ export function traceLink(t) {
     order: `#/orders/${id}`, item: `#/engineering/${encodeURIComponent(id)}`, document: `#/engineering/documents/${encodeURIComponent(id)}`, change: `#/engineering/changes/${encodeURIComponent(id)}`, supplier: '#/procurement?tab=suppliers', schedule: '#/scheduling', constraint: '#/scheduling?closed=1', report: `#/orders`,
     machine: '#/maintenance', asset: '#/maintenance?tab=assets', requisition: '#/procurement?tab=requisitions', downtime: '#/maintenance?tab=log', 'work-order': '#/maintenance?tab=orders',
     demand: '#/material-plan?tab=demand', delivery: '#/programs', contract: '#/programs', program: `#/programs/${id}`, project: `#/projects/${encodeURIComponent(id)}`, part: `#/engineering/${encodeURIComponent(id)}`,
-    shipment: '#/shipping', ncr: '#/quality?tab=ncr', inspection: '#/quality', transaction: '#/inventory?tab=ledger',
+    shipment: '#/shipping', ncr: '#/quality?tab=ncr', inspection: '#/quality', transaction: '#/inventory?tab=ledger', scenario: '#/scenarios',
     po: '#/procurement', request: '#/inventory', audit: '#/settings', person: '#/workforce', qualification: '#/workforce',
   }[kind];
   const label = kind === 'program' ? 'program' : kind === 'person' ? 'person' : `${kind.replace('-', ' ')} ${id}`;

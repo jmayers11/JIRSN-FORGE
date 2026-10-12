@@ -90,6 +90,14 @@ public sealed class V38Tests(PostgresFixture postgres)
         Assert.Contains("no calibration in force", (await Tool(qe, "CAL-1")).GetProperty("validity").GetProperty("problems")[0].GetString(), StringComparison.Ordinal);
         await plant.Ok(qe, "/api/resources/tools/CAL-1/calibrations", new { calibratedOn = Day(0), passed = true, certificate = "LAB-79" });
         Assert.True((await Tool(qe, "CAL-1")).GetProperty("validity").GetProperty("valid").GetBoolean());
+        await plant.Ok(qe, "/api/resources/tools/CAL-1/uses", new { uses = 1, reference = "inspection" });
+        var useHistory = await Get(qe, $"/api/reports/tool-use-history?search=CAL-1&from={Day(-1)}&to={Day(1)}");
+        var useRow = Assert.Single(useHistory.GetProperty("rows").EnumerateArray());
+        Assert.Equal("CAL-1", useRow.GetProperty("cells")[1].GetString());
+        Assert.Equal("Yes", useRow.GetProperty("cells")[3].GetString());
+        var historicalAnswer = await (await qe.PostAsJsonAsync(new Uri("/api/analyst/ask", UriKind.Relative), new { question = "Was CAL-1 calibrated when it was used?" })).Content.ReadFromJsonAsync<JsonElement>();
+        var historicalRequest = historicalAnswer.GetProperty("interpretation").GetProperty("report");
+        Assert.Equal(("tool-use-history", "CAL-1"), (historicalRequest.GetProperty("reportId").GetString(), historicalRequest.GetProperty("parameters").GetProperty("search").GetString()));
 
         // Gauges defined in Quality are tools of the GAUGE type.
         await plant.Ok(qe, "/api/quality/gauges", new { code = "MIC-9", description = "Micrometer", calibrationDue = Day(30), reason = "New gauge" });

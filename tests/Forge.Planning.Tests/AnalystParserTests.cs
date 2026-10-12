@@ -95,6 +95,9 @@ public class AnalystParserTests
     [InlineData("Which tools are out for service?", "tool-status")]
     [InlineData("Which gauges are due for calibration?", "tool-status")]
     [InlineData("Which blades are out for sharpening?", "tool-status")]
+    [InlineData("Was CAL-1 calibrated when it was used?", "tool-use-history")]
+    [InlineData("What happened last shift?", "production-output")]
+    [InlineData("What became of the material issued to order 10001?", "material-reconciliation")]
     [InlineData("Which operations can run now?", "executable-operations")]
     [InlineData("Which operations are on hold?", "executable-operations")]
     [InlineData("Which operations are blocked by tooling?", "executable-operations")]
@@ -124,6 +127,37 @@ public class AnalystParserTests
         var parsed = Parse(question);
         Assert.Equal(AnalystIntent.Report, parsed.Intent);
         Assert.Equal(report, parsed.Report!.ReportId);
+    }
+
+    [Fact]
+    public void Historical_tool_question_filters_to_the_named_tool_and_as_of_use()
+    {
+        var vocabulary = Vocabulary with { Tools = ["CAL-1"] };
+        var parsed = QueryParser.Parse("Was CAL-1 calibrated when it was used?", vocabulary, Clock);
+
+        Assert.Equal(AnalystIntent.Report, parsed.Intent);
+        Assert.Equal("tool-use-history", parsed.Report!.ReportId);
+        Assert.Equal("CAL-1", parsed.Report.Parameters.Search);
+    }
+
+    [Fact]
+    public void Last_shift_resolves_to_the_latest_completed_configured_shift()
+    {
+        var parsed = Parse("What happened last shift?");
+
+        Assert.Equal("production-output", parsed.Report!.ReportId);
+        Assert.Equal("DAY", parsed.Report.Parameters.Shift);
+        Assert.Equal(new DateOnly(2026, 9, 30), parsed.Report.Parameters.From);
+        Assert.Equal(new DateOnly(2026, 9, 30), parsed.Report.Parameters.To);
+    }
+
+    [Fact]
+    public void Recovery_options_question_uses_private_scenario_intent()
+    {
+        var parsed = Parse("What are my recovery options?");
+
+        Assert.Equal(AnalystIntent.RecoveryOptions, parsed.Intent);
+        Assert.False(parsed.NeedsConfirmation);
     }
 
     [Fact]

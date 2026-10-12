@@ -973,3 +973,7 @@ Attendance remains a badge or supervisor-confirmed presence record; direct labor
 ### V3.25 — Horizon lenses and universal questions
 
 Horizon links to Factory, Program, Contract, Work center, Machine, Order and Workforce views, which continue to read through their owning services and permissions. “What changed?” provides −8h, −7d and +2w comparison windows; its past side is the approved schedule in force at the selected earlier instant. The global search can send a plain-language question to Forge Analyst, which shows its interpretation, evidence traces and any ambiguity. Unsupported or unclear questions remain explicit. See ADR 0049.
+
+### V3.26 — Analyst and reporting surfaces
+
+Forge Analyst can locate custody and outside-processor material through stock positions, trace material outcomes and remnants through reconciliation/genealogy, evaluate recorded tool validity at the time of use, resolve the latest completed configured shift, and preview recovery options from the caller's private saved scenarios. Historical tool-use reporting uses the recorded event history and states that machine/activity eligibility cannot be reconstructed where the use event did not capture it. Recovery previews use current authorized services, are read-only and do not select or commit an option. Verified by the full release suite; see ADR 0050.

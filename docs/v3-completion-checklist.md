@@ -1,6 +1,6 @@
 # V3 completion checklist
 
-Owner request: complete V3 and record the result. Last checkpoint: 2026-10-11.
+Owner request: complete V3 and record the result. Last checkpoint: 2026-10-12.
 
 This is the release checklist, not a completion declaration. The supplied `JIRSN Forge V3 Plan.md` defines the numbered roadmap and acceptance gates; use it together with the governance expansion.
 
@@ -26,7 +26,8 @@ This is the release checklist, not a completion declaration. The supplied `JIRSN
 | V3.23 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 266/266, Architecture 32/32, Kernel 33/33, Integration 112/112 (25.3356 minutes); focused PostgreSQL acceptance 1/1; migration idempotency count 84 | Complete; product commit recorded in AI handoff |
 | V3.24 | Full suite PASS; attendance/direct-labor separation and permitted support-work options pass; no migration needed; ADR 0048 | Complete; accepted against existing implementation |
 | V3.25 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 266/266, Architecture 32/32, Kernel 33/33, Integration 112/112 (25.4026 minutes); focused history test 1/1; Node syntax checks pass | Complete; ADR 0049 |
-| V3.26–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
+| V3.26 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 272/272, Architecture 32/32, Kernel 33/33, Integration 112/112 (23.7949 minutes); focused PostgreSQL 3/3; JS syntax and diff checks pass | Complete; ADR 0050 |
+| V3.27–V3.28 | Numbered source plan supplied in `JIRSN Forge V3 Plan.md` | Implement each roadmap increment and its explicit acceptance gate |
 
 ## Governance expansion validation
 

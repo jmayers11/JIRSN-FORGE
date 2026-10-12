@@ -35,7 +35,8 @@ public sealed class AnalystService(
     DocumentationService documentation,
     BriefService briefs,
     IAnalystNarrator narrator,
-    HistoryService entities)
+    HistoryService entities,
+    PlanningScenarioService scenarios)
 {
     public const int MaxRows = 200;
 
@@ -51,6 +52,11 @@ public sealed class AnalystService(
         "Show orders affected by labor constraints",
         "Create an Excel report of downtime last week by machine",
         "Compare first and second shift output this week",
+        "Where is lot L-104 and who holds it?",
+        "What became of the material issued to order 10001?",
+        "Was gauge G-1 calibrated when it was used?",
+        "What happened last shift?",
+        "What are my recovery options?",
         "Brief me",
     ];
 
@@ -138,6 +144,7 @@ public sealed class AnalystService(
             AnalystIntent.WhatChanged => await ChangedAsync(principal, i, clock, zone, ct),
             AnalystIntent.AffectedOrders => await AffectedAsync(principal, i, vocabulary, zone, ct),
             AnalystIntent.PersonImpact or AnalystIntent.Simulate => await ScenarioAsync(principal, i, vocabulary, clock, zone, ct),
+            AnalystIntent.RecoveryOptions => await RecoveryOptionsAsync(principal, i, ct),
             AnalystIntent.Report => await ReportAsync(principal, i, ct),
             AnalystIntent.Brief => await BriefAsync(principal, i, ct),
             AnalystIntent.OrderDocumentation => await DocumentationAsync(principal, i, ct),
@@ -621,6 +628,37 @@ public sealed class AnalystService(
         return new AnalystAnswer(i, headline, facts, result.Columns, result.Rows.Take(MaxRows).ToList(), notes, false, result.Sources);
     }
 
+    private async Task<AnalystAnswer> RecoveryOptionsAsync(ForgePrincipal principal, Interpretation i, CancellationToken ct)
+    {
+        var saved = await scenarios.ListAsync(principal, ct);
+        var columns = new[]
+        {
+            new ReportColumn("scenario", "Private scenario", ReportColumnKind.Text),
+            new ReportColumn("option", "Recovery option", ReportColumnKind.Text),
+            new ReportColumn("feasible", "Feasible", ReportColumnKind.Text),
+            new ReportColumn("why", "Feasibility", ReportColumnKind.Text),
+            new ReportColumn("consequences", "Consequences", ReportColumnKind.Text),
+            new ReportColumn("permission", "Required permission", ReportColumnKind.Text),
+        };
+        var rows = new List<ReportRow>();
+        foreach (var scenario in saved.Take(20))
+        {
+            var projection = await scenarios.RunAsync(scenario.ScenarioId, principal, ct);
+            foreach (var option in projection.RecoveryOptions)
+            {
+                rows.Add(new ReportRow(
+                    [scenario.Name, option.Title, option.Feasible ? "Yes" : "No", option.Feasibility, string.Join(" ", option.Consequences), option.RequiredPermission],
+                    [$"scenario:{scenario.ScenarioId:D}"]));
+            }
+        }
+
+        var feasible = rows.Count(r => string.Equals((string)r.Cells[2]!, "Yes", StringComparison.Ordinal));
+        var note = saved.Count == 0
+            ? "Save a private scenario first. Its recovery options will be evaluated against the current authorized snapshot."
+            : $"Evaluated {rows.Count} option(s) across the first {Math.Min(saved.Count, 20)} of {saved.Count} private scenario(s) using current source data and permissions.";
+        return new AnalystAnswer(i, saved.Count == 0 ? "No saved private scenarios." : $"{feasible} of {rows.Count} recovery option(s) are feasible across your private scenarios.", [], columns, rows, [note], false, ["Private planning scenarios", "Current schedule, readiness and capacity engines"]);
+    }
+
     private async Task<AnalystAnswer> BriefAsync(ForgePrincipal principal, Interpretation i, CancellationToken ct)
     {
         var brief = await briefs.BriefAsync(principal, i.ShiftCode, ct);
@@ -645,14 +683,20 @@ public sealed class AnalystService(
 
         var machines = (await resources.ListMachinesAsync(ct)).Where(m => m.Active).Select(m => new VocabularyMachine(m.Code, m.Name, m.WorkCenterCode)).ToList();
         var workCenters = (await resources.ListWorkCentersAsync(ct)).Where(w => w.Active).Select(w => new VocabularyWorkCenter(w.Code, w.Name)).ToList();
-        var shifts = (await resources.ListShiftsAsync(ct)).Select(s => new VocabularyShift(s.Code, s.Name, s.Start, s.DurationMinutes)).ToList();
+        var shifts = (await resources.ListShiftsAsync(ct)).Select(s => new VocabularyShift(s.Code, s.Name, s.Start, s.DurationMinutes, s.Days)).ToList();
         var parts = (await uow.Store<IEngineeringLookup>().ListItemsAsync(ct)).Select(p => p.PartNumber).ToList();
         var programs = (await uow.Store<IProgramsLookup>().ListProgramsAsync(ct)).Where(p => principal.Programs.Contains(new ProgramId(p.ProgramId))).Select(p => new VocabularyProgram(p.ProgramId, p.Code, p.Name)).ToList();
         var people = Permitted(principal, Permissions.WorkforceRead)
             ? (await uow.Store<IWorkforceLookup>().GetWorkerStatesAsync(now, ct)).Where(w => w.IsActive).Select(w => new VocabularyPerson(w.PersonId, w.DisplayName)).ToList()
             : [];
         var orders = (await uow.Store<IExecutionLookup>().ListOrdersAsync(ct)).Where(o => Visible(principal, o.ProgramId)).Select(o => o.OrderNumber).ToHashSet();
-        return (new AnalystVocabulary(machines, workCenters, shifts, parts, programs, people, orders), clock, zone);
+        var vocabulary = new AnalystVocabulary(machines, workCenters, shifts, parts, programs, people, orders)
+        {
+            Tools = Permitted(principal, Permissions.ResourcesRead)
+                ? (await uow.Store<IToolLookup>().ListToolsAsync(ct)).Select(t => t.Code).ToList()
+                : [],
+        };
+        return (vocabulary, clock, zone);
     }
 
     // ------------------------------------------------------------------ helpers

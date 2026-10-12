@@ -35,6 +35,9 @@ public enum AnalystIntent
     /// <summary>"What happens if SLITTER-A goes down tomorrow?" — a scenario, never saved.</summary>
     Simulate,
 
+    /// <summary>"What are my recovery options?" — options from the caller's private saved scenarios.</summary>
+    RecoveryOptions,
+
     /// <summary>A standard report, from "show", "list", "compare", "generate", "export" requests.</summary>
     Report,
 

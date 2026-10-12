@@ -45,6 +45,23 @@ public sealed class V323Tests(PostgresFixture postgres)
             Assert.False(string.IsNullOrWhiteSpace(option.GetProperty("requiredPermission").GetString()));
         });
         Assert.Contains("No source record", result.RootElement.GetProperty("evidenceNote").GetString(), StringComparison.Ordinal);
+
+        var answerResponse = await plant.Engineer.PostAsJsonAsync("/api/analyst/ask", new { question = "What are my recovery options?" });
+        var answerText = await answerResponse.Content.ReadAsStringAsync();
+        Assert.True(answerResponse.IsSuccessStatusCode, answerText);
+        using var answer = JsonDocument.Parse(answerText);
+        Assert.Equal("RecoveryOptions", answer.RootElement.GetProperty("interpretation").GetProperty("intent").GetString());
+        var answerRows = answer.RootElement.GetProperty("rows").EnumerateArray().ToArray();
+        Assert.Equal(15, answerRows.Length);
+        Assert.All(answerRows, row => Assert.Equal("Slitter outage recovery", row.GetProperty("cells")[0].GetString()));
+
+        var hiddenAnswerResponse = await plant.As("eng2").PostAsJsonAsync("/api/analyst/ask", new { question = "What are my recovery options?" });
+        var hiddenAnswerText = await hiddenAnswerResponse.Content.ReadAsStringAsync();
+        Assert.True(hiddenAnswerResponse.IsSuccessStatusCode, hiddenAnswerText);
+        using var hiddenAnswer = JsonDocument.Parse(hiddenAnswerText);
+        Assert.Empty(hiddenAnswer.RootElement.GetProperty("rows").EnumerateArray());
+        Assert.DoesNotContain("Slitter outage recovery", hiddenAnswerText, StringComparison.Ordinal);
+
         var after = await CountAsync(connection, "SELECT count(*) FROM kernel.event_log") + await CountAsync(connection, "SELECT count(*) FROM kernel.audit_log");
         Assert.Equal(before, after);
 

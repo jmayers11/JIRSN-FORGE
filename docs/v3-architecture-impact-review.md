@@ -110,6 +110,15 @@ V3.1–V3.9 are committed, with V3.9 full verification PASS at `411c3c9`. V3.10 
 14–16. Failure/performance: no schedule at the selected past instant is shown as absent, not backfilled from today. Existing one-year comparison bound remains. Unsupported or ambiguous questions are returned as such.
 17–20. Tests/dependencies/decisions: existing Phase8 integration test proves the old approved schedule is returned as the before projection after replanning; Analyst and program-segregation tests exercise shared access. UI syntax and full verification gate are required. No new dependency. Lenses remain navigational, so counts must be compared using the same scope and instant rather than summed across overlapping scopes.
 
+## Analyst and reporting surfaces (V3.26)
+
+1–4. Existing: Inventory owns stock/custody and outside processing; material reconciliation and genealogy own outcomes/remnants; Resources owns tool history and production owns shift output; private scenario previews use Planning engines. Risk: a historical answer is misread as current state, an inferred shift ignores its calendar, or a recovery answer leaks another person's scenario.
+5. Owner: source contexts remain authoritative; Planning owns report evaluation, Analyst owns deterministic intent/dispatch, and PlanningScenarioService enforces owner and permission checks.
+6–9. Entities/API: add a read-only `tool-use-history` report evaluated at each `Used` event's instant, route order material-outcome queries to reconciliation, and add configured last-shift resolution. No persistence change.
+10–13. Events/UI/authorization/audit: recovery-options uses only the caller's private saved scenarios and the ordinary schedule/readiness engines. It does not write events, choose an option or invoke a consequential command. Existing report permissions and source filters apply.
+14–16. Failure/performance: historical tool events cannot establish machine/activity eligibility because those facts are absent from the event. Recovery evaluation is capped at 20 scenarios per answer and reports the evaluated scope; each evaluation recomputes the current authorized snapshot.
+17–20. Tests/dependencies/decisions: Planning tests cover phrase routing, named-tool filtering, last completed configured shift and private-scenario intent. PostgreSQL acceptance covers historical validity and scenario ownership. No new dependency or migration. ADR 0050 records the limits.
+
 ## Priority and generalized holds (28–32)
 
 1–4. Existing: priorities influence deterministic scheduling; V3.9 production holds and separate quality/stock mechanisms. V3.10 package centralizes explicit holds and configures blocked activities/release authority; missing controlled priority proposals/impact, general downstream hold impact and signoff policies.

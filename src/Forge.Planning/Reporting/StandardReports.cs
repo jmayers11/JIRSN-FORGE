@@ -248,6 +248,15 @@ internal static class StandardReports
                 "Tools as they stand now; the period does not apply. Usable now means valid at this moment: calibration in force, not damaged, not away, within its limits."),
             Permissions.ResourcesRead, null, ToolStatusAsync),
         new(
+            new("tool-use-history", "Tool validity at time of use", "Resources",
+                "Every recorded tool use in the selected period, evaluated against the tool event history at that instant: calibration in force, service status, condition and usage limits. This is historical evidence, not a current validity check.",
+                [FromFilter, ToFilter, SearchFilter],
+                [C("at", "Used at", ReportColumnKind.DateTime), C("tool", "Tool", ReportColumnKind.Text), C("calibratedThrough", "Calibrated through", ReportColumnKind.Date),
+                 C("valid", "Valid at use", ReportColumnKind.Text), C("usesLeft", "Uses left then", ReportColumnKind.Number), C("whyNot", "Why not", ReportColumnKind.Text), C("reference", "Recorded reference", ReportColumnKind.Text)],
+                ["tool", "valid"], "tool", 3660,
+                "Each Used event is evaluated using the tool's recorded history through that event. Machine and activity are not stored on the use event, so eligibility to a specific operation cannot be reconstructed."),
+            Permissions.ResourcesRead, null, ToolUseHistoryAsync),
+        new(
             new("goal-attainment", "Goal attainment", "Planning",
                 "Every open production and delivery goal: its required-by date (its own, or cascaded from the goal above it), what is done against its target, the reforecast completion of the remaining work, and whether it is on track, behind plan but recoverable, at risk or late.",
                 [ProgramFilter, StatusFilter(Enum.GetNames<GoalState>()), SearchFilter],
@@ -992,6 +1001,32 @@ internal static class StandardReports
         var unusable = rows.Count(r => (string)r.Cells[11]! == "No");
         var dueSoon = rows.Count(r => r.Cells[7] is decimal d && d is >= 0 and <= 30);
         return new ReportBody(rows, [rows.Count == 0 ? "No tools registered." : $"{rows.Count} tool(s): {unusable} not usable now, {dueSoon} due for calibration within 30 days."], ["Tools", "Tool history"]);
+    }
+
+    private static async Task<ReportBody> ToolUseHistoryAsync(ReportRun run, CancellationToken ct)
+    {
+        var tools = run.Uow.Store<Forge.Resources.Contracts.IToolLookup>();
+        var registered = (await tools.ListToolsAsync(ct)).ToDictionary(t => t.Code, StringComparer.Ordinal);
+        var types = (await tools.ListToolTypesAsync(ct)).ToDictionary(t => t.Code, StringComparer.Ordinal);
+        var events = (await tools.ListToolEventsAsync(null, ct)).GroupBy(e => e.ToolCode, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.OrderBy(e => e.At).ThenBy(e => e.EventId).ToList(), StringComparer.Ordinal);
+        var rows = new List<ReportRow>();
+        foreach (var use in events.Values.SelectMany(e => e).Where(e => e.Kind == Forge.Resources.Contracts.ToolEventKind.Used && run.InPeriod(e.At)).OrderBy(e => e.At).ThenBy(e => e.EventId))
+        {
+            if (!registered.TryGetValue(use.ToolCode, out var tool) || !types.TryGetValue(tool.TypeCode, out var type)
+                || !run.Matches(use.ToolCode, use.Reference, type.Name))
+            {
+                continue;
+            }
+
+            var validity = Forge.Resources.Contracts.ToolValidity.At(tool, type, events[tool.Code], use.At);
+            rows.Add(new ReportRow(
+                [use.At, tool.Code, validity.CalibrationDue, validity.Valid ? "Yes" : "No", validity.UsesLeft is { } left ? (decimal)left : null,
+                 string.Join(" ", validity.Problems), use.Reference],
+                ["tool:" + tool.Code]));
+        }
+
+        var invalid = rows.Count(r => (string)r.Cells[3]! == "No");
+        return new ReportBody(rows, [$"{rows.Count} recorded tool use(s); {invalid} evaluated invalid from the history available at use time."], ["Tool use events", "Calibration and service history"]);
     }
 
     private static async Task<ReportBody> StockPositionsAsync(ReportRun run, CancellationToken ct)
