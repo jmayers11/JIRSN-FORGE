@@ -38,7 +38,7 @@ public sealed class V319Tests(PostgresFixture postgres)
             severity = "ActionRequired", confidence = "Low", recipientRoles = new[] { "Supervisor" }, escalationRoles = new[] { "Supervisor" },
             channels = new[] { "InApp", "Email" }, template = "{eventType} on {entityType} {entityId}", resolutionTemplate = "Cleared by {eventType} on {entityId}",
             deepLinkTemplate = "#/orders/{entityId}", delaySeconds = 0, reminderSeconds = 600, escalationSeconds = 1200,
-            quietStart = "22:00:00", quietEnd = "06:00:00", timeZone = "America/New_York", dedupSeconds = 3600, reason = "Create scoped delivery rule",
+            quietStart = (TimeOnly?)null, quietEnd = (TimeOnly?)null, timeZone = "America/New_York", dedupSeconds = 3600, reason = "Create scoped delivery rule",
         });
         Assert.True(Guid.TryParse(saved.GetProperty("entityId").GetString(), out _));
 

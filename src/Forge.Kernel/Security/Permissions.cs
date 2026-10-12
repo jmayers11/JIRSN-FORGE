@@ -9,6 +9,7 @@ public static class Permissions
     public const string NotificationsRead = "notifications.read";
     public const string NotificationsAcknowledge = "notifications.acknowledge";
     public const string NotificationRulesManage = "notifications.rules.manage";
+    public const string WorkAssignmentsManage = "work.assignments.manage";
 
     public const string ResourcesManage = "resources.manage";
     public const string ResourcesRead = "resources.read";
@@ -270,6 +271,8 @@ public static class Roles
             Map[role] = [.. Map[role], Permissions.NotificationsRead, Permissions.NotificationsAcknowledge];
         Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.NotificationRulesManage];
         Map[Supervisor] = [.. Map[Supervisor], Permissions.NotificationRulesManage];
+        Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.WorkAssignmentsManage];
+        Map[Supervisor] = [.. Map[Supervisor], Permissions.WorkAssignmentsManage];
     }
 
     /// <summary>The system role the propagation of a released engineering change acts with (V2.5).</summary>

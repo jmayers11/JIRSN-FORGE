@@ -56,6 +56,15 @@ V3.1–V3.9 are committed, with V3.9 full verification PASS at `411c3c9`. V3.10 
 14–16. Integration/failure/performance: mail dispatch is a separate leased worker with provider idempotency keys and bounded retries. Provider failure updates delivery state only; it cannot roll back the triggering source command. Quiet hours defer delivery in the configured IANA zone. A configured clear event updates the alert and emits a resolution notice; resolution acknowledgment is distinct from initial acknowledgment.
 17–20. Migration/tests/dependencies/decisions: additive Kernel migration; test rule scope, duplicate source-event replay, current access revocation, acknowledgment/resolution, delayed email failure and migration idempotency. Email address resolution and transport stay behind an HTTPS provider configured by deployment; no mail credential or address is stored in Forge.
 
+## Approval inbox and assignments (V3.20)
+
+1–4. Existing: each bounded context owns its authoritative approval state and second-person rules; the Host can read the shared PostgreSQL schemas and resolve the current Forge principal. Missing: one access-filtered view of pending decisions and a common lifecycle for explicitly assigned follow-up work.
+5. Owner: source contexts retain decisions and separation of duties; Kernel owns assignment records/history; Host composes the read-only approval projection and exposes assignment actions.
+6–9. Entities/DB/services/API: additive kernel assignment and history tables; inbox projects pending NCR, schedule, purchasing, project, outage, document, engineering-review, alternate and manufacturer-part decisions. It checks each required permission and excludes the requester's actor ID. Assignment types cover NCRs, inspections, work orders, RFQs, project reviews and material tasks; assignment metadata never changes source state.
+10–13. Events/UI/authorization/audit: `/api/work-inbox` backs My Work. Supervisors and Security Administrators assign active Forge people with a reason; assignees alone move Assigned → Acknowledged → InProgress → Completed, each with history and a reason. Source links still invoke their ordinary APIs and permissions.
+14–16. Integration/failure/performance: unsupported links/types, inactive assignees, missing source records, self-approval and skipped status transitions are rejected. Queries are bounded at 500 items; assignment status does not approve or complete the source record.
+17–20. Migration/tests/dependencies/decisions: migration 0005 is additive; PostgreSQL acceptance covers self-exclusion, sequential lifecycle and source-state separation. Current approval rows include the mapped source schemas; adding another approval flow requires mapping its source-specific requester, status and permission.
+
 ## Priority and generalized holds (28–32)
 
 1–4. Existing: priorities influence deterministic scheduling; V3.9 production holds and separate quality/stock mechanisms. V3.10 package centralizes explicit holds and configures blocked activities/release authority; missing controlled priority proposals/impact, general downstream hold impact and signoff policies.

@@ -23,6 +23,7 @@ import { engineeringPage } from './pages/engineering.js';
 import { analystPage } from './pages/analyst.js';
 import { shiftContinuityPage } from './pages/shift-continuity.js';
 import { notificationsPage } from './pages/notifications.js';
+import { workInboxPage } from './pages/work-inbox.js';
 import { loadDirectory } from './people.js';
 
 const NAV = [
@@ -40,6 +41,7 @@ const NAV = [
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
   { route: 'shift-continuity', label: 'Shift Continuity', icon: 'timeline', page: shiftContinuityPage },
   { route: 'notifications', label: 'Notifications', icon: 'bell', page: notificationsPage },
+  { route: 'my-work', label: 'My Work', icon: 'workorder', page: workInboxPage },
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
