@@ -1,0 +1,1834 @@
+{
+  "artifactType": "Architecture-only capability/requirement coverage register",
+  "formatVersion": 1,
+  "date": "2026-10-12",
+  "status": "PROPOSED — not implementation or conformity evidence",
+  "reviewSourceCommit": "c298a7fb9376a2bd8a344de2f37bcdd5e09a0a1b",
+  "standard": {
+    "name": "ISO 9001",
+    "targetEdition": "2026",
+    "publicationVerifiedFromPublicCatalog": true,
+    "publicPublicationDate": "2026-09-16",
+    "licensedNormativeTextAvailable": false,
+    "exactClauseCoverageVerified": false
+  },
+  "interpretationBoundary": "All interpretations below describe the user-supplied V4 architecture request. Broad clause families are provisional; exact normative wording, subclauses, mandatory/conditional classifications and applicability require a qualified review of authorized source text. No evidence link, software feature or AI explanation proves conformity.",
+  "publicSources": [
+    "https://www.iso.org/standard/9001",
+    "https://www.iso.org/quality-management/iso-9001-2026",
+    "https://www.iso.org/standard/62085.html",
+    "https://www.iso.org/standard/88431.html"
+  ],
+  "sourceSpecification": "docs/v4/sources/v4-master-request.md",
+  "sourceInventoryNote": "Original V3 BG15 and BN9 recovered and preserved in docs/v4/sources/v3-cloud-implementation-brief.txt. Numeric section54 chain remains unlocated; original catalog parity is not claimed.",
+  "classificationLegend": {
+    "M?": "Candidate mandatory QMS outcome; final normative classification requires licensed verification.",
+    "C?": "Candidate conditional requirement; applicability and exact normative meaning require licensed verification.",
+    "P": "Organization/customer policy or implementation control, with authoritative applicable-source review.",
+    "O": "Optional Forge software/technical mechanism; it does not remove an applicable quality obligation.",
+    "M?/P": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+    "M?/C?": "Candidate mandatory or conditional outcome; qualified licensed-source review determines applicability.",
+    "C?/P": "Candidate conditional obligation with organization-defined controls; licensed/applicable-source verification required.",
+    "P/C?": "Organizational control supporting potentially conditional obligations; not an asserted ISO method mandate.",
+    "O/P": "Optional mechanism adopted by organization policy; not asserted to be universally required by ISO.",
+    "M?/O": "Candidate required outcome; the register/dashboard mechanism is optional. Licensed verification required.",
+    "C?/M?": "Conditional/mandatory outcome subject to licensed review and incident applicability.",
+    "P/O": "Organization-adopted security/technical mechanism; not asserted to be an ISO-mandated authentication protocol."
+  },
+  "records": [
+    {
+      "id": "R03",
+      "userSpecificationSection": 3,
+      "title": "QMS scope, context and process map",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "4",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Versioned QMS profile and process map with issues, parties, requirements and owners.",
+      "requirementClassification": {
+        "code": "M?",
+        "meaning": "Candidate mandatory QMS outcome; final normative classification requires licensed verification.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Organization-approved scope, sites, products/services, processes and justified applicability.",
+      "proposedForgeCapability": "Versioned QMS profile and process map with issues, parties, requirements and owners.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E17",
+          "E23",
+          "E30"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add structured profile/process/context/applicability; reuse site/person/document references.",
+      "evidenceProduced": "Approved profile and procedure revisions, applicability rationale and review history.",
+      "responsibleHumanRole": "Leadership, QMS lead and named process owners.",
+      "validationApproach": "Approved versus draft scope; forbidden inferred exclusions; effective-version/revocation checks.",
+      "openQuestions": [
+        "Who defines organization/site scope and resolves applicable external requirements?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D02",
+        "D12"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 3",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R04",
+      "userSpecificationSection": 4,
+      "title": "Leadership, quality policy and responsibilities",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "5",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Policy revision links, responsibility appointments and communication evidence.",
+      "requirementClassification": {
+        "code": "M?/P",
+        "meaning": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Organization defines responsibilities, policy communication and appropriate acknowledgment.",
+      "proposedForgeCapability": "Policy revision links, responsibility appointments and communication evidence.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E10",
+          "E15",
+          "E25"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Extend existing controlled documents; add QMS responsibility/communication review.",
+      "evidenceProduced": "Exact policy revision, approver, communication/acknowledgment and effectiveness assessment.",
+      "responsibleHumanRole": "Leadership, QMS owner and process owners.",
+      "validationApproach": "Independent policy approval; historic revisions retained; acknowledgment never grants competence.",
+      "openQuestions": [
+        "Which policy/culture/ethical requirements are actually normative or organizational?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D02",
+        "D14"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 4",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R05",
+      "userSpecificationSection": 5,
+      "title": "Risks and opportunities",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "6",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Distinct risk/opportunity records, owners/actions, review and effectiveness linked to operational evidence.",
+      "requirementClassification": {
+        "code": "M?/P",
+        "meaning": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Evaluate relevant risks and opportunities using the organization-selected method.",
+      "proposedForgeCapability": "Distinct risk/opportunity records, owners/actions, review and effectiveness linked to operational evidence.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E25",
+          "E28",
+          "E30"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add QMS register; operational goal risk is an input, not a replacement.",
+      "evidenceProduced": "Evaluation-method version, consequence/benefit, action evidence and review result.",
+      "responsibleHumanRole": "Process owner and QMS reviewer.",
+      "validationApproach": "Different risk/opportunity semantics; no forced FMEA/score; evidence versus forecast distinguished.",
+      "openQuestions": [
+        "Which evaluation methods and approval thresholds apply to each process?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D10"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 5",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R06",
+      "userSpecificationSection": 6,
+      "title": "Quality objectives",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "6",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Quality objectives referencing versioned metrics, target, resources, actions and review intervals.",
+      "requirementClassification": {
+        "code": "M?/P",
+        "meaning": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Objectives and targets apply to defined processes/scopes and measurement methods.",
+      "proposedForgeCapability": "Quality objectives referencing versioned metrics, target, resources, actions and review intervals.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E06",
+          "E07",
+          "E25"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add QMS objective definitions; reuse authoritative facts and separately link production/delivery goals.",
+      "evidenceProduced": "Metric definition/result/cutoff, target version, scope, actions and human review.",
+      "responsibleHumanRole": "Process owner and leadership.",
+      "validationApproach": "Complete population and unknown-result behavior; no complaint objective forced into production goal.",
+      "openQuestions": [
+        "Which targets, measurement windows and resource commitments are approved?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D16",
+        "D17"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 6",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R07",
+      "userSpecificationSection": 7,
+      "title": "Controlled QMS change",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "6",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Source-owned change plan with impact, authority, implementation, verification and effectiveness.",
+      "requirementClassification": {
+        "code": "M?/P",
+        "meaning": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "QMS changes affecting scope/process/resource/responsibility require adopted governance.",
+      "proposedForgeCapability": "Source-owned change plan with impact, authority, implementation, verification and effectiveness.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E10",
+          "E23",
+          "E25"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add QMS change target/lifecycle; link existing engineering change when technical revisions change.",
+      "evidenceProduced": "Reasoned impact review, approved plan, implementation verification and effectiveness.",
+      "responsibleHumanRole": "Process owner, QMS lead and designated approver.",
+      "validationApproach": "Stale version denied; engineering release cannot silently approve unrelated QMS scope change.",
+      "openQuestions": [
+        "Which changes need independent review/signoff and which engineering sources are affected?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D17"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 7",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R08",
+      "userSpecificationSection": 8,
+      "title": "Competence and training",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "7",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Link qualifications, assessments and training to competence/effectiveness evidence.",
+      "requirementClassification": {
+        "code": "M?/C?",
+        "meaning": "Candidate mandatory or conditional outcome; qualified licensed-source review determines applicability.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Required competence and trainer authorization vary by work and applicable requirements.",
+      "proposedForgeCapability": "Link qualifications, assessments and training to competence/effectiveness evidence.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E02",
+          "E15",
+          "E26"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Extend existing competence/training records and typed evidence; do not duplicate HR authority.",
+      "evidenceProduced": "Qualification criteria and historic assessment/training evidence with validity interval.",
+      "responsibleHumanRole": "Qualification authority, authorized trainer and supervisor.",
+      "validationApproach": "B/L: expiry/revocation at command time, supervised policy, attendance not competence.",
+      "openQuestions": [
+        "What establishes demonstrated competence and retraining/effectiveness for each role?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D05",
+        "D12"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 8",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R09",
+      "userSpecificationSection": 9,
+      "title": "Calibration and measurement-resource impact",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "7",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Resources calibration plus Quality out-of-tolerance interval/impact assessment.",
+      "requirementClassification": {
+        "code": "C?/P",
+        "meaning": "Candidate conditional obligation with organization-defined controls; licensed/applicable-source verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Applicable measuring resources and metrological traceability requirements are defined by process/measurement.",
+      "proposedForgeCapability": "Resources calibration plus Quality out-of-tolerance interval/impact assessment.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E04",
+          "E08",
+          "E09",
+          "E26"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add as-found finding, typed equipment-use/result links and retrospective investigation.",
+      "evidenceProduced": "Original calibration/use result, as-found observation, interval basis, candidate paths and human disposition.",
+      "responsibleHumanRole": "Metrology authority and Quality reviewer.",
+      "validationApproach": "D: interval boundaries, unknown interval, multi-gauge results, unchanged historical inspection and human disposition.",
+      "openQuestions": [
+        "Who establishes suspected interval and applicable measurement range/traceability evidence?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D06",
+        "D08"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 9",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R10",
+      "userSpecificationSection": 10,
+      "title": "Controlled documented information",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "7",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Existing Engineering document/file/applicability lifecycle with QMS targets and distribution references.",
+      "requirementClassification": {
+        "code": "M?/P",
+        "meaning": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Applicable approved instruction/document depends on controlled work/configuration, not simply newest revision.",
+      "proposedForgeCapability": "Existing Engineering document/file/applicability lifecycle with QMS targets and distribution references.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E10",
+          "E23",
+          "E24"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Extend target resolution, distribution/protection/retention governance; preserve reference versus controlled authority.",
+      "evidenceProduced": "Exact revision/hash, effective applicability, approval/release and access history.",
+      "responsibleHumanRole": "Document controller and technical/process authority.",
+      "validationApproach": "A/G: old applicable revision accepted, conflict/direct command denied, reference attachment not Follow authority.",
+      "openQuestions": [
+        "What distribution/enforcement and external-document applicability policies apply?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D09"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 10",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R11",
+      "userSpecificationSection": 11,
+      "title": "Record retention and disposition",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "7",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Engineering-owned retention policy/bindings/legal holds/disposition metadata over authoritative source records; Kernel supplies shared reference, authorization, audit and outbox infrastructure.",
+      "requirementClassification": {
+        "code": "P/C?",
+        "meaning": "Organizational control supporting potentially conditional obligations; not an asserted ISO method mandate.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Retention periods/triggers derive from verified organizational, contractual, legal and regulatory sources.",
+      "proposedForgeCapability": "Engineering-owned retention policy/bindings/legal holds/disposition metadata over authoritative source records; Kernel supplies shared reference, authorization, audit and outbox infrastructure.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E10",
+          "E12",
+          "E16"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add metadata/holds/eligibility first; physical purge is separately approved and cannot bypass immutable guards.",
+      "evidenceProduced": "Policy source/version, trigger, hold history, authorized disposition and actual destruction evidence if later supported.",
+      "responsibleHumanRole": "Records owner, QMS lead and legal/disposition authority.",
+      "validationApproach": "Overlapping holds, unknown trigger, shared file references, retained backups and no-delete initial scope.",
+      "openQuestions": [
+        "Which sources determine durations and who may authorize physical destruction?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D09"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 11",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R12",
+      "userSpecificationSection": 12,
+      "title": "Unified canonical identification",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Namespaced resolver maps authoritative entity keys and controlled aliases.",
+      "requirementClassification": {
+        "code": "O/P",
+        "meaning": "Optional mechanism adopted by organization policy; not asserted to be universally required by ISO.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Identification granularity is chosen for required product/process traceability. Organization namespace prevents collisions only; prefer one organization per deployment pending separately approved tenancy controls.",
+      "proposedForgeCapability": "Namespaced resolver maps authoritative entity keys and controlled aliases.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E08",
+          "E17",
+          "E18",
+          "E24"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add one transport-neutral resolver/alias presentation; no second inventory identity.",
+      "evidenceProduced": "Canonical subject/type/key, alias approval and resolution provenance.",
+      "responsibleHumanRole": "Operations/Quality identity-policy owner.",
+      "validationApproach": "E/L: cross-part lot ambiguity, composite escaping, foreign/unknown references and no stock insertion.",
+      "openQuestions": [
+        "Which entities and alias sources require labels and what granularity is necessary?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D04",
+        "D05",
+        "D02"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 12",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R13",
+      "userSpecificationSection": 13,
+      "title": "Barcode and scanner abstraction",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Configurable Code128/QR/DataMatrix and keyboard-wedge/camera/future scanner adapters.",
+      "requirementClassification": {
+        "code": "O/P",
+        "meaning": "Optional mechanism adopted by organization policy; not asserted to be universally required by ISO.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Barcode technology is an adopted Forge method, not a universal ISO mandate.",
+      "proposedForgeCapability": "Configurable Code128/QR/DataMatrix and keyboard-wedge/camera/future scanner adapters.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E18",
+          "E11"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add bounded parsing/adapters and safe display while reusing business commands.",
+      "evidenceProduced": "Adapter/profile version and meaningful validation outcome, without credentials.",
+      "responsibleHumanRole": "Operations/device administrator.",
+      "validationApproach": "Malformed/oversized/untrusted input cannot execute commands/URLs; manual fallback policy and accessibility.",
+      "openQuestions": [
+        "Which symbologies/devices and fallback paths are needed at actual sites?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D04",
+        "D05",
+        "D19"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 13",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R14",
+      "userSpecificationSection": 14,
+      "title": "Label lifecycle",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Label/template/print-attempt records reference existing physical/work entities.",
+      "requirementClassification": {
+        "code": "O/P",
+        "meaning": "Optional mechanism adopted by organization policy; not asserted to be universally required by ISO.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Tracked label copies/replacement rules depend on physical process risk.",
+      "proposedForgeCapability": "Label/template/print-attempt records reference existing physical/work entities.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E17",
+          "E18"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add issue/reprint/replacement/void/version/audit; printer state never changes stock.",
+      "evidenceProduced": "Print intent/result/uncertainty, issuer/time/template, reprint reason and same subject.",
+      "responsibleHumanRole": "Authorized label issuer and operations verifier.",
+      "validationApproach": "E: duplicate/void/copied labels, same entity after reprint, valid repeated scan and print outage.",
+      "openQuestions": [
+        "Are multiple labels valid and how is physical placement/copy conflict verified?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D04",
+        "D05"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 14",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R15",
+      "userSpecificationSection": 15,
+      "title": "Scan-to-execute flow",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Session-bound selection plus shared authoritative checks and existing execution/material commands.",
+      "requirementClassification": {
+        "code": "O/P",
+        "meaning": "Optional mechanism adopted by organization policy; not asserted to be universally required by ISO.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Required scans/checks vary by controlled operation and risk.",
+      "proposedForgeCapability": "Session-bound selection plus shared authoritative checks and existing execution/material commands.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E01",
+          "E02",
+          "E11",
+          "E18"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add staged workflow; close command-enforcement gap before complete execution claim.",
+      "evidenceProduced": "Source/policy/instruction version, validated selection and accepted business transaction ID.",
+      "responsibleHumanRole": "Qualified operator and authorized supervisor.",
+      "validationApproach": "A/B/F/L: direct API negative checks, stale preview, concurrent stock/hold change, no offline queue.",
+      "openQuestions": [
+        "Which stages are mandatory and which context may a trusted terminal supply?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D05",
+        "D06",
+        "D07"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 15",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R16",
+      "userSpecificationSection": 16,
+      "title": "Personnel identification and Nexus",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "7/8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Nexus identity/assurance with Forge authority/qualification; operator and terminal actor separate.",
+      "requirementClassification": {
+        "code": "P/O",
+        "status": "Provisional; not verified against licensed normative text",
+        "meaning": "Organization-adopted security/technical mechanism; not asserted to be an ISO-mandated authentication protocol."
+      },
+      "conditionalApplicability": "Consequential actions require the organization-configured trusted authentication assurance.",
+      "proposedForgeCapability": "Nexus identity/assurance with Forge authority/qualification; operator and terminal actor separate.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E11",
+          "E15",
+          "E26"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Extend trusted actor binding for scan sessions; no badge-derived authentication or new credential store.",
+      "evidenceProduced": "Validated subject/issuer/assurance time, acting operator, source/version-bound signoff.",
+      "responsibleHumanRole": "Identity/security owner and manufacturing authority.",
+      "validationApproach": "B/L: real issuer configuration, weak/stale assurance, deactivation and actor switch races.",
+      "openQuestions": [
+        "What Nexus assurance and trusted operator mapping applies to each action?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D05"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 16",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R17",
+      "userSpecificationSection": 17,
+      "title": "Scan validation",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Reuse shared source checks at preview and inside authoritative command transaction.",
+      "requirementClassification": {
+        "code": "P/O",
+        "status": "Provisional; not verified against licensed normative text",
+        "meaning": "Organization-adopted security/technical mechanism; not asserted to be an ISO-mandated authentication protocol."
+      },
+      "conditionalApplicability": "Applicable work/material/quality/resource/predecessor checks govern each accepted action.",
+      "proposedForgeCapability": "Reuse shared source checks at preview and inside authoritative command transaction.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E01",
+          "E02",
+          "E09",
+          "E18",
+          "E23"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Integrate full applicable checks and exact context re-resolution; no parallel scan authority.",
+      "evidenceProduced": "Validation code/reason and actual current source/policy versions.",
+      "responsibleHumanRole": "Operations/Quality policy owner and acting operator.",
+      "validationApproach": "A/B/F: revision/location/hold/quantity/qualification/calibration/predecessor violations denied without mutation.",
+      "openQuestions": [
+        "Which missing/indeterminate facts block rather than warn under approved policy?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D05",
+        "D06"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 17",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R18",
+      "userSpecificationSection": 18,
+      "title": "Scan-driven event and attempt model",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8/7",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Redacted ScanAttempt references owning domain event/transaction after acceptance.",
+      "requirementClassification": {
+        "code": "O/P",
+        "meaning": "Optional mechanism adopted by organization policy; not asserted to be universally required by ISO.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Capture meaningful accepted transactions; raw attempts have proportional bounded retention.",
+      "proposedForgeCapability": "Redacted ScanAttempt references owning domain event/transaction after acceptance.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E11",
+          "E12",
+          "E16",
+          "E18"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add attempt/session provenance separately from ordinary accepted audit/outbox events.",
+      "evidenceProduced": "Outcome, actor/operator/session/device when available, time/correlation and accepted source ID.",
+      "responsibleHumanRole": "Operations and security/records owner.",
+      "validationApproach": "Retry/duplicate input, uncertain commit, event failure and no secret/raw badge storage.",
+      "openQuestions": [
+        "What raw attempt data is necessary and for how long?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D05",
+        "D09",
+        "D19"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 18",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R19",
+      "userSpecificationSection": 19,
+      "title": "Material genealogy",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Existing Inventory/Execution graph plus source-owned operation/equipment/inspection evidence joins.",
+      "requirementClassification": {
+        "code": "C?/P",
+        "meaning": "Candidate conditional obligation with organization-defined controls; licensed/applicable-source verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Traceability granularity and exact operator/tool/inspection coverage depend on required controls.",
+      "proposedForgeCapability": "Existing Inventory/Execution graph plus source-owned operation/equipment/inspection evidence joins.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E08",
+          "E17",
+          "E19",
+          "E24"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add typed subject/equipment joins and complete investigation queries; do not infer missing history.",
+      "evidenceProduced": "Recorded transformation paths, historic configuration, labor/tool/inspection and shipment source IDs.",
+      "responsibleHumanRole": "Operations recorder and Quality investigator.",
+      "validationApproach": "C/D/G: split/merge/remnant/shipment forward/back paths; movement adds no transformation; truncation/hidden gaps shown.",
+      "openQuestions": [
+        "Is order-wide as-built sufficient or is exact unit allocation required?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D04",
+        "D06",
+        "D19"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 19",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R20",
+      "userSpecificationSection": 20,
+      "title": "Traceability investigation and containment",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8/10",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Controlled investigation/candidate assessment referencing existing genealogy and HoldService.",
+      "requirementClassification": {
+        "code": "P/C?",
+        "meaning": "Organizational control supporting potentially conditional obligations; not an asserted ISO method mandate.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Suspect reports are evaluated by human Quality; trace candidates are not automatically defective.",
+      "proposedForgeCapability": "Controlled investigation/candidate assessment referencing existing genealogy and HoldService.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E08",
+          "E19",
+          "E21",
+          "E26"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add review snapshot, completeness, include/exclude/uncertain decision and separately authorized containment.",
+      "evidenceProduced": "Trigger, exact candidate evidence paths, authorized assessment/hold references and rationale.",
+      "responsibleHumanRole": "Quality investigator/disposition authority.",
+      "validationApproach": "C/D: complete permitted stock/WIP/allocations/staged/shipped/customer candidates and no automatic communication/hold.",
+      "openQuestions": [
+        "What scope/completeness is required before containment or customer decisions?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D07",
+        "D08",
+        "D18"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 20",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R21",
+      "userSpecificationSection": 21,
+      "title": "Controlled customer requirements",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Extend Programs requirement review/version links into planning/inspection/release/shipping.",
+      "requirementClassification": {
+        "code": "M?/C?",
+        "meaning": "Candidate mandatory or conditional outcome; qualified licensed-source review determines applicability.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Applicable product/contract/delivery/configuration/quality/customer sources must be accepted under policy.",
+      "proposedForgeCapability": "Extend Programs requirement review/version links into planning/inspection/release/shipping.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E20",
+          "E21",
+          "E23",
+          "E24"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add accepted review history and stable customer-source reference; current code/text is not complete review evidence.",
+      "evidenceProduced": "Accepted requirement/version, changes/approver, configuration and source evidence.",
+      "responsibleHumanRole": "Commercial/program owner and technical/Quality approver.",
+      "validationApproach": "A/F/I: changed/ambiguous customer requirement, stale package, source scope and release/ship linkage.",
+      "openQuestions": [
+        "Who accepts requirements and resolves conflicts or changed commitments?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D02",
+        "D07",
+        "D12"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 21",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R22",
+      "userSpecificationSection": 22,
+      "title": "Design and development controls",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Extend/integrate Engineering planning/inputs/reviews/verification/validation/output controls where applicable.",
+      "requirementClassification": {
+        "code": "C?",
+        "meaning": "Candidate conditional requirement; applicability and exact normative meaning require licensed verification.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Organization decides whether it performs applicable design/development, with justified exclusions.",
+      "proposedForgeCapability": "Extend/integrate Engineering planning/inputs/reviews/verification/validation/output controls where applicable.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E10",
+          "E23",
+          "E24"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add missing design-control evidence or integrate authoritative PLM; Design change type alone is insufficient.",
+      "evidenceProduced": "Approved applicability, design inputs/reviews/verification/validation and changed configuration.",
+      "responsibleHumanRole": "Engineering/design authority and QMS owner.",
+      "validationApproach": "Build-to-print justified nonapplicability, applicable design lifecycle and preserved historic outputs.",
+      "openQuestions": [
+        "Which design activity is in QMS scope and what external system owns its evidence?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D12"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 22",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R23",
+      "userSpecificationSection": 23,
+      "title": "Supplier and external-provider control",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Extend existing Procurement supplier/approved sources with evaluation/reevaluation/monitoring.",
+      "requirementClassification": {
+        "code": "C?/P",
+        "meaning": "Candidate conditional obligation with organization-defined controls; licensed/applicable-source verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Approval/evaluation scope depends on purchased product/service/process and applicable requirements.",
+      "proposedForgeCapability": "Extend existing Procurement supplier/approved sources with evaluation/reevaluation/monitoring.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E20",
+          "E21",
+          "E30"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add evidence-based criteria/results and conditional approval scope/effectivity.",
+      "evidenceProduced": "Evaluation/reevaluation evidence, authority, scope and monitoring decisions.",
+      "responsibleHumanRole": "Procurement and supplier Quality authority.",
+      "validationApproach": "Expired/inapplicable scope, no approved source versus active supplier policy, poor score not automatic defect.",
+      "openQuestions": [
+        "What criteria, reevaluation triggers and restrictive sourcing defaults are approved?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D11",
+        "D18"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 23",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R24",
+      "userSpecificationSection": 24,
+      "title": "Controlled production conditions",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Shared readiness and transactional execution checks with parameters/setup/environment where required.",
+      "requirementClassification": {
+        "code": "C?/P",
+        "meaning": "Candidate conditional obligation with organization-defined controls; licensed/applicable-source verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Process controls apply according to approved work and applicable customer/process requirements.",
+      "proposedForgeCapability": "Shared readiness and transactional execution checks with parameters/setup/environment where required.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E01",
+          "E02",
+          "E20",
+          "E23"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Close command-readiness gap; add typed required process observations without duplicate scheduling.",
+      "evidenceProduced": "Applicable instruction/configuration, qualified personnel/resources, setup/parameter/inspection evidence.",
+      "responsibleHumanRole": "Operations/process owner and Quality authority.",
+      "validationApproach": "A/B/F: direct API cannot bypass configured production conditions, missing measurements remain unknown.",
+      "openQuestions": [
+        "What process parameters, setup verification and preservation/environment controls are actually required?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D05",
+        "D06",
+        "D12"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 24",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R25",
+      "userSpecificationSection": 25,
+      "title": "Inspection and acceptance",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Existing revision-specific plan/results extended with exact subject, frozen criteria/units and equipment.",
+      "requirementClassification": {
+        "code": "C?/P",
+        "meaning": "Candidate conditional obligation with organization-defined controls; licensed/applicable-source verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Inspection/sampling and accepted-unit coverage follow the approved acceptance arrangements.",
+      "proposedForgeCapability": "Existing revision-specific plan/results extended with exact subject, frozen criteria/units and equipment.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E04",
+          "E09",
+          "E20",
+          "E26"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add cohort/attempt/sample coverage, plan version/hash, per-characteristic equipment/time and evidence.",
+      "evidenceProduced": "Historic criteria/measurements/units/subject, result, inspector and accepted coverage decision.",
+      "responsibleHumanRole": "Independent qualified inspector and Quality acceptance authority.",
+      "validationApproach": "A/D/F: units/limits, sample coverage, partial acceptance, equipment validity and no all-units inference.",
+      "openQuestions": [
+        "Which sample-to-quantity rule and acceptance authority applies?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D06",
+        "D07",
+        "D08"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 25",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R26",
+      "userSpecificationSection": 26,
+      "title": "Product release",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Quality release decision consumed atomically by existing Inventory ledger/ship gates.",
+      "requirementClassification": {
+        "code": "M?/C?",
+        "meaning": "Candidate mandatory or conditional outcome; qualified licensed-source review determines applicability.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Release applies to identified accepted quantities under applicable arrangements and permitted concessions.",
+      "proposedForgeCapability": "Quality release decision consumed atomically by existing Inventory ledger/ship gates.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E03",
+          "E04",
+          "E21"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add release aggregate/scope/reservation/evidence/signoff; production receipt is not sufficient decision evidence.",
+      "evidenceProduced": "Acceptance/coverage/requirement/concession references and authorized version-bound release.",
+      "responsibleHumanRole": "Product-release authority, independent reviewer as configured.",
+      "validationApproach": "F/I: 920 released/80 held, competing releases/ships, revoked authority and exact concession scope.",
+      "openQuestions": [
+        "Who releases which quantities and where is independent/customer approval required?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D06",
+        "D07"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 26",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R27",
+      "userSpecificationSection": 27,
+      "title": "Nonconforming outputs",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Existing generalized holds/NCR/rework/repair/RTV/scrap plus exact quantity/concession evidence.",
+      "requirementClassification": {
+        "code": "M?/C?",
+        "meaning": "Candidate mandatory or conditional outcome; qualified licensed-source review determines applicability.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Control known/suspected nonconforming scope with authorized disposition and required reinspection.",
+      "proposedForgeCapability": "Existing generalized holds/NCR/rework/repair/RTV/scrap plus exact quantity/concession evidence.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E04",
+          "E19",
+          "E21",
+          "E26"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Extend scope/customer concession links; preserve original NCR and disposition history.",
+      "evidenceProduced": "Containment, disposition, rework/repair/reinspection and approved release evidence.",
+      "responsibleHumanRole": "Quality disposition/approval authority.",
+      "validationApproach": "C/F/H: prohibited release, whole/partial scope, independent concession and history preservation.",
+      "openQuestions": [
+        "Which dispositions/concessions require customer or independent approval?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D07",
+        "D15"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 27",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R28",
+      "userSpecificationSection": 28,
+      "title": "Preservation and customer property",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Existing shelf-life/custody/packaging plus legal owner/agreement/incidents over existing identities.",
+      "requirementClassification": {
+        "code": "C?/P",
+        "meaning": "Candidate conditional obligation with organization-defined controls; licensed/applicable-source verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Controls vary by storage/handling/transport and customer/consignment agreement.",
+      "proposedForgeCapability": "Existing shelf-life/custody/packaging plus legal owner/agreement/incidents over existing identities.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E17",
+          "E20",
+          "E21",
+          "E22"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add structured owner/loan/permitted use/receipt condition/return acceptance and relevant environmental observations.",
+      "evidenceProduced": "Agreement/version, custody events, condition/loss/unsuitability and customer acknowledgment.",
+      "responsibleHumanRole": "Operations, commercial/property owner and Quality.",
+      "validationApproach": "E/I: custody not ownership, no new identity on movement, preserved shelf-life and authorized use/return.",
+      "openQuestions": [
+        "Who owns property and what use/preservation/incident/return obligations apply?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D09",
+        "D12",
+        "D13"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 28",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R29",
+      "userSpecificationSection": 29,
+      "title": "Post-delivery activities",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Quality case references original Inventory shipment/return/genealogy and existing CAPA.",
+      "requirementClassification": {
+        "code": "C?/P",
+        "meaning": "Candidate conditional obligation with organization-defined controls; licensed/applicable-source verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Complaints/returns/warranty/field investigation/recall obligations depend on verified requirements.",
+      "proposedForgeCapability": "Quality case references original Inventory shipment/return/genealogy and existing CAPA.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E08",
+          "E21",
+          "E22"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add complaint/investigation/response authority and applicable warranty/recall integration, not new stock history.",
+      "evidenceProduced": "Original shipment/lot, allegation versus assessment, return/disposition/CAPA and authorized communication.",
+      "responsibleHumanRole": "Customer Quality, commercial authority and investigator.",
+      "validationApproach": "I: partial returns, duplicate names, unconfirmed defect, bounded quantities and no unsolicited contact.",
+      "openQuestions": [
+        "Which post-delivery obligations and response approval apply to each customer/product?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D02",
+        "D12",
+        "D15",
+        "D18"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 29",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R30",
+      "userSpecificationSection": 30,
+      "title": "QMS performance dashboard",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "9",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Versioned QMS metrics composed from authoritative source transactions.",
+      "requirementClassification": {
+        "code": "M?/O",
+        "meaning": "Candidate required outcome; the register/dashboard mechanism is optional. Licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Organization chooses relevant indicators with approved methods and complete scope.",
+      "proposedForgeCapability": "Versioned QMS metrics composed from authoritative source transactions.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E06",
+          "E07",
+          "E21",
+          "E25"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Fix full-population/cohort semantics; process FPY excludes units with prior rework/repair and is distinct from first inspection acceptance. Add definition/completeness/target views, not manually duplicated transactions.",
+      "evidenceProduced": "Numerator/denominator/unit/scope/window/source cutoff and query/definition versions.",
+      "responsibleHumanRole": "Metric/process owner and reporting reviewer.",
+      "validationApproach": "J: over5000 rows, reinspection deduplication, prior rework/repair exclusion, UOM/partial scope/unknown denominator and historical definition changes.",
+      "openQuestions": [
+        "Which metrics/targets and data-quality thresholds are approved?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D16",
+        "D19"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 30",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R31",
+      "userSpecificationSection": 31,
+      "title": "Customer satisfaction",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "9",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Structured feedback and human satisfaction assessment alongside delivery/acceptance facts.",
+      "requirementClassification": {
+        "code": "M?/P",
+        "meaning": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Organization defines feedback/scorecard/survey/complaint methods suitable to its customers.",
+      "proposedForgeCapability": "Structured feedback and human satisfaction assessment alongside delivery/acceptance facts.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E21",
+          "E07"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add feedback cases and stable customer identity; do not infer satisfaction from OTD alone.",
+      "evidenceProduced": "Feedback source/time/scope, assessment method, response and approved conclusion.",
+      "responsibleHumanRole": "Customer relationship and QMS process owner.",
+      "validationApproach": "I/J: unrelated customers/duplicate names, contradictory feedback and no delivery-only satisfaction score.",
+      "openQuestions": [
+        "Which feedback methods and interpretation/response rules are used?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D02",
+        "D16",
+        "D18"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 31",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R32",
+      "userSpecificationSection": 32,
+      "title": "Internal QMS audits",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "9",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Quality business audit/finding/report/follow-up references Kernel audit/evidence, not replaced by it.",
+      "requirementClassification": {
+        "code": "M?/P",
+        "meaning": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Audit program/criteria/schedule/team competence/impartiality follow approved applicable requirements.",
+      "proposedForgeCapability": "Quality business audit/finding/report/follow-up references Kernel audit/evidence, not replaced by it.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E05",
+          "E10",
+          "E12",
+          "E25"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add audit-management domain; process finding need not be product NCR with part/quantity.",
+      "evidenceProduced": "Criteria/version, competence/impartiality assessment, objective evidence, finding/report and follow-up.",
+      "responsibleHumanRole": "Competent impartial auditor and audit-program owner.",
+      "validationApproach": "G/H: scoped criteria/evidence, denied sensitive source, finding kinds and independent closure policy.",
+      "openQuestions": [
+        "Who may audit/approve reports and which scheduling/impartiality rules apply?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D14",
+        "D15"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 32",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R33",
+      "userSpecificationSection": 33,
+      "title": "Clause-to-evidence mapping",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "9/7",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "StandardEdition/RequirementMapping/EvidenceAssessment and many-to-many transition relations.",
+      "requirementClassification": {
+        "code": "O",
+        "meaning": "Optional Forge software/technical mechanism; it does not remove an applicable quality obligation.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Edition-specific mappings aid assessment; linked records do not establish conformity.",
+      "proposedForgeCapability": "StandardEdition/RequirementMapping/EvidenceAssessment and many-to-many transition relations.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E10",
+          "E12",
+          "E30"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add mapping/source-verification/applicability/assessment records; no normative text invented or copied without authority.",
+      "evidenceProduced": "Licensed source reference, verified mapping, linked procedure/transaction and human adequacy rationale.",
+      "responsibleHumanRole": "Qualified QMS reviewer/auditor and process owner.",
+      "validationApproach": "G/K: evidence versus adequacy, unverified/unknown/applicability distinctions and current export access.",
+      "openQuestions": [
+        "Which authorized clause sources and assessor authority finalize exact coverage?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D09",
+        "D14",
+        "D20"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 33",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R34",
+      "userSpecificationSection": 34,
+      "title": "Management review",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "9",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Frozen review pack with decisions/resources/QMS changes/actions and follow-up.",
+      "requirementClassification": {
+        "code": "M?/P",
+        "meaning": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Leadership determines review process/frequency and applicable inputs/outputs.",
+      "proposedForgeCapability": "Frozen review pack with decisions/resources/QMS changes/actions and follow-up.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E06",
+          "E07",
+          "E25"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add management-review records over complete metrics/source evidence; avoid forced shift-review semantics.",
+      "evidenceProduced": "Frozen definition/scope/cutoff, participants, approved decisions/actions/owners/dates and follow-up.",
+      "responsibleHumanRole": "Leadership and QMS review coordinator.",
+      "validationApproach": "J/K: later data/metric revision cannot rewrite pack; action acknowledgment not completion.",
+      "openQuestions": [
+        "Which cadence/input approval/decision and follow-up responsibilities apply?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D16",
+        "D17",
+        "D20"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 34",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R35",
+      "userSpecificationSection": 35,
+      "title": "Corrective action",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "10",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Extend existing CapaId with investigation/multi-source scope/owner/action/effectiveness/recurrence.",
+      "requirementClassification": {
+        "code": "C?/M?",
+        "meaning": "Conditional/mandatory outcome subject to licensed review and incident applicability.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Applicable nonconformity causes require evidence-supported evaluation/action/effectiveness under policy.",
+      "proposedForgeCapability": "Extend existing CapaId with investigation/multi-source scope/owner/action/effectiveness/recurrence.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E05",
+          "E12",
+          "E25"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add unknown-cause investigation and contextual access before new origins; preserve legacy state/history.",
+      "evidenceProduced": "Problem/correction/containment/cause evidence, action plan/implementation and independent effectiveness/closure.",
+      "responsibleHumanRole": "Corrective-action owner and independent effectiveness authority.",
+      "validationApproach": "H/G/I: unknown cause, recurrence/ineffective reopen, source revocation and correction not closure.",
+      "openQuestions": [
+        "Who verifies cause/effectiveness, over what window and with what criteria?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D14",
+        "D15"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 35",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R36",
+      "userSpecificationSection": 36,
+      "title": "Continual improvement",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "10",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Improvement entries reference audits/CAPA/objectives/feedback/risk/review and real Projects when appropriate.",
+      "requirementClassification": {
+        "code": "M?/O",
+        "meaning": "Candidate required outcome; the register/dashboard mechanism is optional. Licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Organization selects improvement opportunities and evaluates useful results where practical.",
+      "proposedForgeCapability": "Improvement entries reference audits/CAPA/objectives/feedback/risk/review and real Projects when appropriate.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E05",
+          "E07",
+          "E25"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add improvement register/evaluations; no fabricated cause or capital-project requirement for every suggestion.",
+      "evidenceProduced": "Baseline/result measurement or reasoned assessment, decisions/actions and review.",
+      "responsibleHumanRole": "Process owner and leadership/QMS reviewer.",
+      "validationApproach": "H/J: before/after method consistency, suggestions not forced CAPA, real Project remains external reference.",
+      "openQuestions": [
+        "What improvement approval/results evidence is proportionate?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D10",
+        "D16",
+        "D17"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 36",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R37",
+      "userSpecificationSection": 37,
+      "title": "Forge Quality Analyst",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "4/5/6/7/8/9/10",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Existing deterministic parser/services/report catalog extended to new Quality questions.",
+      "requirementClassification": {
+        "code": "O",
+        "meaning": "Optional Forge software/technical mechanism; it does not remove an applicable quality obligation.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Analyst explanations are authorized views, not independent conformity evidence.",
+      "proposedForgeCapability": "Existing deterministic parser/services/report catalog extended to new Quality questions.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E06",
+          "E07",
+          "E08",
+          "E09",
+          "E28"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add question mappings only after authoritative workflows/metrics exist; unknown/ambiguous results explicit.",
+      "evidenceProduced": "Interpretation, source references, facts, cutoff and limitations, with human assessments labeled.",
+      "responsibleHumanRole": "Authorized requester and source-record owner.",
+      "validationApproach": "G/J/K: all13 requested question classes, access/marking revocation and no AI-fabricated fact/cause/conformity.",
+      "openQuestions": [
+        "Which question interpretations and scope/time defaults are approved?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D16"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 37",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R38",
+      "userSpecificationSection": 38,
+      "title": "Notifications",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "7/8/9/10",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Existing event/outbox/notification rules with current authorized source projections and expiry evaluation.",
+      "requirementClassification": {
+        "code": "O/P",
+        "meaning": "Optional mechanism adopted by organization policy; not asserted to be universally required by ISO.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Rules/recipients/channels and due-condition evaluation follow adopted communication policy.",
+      "proposedForgeCapability": "Existing event/outbox/notification rules with current authorized source projections and expiry evaluation.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E13",
+          "E14",
+          "E15"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Recheck markings/current recipient/source access at send; add source-aware QMS trigger/due facts.",
+      "evidenceProduced": "Factual domain event, rule/version/condition, dedup/delivery/suppression and resolution outcome.",
+      "responsibleHumanRole": "Notification-rule owner and authorized communication authority.",
+      "validationApproach": "Queued revocation/expiry/markings, duplicate/out-of-order events, delivery failure and no source rollback/customer autosend. Verify supported host topology, subscriber leases/checkpoints, duplicate/out-of-order versions and projection lag.",
+      "openQuestions": [
+        "Which audiences, external-send approvals and suppressed-delivery rules apply?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D18",
+        "D19"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 38",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R39",
+      "userSpecificationSection": 39,
+      "title": "Security and operational record integrity",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "7/8",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Reuse source-aware permissions/delegation/SoD/assurance/signoff/audit/recovery and secure export.",
+      "requirementClassification": {
+        "code": "P/C?",
+        "meaning": "Organizational control supporting potentially conditional obligations; not an asserted ISO method mandate.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Controls support verified applicable access/record requirements; Nexus authenticates and Forge authorizes.",
+      "proposedForgeCapability": "Reuse source-aware permissions/delegation/SoD/assurance/signoff/audit/recovery and secure export.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E12",
+          "E15",
+          "E16",
+          "E31"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Add actual context before replay/write/export and current access everywhere; document DB privilege assumptions. Bind replay to originating authenticated identity, acting operator where relevant and logical command/source. Specify multi-host subscription lease/checkpoint and duplicate/out-of-order handling before that topology is supported.",
+      "evidenceProduced": "Authorized decision/version/assurance evidence, audit/outbox, protected recovery and export manifest.",
+      "responsibleHumanRole": "Security, operational authority and records owner.",
+      "validationApproach": "G/L: cross-source/mixed scope, revoked replay, forged assurance, SoD, signed version race and restoration. Test cross-actor/operator/source replay, source-version races and topology/checkpoint/provider-idempotency failures.",
+      "openQuestions": [
+        "Which assurance/signature/export/deployment controls are required for each action?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D05",
+        "D09",
+        "D18",
+        "D19"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 39",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    },
+    {
+      "id": "R40",
+      "userSpecificationSection": 40,
+      "title": "Evidence identity, integrity and corrections",
+      "standardEdition": "ISO 9001:2026",
+      "clauseFamily": "7/9",
+      "exactNormativeClauseReference": null,
+      "legacy2015LocatorStatus": "Not asserted: obtain licensed edition/amendment comparison; do not assume unchanged subclause numbers.",
+      "requirementInterpretation": "Existing hash-addressed files/revisions protected by application/DB guards, with typed evidence/version/assessment/correction links; no guarantee against unrestricted privileged administrators.",
+      "requirementClassification": {
+        "code": "M?/P",
+        "meaning": "Candidate mandatory outcome implemented through organization-defined policies; licensed verification required.",
+        "status": "Provisional; not verified against licensed normative text"
+      },
+      "conditionalApplicability": "Evidence adequacy and integrity controls depend on record/source and applicable requirements.",
+      "proposedForgeCapability": "Existing hash-addressed files/revisions protected by application/DB guards, with typed evidence/version/assessment/correction links; no guarantee against unrestricted privileged administrators.",
+      "existingV3CapabilityToReuse": {
+        "evidenceIndexReferences": [
+          "E10",
+          "E12",
+          "E16",
+          "E24"
+        ],
+        "assessment": "Reuse source-owned records/contracts as described in architecture-impact-review.md and the supporting assessments; none of these references establishes V4 acceptance."
+      },
+      "newV4WorkRequired": "Extend source-aware manifests, retention and superseding attestations; no absolute immutable/PKI claim.",
+      "evidenceProduced": "Source ID/version/hash, creator/time/access/retention/history/signoff and independent adequacy assessment.",
+      "responsibleHumanRole": "Evidence/records owner and qualified assessor.",
+      "validationApproach": "G/K: stale version, exact hash, correction preserves original, current download/export and unknown historical classification.",
+      "openQuestions": [
+        "What attestation/correction/integrity verification and protected storage is required?",
+        "D01: verify exact requirement meaning and applicable clause(s) against authorized ISO 9001:2026 source text."
+      ],
+      "productOwnerDecisionReferences": [
+        "D01",
+        "D03",
+        "D09",
+        "D14"
+      ],
+      "verificationStatus": "RequiresLicensedVerification",
+      "implementationStatus": "ProposedOnly",
+      "conformityAssessmentStatus": "NotAssessed",
+      "provenance": {
+        "architectureRequirement": "V4 user request section 40",
+        "repositoryEvidenceIndex": "architecture-impact-review.md E01–E32",
+        "standardInterpretation": "No authorized exact normative text inspected."
+      }
+    }
+  ],
+  "preservedSourceHashes": {
+    "docs/v4/sources/v4-master-request.md": "7330e044bb2f02120135fba0902dc46986a0b979a2eb970937d61cdf6fea1719",
+    "docs/v4/sources/v3-cloud-implementation-brief.txt": "718c3c93f3a4710843bec5ab8a0f85987b540752b458ce7a7db17c8e1f563935"
+  }
+}

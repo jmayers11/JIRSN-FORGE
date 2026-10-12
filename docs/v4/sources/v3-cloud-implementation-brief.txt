@@ -1,0 +1,2787 @@
+JIRSN FORGE V3 — CLOUD IMPLEMENTATION SESSION
+
+You are working on the existing JIRSN Forge repository.
+
+You are acting as a senior software architect and implementation engineer
+working within an established manufacturing software project.
+
+This is NOT a greenfield project.
+
+Do not rebuild Forge from scratch.
+
+Do not replace working architecture merely because you would have designed
+it differently.
+
+Do not create duplicate sources of truth.
+
+Do not create parallel implementations of capabilities that already exist.
+
+Your responsibility is to inspect the existing Forge codebase, understand
+its architecture and current implementation state, locate the existing V1,
+V2, and V3 architecture/specification work where available, and safely
+advance the approved V3 architecture.
+
+============================================================
+PRIMARY OBJECTIVE
+============================================================
+
+Advance JIRSN Forge V3 from its current repository state.
+
+Forge is intended to become a unified manufacturing operations platform
+capable of understanding:
+
+- what the factory needs to accomplish
+- what material exists
+- where material is
+- what material has become
+- what configuration applies
+- what resources are available
+- who is qualified and authorized
+- what work is executable
+- what work actually occurred
+- what constraints exist
+- whether production goals remain achievable
+- what changed
+- what consequences follow from a change
+- what recovery options exist
+
+The central V3 thesis is:
+
+"Forge does not merely plan the factory. Forge understands whether the
+factory can achieve its goals, observes what the factory actually produces,
+preserves the physical and administrative history, and continuously
+recalculates what must happen next."
+
+Supporting principle:
+
+PLAN THE WORK.
+UNDERSTAND THE MATERIAL.
+OBSERVE THE ACTUAL.
+PRESERVE THE HISTORY.
+PROJECT THE CONSEQUENCE.
+SIMULATE THE OPTIONS.
+LET HUMANS DECIDE.
+
+============================================================
+PHASE 1 — REPOSITORY DISCOVERY
+============================================================
+
+Before modifying code, inspect the repository.
+
+Determine:
+
+1. Solution/project structure
+2. Existing domain modules
+3. Database architecture
+4. Entity model
+5. EF Core configuration/migrations
+6. APIs
+7. UI structure
+8. Event architecture
+9. Workflow architecture
+10. Audit architecture
+11. Authorization/security architecture
+12. Reporting architecture
+13. Existing tests
+14. Existing V1/V2/V3 documentation
+15. Existing architecture review documents
+16. Existing TODOs or implementation plans
+17. Current build/test status
+
+Search before assuming something does not exist.
+
+Pay particular attention to reusable generalized infrastructure.
+
+Do not create a new engine when an existing engine can be extended.
+
+============================================================
+PHASE 2 — ESTABLISH BASELINE
+============================================================
+
+Before significant implementation:
+
+- restore dependencies
+- build the solution
+- run existing automated tests
+- identify pre-existing failures
+- distinguish pre-existing failures from failures introduced by this session
+
+Do not silently "fix" unrelated behavior merely to make tests green.
+
+Document significant pre-existing issues.
+
+============================================================
+PHASE 3 — REVIEW V3 AGAINST ACTUAL CODE
+============================================================
+
+Compare the existing implementation with the approved V3 direction.
+
+Classify capabilities as:
+
+IMPLEMENTED
+
+PARTIALLY IMPLEMENTED
+
+ARCHITECTURALLY SUPPORTED BUT NOT IMPLEMENTED
+
+MISSING
+
+CONFLICTING / REQUIRES PRODUCT OWNER DECISION
+
+DUPLICATIVE / SHOULD REUSE EXISTING CAPABILITY
+
+Pay particular attention to the following V3 areas.
+
+============================================================
+A. GOAL-DRIVEN MANUFACTURING
+============================================================
+
+Forge should support the conceptual loop:
+
+Demand
+→ Goals
+→ Requirements
+→ Plan
+→ Executable Capacity
+→ Execution
+→ Actual Results
+→ Material Transformation
+→ Inventory
+→ Genealogy
+→ Performance
+→ Reforecast
+→ Constraints
+→ Options
+→ Human Decision
+→ Updated Plan
+
+Evaluate and extend, where appropriate:
+
+- Goal Attainment
+- Goal Decomposition
+- Required-By Cascade
+- Production Actuals
+- Remaining Work
+- Reforecasting
+- Projected Completion
+- Behind Plan
+- Goal At Risk
+- Recovery Options
+
+CRITICAL:
+
+BEHIND PLAN != GOAL AT RISK.
+
+An order may be behind an intermediate plan while still being recoverable
+within current executable capacity.
+
+============================================================
+B. EXECUTABLE CAPACITY
+============================================================
+
+Executable Capacity should represent the practical intersection of:
+
+- machine/resource availability
+- qualified workforce
+- safety requirements
+- calendars
+- certifications
+- material
+- tooling
+- maintenance
+- engineering/configuration
+- quality
+- operation requirements
+
+Forge should answer:
+
+"Can this operation actually happen?"
+
+and:
+
+"Why or why not?"
+
+Avoid arbitrary readiness percentages.
+
+Prefer explainable readiness dimensions and blockers.
+
+============================================================
+C. MATERIAL TRANSFORMATION
+============================================================
+
+Support generalized:
+
+INPUTS
+→ OPERATION
+→ OUTPUTS
++ BYPRODUCTS
++ SCRAP
++ REMNANTS
+
+Support manufacturing processes without assuming every operation is a
+simple one-input/one-output transaction.
+
+Material may:
+
+- split
+- merge
+- transform
+- be partially consumed
+- produce reusable remnants
+- become WIP
+- remain WIP for long periods
+- return to storage
+- be reissued
+- be transformed again
+- be reworked
+- be shipped
+- be returned
+- leave for outside processing and return
+
+Do not create special inventory systems for each case.
+
+============================================================
+D. MATERIAL IDENTITY
+============================================================
+
+Keep separate concepts for:
+
+ITEM DEFINITION
+
+CONFIGURATION
+
+PHYSICAL INVENTORY INSTANCE
+
+Physical identity may include:
+
+- lot
+- batch
+- roll
+- serial
+- reel
+- sheet
+- piece
+- container
+- pallet
+
+Material identity must survive legitimate movement and custody changes.
+
+Movement does not automatically create a new identity.
+
+Transformation may create new identity where physically appropriate.
+
+============================================================
+E. MATERIAL QUANTITY
+============================================================
+
+Quantity and identity are separate.
+
+A roll may remain the same physical identity while its remaining quantity
+decreases.
+
+New identity should be created when material is physically divided into
+independently tracked material where required.
+
+Support reconciliation such as:
+
+ISSUED
+=
+CONSUMED
++ RETURNED
++ SCRAP
++ PROCESS LOSS
++ REMAINING AT WORK CENTER
++ OTHER AUTHORIZED DISPOSITION
+± CONTROLLED TOLERANCE
+
+Never silently classify unexplained quantity as scrap.
+
+============================================================
+F. WIP & REMNANTS
+============================================================
+
+WIP and semi-finished material may remain usable inventory for:
+
+- hours
+- days
+- months
+- years
+
+Age alone does not make WIP unusable.
+
+Reusable remnants should be legitimate inventory instances.
+
+Do not make "Remnant" an isolated second-class inventory system.
+
+A remnant should be capable of:
+
+- storage
+- reservation
+- transfer
+- return
+- inspection
+- allocation
+- issue
+- transformation
+- partial consumption
+- splitting
+- return to storage
+- depletion
+- authorized scrap
+
+Support arbitrary transformation depth.
+
+Example:
+
+Supplier Lot
+→ Master Roll
+→ Slitting
+→ Remnant
+→ Warehouse
+→ Second Slitting
+→ Child Roll
+→ Winding
+→ Component Lot
+→ Assembly
+→ Finished Serial
+→ Shipment
+
+============================================================
+G. GENEALOGY
+============================================================
+
+Genealogy should support a graph, not merely a parent-child tree.
+
+Support relationships such as:
+
+PRODUCED_FROM
+CONSUMED_INTO
+SPLIT_FROM
+MERGED_INTO
+REWORKED_FROM
+RECOVERED_FROM
+RETURNED_FROM
+SUBSTITUTED_FOR
+TRANSFERRED_FROM
+PACKED_INTO
+UNPACKED_FROM
+SHIPPED_AS
+RECLASSIFIED_FROM
+
+Support:
+
+1 → 1
+1 → many
+many → 1
+many → many
+
+Movement/location changes should not create false transformation genealogy.
+
+============================================================
+H. LOCATION, CUSTODY & STATUS
+============================================================
+
+Keep separate:
+
+PHYSICAL LOCATION
+
+CUSTODY
+
+QUALITY STATUS
+
+AVAILABILITY
+
+ALLOCATION
+
+QUANTITY
+
+Possible location hierarchy:
+
+Facility
+→ Warehouse / Production Area
+→ Zone
+→ Rack
+→ Shelf/Bin
+→ Position
+
+Material may also be:
+
+- receiving
+- inspection
+- quarantine
+- staging
+- machine-side
+- external processor
+- shipping
+- in transit
+
+Physical On-Hand
+!=
+Available for Planning
+!=
+Allocated
+!=
+At Point of Use
+
+============================================================
+I. MATERIAL MOVEMENT
+============================================================
+
+Distinguish:
+
+MATERIAL REQUIREMENT
+
+MOVEMENT REQUEST
+
+RESERVATION / ALLOCATION
+
+PICK
+
+TRANSFER
+
+DELIVERY
+
+ISSUE
+
+CONSUMPTION
+
+RETURN
+
+These are not synonyms.
+
+Required
+!=
+Requested
+!=
+Allocated
+!=
+Picked
+!=
+Delivered
+!=
+Consumed
+
+Support partial fulfillment.
+
+Inventory existing in a warehouse does not mean production has it at the
+point of use.
+
+This should be capable of producing a distinct:
+
+MATERIAL FLOW / LOGISTICS CONSTRAINT
+
+rather than falsely reporting a shortage.
+
+============================================================
+J. RETURN-TO-STORAGE
+============================================================
+
+Material flow must be bidirectional.
+
+Warehouse
+⇄
+Production
+⇄
+WIP Storage
+⇄
+Production
+
+Return does not imply:
+
+- rejection
+- scrap
+- defect
+- consumption
+- new identity
+
+Support partially consumed raw material returning to storage where
+physically appropriate.
+
+Preserve:
+
+- original identity
+- supplier lot
+- configuration
+- consumed quantity
+- remaining quantity
+- location history
+- quality state
+- storage requirements
+
+============================================================
+K. LOT SPLIT / MERGE / REWORK
+============================================================
+
+Support:
+
+LOT SPLITTING
+
+Example:
+
+1000 received
+
+900 accepted
+70 rework
+30 scrap
+
+Support:
+
+LOT MERGING
+
+where controlled policy permits.
+
+Support rework as a first-class process.
+
+Rework must not rewrite original history.
+
+Distinguish:
+
+REWORK
+
+REPAIR
+
+USE-AS-IS / DEVIATION
+
+SCRAP
+
+============================================================
+L. PRODUCTION QUANTITY STATES
+============================================================
+
+Support meaningful quantity states such as:
+
+Started
+Produced
+Pending Inspection
+Accepted
+Released
+Available Downstream
+Hold
+Rejected
+Rework
+Scrap
+Finished Goods
+Packed
+Staged
+Shipped
+
+Produced != Usable.
+
+============================================================
+M. AGING, SHELF LIFE & STORAGE
+============================================================
+
+Keep separate:
+
+AGE
+
+SHELF LIFE
+
+EXPIRATION
+
+OPEN-CONTAINER LIFE
+
+STORAGE CONDITION
+
+QUALITY DISPOSITION
+
+Core principle:
+
+AGE INFORMS.
+REQUIREMENTS CONTROL.
+QUALITY DISPOSES.
+
+Support:
+
+- production date
+- receipt date
+- WIP age
+- time since movement
+- time since inspection
+- expiration
+- retest
+- authorized shelf-life extension
+- storage requirements
+- temperature-regulated material
+- storage excursions
+
+Forge must never independently extend shelf life.
+
+Authorized extensions must preserve original expiration and evidence.
+
+============================================================
+N. INVENTORY SELECTION
+============================================================
+
+Support configurable material-selection policy such as:
+
+FIFO
+
+FEFO
+
+but never allow selection policy to override:
+
+- compatibility
+- configuration
+- quality
+- customer/program requirements
+- contract requirements
+- shelf life
+- storage requirements
+- approved alternates
+
+============================================================
+O. RECEIVING & SUPPLIER QUALITY
+============================================================
+
+Support:
+
+Supplier
+→ PO
+→ Receipt
+→ Receiving Inspection
+→ Accept / Hold / Reject
+→ Authorized Disposition
+
+Partial acceptance must be supported.
+
+Supplier nonconformance disposition may include:
+
+- Return to Supplier
+- Replacement
+- Supplier Rework
+- Authorized Internal Rework
+- Sort / Screen
+- Use-As-Is / Deviation
+- Hold
+- Scrap
+- Other Authorized Disposition
+
+Humans retain disposition authority.
+
+============================================================
+P. SUPPLIER RETURN / RTV
+============================================================
+
+Support supplier-return traceability.
+
+Potential lifecycle:
+
+Proposed
+→ Authorized
+→ Supplier Contacted
+→ Return Authorized
+→ Staged
+→ Shipped
+→ Supplier Received
+→ Replacement / Credit / Resolution
+→ Closed
+
+Replacement material is a NEW physical inventory instance.
+
+Never rewrite rejected material into replacement material.
+
+============================================================
+Q. BUSINESS RECORD EVIDENCE
+============================================================
+
+Forge must support evidence tied to business records.
+
+Examples:
+
+PO
+→ Quote
+→ Order Confirmation
+→ Technical Package
+→ Correspondence
+
+Receipt
+→ Packing Slip
+→ CoC
+→ CoA
+→ Inspection
+
+Inspection
+→ Measurements
+→ Test Results
+→ Photos
+→ FAI
+→ NCR
+
+Shipment
+→ Packing List
+→ Customer Certifications
+
+Supporting evidence is not automatically a controlled engineering
+document.
+
+Preserve that distinction.
+
+============================================================
+R. RECEIVING INSPECTION & FAI
+============================================================
+
+FAI must NOT be represented solely as a Boolean.
+
+Support explicit states such as:
+
+REQUIRED
+
+NOT REQUIRED
+
+NOT APPLICABLE
+
+PENDING DETERMINATION
+
+NULL / blank must not mean Not Applicable.
+
+General state principle:
+
+BLANK
+= nobody entered a determination
+
+UNKNOWN
+= currently unknown
+
+NOT APPLICABLE
+= affirmative determination
+
+COMPLETE
+= activity performed
+
+Never collapse these concepts.
+
+Support both:
+
+STRUCTURED INSPECTION / FAI DATA
+
+and:
+
+SIGNED SUPPORTING DOCUMENT
+
+where policy requires.
+
+A document attachment does not imply structured fields are complete.
+
+Structured fields do not eliminate a required signed document.
+
+============================================================
+S. RFQ & SOURCING
+============================================================
+
+Operational sourcing belongs in Forge.
+
+Conceptual flow:
+
+Requirement
+→ Sourcing Need
+→ RFQ
+→ Supplier Distribution
+→ Supplier Response
+→ Quote Comparison
+→ Authorized Source Selection
+→ Requisition / PO
+→ Supplier Confirmation
+→ Receipt
+→ Inspection
+→ Inventory
+
+Financial accounting remains external.
+
+Forge should NOT attempt to own:
+
+- general ledger
+- invoice payment
+- cash management
+- tax accounting
+
+unless separately approved in future architecture.
+
+============================================================
+T. RFQ TECHNICAL CONFIGURATION
+============================================================
+
+Forge must preserve exactly what technical configuration was transmitted
+to suppliers.
+
+Support applicable:
+
+- drawing
+- drawing revision
+- material specification
+- process specification
+- inspection requirements
+- test requirements
+- Quality clauses
+- certifications
+- packaging
+- customer requirements
+
+Do not simply send "latest drawing."
+
+Resolve applicable configuration/effectivity.
+
+Preserve:
+
+Requirement
+→ RFQ
+→ Technical Package Sent
+→ Quote
+→ Source Selection
+→ PO
+→ Receipt
+→ Inspection
+→ Production
+
+============================================================
+U. SUPPLIER QUOTES
+============================================================
+
+Support structured quote data plus original supplier evidence.
+
+Possible fields:
+
+- Supplier
+- Quote Number
+- Quote Date
+- Expiration
+- Quantity
+- UOM
+- Unit Price
+- Price Break
+- MOQ
+- Lead Time
+- Proposed Delivery
+- Freight
+- Manufacturer
+- Manufacturer Part Number
+- Proposed Alternate
+- Exceptions
+- Notes
+- Original Quote Attachment
+
+Quote != Supply.
+
+RFQ acknowledgment != commitment to deliver.
+
+Proposed alternate != approved alternate.
+
+Forge should compare facts.
+
+Humans make sourcing decisions.
+
+============================================================
+V. DOCUMENT CONTROL / CONFIGURATION
+============================================================
+
+Forge must determine the APPLICABLE revision.
+
+Do not assume newest revision is always correct.
+
+Controlled documents may include internal and external documents.
+
+Support:
+
+- revision
+- effectivity
+- applicability
+- release
+- supersession
+- required revision
+- referenced revision
+- attached revision
+- configuration impact
+
+Wrong applicable revision may block readiness.
+
+Completed historical production must retain the configuration that
+actually applied at the time.
+
+============================================================
+W. CHANGE CONTROL
+============================================================
+
+Support controlled engineering/configuration changes.
+
+Potential lifecycle:
+
+Draft
+→ Review
+→ Approval
+→ Released
+→ Effectivity Applied
+→ Propagation Verified
+
+Approved change may propagate administrative consequences.
+
+It must NOT rewrite completed production history.
+
+Humans decide technical disposition.
+
+============================================================
+X. ALTERNATES & SUBSTITUTES
+============================================================
+
+Support rich relationships for:
+
+- alternate
+- substitute
+- approved alternate
+- conditional alternate
+- temporary alternate
+
+Include:
+
+- context
+- approval
+- program/customer restrictions
+- configuration
+- effectivity
+- expiration where applicable
+- evidence
+
+Never infer interchangeability merely because two items appear similar.
+
+============================================================
+Y. MAINTENANCE / FACILITIES / MRO
+============================================================
+
+Support:
+
+- Assets
+- Maintenance Work Orders
+- Preventive Maintenance
+- Downtime
+- Spare Parts
+- MRO Inventory
+- Facility Projects
+- Asset Lifecycle
+- Obsolescence
+
+Procurement demand may originate from:
+
+- Production
+- Maintenance
+- MRO
+- Facility
+- Capital
+- Quality
+- Tooling
+- Engineering
+
+Preserve why something was purchased.
+
+============================================================
+Z. TOOLING & CALIBRATION
+============================================================
+
+Treat important manufacturing tooling as first-class operational resources.
+
+Examples:
+
+- Gauges
+- Measuring Instruments
+- Blades
+- Dies
+- Fixtures
+- Jigs
+- Torque Tools
+- Test Equipment
+- Inspection Equipment
+- Specialty Tooling
+
+Support as applicable:
+
+- Tool Identity
+- Type
+- Serial Number
+- Location
+- Custody
+- Work Center
+- Condition
+- Calibration Requirement
+- Calibration Interval
+- Calibration History
+- Calibration Certificate
+- Inspection
+- Service
+- Sharpening
+- Usage Count
+- Usage Limit
+- Eligible Machines
+- Eligible Operations
+- Documents
+- Audit
+
+Tool present != Tool eligible.
+
+Example:
+
+Machine ready.
+Material ready.
+Operator qualified.
+Gauge present.
+Gauge calibration expired.
+
+Result:
+
+OPERATION / INSPECTION NOT EXECUTABLE
+
+where controlled policy requires valid calibration.
+
+Historical validity must be evaluated at the historical time of use.
+
+============================================================
+AA. TOOLING SERVICE
+============================================================
+
+Calibration is not the only tooling lifecycle.
+
+Example:
+
+Slitting blade:
+
+Available
+→ Reserved
+→ In Use
+→ Service Required
+→ Out for Sharpening
+→ Inspected
+→ Available
+
+Support generalized service/condition history without pretending every tool
+is calibrated.
+
+============================================================
+AB. WORKFORCE
+============================================================
+
+Forge owns manufacturing-relevant workforce facts.
+
+Examples:
+
+- assignment
+- shift
+- work center
+- manufacturing qualification
+- training requirement
+- operation eligibility
+- actual labor where implemented
+
+Employment/HR authority may belong to JIRSN Core or external HR systems.
+
+Do not duplicate authoritative employment records unnecessarily.
+
+============================================================
+AC. PRESENCE CONFIDENCE
+============================================================
+
+Where supported, distinguish levels such as:
+
+Scheduled
+
+Clocked In
+
+Assigned to Work Center
+
+Active on Operation
+
+These are not equivalent.
+
+Do not infer that a scheduled employee is physically present.
+
+============================================================
+AD. NEXUS IDENTITY BOUNDARY
+============================================================
+
+JIRSN Nexus should be treated as the preferred JIRSN identity and
+authentication authority.
+
+Conceptual responsibility:
+
+NEXUS:
+Who are you?
+
+FORGE:
+What are you allowed to do in manufacturing?
+
+Nexus may own:
+
+- Identity
+- Authentication
+- Password Verification
+- Passkeys / WebAuthn
+- MFA
+- Authentication Assurance
+- SSO
+- Federation
+- Application Access
+- Identity Lifecycle
+
+Forge owns:
+
+- Manufacturing Role
+- Manufacturing Permission
+- Manufacturing Qualification
+- Operational Scope
+- Assignment
+- Approval Authority
+- Separation of Duties
+- Record-Level Authorization
+
+Forge should not maintain a separate Forge password when Nexus is
+authoritative.
+
+Forge must never require access to the user's plaintext Nexus password.
+
+============================================================
+AE. AUTHENTICATION STANDARDS
+============================================================
+
+Prefer established standards where appropriate:
+
+- OpenID Connect
+- OAuth
+- SAML where required
+- SCIM where appropriate
+- WebAuthn / Passkeys
+
+Do not invent proprietary authentication protocols.
+
+Nexus should eventually be capable of federation with existing enterprise
+identity providers rather than requiring organizations to abandon their
+existing identity infrastructure.
+
+============================================================
+AF. AUTHENTICATION ≠ AUTHORIZATION
+============================================================
+
+Maintain these distinctions:
+
+Identity
+!=
+Authentication
+!=
+Application Access
+!=
+Role
+!=
+Permission
+!=
+Scope
+!=
+Assignment
+!=
+Qualification
+!=
+Approval Authority
+!=
+Electronic Signature
+
+Example:
+
+A user successfully authenticating does not mean the user is qualified to
+operate a machine.
+
+A qualified operator does not automatically have Quality release authority.
+
+============================================================
+AG. ROLE & PERMISSION MODEL
+============================================================
+
+Roles must be configurable.
+
+Example roles may include:
+
+- Operator
+- Material Handler
+- Receiving
+- Inspector
+- Quality Engineer
+- Buyer
+- Planner
+- Scheduler
+- Maintenance Technician
+- Manufacturing Engineer
+- Supervisor
+- Production Manager
+- Program Manager
+- Document Control
+- Shipping
+- Administrator
+- Auditor
+
+Do not hardcode these as universal.
+
+Permissions should describe business actions.
+
+Examples:
+
+START_OPERATION
+COMPLETE_OPERATION
+REQUEST_MATERIAL
+TRANSFER_MATERIAL
+PERFORM_INSPECTION
+CREATE_NCR
+DISPOSITION_NCR
+RELEASE_MATERIAL
+CHANGE_PRIORITY
+PLACE_HOLD
+RELEASE_HOLD
+CREATE_RFQ
+RELEASE_RFQ
+SELECT_SOURCE
+RELEASE_PO
+APPROVE_CHANGE
+RELEASE_DOCUMENT
+
+Avoid thousands of unnecessarily granular screen permissions.
+
+============================================================
+AH. CONTEXTUAL AUTHORIZATION
+============================================================
+
+Authorization may depend on:
+
+- Facility
+- Department
+- Work Center
+- Program
+- Contract
+- Customer
+- Shift
+- Item
+- Operation
+- Record State
+- Assignment
+- Approval Threshold
+- Delegated Authority
+- Separation of Duties
+
+A supervisor may be allowed to change priority in one work center without
+having Quality release authority.
+
+============================================================
+AI. STEP-UP AUTHENTICATION
+============================================================
+
+Consequential actions may require stronger authentication.
+
+Example:
+
+User is already logged into Forge.
+
+User attempts:
+
+RELEASE QUALITY HOLD
+
+Forge determines step-up authentication is required.
+
+Forge requests stronger authentication from Nexus.
+
+Nexus verifies identity and returns appropriate assurance evidence.
+
+Forge then independently verifies authorization.
+
+Both must succeed.
+
+============================================================
+AJ. SHARED WORKSTATIONS
+============================================================
+
+Manufacturing environments commonly use shared terminals.
+
+Support architecture for:
+
+- visible current user
+- configurable inactivity timeout
+- secure rapid user switching
+- reauthentication
+- operation authentication
+- step-up authentication
+- session locking
+
+Operator B must not accidentally perform an action under Operator A's
+identity.
+
+Balance security with practical shop-floor usability.
+
+============================================================
+AK. ELECTRONIC SIGNOFF
+============================================================
+
+Electronic signoff should capture where required:
+
+- Identity
+- Role/Authority
+- Authentication Assurance
+- Timestamp
+- Record
+- Record Version
+- Action
+- Meaning
+- Result
+
+A checkbox is not automatically an electronic signature.
+
+============================================================
+AL. DELEGATED AUTHORITY
+============================================================
+
+Support temporary delegated authority.
+
+Record:
+
+- Grantor
+- Recipient
+- Scope
+- Permissions
+- Start
+- Expiration
+- Reason
+- Approval
+- Audit
+
+Delegated authority must expire automatically.
+
+Do not permanently alter the user's base role.
+
+============================================================
+AM. SEPARATION OF DUTIES
+============================================================
+
+Support configurable separation-of-duty rules.
+
+Do not hardcode universal policies.
+
+Examples may include:
+
+Creator cannot provide final approval.
+
+Inspector cannot provide certain final dispositions.
+
+Buyer requires independent approval above threshold.
+
+Organization policy determines actual rules.
+
+============================================================
+AN. SAFETY
+============================================================
+
+Safety requirements are human/company-defined controlled requirements.
+
+Forge may evaluate configured safety prerequisites.
+
+Forge must never invent, waive, or override safety requirements using AI.
+
+============================================================
+AO. PERSONNEL COMPOSITION
+============================================================
+
+Support staffing requirements beyond individual qualification.
+
+Example:
+
+Operation requires:
+
+2 qualified operators
++ 1 certified inspector
+
+or:
+
+Work Center requires minimum configured staffing.
+
+Keep:
+
+MACHINE ASSIGNMENT
+
+distinct from:
+
+WORK CENTER / SAFETY-AREA STAFFING.
+
+============================================================
+AP. SHIFT PASS-ON
+============================================================
+
+Support structured shift pass-on.
+
+Possible categories:
+
+- Work Remaining
+- Machine Condition
+- Material Status
+- Tooling
+- Setup
+- Quality Concern
+- Maintenance Concern
+- Priority Work
+- WIP
+- Waiting Material
+- Safety Concern
+- Special Instruction
+- Open Action
+
+Link pass-on information to authoritative entities.
+
+If Forge already knows Machine M-04 is down, do not force the operator to
+re-enter "Machine M-04 is down."
+
+Automatically surface the authoritative fact and allow the operator to add
+context.
+
+============================================================
+AQ. SUPERVISOR HANDOFF
+============================================================
+
+Forge should be capable of generating most supervisor handoff information
+from authoritative state.
+
+Potential sections:
+
+PRODUCTION
+MATERIAL
+QUALITY
+EQUIPMENT
+WORKFORCE
+SHIPPING
+OPEN ACTIONS
+NEXT SHIFT
+
+Support configurable work-center handoff checklists.
+
+Distinguish:
+
+HANDOFF CREATED
+HANDOFF REVIEWED
+HANDOFF ACKNOWLEDGED
+ACTION COMPLETED
+
+Acknowledgment does not resolve an open issue.
+
+============================================================
+AR. PRIORITY GOVERNANCE
+============================================================
+
+Priority must be controlled and auditable.
+
+Record:
+
+- Previous Priority
+- New Priority
+- Changed By
+- Time
+- Reason
+- Authority
+- Impact
+
+Priority should not become an uncontrolled "make mine first" button.
+
+Where practical, use Impact Preview before significant priority changes.
+
+Example:
+
+Moving Order A ahead may delay Order B.
+
+Show the consequence.
+
+Human decides.
+
+Priority never overrides:
+
+- Safety
+- Quality
+- Configuration
+- Qualification
+- Maintenance
+- Material compatibility
+- Authorization
+
+============================================================
+AS. GENERALIZED HOLDS
+============================================================
+
+Support generalized controlled holds such as:
+
+- Quality
+- Material
+- Production
+- Engineering
+- Customer
+- Shipping
+- Procurement
+- Configuration
+- Safety
+- Administrative
+
+Support:
+
+- Scope
+- Reason
+- Source
+- Authority
+- Evidence
+- Affected Entities
+- Required Resolution
+- Release Authority
+- Audit
+
+The authority to place a hold does not automatically imply authority to
+release it.
+
+============================================================
+AT. DOWNTIME & CHANGEOVER
+============================================================
+
+Distinguish:
+
+PLANNED DOWNTIME
+UNPLANNED DOWNTIME
+SETUP
+CHANGEOVER
+MAINTENANCE
+WAITING
+STARVED
+BLOCKED
+
+Reason code != proven root cause.
+
+Actual downtime should feed:
+
+- Executable Capacity
+- Scheduling
+- Goal Attainment
+- Horizon
+- What Changed?
+- Constraints
+- Notifications
+
+Support expected vs actual changeover duration.
+
+============================================================
+AU. OUTSIDE PROCESSING
+============================================================
+
+Support company-owned material leaving the facility for outside processing.
+
+Examples:
+
+- coating
+- plating
+- heat treatment
+- machining
+- grinding
+- laboratory testing
+- special inspection
+
+Flow:
+
+Internal Material
+→ Outside Process Requirement
+→ Procurement
+→ Shipment
+→ External Custody
+→ Processing
+→ Return
+→ Receipt
+→ Inspection / Certification
+→ Release
+→ Next Operation
+
+OWNERSHIP != CUSTODY.
+
+Material may remain company-owned while physically located at the supplier.
+
+Preserve:
+
+- Identity
+- Quantity
+- Configuration
+- Processor
+- Applicable Specification
+- Revision
+- Shipment
+- Expected Return
+- Actual Return
+- PO/Service Order
+- Certifications
+- Custody
+- Receipt
+- Inspection
+- Genealogy
+- Evidence
+- Audit
+
+Movement to an external processor is not automatically transformation.
+
+============================================================
+AV. PACKAGING & SHIPPING
+============================================================
+
+Support packaging and shipping requirements.
+
+Potential material classes:
+
+- Production Consumable
+- Packaging
+- Shipping
+- Indirect
+- MRO Consumable
+- Controlled Packaging
+
+Examples:
+
+cartons
+dividers
+pallets
+stretch wrap
+tape
+labels
+bags
+foam
+desiccant
+caps
+plugs
+strapping
+
+Not all consumables belong on the engineering BOM.
+
+Packaging may block shipment readiness where required.
+
+============================================================
+AW. SHIPMENT TRACEABILITY
+============================================================
+
+Support:
+
+Customer
+→ Contract / Order
+→ Shipment
+→ Finished Lot / Serial
+→ Quantity
+→ Package
+→ Date
+→ Destination
+→ Genealogy
+
+Support:
+
+- Partial Shipment
+- Correction
+- Customer Return
+
+Production goal != Delivery goal.
+
+============================================================
+AX. NOTIFICATION & COMMUNICATIONS ENGINE
+============================================================
+
+Notifications should be centralized.
+
+Conceptual flow:
+
+Business Event / Condition
+→ Notification Rule
+→ Recipient Resolution
+→ Message Generation
+→ Delivery Channel
+→ Delivery Result
+→ Acknowledgment / Escalation where required
+→ Audit
+
+Initial channels may include:
+
+IN-APP
+EMAIL
+
+Architecture should allow future channels without embedding communication
+logic into manufacturing domains.
+
+Potential future channels:
+
+- Teams
+- Slack
+- SMS
+- Mobile Push
+- Webhook
+
+Do not hardcode a specific email provider.
+
+Use provider abstractions.
+
+============================================================
+AY. NOTIFICATION RULES
+============================================================
+
+Support configurable:
+
+- Trigger
+- Condition
+- Scope
+- Severity
+- Recipient Resolution
+- Channel
+- Template
+- Delay
+- Reminder
+- Escalation
+- Acknowledgment
+- Quiet Hours
+- Deduplication
+- Effective Date
+- Owner
+- Audit
+
+Prefer dynamic recipients such as:
+
+- Assigned User
+- Buyer
+- Planner
+- Supervisor
+- Program Manager
+- Quality
+- Maintenance
+- Requestor
+- Approver
+- Material Handler
+- Role / Group
+
+over hardcoded email addresses.
+
+============================================================
+AZ. NOTIFICATION SECURITY
+============================================================
+
+Notifications must respect authorization and data classification.
+
+Prefer minimal external email content plus a secure Forge deep link for
+sensitive records.
+
+Possession of a deep link never grants access.
+
+Authorization must be evaluated when the user opens the record.
+
+Notification delivery failure should normally not roll back the underlying
+business transaction.
+
+Queue/retry and expose failures appropriately.
+
+============================================================
+BA. ASSIGNMENT NOTIFICATIONS
+============================================================
+
+Notify where configured when actionable work is:
+
+- assigned
+- reassigned
+- approaching due
+- overdue
+- escalated
+
+Examples:
+
+- NCR
+- RFQ
+- Receiving Inspection
+- Maintenance WO
+- Engineering Review
+- Document Review
+- Constraint Investigation
+- Material Request
+- Rework
+- CAPA
+
+Distinguish:
+
+ASSIGNED
+ACKNOWLEDGED
+IN PROGRESS
+COMPLETED
+
+============================================================
+BB. PRIORITY ARRIVAL NOTIFICATIONS
+============================================================
+
+Accurately distinguish:
+
+ARRIVED
+!=
+INSPECTED
+!=
+RELEASED
+!=
+AT POINT OF USE
+
+Example:
+
+Priority material arrives at Receiving.
+
+Forge may notify:
+
+"Priority material arrived."
+
+After RI:
+
+"Priority material released."
+
+After transfer:
+
+"Priority material available at SL-02."
+
+Do not imply readiness prematurely.
+
+============================================================
+BC. OPERATIONAL DEVIATION NOTIFICATIONS
+============================================================
+
+Support configurable deviation detection using authoritative data.
+
+Examples:
+
+- planned vs actual start
+- planned vs actual completion
+- planned vs actual quantity
+- expected vs actual progress
+- cycle time
+- queue time
+- required vs projected date
+- planned vs actual yield
+- planned vs actual rate
+
+Avoid trivial alert spam.
+
+CRITICAL:
+
+BEHIND PLAN
+!=
+GOAL AT RISK
+
+Notification should explain where possible:
+
+WHAT changed
+
+WHAT is affected
+
+HOW FAR behind
+
+WHEN required
+
+WHETHER goal remains achievable
+
+OBSERVED constraints
+
+WHO owns the next action
+
+Never fabricate root cause.
+
+============================================================
+BD. RESOLUTION NOTIFICATIONS
+============================================================
+
+Notifications should respond when the underlying condition changes.
+
+Example:
+
+GOAL AT RISK
+
+then:
+
+Material arrives.
+
+Capacity recalculates.
+
+Projected completion returns within requirement.
+
+Forge may produce:
+
+RISK RESOLVED
+
+Do not leave stale operational warnings active indefinitely.
+
+============================================================
+BE. SHIFT CLOSEOUT
+============================================================
+
+Support operational closeout/reconciliation.
+
+Where applicable reconcile:
+
+- Operations Started
+- Operations Completed
+- Quantity Produced
+- Accepted
+- Hold
+- Rework
+- Scrap
+- Material Issued
+- Material Consumed
+- Material Returned
+- Material Remaining
+- WIP Created
+- WIP Transferred
+- Downtime
+- Tooling Issues
+- Open Material Requests
+- Open Quality Issues
+
+Do not require duplicate entry of facts already recorded.
+
+============================================================
+BF. DATA-INTEGRITY EXCEPTIONS
+============================================================
+
+Detect impossible or suspicious states.
+
+Examples:
+
+- unsupported negative inventory
+- same serial in incompatible locations
+- consumption before issue
+- operation completion before required predecessor
+- expired qualification used where prohibited
+- expired calibration used where prohibited
+- orphan genealogy
+- shipment exceeding released quantity
+- duplicate scan
+- unauthorized production on closed order
+- impossible UOM conversion
+- incompatible configuration
+- unauthorized action
+- required signoff missing
+
+These are DATA / PROCESS EXCEPTIONS.
+
+Do not automatically label them:
+
+fraud
+theft
+tampering
+misconduct
+
+without evidence.
+
+============================================================
+BG. RECOVERY PLANNING
+============================================================
+
+When a goal becomes at risk, Scenario Engine should evaluate feasible
+recovery options where supported.
+
+Potential options:
+
+- Overtime
+- Additional Shift
+- Alternate Qualified Personnel
+- Alternate Machine
+- Alternate Work Center
+- Approved Alternate Material
+- Existing WIP
+- Remnant Transformation
+- Split Production
+- Resequencing
+- Expedited Procurement
+- Expedited Material Movement
+- Outside Processing
+- Maintenance Timing Change
+- Partial Shipment
+
+Forge calculates feasibility and consequences.
+
+Human decides.
+
+Forge does not autonomously commit consequential recovery actions.
+
+============================================================
+BH. WHAT CHANGED?
+============================================================
+
+Forge should preserve enough temporal/event information to reconstruct
+meaningful historical state.
+
+Questions should include:
+
+"What changed?"
+
+"When did this become a problem?"
+
+"What was true at that time?"
+
+"What happened immediately before this?"
+
+"What changed afterward?"
+
+Do not rewrite historical truth when current configuration changes.
+
+============================================================
+BI. CAUSEMAP
+============================================================
+
+CauseMap should connect evidence without inventing causality.
+
+Example:
+
+ORDER AT RISK
+
+Observed:
+
+Machine M-04 down
+Material MR-22 not at point of use
+Qualified operator available
+Required tool available
+
+Forge may identify correlated constraints.
+
+Forge must not claim:
+
+"Machine failure caused the late order"
+
+unless the evidence/model actually supports that conclusion.
+
+============================================================
+BJ. IMPACT PREVIEW / TRY A CHANGE
+============================================================
+
+Support isolated scenario evaluation.
+
+Examples:
+
+"What happens if I move this order first?"
+
+"What happens if this employee takes PTO?"
+
+"What happens if Machine M-04 is unavailable tomorrow?"
+
+"What happens if Supplier X slips five days?"
+
+"What happens if we use this approved alternate?"
+
+"What happens if we work overtime?"
+
+Scenario results must remain isolated until an authorized human commits a
+change.
+
+============================================================
+BK. FORGE ANALYST
+============================================================
+
+Forge Native Intelligence should use deterministic, permission-aware Forge
+services as authoritative truth.
+
+Potential questions:
+
+"Can we still ship on time?"
+
+"Why is this order at risk?"
+
+"What material is missing?"
+
+"Where is Lot L-104?"
+
+"Who currently has custody?"
+
+"What did this material become?"
+
+"What was produced from Supplier Lot S-22?"
+
+"What usable WIP already exists?"
+
+"Can this remnant satisfy the requirement?"
+
+"Why can't this operation start?"
+
+"Who is qualified?"
+
+"Who is authorized?"
+
+"What authentication level is required?"
+
+"What tool is blocking this operation?"
+
+"Was that gauge calibrated when the inspection occurred?"
+
+"What happened last shift?"
+
+"What did first shift pass on?"
+
+"What material is at outside processors?"
+
+"What priority orders are falling behind?"
+
+"What changed?"
+
+"What are our recovery options?"
+
+Native Intelligence should not fabricate business facts.
+
+Generative explanation may eventually sit above deterministic services, but
+the deterministic system remains authoritative.
+
+============================================================
+BL. HUMAN AUTHORITY
+============================================================
+
+AI must not autonomously:
+
+- waive safety requirements
+- approve engineering deviations
+- approve substitutes
+- release Quality holds
+- disposition NCRs
+- extend shelf life
+- change controlled configuration
+- select suppliers without authorized policy
+- commit major schedule changes
+- fabricate missing production records
+- fabricate genealogy
+- fabricate inspection evidence
+- infer employee misconduct
+- override authorization
+
+AI may:
+
+- summarize
+- explain
+- correlate evidence
+- identify constraints
+- present scenarios
+- surface anomalies
+- generate draft reports
+- suggest questions
+- present options
+
+Humans retain consequential authority.
+
+============================================================
+BM. REPORTING
+============================================================
+
+Preserve support for:
+
+- XLSX
+- CSV
+- PDF
+- Print
+
+Forge Analyst may create structured report definitions.
+
+Reporting must respect permissions.
+
+============================================================
+BN. VALIDATION / REFERENCE FACTORIES
+============================================================
+
+V3 must eventually be tested against realistic factories rather than only
+toy data.
+
+Maintain/reference test factories such as:
+
+HEALTHY FACTORY
+
+CONSTRAINED FACTORY
+
+STRANGE BUT VALID FACTORY
+
+Test hundreds of:
+
+- parts
+- inventory instances
+- employees
+- qualifications
+- work centers
+- machines
+- BOM revisions
+- documents
+- suppliers
+- purchase orders
+- production orders
+- transformations
+- material requests
+- maintenance records
+- shipments
+- events
+
+Inject disruptions.
+
+Forge should answer:
+
+CAN THE GOAL BE MET?
+
+WHY?
+
+WHAT IS REQUIRED?
+
+BY WHEN?
+
+WHAT IS BLOCKING IT?
+
+WHAT CHANGED?
+
+WHAT ELSE IS AFFECTED?
+
+WHAT OPTIONS EXIST?
+
+SHOW THE EVIDENCE.
+
+============================================================
+BO. CROSS-CUTTING EVENT MODEL
+============================================================
+
+Do not create an unrelated event architecture for every new capability.
+
+Continue using the generalized structured business-event architecture.
+
+Events should preserve as appropriate:
+
+- Event ID
+- Event Type
+- Entity
+- Entity ID
+- Timestamp
+- Actor
+- Source
+- Before
+- After
+- Reason
+- Evidence
+- Correlation
+- Program/Contract Context
+- Authorization Context
+- Audit Metadata
+
+Domain events record what happened.
+
+Notification rules determine whether someone should be told about it.
+
+Event != Notification.
+
+============================================================
+BP. CROSS-CUTTING AUDIT
+============================================================
+
+Consequential changes should preserve:
+
+WHO
+
+WHAT
+
+WHEN
+
+WHERE APPLICABLE
+
+BEFORE
+
+AFTER
+
+WHY
+
+AUTHORITY
+
+AUTHENTICATION ASSURANCE WHERE REQUIRED
+
+EVIDENCE
+
+Do not silently overwrite history.
+
+============================================================
+BQ. UX PRINCIPLE
+============================================================
+
+Forge may be extremely complex internally.
+
+The shop-floor interface should not be.
+
+Core philosophy:
+
+THE SYSTEM DOES THE COMPLEXITY.
+
+THE INTERFACE EXPOSES WHAT MATTERS.
+
+THE HUMAN MAKES THE DECISION.
+
+Operator workflows should be optimized around tasks such as:
+
+SCAN
+→ VALIDATE
+→ RUN
+→ RECORD ACTUAL
+→ COMPLETE
+
+Do not expose architectural complexity unnecessarily to operators.
+
+============================================================
+BR. UNIVERSAL INTERACTION LANGUAGE
+============================================================
+
+Where useful, Forge should provide consistent actions/questions:
+
+WHY?
+
+WHAT CHANGED?
+
+WHAT DOES THIS AFFECT?
+
+WHEN DID THIS BECOME A PROBLEM?
+
+SHOW EVIDENCE.
+
+WHAT ARE MY OPTIONS?
+
+WHAT HAPPENS IF I DO THIS?
+
+These should reuse common engines rather than bespoke logic on each screen.
+
+============================================================
+BS. CORE SYSTEM DISTINCTIONS
+============================================================
+
+Preserve these distinctions:
+
+REQUIRED != REQUESTED
+
+REQUESTED != ALLOCATED
+
+ALLOCATED != PICKED
+
+PICKED != DELIVERED
+
+DELIVERED != ISSUED
+
+ISSUED != CONSUMED
+
+PRODUCED != ACCEPTED
+
+ACCEPTED != RELEASED
+
+RELEASED != AT POINT OF USE
+
+ON HAND != AVAILABLE FOR PLANNING
+
+MOVEMENT != TRANSFORMATION
+
+LOCATION != CUSTODY
+
+CUSTODY != OWNERSHIP
+
+AGE != EXPIRATION
+
+BLANK != UNKNOWN
+
+UNKNOWN != NOT APPLICABLE
+
+AUTHENTICATION != AUTHORIZATION
+
+AUTHORIZATION != QUALIFICATION
+
+QUALIFICATION != ASSIGNMENT
+
+ASSIGNMENT != APPROVAL AUTHORITY
+
+ACKNOWLEDGMENT != COMPLETION
+
+BEHIND PLAN != GOAL AT RISK
+
+QUOTE != SUPPLY
+
+PROPOSED ALTERNATE != APPROVED ALTERNATE
+
+EVENT != NOTIFICATION
+
+DOWNTIME REASON != PROVEN ROOT CAUSE
+
+These distinctions are fundamental to V3.
+
+============================================================
+BT. JIRSN PRODUCT BOUNDARIES
+============================================================
+
+Preferred conceptual responsibility:
+
+JIRSN NEXUS
+----------------
+Identity
+Authentication
+SSO
+MFA
+Passkeys
+Authentication Assurance
+Application Access
+Identity Lifecycle
+
+JIRSN CORE
+----------------
+Employment Administration
+Organization
+HR Administration
+PTO
+Time/Attendance Authority where implemented
+Benefits / Workforce Administration
+Payroll Preparation / External Integration where implemented
+
+JIRSN FORGE
+----------------
+Manufacturing Operations
+Material
+Inventory
+Genealogy
+Planning
+Scheduling
+Executable Capacity
+Manufacturing Workforce Qualification
+Production Assignment
+Manufacturing Authorization
+Tooling
+Quality
+Procurement Operations
+Maintenance
+Configuration
+Shipping
+Goal Attainment
+Operational Simulation
+
+JIRSN SENTINEL
+----------------
+Cybersecurity Assessment
+Security Evidence
+Investigation
+Defensive Hardening Guidance
+
+Do not duplicate authoritative ownership merely for convenience.
+
+============================================================
+BU. ARCHITECTURAL EXTENSIBILITY TEST
+============================================================
+
+Before considering V3 architecture mature, answer:
+
+"Can Forge support a legitimate manufacturing workflow that was NOT
+explicitly described in this specification without requiring a second
+inventory system, second genealogy architecture, second workflow engine,
+second authorization architecture, second evidence architecture, or second
+event architecture?"
+
+Choose at least one legitimate manufacturing workflow not explicitly
+described here.
+
+Model it using existing Forge primitives.
+
+If that cannot be done cleanly, identify the architectural weakness rather
+than creating a one-off workaround.
+
+============================================================
+BV. IMPLEMENTATION RULES FOR THIS CLOUD SESSION
+============================================================
+
+Do NOT attempt to implement every V3 capability in one uncontrolled pass.
+
+After repository discovery and architecture analysis:
+
+1. Determine the current V3 implementation state.
+
+2. Identify the highest-value dependency-safe implementation slice.
+
+3. Prefer foundational generalized capabilities before dependent UI
+   features.
+
+4. Reuse existing architecture.
+
+5. Keep changes cohesive.
+
+6. Add/update tests with implementation.
+
+7. Preserve backward compatibility where practical.
+
+8. Do not delete working functionality unless necessary and justified.
+
+9. Do not perform massive unrelated refactors.
+
+10. Do not add speculative abstractions with no current architectural need.
+
+11. Do not duplicate authoritative state.
+
+12. Do not fabricate production data merely to make UI appear functional.
+
+13. Do not weaken authorization/security to simplify implementation.
+
+14. Do not silently change domain semantics.
+
+15. Preserve auditability.
+
+16. Keep human authority intact.
+
+17. Run tests after implementation.
+
+18. Report exactly what changed.
+
+============================================================
+BW. IMPLEMENTATION PRIORITY
+============================================================
+
+Use actual repository state to determine exact sequencing.
+
+In general, favor dependencies in approximately this order where missing:
+
+1. Shared domain primitives / state distinctions
+2. Audit / event foundations
+3. Material identity / inventory foundations
+4. Material movement / custody
+5. Transformation / genealogy
+6. Production actuals
+7. Readiness / executable capacity
+8. Goal attainment / reforecast
+9. Procurement / sourcing
+10. Quality / evidence
+11. Tooling / calibration
+12. Authorization integration
+13. Shift continuity
+14. Notifications
+15. Scenario / recovery integration
+16. Analyst / reporting surfaces
+17. UX refinements
+
+DO NOT blindly follow this order if the repository already implements these
+capabilities.
+
+Inspect first.
+
+============================================================
+BX. TESTING EXPECTATIONS
+============================================================
+
+For every implemented capability:
+
+Add meaningful tests.
+
+Prefer tests that verify business behavior rather than merely code coverage.
+
+Include where appropriate:
+
+- Unit Tests
+- Domain Tests
+- Integration Tests
+- API Tests
+- Persistence Tests
+- Authorization Tests
+- Regression Tests
+
+Important invariants should be directly tested.
+
+Examples:
+
+Movement does not alter genealogy.
+
+Return does not imply rejection.
+
+Remnant remains legitimate inventory.
+
+Expired calibration can block required operation.
+
+Authentication does not bypass qualification.
+
+Hold blocks configured downstream activity.
+
+Notification failure does not reverse production transaction.
+
+Unexplained material is not silently scrap.
+
+Historical revision remains historical.
+
+Historical calibration validity remains historical.
+
+Scenario changes do not mutate production state until committed.
+
+============================================================
+BY. SECURITY EXPECTATIONS
+============================================================
+
+Do not:
+
+- store plaintext passwords
+- implement proprietary cryptography
+- expose secrets
+- commit credentials
+- bypass authorization
+- trust client-supplied authorization state
+- expose sensitive records through notification links
+- treat URL possession as permission
+- execute arbitrary AI-generated commands
+- allow AI to directly commit consequential manufacturing decisions
+
+Use established framework/security mechanisms.
+
+============================================================
+BZ. PERFORMANCE EXPECTATIONS
+============================================================
+
+Do not design V3 solely around tiny demo datasets.
+
+Consider:
+
+- hundreds/thousands of items
+- deep genealogy
+- large event histories
+- many production orders
+- long-lived WIP
+- many inventory instances
+- historical configuration
+- notification volume
+- concurrent shop-floor transactions
+- reporting
+- scenario calculation
+
+Avoid premature optimization, but identify obvious scaling problems.
+
+============================================================
+CA. USER EXPERIENCE EXPECTATIONS
+============================================================
+
+Do not make users manually reconstruct information Forge already knows.
+
+Examples:
+
+Shift handoff should pull current machine status.
+
+Material request should know the requesting operation.
+
+Inspection should know applicable configuration.
+
+RFQ should inherit demand/configuration context.
+
+Production should know assigned order/operation.
+
+Notifications should deep-link to the relevant record.
+
+Forge should progressively disclose complexity.
+
+Operators should receive simple actionable workflows.
+
+Planners/supervisors may receive deeper analysis.
+
+============================================================
+CB. REQUIRED FINAL SESSION REPORT
+============================================================
+
+At the end of this cloud session provide a concise but complete report:
+
+1. REPOSITORY STATE FOUND
+
+2. BUILD/TEST BASELINE
+
+3. V3 CAPABILITIES ALREADY PRESENT
+
+4. V3 CAPABILITIES PARTIALLY PRESENT
+
+5. V3 GAPS IDENTIFIED
+
+6. ARCHITECTURAL CONFLICTS FOUND
+
+7. IMPLEMENTATION SLICE SELECTED
+
+8. FILES CHANGED
+
+9. DATABASE/MIGRATION CHANGES
+
+10. APIs ADDED/CHANGED
+
+11. UI CHANGES
+
+12. DOMAIN/EVENT CHANGES
+
+13. AUTHORIZATION/SECURITY CHANGES
+
+14. TESTS ADDED
+
+15. TEST RESULTS
+
+16. KNOWN LIMITATIONS
+
+17. TECHNICAL DEBT INTRODUCED, IF ANY
+
+18. PRODUCT OWNER DECISIONS REQUIRED
+
+19. RECOMMENDED NEXT IMPLEMENTATION SLICE
+
+20. RISKS / CONCERNS
+
+Do not describe unfinished functionality as complete.
+
+Clearly distinguish:
+
+IMPLEMENTED
+
+SCAFFOLDED
+
+PARTIAL
+
+PLANNED
+
+============================================================
+CC. FINAL PRODUCT PRINCIPLE
+============================================================
+
+Forge should ultimately understand both administrative and physical
+manufacturing reality.
+
+It should understand:
+
+WHAT SHOULD HAPPEN.
+
+WHAT CAN HAPPEN.
+
+WHAT IS HAPPENING.
+
+WHAT ACTUALLY HAPPENED.
+
+WHAT MATERIAL BECAME.
+
+WHERE IT WENT.
+
+WHO ACTED.
+
+WHETHER THEY WERE AUTHORIZED.
+
+WHETHER THE REQUIRED RESOURCES WERE VALID.
+
+WHAT CHANGED.
+
+WHAT THAT CHANGE AFFECTED.
+
+WHETHER THE GOAL CAN STILL BE ACHIEVED.
+
+WHAT OPTIONS EXIST IF IT CANNOT.
+
+And it must preserve the evidence required to explain those conclusions.
+
+The system performs the complexity.
+
+The interface exposes what matters.
+
+The human makes the decision.
+
+============================================================
+BEGIN
+============================================================
+
+Begin by inspecting the existing repository.
+
+Do not assume the specification accurately describes current implementation
+state.
+
+Establish the actual state from the code.
+
+Run the baseline build/tests.
+
+Review existing V3 architecture/documentation.
+
+Then select the safest, highest-value dependency-aware V3 implementation
+slice.
+
+If the repository contains an approved V3 Architecture Impact Review,
+treat it as higher-fidelity implementation guidance and reconcile this
+prompt against it.
+
+If a significant architectural contradiction requires Product Owner input,
+do not guess.
+
+Document the decision required.
+
+Otherwise proceed with the selected implementation slice, test it, and
+provide the required final session report.

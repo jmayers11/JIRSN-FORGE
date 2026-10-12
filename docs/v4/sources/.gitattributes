@@ -1,0 +1,4 @@
+# Keep archived user-provided specifications byte-identical across checkouts.
+# The V4 Markdown source intentionally contains two-space line breaks.
+v4-master-request.md -text -whitespace
+v3-cloud-implementation-brief.txt -text -whitespace
