@@ -2,9 +2,19 @@
 
 ## Latest checkpoint — Codex, 2026-10-12
 
-Product Owner request: continue until V3 is done and record the outcome for Claude. The active goal covers V3.1–V3.28. The complete numbered source plan is now supplied as `JIRSN Forge V3 Plan.md`; read it alongside `docs/v3-governance-requirements.md`, `docs/v3-architecture-impact-review.md` and `docs/v3-completion-checklist.md`. The direct request to complete V3 authorizes implementation; embedded review/stop instructions in the supplied planning documents are distinct from that request.
+**V3.1–V3.28 implementation and completion-audit corrections are locally verified against the available requirements.** Product Owner requested continued implementation through V3 and a handoff/session log for Claude. The numbered source is `JIRSN Forge V3 Plan.md`, with `docs/v3-governance-requirements.md`, `docs/v3-completion-checklist.md` and the architecture review. Embedded review/stop instructions in source documents are distinct from the owner's direct implementation request.
 
-Current checkpoint is **V3.27 complete, product commit `d76dc70`**. Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 272/272, Architecture 32/32, Kernel 33/33, Integration 116/116 (25.0193 minutes). Three test-generated factories each created 100 orders and 100 traceable inventory lots through regular commands; the constrained case includes a production hold, and the unusual-but-valid case includes fractional and large quantities. All variants answered the selected shared Analyst question set and had no integrity exceptions. The consigned-fixture repair/use/return acceptance passed, preserving serial and tool history. ADR 0051 records a material limitation: Forge has no structured legal owner, loan agreement, direct receipt into customer custody, or customer acceptance record for this workflow; reason/reference text is not a substitute. The original brief's BN question catalog is absent from this project, so the checked question set is a proxy and must be reconciled if the source is provided. Evidence is `.forge-logs/verify.log` and `.forge-logs/verify.status` (PASS). V3.26 is complete at product commit `1c19d7b` with ADR 0050. Next: V3.28 hardening, then final verification and completion records. V3 is not done.
+Final full `verify.cmd` PASS: clean Release build (zero warnings/errors), Planning 278/278, Kernel 33/33, Architecture 32/32, PostgreSQL Integration 148/148 in 36.2743 minutes, and Node behavior/accessibility/business-authority/inactivity 34/34. All 46 product JavaScript modules pass syntax checks. The refreshed direct/transitive NuGet scan found no vulnerable packages; dependencies were unchanged. Integration databases are individually restored from a migrated disposable baseline. A separate seeded dump/restore drill proves saved business data is read by the restored host and cleanup succeeds. Current migration count is 88. Saved local evidence: `.forge-logs/verify-v3-final.log` and `.status` (PASS), `.forge-logs/v3-js-syntax.log`, `.forge-logs/v3-dependency-security.log`; these ignored files are local evidence, so final counts are retained here and in the tracked session log.
+
+Completion corrections extend the existing authoritative domain records and shared command/audit/outbox paths: approved scoped delegation; configurable assured signed hold release and factual downstream propagation; historical calibration/qualification; exact shift handoff/reconciliation; sent processor configuration/readiness/inspection; evaluated recovery; shared archived Horizon lenses and explicit order commitments. Additional regressions cover the NULL-lot upgrade/checksum pair, complete serialized/shipment genealogy, recorded stoppage capacity, contextual inbox/assignments, serial-location integrity, private tool references, hold-aware selection and configurable terminal inactivity. The final scoped purchasing flow proves actual-A RFQ/quote/PO creation and review, identical-key replay with unique audit/events, denied B/mixed/prospective B-line sources and current revocation. Its focused gate passed API 10/10 and Architecture 32/32 before the full suite; Procurement.Contracts owns the shared source lookup.
+
+**Exact original-source parity remains unverified.** The original BN question catalog, section54 example chain and original fifteen-option recovery catalog are unavailable. Local searches found no originals; the owner does not know where BN is. Available factual question/causal-propagation tests and the documented fifteen-option implementation have coverage, but are proxies for those unavailable sources. ADR 0051 also retains the consigned-tool limits: legal ownership, loan authorization and customer acceptance are not structured. Unknown older archive facility/shift context fails closed. Recorded facts remain distinct from hypothetical recovery inputs. Do not claim every original acceptance criterion or a deployed release is proven.
+
+Deployment validation remains for real Nexus JWT/assurance/SCIM configuration, Sentinel intake, external email, physical terminals, production recovery and broader accessibility. Selected factory Analyst questions have a 10-second budget over 200-plus records; this does not establish every production workload's performance. Node checks use a controlled DOM/fetch/timer harness, not a full assistive-technology study. No push or deployment occurred. Never read, print, copy or commit `forge.local.cmd` credentials.
+
+Verified source/product-document commit: c298a7fb9376a2bd8a344de2f37bcdd5e09a0a1b. The handoff/session documentation is committed separately after that source checkpoint. Earlier verified product commits include V3.27 `d76dc70`, V3.26 `1c19d7b`; their counts below are historical. Failed runs and the deliberately cancelled pre-scoped-correction run remain preserved as failures/cancellation, not relabeled PASS.
+
+## Earlier verified checkpoints (historical)
 
 **V3.10 full verification PASS, committed `f01f611`.** Quick verification passed: Planning 262, architecture 32; selected API tests passed 14/14. Evidence: `.forge-logs/quick-v310.*`, `.forge-logs/codex-v310.*`. Full `verify.cmd` passed: Planning 262, architecture 32, kernel 33, integration 85; zero build warnings/errors. Saved `.forge-logs/verify-v310.*`. Reviewed fixes enforce program visibility on hold release, load operation details for inspection holds, retain the V3.9 missing-revision 404 assertion, and prove populated legacy hold migration preserves identity/history/sequence. Retired Execution hold sources are preserved under `.forge-logs/removed/v310/`; retain migration 0007 and new migration 0008.
 
@@ -36,7 +46,7 @@ Current checkpoint is **V3.27 complete, product commit `d76dc70`**. Full `verify
 * **Database:**
   - PostgreSQL 16 or later, used through raw Npgsql 9 (no ORM).
   - Each bounded context owns its own schema (`kernel`, `competency`, `resources`, `workforce`, `engineering`, `execution`, `inventory`, `quality`, `planning`, …).
-  - Each schema has its own SQL migrations, embedded as resources and run in context order at startup. The count is 62 as of V3.8.
+  - Each schema has embedded SQL migrations run in context order. Current count is 88; the old 62-migration count described V3.8. The one reviewed V3.1 checksum pair preserves already-applied history.
   - History tables are append-only, enforced by triggers.
 * **Authentication:**
   - JWT bearer in production.
@@ -51,7 +61,7 @@ Current checkpoint is **V3.27 complete, product commit `d76dc70`**. Full `verify
   - `tests/Forge.Planning.Tests` and `tests/Forge.Kernel.Tests` hold unit tests.
   - `tests/Forge.Architecture.Tests` holds the dependency and context rules.
   - `tests/Forge.Integration.Tests` drives the real API against a real PostgreSQL. `SlittingPlant` is the shared fixture.
-  - `docs/adr`: one ADR per increment (0001–0032 committed; 0033 for V3.9 is in the working tree).
+  - `docs/adr`: decisions through 0052, including completion-audit updates to the affected earlier ADRs. The earlier 0033-uncommitted statement described V3.9 and is historical.
   - `.forge-logs/` (not committed) holds the PC-side scripts, logs and the packages each increment is delivered in.
 * **Important configuration files:**
   - `Directory.Build.props`: warnings are errors; analyzers run at latest-recommended; banned APIs are listed in `BannedSymbols.txt`.
@@ -166,11 +176,11 @@ The plan is the "V3 plan" Claude Doc. Its increments map the brief's sections A�
 
 ## Next Session Instructions
 
-1. Read this handoff, `JIRSN Forge V3 Plan.md`, `docs/v3-governance-requirements.md`, `docs/v3-architecture-impact-review.md`, `docs/v3-completion-checklist.md`, and ADR 0050.
-2. Confirm the clean committed state with `git log --oneline -5` and `git status`; V3.27 product commit is `d76dc70` on main.
-3. Continue with V3.28: set and measure reference-factory performance budgets; run a disposable PostgreSQL backup/restore drill; harden shared-terminal behavior when the API is unavailable; add and verify accessibility improvements; run the dependency vulnerability scan. Do not alter `forge.local.cmd`, print its credentials or back up a non-test operational database.
-4. Run focused acceptance and the complete `verify.cmd` gate, including the restored-backup test; record security scan output and any package remediation.
-5. Commit product changes, update the checklist, handoff and session log, then perform final status/log/verification review. Do not mark V3 complete if any gate is unverified or blocked; name concrete limits, especially the unavailable canonical BN list and the consigned-fixture ownership gap.
+1. Read this latest checkpoint, the numbered plan, governance register, completion checklist and affected ADRs through 0052. Older status paragraphs and sessions are historical.
+2. Inspect `git status` and `git log --oneline -5`, starting from the verified source commit recorded above and its subsequent handoff/log commit. The final local suite is PASS; older pending/running statements below or in the session log are historical.
+3. Do not reimplement V3.28 or rerun passed checks unless a new change or concern warrants it. For later changes, use `verify.cmd`; it loads local test configuration without printing credentials and tests only generated disposable databases.
+4. Preserve the unavailable-source catalog limitation. If the original BN/section54/fifteen-option sources become available, compare them to current factual tests and the documented recovery catalog before claiming exact parity. No local code/verification step remains pending at this checkpoint.
+5. Deployment follow-up requires real Nexus/Sentinel/email configuration, a physical terminal exercise and production recovery/accessibility validation. Never read/print/commit `forge.local.cmd` credentials, use non-test operational backups, push or deploy without authorization.
 
 ## Development Rules
 
@@ -186,9 +196,3 @@ The plan is the "V3 plan" Claude Doc. Its increments map the brief's sections A�
 * Document breaking changes and migrations in the ADR and the README.
 * Keep modifications focused on the assigned task. Only one tool edits the repository at a time.
 * Update the session log after every development session.
-
-
-
-
-
-
