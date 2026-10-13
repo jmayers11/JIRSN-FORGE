@@ -1,6 +1,6 @@
 # Forge V4 architecture review package
 
-Status: **PROPOSED — review complete; implementation awaits Product Owner approval.** Date: 2026-10-12.
+Status: **APPROVED TO START AFTER V3 COMPLETION.** Product Owner instruction, 2026-10-13: “V4 approved to start after V3 is completed.” The architecture review was completed on 2026-10-12; its approval stop is now superseded conditional on finishing and verifying V3 first. Licensed normative verification and pending design choices retain their explicit limits.
 
 Start with the [Architecture Impact Review](<C:/Users/wrest/Documents/JISRN Forge/docs/v4/architecture-impact-review.md>). Its twenty numbered sections correspond to all twenty requested deliverables. It includes the provisional ISO clause/transition maps, source reuse and actual gaps, domains/governance/evidence, scanning, database/API/UI/security/notification impacts, metrics, scenarios A–L, four organizational archetypes, dependency map and twenty pending decisions.
 
@@ -15,6 +15,6 @@ Detailed read-only evidence assessments:
 Preserved unchanged user sources:
 
 - [V4 master architecture request](<C:/Users/wrest/Documents/JISRN Forge/docs/v4/sources/v4-master-request.md>)
-- [Recovered original V3 cloud implementation brief](<C:/Users/wrest/Documents/JISRN Forge/docs/v4/sources/v3-cloud-implementation-brief.txt>) — BG contains the original fifteen recovery options; BN contains nine universal question categories. Their formal implementation/test reconciliation remains open. Numeric section54's causal example remains unlocated.
+- [Recovered original V3 cloud implementation brief](<C:/Users/wrest/Documents/JISRN Forge/docs/v4/sources/v3-cloud-implementation-brief.txt>) — BG's original fifteen recovery options and BN's sixteen populations/nine universal question categories are reconciled and pass the renewed V3 gate. Numeric section54's causal example remains unlocated; the owner-approved available examples passed. See the current V3 completion record for exact scope and limits.
 
-Historical instructions in the V3 source are reference material; they do not authorize implementation in this review session. The current V4 request explicitly requires architecture review only and stopping for Product Owner approval. No application code, migrations, permissions, endpoints or application tests changed; no build/test/deployment was performed. Previous local V3 PASS is historical, not V4 acceptance. AI_HANDOFF.md and AI_SESSION_LOG.md record this review and continuation boundary.
+The architecture review was a documentation-only checkpoint on 2026-10-12: no application code, migrations, permissions, endpoints or application tests changed, and no build/test/deployment was performed for that review. Its approval stop is historical and superseded by the direct Product Owner instruction above. The subsequent V3 reconciliation and verification are recorded separately in AI_HANDOFF.md and AI_SESSION_LOG.md; they do not establish V4 acceptance.

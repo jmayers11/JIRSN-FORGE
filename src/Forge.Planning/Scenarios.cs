@@ -25,7 +25,45 @@ public sealed record ScenarioChange(
     string? ActivityCode = null,
     DateTimeOffset? StartsAt = null,
     int? DurationHours = null,
-    int? DelayDays = null);
+    int? DelayDays = null,
+    IReadOnlyList<RecoverySelection>? RecoverySelections = null);
+
+/// <summary>
+/// Explicit inputs for one independent recovery trial. Each trial starts from the same private
+/// scenario; selections are never commands and are not combined into an implicitly approved plan.
+/// Quantities use the selected source item's units. Dates and identities are checked against source records.
+/// </summary>
+public sealed record RecoverySelection(
+    string OptionId,
+    long? OrderNumber = null,
+    int? Sequence = null,
+    string? MachineCode = null,
+    string? WorkCenterCode = null,
+    Guid? PersonId = null,
+    string? ShiftCode = null,
+    int? AdditionalMinutes = null,
+    int? Priority = null,
+    string? PartNumber = null,
+    string? LotNumber = null,
+    string? FromLocation = null,
+    string? ToLocation = null,
+    decimal? Quantity = null,
+    long? AlternateId = null,
+    string? PrimaryPartNumber = null,
+    long? PurchaseOrder = null,
+    int? PurchaseOrderLine = null,
+    DateOnly? ProposedDate = null,
+    long? DowntimeId = null,
+    DateTimeOffset? StartsAt = null,
+    DateTimeOffset? EndsAt = null,
+    long? ShipmentId = null,
+    long? SourceOrderNumber = null,
+    string? ProposedShiftCode = null,
+    IReadOnlyList<Guid>? PersonIds = null,
+    long? WorkOrderId = null,
+    string? SpecificationDocument = null,
+    string? SpecificationRevision = null,
+    IReadOnlyList<decimal>? SplitQuantities = null);
 
 public sealed record CreatePlanningScenario(string Name, ScenarioChange Change);
 public sealed record DeletePlanningScenario(Guid ScenarioId);
@@ -65,7 +103,23 @@ public sealed record RecoveryOption(
     IReadOnlyList<string> Constraints,
     IReadOnlyList<string> RequiredInputs,
     IReadOnlyList<string> Evidence,
-    IReadOnlyList<RecoveryMachineAlternative> MachineAlternatives);
+    IReadOnlyList<RecoveryMachineAlternative> MachineAlternatives)
+{
+    /// <summary>Real source commands and their scoped permission decisions; a trial never invokes them.</summary>
+    public IReadOnlyList<RecoverySourceAuthority> SourceAuthority { get; init; } = [];
+}
+
+public sealed record RecoverySourceAuthority(
+    string SourceContext,
+    string Command,
+    string Permission,
+    string ResourceType,
+    string? ResourceId,
+    bool Permitted,
+    string CommitRequirement)
+{
+    public Guid? ProgramId { get; init; }
+}
 
 public sealed record RecoveryMachineAlternative(
     long OrderNumber,

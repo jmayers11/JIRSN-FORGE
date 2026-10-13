@@ -46,22 +46,24 @@ internal static class ExecutableOperations
             return [];
         }
 
-        var material = (await MaterialPlanningService.RunMaterialAsync(uow, time, ct)).Output.ToDictionary(m => m.OrderNumber);
+        var material = (await MaterialPlanningService.RunMaterialAsync(uow, time, ct, principal)).Output.ToDictionary(m => m.OrderNumber);
         var pointOfUse = await ReadinessService.PointOfUseAsync(uow, snapshot.AsOf, ct);
         var engineering = uow.Store<IEngineeringLookup>();
+        var fullOrders = new List<OrderInfo>();
+        foreach (var summary in orders)
+            fullOrders.Add(await execution.FindOrderAsync(summary.OrderNumber, ct)
+                ?? throw new InvalidOperationException($"Order {summary.OrderNumber} disappeared from the snapshot."));
+        var continuations = await WipContinuationFacts.LoadAsync(uow, fullOrders, snapshot.AsOf, ct);
         var engine = new OrderReadinessEngine();
         var answers = new List<OperationAnswer>();
-        foreach (var summary in orders)
+        foreach (var order in fullOrders)
         {
-            // The list contains headers only; readiness needs the released operation and material snapshots.
-            var order = await execution.FindOrderAsync(summary.OrderNumber, ct)
-                ?? throw new InvalidOperationException($"Order {summary.OrderNumber} disappeared from the snapshot.");
             var revision = (await engineering.ListRevisionsAsync(order.PartNumber, ct)).SingleOrDefault(r => r.Revision == order.Revision);
             var quality = await uow.Store<IQualityLookup>().GetOrderQualityAsync(order.OrderNumber, order.PartNumber, ct);
             var documentation = await DocumentationService.ForOrderAsync(uow, order, snapshot.AsOf, principal, ct);
             var training = await ReadinessService.TrainingAsync(uow, documentation, ct);
             var forOrder = order.Status == OrderStatus.Released ? material.GetValueOrDefault(order.OrderNumber) : null;
-            var result = engine.Evaluate(snapshot, new OrderReadinessRequest(order, revision, forOrder, quality, documentation, forOrder is null ? null : pointOfUse, training), snapshot.AsOf).Output;
+            var result = engine.Evaluate(snapshot, new OrderReadinessRequest(order, revision, forOrder, quality, documentation, forOrder is null ? null : pointOfUse, training, continuations.GetValueOrDefault(order.OrderNumber)), snapshot.AsOf).Output;
             foreach (var op in result.Operations)
             {
                 var info = order.Operations.First(o => o.Sequence == op.Sequence);

@@ -52,7 +52,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
     }
 
     /// <summary>Audit entries, newest first. Entries tied to a program are returned only for the given programs.</summary>
-    public async Task<IReadOnlyList<ChainedAuditEntry>> QueryAuditAsync(string? entityType, string? entityId, IReadOnlySet<ProgramId> visiblePrograms, int take, CancellationToken ct)
+    public async Task<IReadOnlyList<ChainedAuditEntry>> QueryAuditAsync(string? entityType, string? entityId, IReadOnlySet<ProgramId> visiblePrograms, int take, CancellationToken ct, DataMarking visibleMarkings = DataMarking.None)
     {
         ArgumentNullException.ThrowIfNull(visiblePrograms);
         await using var cmd = dataSource.CreateCommand(
@@ -63,6 +63,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
             WHERE ($1::text IS NULL OR entity_type = $1)
               AND ($2::text IS NULL OR entity_id = $2)
               AND (program_id IS NULL OR program_id = ANY($3))
+              AND (markings & $5)=markings
             ORDER BY sequence DESC
             LIMIT $4
             """);
@@ -70,11 +71,12 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
         cmd.Parameters.Add(new NpgsqlParameter { Value = (object?)entityId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text });
         cmd.Parameters.AddWithValue(visiblePrograms.Select(p => p.Value).ToArray());
         cmd.Parameters.AddWithValue(Math.Clamp(take, 1, 500));
+        cmd.Parameters.AddWithValue((int)visibleMarkings);
         return await ReadAudit(cmd, ct);
     }
 
     /// <summary>Successful changes to the given entity types recorded in (after, upTo], oldest first. Program-tied entries only for the given programs.</summary>
-    public async Task<IReadOnlyList<ChainedAuditEntry>> QueryAuditBetweenAsync(DateTimeOffset after, DateTimeOffset upTo, IReadOnlyCollection<string> entityTypes, IReadOnlySet<ProgramId> visiblePrograms, int take, CancellationToken ct)
+    public async Task<IReadOnlyList<ChainedAuditEntry>> QueryAuditBetweenAsync(DateTimeOffset after, DateTimeOffset upTo, IReadOnlyCollection<string> entityTypes, IReadOnlySet<ProgramId> visiblePrograms, int take, CancellationToken ct, DataMarking visibleMarkings = DataMarking.None)
     {
         ArgumentNullException.ThrowIfNull(entityTypes);
         ArgumentNullException.ThrowIfNull(visiblePrograms);
@@ -86,6 +88,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
             WHERE recorded_at > $1 AND recorded_at <= $2 AND outcome = 'Succeeded'
               AND entity_type = ANY($3)
               AND (program_id IS NULL OR program_id = ANY($4))
+              AND (markings & $6)=markings
             ORDER BY sequence
             LIMIT $5
             """);
@@ -94,6 +97,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
         cmd.Parameters.AddWithValue(entityTypes.ToArray());
         cmd.Parameters.AddWithValue(visiblePrograms.Select(p => p.Value).ToArray());
         cmd.Parameters.AddWithValue(Math.Clamp(take, 1, 5000));
+        cmd.Parameters.AddWithValue((int)visibleMarkings);
         return await ReadAudit(cmd, ct);
     }
 

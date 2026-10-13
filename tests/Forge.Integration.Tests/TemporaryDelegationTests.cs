@@ -116,10 +116,45 @@ public sealed class TemporaryDelegationTests(PostgresFixture postgres)
         Assert.Equal(initialRoles, expiredMe.GetProperty("roles").EnumerateArray().Select(role => role.GetString()));
         var expired = (await Json(await recipient.GetAsync("/api/kernel/delegations"))).EnumerateArray().Single(record => record.GetProperty("delegationId").GetGuid() == id);
         Assert.Equal("Expired", expired.GetProperty("state").GetString());
-        var audit = await Json(await plant.Admin.GetAsync($"/api/kernel/audit?entityType=AuthorityDelegation&entityId={id}"));
+        var auditPath = $"/api/kernel/audit?entityType=AuthorityDelegation&entityId={id}";
+        var reads = app.Services.GetRequiredService<KernelReadStore>();
+        var adminPrincipal = await reads.ResolvePrincipalBySubjectAsync(ForgeApp.AdminSubject, CancellationToken.None);
+        Assert.NotNull(adminPrincipal);
+        Assert.DoesNotContain(adminPrincipal.Programs, program => program.Value == programA);
+
+        // The scoped proposal's success is recorded under A. An administrator without A
+        // cannot read it merely because that identity can manage delegation approval.
+        var unmemberAudit = await Json(await plant.Admin.GetAsync(auditPath));
+        var unmemberSuccess = Assert.Single(unmemberAudit.EnumerateArray(), entry => entry.GetProperty("entry").GetProperty("outcome").GetString() == "Succeeded").GetProperty("entry");
+        Assert.Equal(("ApproveDelegation", $"person:{adminPrincipal.PersonId}", "Independent approval of the bounded shift cover"),
+            (unmemberSuccess.GetProperty("action").GetString(), unmemberSuccess.GetProperty("actor").GetString(), unmemberSuccess.GetProperty("reason").GetString()));
+        Assert.DoesNotContain(unmemberAudit.EnumerateArray(), entry => entry.GetProperty("entry").GetProperty("reason").GetString() == "Cover program A during the planning shift");
+
+        // Read-only source proof uses the existing audit query, including exact stored
+        // entry values and chain hashes. Changing read access must not rewrite them.
+        var observedPrograms = new HashSet<Forge.Kernel.Identity.ProgramId> { new(programA) };
+        var storedBefore = await reads.QueryAuditAsync("AuthorityDelegation", id.ToString("D"), observedPrograms, 100, CancellationToken.None);
+        var proposalAudit = Assert.Single(storedBefore, row => row.Entry.Action == "ProposeDelegation" && row.Entry.Outcome == "Succeeded");
+        Assert.Equal((id.ToString("D"), $"person:{grantorId}", "Cover program A during the planning shift", (Guid?)programA),
+            (proposalAudit.Entry.EntityId, proposalAudit.Entry.Actor, proposalAudit.Entry.Reason, proposalAudit.Entry.ProgramId?.Value));
+        var canonicalBefore = Forge.Kernel.Serialization.CanonicalJson.Serialize(storedBefore);
+
+        // An independent existing access manager grants A through the normal command;
+        // the default prohibition on self-program changes remains in force.
+        await plant.Ok(grantor, $"/api/kernel/people/{adminPrincipal.PersonId}/programs", new { programId = programA, reason = "Independent audit access to the delegated program" });
+        var audit = await Json(await plant.Admin.GetAsync(auditPath));
         Assert.Equal(2, audit.EnumerateArray().Count(entry => entry.GetProperty("entry").GetProperty("outcome").GetString() == "Succeeded"));
-        Assert.Contains(audit.EnumerateArray(), entry => entry.GetProperty("entry").GetProperty("reason").GetString() == "Cover program A during the planning shift");
-        Assert.Contains(audit.EnumerateArray(), entry => entry.GetProperty("entry").GetProperty("reason").GetString() == "Independent approval of the bounded shift cover");
+        var proposalVisible = Assert.Single(audit.EnumerateArray(), entry => entry.GetProperty("entry").GetProperty("action").GetString() == "ProposeDelegation" && entry.GetProperty("entry").GetProperty("outcome").GetString() == "Succeeded").GetProperty("entry");
+        Assert.Equal((id.ToString("D"), $"person:{grantorId}", "Cover program A during the planning shift"),
+            (proposalVisible.GetProperty("entityId").GetString(), proposalVisible.GetProperty("actor").GetString(), proposalVisible.GetProperty("reason").GetString()));
+        var approvalVisible = Assert.Single(audit.EnumerateArray(), entry => entry.GetProperty("entry").GetProperty("action").GetString() == "ApproveDelegation" && entry.GetProperty("entry").GetProperty("outcome").GetString() == "Succeeded").GetProperty("entry");
+        Assert.Equal((id.ToString("D"), $"person:{adminPrincipal.PersonId}", "Independent approval of the bounded shift cover"),
+            (approvalVisible.GetProperty("entityId").GetString(), approvalVisible.GetProperty("actor").GetString(), approvalVisible.GetProperty("reason").GetString()));
+        var deniedApproval = Assert.Single(audit.EnumerateArray(), entry => entry.GetProperty("entry").GetProperty("action").GetString() == "ApproveDelegation" && entry.GetProperty("entry").GetProperty("outcome").GetString() == "Denied" && entry.GetProperty("entry").GetProperty("actor").GetString() == $"person:{outsiderId}").GetProperty("entry");
+        Assert.Equal((id.ToString("D"), "No approval authority"),
+            (deniedApproval.GetProperty("entityId").GetString(), deniedApproval.GetProperty("reason").GetString()));
+        Assert.Contains(Permissions.AccessManage, deniedApproval.GetProperty("newValue").GetString(), StringComparison.Ordinal);
+        Assert.Equal(canonicalBefore, Forge.Kernel.Serialization.CanonicalJson.Serialize(await reads.QueryAuditAsync("AuthorityDelegation", id.ToString("D"), observedPrograms, 100, CancellationToken.None)));
         Assert.True((await Json(await plant.Admin.GetAsync("/api/kernel/audit/verify"))).GetProperty("intact").GetBoolean());
 
         // A fresh approved interval stops granting immediately when its source is revoked, and can itself be revoked.

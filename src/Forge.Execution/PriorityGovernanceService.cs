@@ -24,7 +24,7 @@ public sealed class PriorityGovernanceService(
         var order = await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct);
         EnsureVisible(order, principal, orderNumber);
         var asOf = DatabaseTime(time.GetUtcNow());
-        var preview = await impactProvider.PreviewAsync(uow, orderNumber, newPriority, asOf, ct);
+        var preview = await impactProvider.PreviewAsync(uow, orderNumber, newPriority, asOf, ct, principal);
         return FilterVisible(preview, principal);
     }
 

@@ -84,6 +84,11 @@ internal static class ApiSupport
             return await query(uow.Store<TStore>(), http.RequestAborted);
         });
 
+    /// <summary>Classification failures may be concealed by source-specific API contracts after the pipeline records their denial.</summary>
+    public static bool SourceClassificationDenied(AuthorizationDecision decision) => decision.Reasons.Any(reason =>
+        reason == "No access to the program that owns this resource."
+        || reason.StartsWith("Missing data markings:", StringComparison.Ordinal));
+
     public static IResult NotRegistered() => Results.Problem(
         title: "Not registered in Forge",
         detail: "Your identity is authenticated but is not registered or not active in Forge. Ask a security administrator.",

@@ -39,6 +39,7 @@ internal sealed class ReportRun
     public required DateTimeZone Zone { get; init; }
 
     public IReadOnlyList<ShiftInfo> Shifts { get; init; } = [];
+    public MaterialSourceVisibility? SourceVisibility { get; init; }
 
     public DateTimeOffset AtSite(DateOnly date, TimeOnly time) =>
         Zone.AtLeniently(new LocalDateTime(date.Year, date.Month, date.Day, time.Hour, time.Minute)).ToDateTimeOffset().ToUniversalTime();
@@ -85,7 +86,7 @@ internal sealed class ReportRun
         string.IsNullOrWhiteSpace(filter) || string.Equals(value?.Trim(), filter.Trim(), StringComparison.OrdinalIgnoreCase);
 
     public bool Matches(params string?[] fields) =>
-        string.IsNullOrWhiteSpace(Parameters.Search) || fields.Any(f => f is not null && f.Contains(Parameters.Search.Trim(), StringComparison.OrdinalIgnoreCase));
+        string.IsNullOrWhiteSpace(Parameters.Search) || fields.Any(f => f is not null && (SourceVisibility?.Text(f) ?? f).Contains(Parameters.Search.Trim(), StringComparison.OrdinalIgnoreCase));
 
     public static decimal Hours(TimeSpan span) => decimal.Round((decimal)span.TotalHours, 2, MidpointRounding.AwayFromZero);
 
@@ -159,9 +160,12 @@ public sealed class ReportService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
             Today = today,
             Zone = zone,
             Shifts = await uow.Store<IResourcesLookup>().ListShiftsAsync(ct),
+            SourceVisibility = await MaterialSourceVisibility.LoadAsync(uow, principal, ct, authorizer: authorizer),
         };
 
         var body = await spec.Build(run, ct);
+        var access = run.SourceVisibility!;
+        body = body with { Rows = body.Rows.Select(access.Row).ToArray(), Summary = body.Summary.Select(access.Text).ToArray(), Sources = body.Sources.Select(access.Text).ToArray() };
         // Decimals keep no trailing zeros from storage scale (9, not 9.000000), on screen and in exports.
         var rows = body.Rows.Take(MaxRows)
             .Select(r => r.Cells.Any(c => c is decimal) ? r with { Cells = r.Cells.Select(c => c is decimal d ? (object)(d / 1.000000000000000000000000000000000m) : c).ToList() } : r)

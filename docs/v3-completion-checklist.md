@@ -1,10 +1,34 @@
 # V3 completion checklist
 
+**V3.1–V3.28 locally verified, 2026-10-13:** the recovered original BG/BN acceptance, closed source corrections and retained regressions pass the renewed completion gate. The Product Owner accepted the available V3.22 factual examples; numeric original section54 remains unlocated. The current all-28/governance-A–L map is in `docs/v3-source-reconciliation.md`. The 525-test result below is preserved as historical baseline evidence. V4 is approved to start after this V3 completion is recorded.
+
+## Current completion evidence — 2026-10-13
+
+Full `verify.cmd` **PASS: 565 tests** — Planning 303/303, Kernel 33/33, Architecture 32/32, restored PostgreSQL Integration 163/163 in 59.8970 minutes including fixture cleanup, and Node 34/34 with zero failures, cancellations, skips or todos. Release build has zero warnings/errors. Both accepted V3.22 examples and all four original-scale factory/extension cases passed. The restored-host marker drill and migration idempotency at 88 passed. All 80 changed source/test SHA-256 values remained unchanged throughout the gate; the source commit is recorded in `AI_HANDOFF.md`.
+
+Local evidence: `.forge-logs/verify-v3-reconciled.log` and `.status` (PASS), `v3-reconciled-full-pass-manifest.json`, `v3-reconciled-js-syntax.log` (44 JS + 2 MJS = 46 modules), and `v3-reconciled-dependency-security.log` (refreshed direct/transitive NuGet scan: no vulnerable packages). No dependencies or migrations were added by this reconciliation. Earlier failed runs, including the first full 158/163 result, remain separately preserved and described in `AI_SESSION_LOG.md`; they have not been relabeled. The current per-version and governance A–L mapping below and in the reconciliation document is verified by this renewed gate, subject to the stated local/deployment limits.
+
+| Affected gate / governance evidence | Current source and acceptance mapping |
+| --- | --- |
+| V3.27/V3.28 — original BN | OriginalReferenceFactory.cs and V327Tests.cs require three healthy/constrained/unusual-valid factories, each with a BN manifest of 400 parts, 200 each of fourteen other business populations (including registered workers and actual Qualified records), and 800 real worker events. Normal authenticated commands create the records; read-only persisted counts verify all sixteen populations after the real relay. Injected disruptions and exact source assertions cover nine BN category reads plus four retained BK queries, each under 10 seconds; construction is untimed. |
+| V3.23 / governance L — original BG | RecoveryCatalog.cs, RecoveryTrialEvaluator.cs, RecoverySourceFacts.cs and RecoveryOptionTests.cs map the exact fifteen options to independent copied trials, source authority, consequences and explicit unsupported actions. Inventory.Contracts/RecoveryReadinessContracts.cs, InventoryRecoveryReadiness.cs and RecoveryInventoryReadinessTests.cs reuse actual source-command gates and require unchanged source/audit/event/idempotency state. RecoveryGovernanceTests.cs retains real failure/goal/notification/human restoration. |
+| V3.9/V3.17 / governance A/H — actual start and controlled old WIP | OperationStartCheck.cs and V39Tests.cs evaluate all shared dimensions inside the command transaction for the selected machine/operator/trainer and controlled documents. Engine version 7 shares WipContinuationFacts.cs; V25Tests.cs Scenario_1 and OrderReadinessTests.cs require exact released-change/resolved CompleteAtOldRevision source authority, refuse fresh restart before resolution, and allow it after normal authorized Quality resolution while preserving the old revision/BOM and all other gates. |
+| V3.15/V3.16/V3.24 / governance C — current replay actor | CommandReplayAuthorityTests.cs and AttendanceReplayAuthorityTests.cs cover current terminal/badge/operator binding, withdrawal and same-actor retry semantics, alongside retained terminal Node/session and qualification evidence. Attendance remains separate from direct production labor. |
+| V3.1/V3.15/V3.17/V3.23/V3.25/V3.26 — planning source visibility | MaterialSourceVisibility.cs, MaterialSourceVisibilityTests.cs and V3PlanningSourceSecurityTests.cs cover private supplying-order/PO descriptions and links, hidden owned evidence, visible consumer evidence, current owning-source read scopes and withdrawal/restoration across material/MRP, readiness, priority previews, recovery, stored schedules/constraints, reports/exports/Analyst and historical Horizon. Full allocation/source keys, netting, canonical fingerprints and stored schedule/audit bytes remain authoritative. |
+| V3.22 — owner-accepted available examples | V25Tests.cs uses actual normal-command EngineeringChangeReleased, OrderRevisionChanged and OrderDocumentationReissued IDs/source references/recorded causation through CauseMap. V322AvailableExampleTests.cs combines the real BI at-risk M-04 order, undelivered MR-22 point-of-use request, failed machine, qualified present crew and valid required tool; correlated machine/material events must remain unlinked. V322Tests.cs and PropagationVerificationTests.cs remain separate regressions. Numeric original section54 is still unlocated; owner acceptance does not claim exact-source reconstruction. |
+| V3.28 — disposable fixture cleanup | PostgresFixture.cs external-server teardown targets only this fixture's created database names, drops them individually with a 300-second command limit and reports failures. Docker teardown removes the fixture container. This allowance is separate from read budgets and deployed recovery validation. |
+
+The recovery acceptance retains its explicit limits: alternate-work-center and split-production selections are Infeasible without a controlled replacement routing or split source plan; outside-processing feasibility proves dispatch readiness; partial shipment proves release of already packed partial contents. Scheduling uses a 14-day horizon and alternate-machine exploration is bounded to 40 trials. Consigned-fixture ownership/loan/customer acceptance weaknesses remain recorded in ADR 0051. No new QMS release aggregate, fabricated numeric section54 example or V4 implementation is claimed.
+
+## Historical completion checkpoint — 2026-10-12
+
+The following recorded statements, tables, counts, logs and source-availability limits belong to the earlier checkpoint. They are preserved as audit history and do not establish the resumed gate's result. In particular, its V3.27 phrase “three 200-record factory variants” describes the narrower 100-order/100-receipt fixtures, rather than the current sixteen-population BN manifest.
+
 Owner request: complete V3 and record the result. Last checkpoint: 2026-10-12.
 
 V3.1–V3.28 implementation and completion-audit corrections are locally verified against the available requirements. The 2026-10-12 audit reopened governance acceptance (D/F/G/I/J/K), historical execution proof (B/E), evaluated recovery (L), and common historical Horizon lenses (V3.25); the final gate below covers their corrections. The supplied `JIRSN Forge V3 Plan.md` defines the numbered roadmap; use it with the governance expansion. Exact parity with unavailable original BN/section54/recovery catalogs remains unverified, and deployment validation is separate.
 
-## Increment verification — historical checkpoints, final gate below
+## Increment verification — historical checkpoints, historical final gate below
 
 | Increment | Current state | Remaining gate |
 | --- | --- | --- |
@@ -30,7 +54,7 @@ V3.1–V3.28 implementation and completion-audit corrections are locally verifie
 | V3.27 | Full `verify.cmd` PASS: Release build 0 warnings/errors; Planning 272/272, Architecture 32/32, Kernel 33/33, Integration 116/116 (25.0193 minutes); three 200-record factory variants and consigned-fixture workflow pass | Complete; ADR 0051 records ownership/loan limitation and missing canonical BN list |
 | V3.28 | Full verify PASS: clean Release, Planning 278/278, Architecture 32/32, Kernel 33/33, Integration 148/148 (36.2743minutes), Node 34/34; restored databases and seeded restore/readback/cleanup; three factory budgets; no vulnerable NuGet packages | Locally verified; exact missing-source parity and deployment limits below |
 
-## Reconciled completion-audit gate
+## Historical reconciled completion-audit gate — 2026-10-12
 
 Final full `verify.cmd` PASS: Release build zero warnings/errors; Planning 278/278, Architecture 32/32, Kernel 33/33, PostgreSQL Integration 148/148 in 36.2743 minutes, Node behavior/accessibility/business-authority/inactivity 34/34. All 46 product JavaScript modules pass syntax checks; the refreshed direct/transitive NuGet scan reports no vulnerable packages. Migration idempotency passes at 88. The suite uses restored migrated databases and separately proves seeded backup readback/cleanup. Local evidence is `.forge-logs/verify-v3-final.log`/`.status` (PASS); the tracked handoff/session retain the counts and source commit.
 
@@ -50,7 +74,7 @@ Earlier failed focused/full runs and the deliberately cancelled pre-scoped-corre
 | V3.26 tool history | Real private tool/gauge references appear only with current access in API/report/Analyst; revocation and missing sources hide them |
 | V3.6/V3.10 selection | Direct/descendant material-issue holds exclude candidates; unrelated and shipping-only held material remains eligible; release restores ranks |
 
-## Governance expansion validation
+## Historical governance expansion validation — 2026-10-12
 
 | Scenario | Current coverage | Remaining evidence |
 | --- | --- | --- |
@@ -67,7 +91,8 @@ Earlier failed focused/full runs and the deliberately cancelled pre-scoped-corre
 | K — closeout 20-unit discrepancy | Exact 1000/750/200/30 =20 unexplained; no inferred scrap; immutable closeout | Final full PASS |
 | L — failure/recovery/communications | Real failure/capacity/goal/notification/human command and factual versus hypothetical provenance; saved history immutable | Final full PASS |
 
-All reopened local gates listed in the reconciled matrix pass the final full restored-database suite. Original BN questions, the original section54 example chain and the original enumerated recovery-option catalog were not supplied locally; searches found no originals and the owner does not know BN's location. Available factual proxies, actual recorded causal propagation and the documented fifteen-option implementation have acceptance coverage, without an exact source-parity claim. ADR 0051 retains the consigned-fixture ownership/loan/customer-acceptance limits. Selected-question performance, targeted Node accessibility and local restore coverage do not certify every production workload, a full accessibility audit or deployed disaster recovery.
-## Release rule
+Historical source-availability statement (2026-10-12; superseded for BG/BN by the current checkpoint above): All reopened local gates listed in the reconciled matrix pass the final full restored-database suite. Original BN questions, the original section54 example chain and the original enumerated recovery-option catalog were not supplied locally; searches found no originals and the owner does not know BN's location. Available factual proxies, actual recorded causal propagation and the documented fifteen-option implementation have acceptance coverage, without an exact source-parity claim. ADR 0051 retains the consigned-fixture ownership/loan/customer-acceptance limits. Selected-question performance, targeted Node accessibility and local restore coverage do not certify every production workload, a full accessibility audit or deployed disaster recovery.
+
+## Historical release checkpoint — 2026-10-12
 
 The local implementation checkpoint requires implemented reconciled requirements, passing migration/regression gates, recorded source commits and final handoff/session evidence. These tests pass; commit references are recorded in the handoff. Do not claim every unavailable original acceptance criterion or a deployed release is proven. Forge's SCIM/Sentinel adapters have local contract coverage; live Nexus/Sentinel/email, physical terminals, production recovery and broader accessibility remain deployment validation. No push or deployment occurred.

@@ -19,7 +19,8 @@ public sealed record OrderReadinessRequest(
     OrderQuality? Quality = null,
     OrderDocumentation? Documentation = null,
     OrderPointOfUse? PointOfUse = null,
-    OrderTraining? Training = null);
+    OrderTraining? Training = null,
+    WipContinuationEvidence? Continuation = null);
 
 /// <summary>How one eligible machine (or the work center, for work without a machine) looks for an operation.</summary>
 public sealed record OperationCandidate(string? MachineCode, bool Executable, string? PrimaryConstraint, IReadOnlyList<ReadinessDimension> Dimensions);
@@ -60,7 +61,8 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
 
     public string Name => "order-readiness";
 
-    public string Version => "5";
+    public const string CurrentVersion = "7";
+    public string Version => CurrentVersion;
 
     public EngineEvaluation<OrderReadinessResult> Evaluate(SiteSnapshot snapshot, OrderReadinessRequest parameters, DateTimeOffset asOf)
     {
@@ -76,6 +78,9 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
         {
             null => new ReadinessDimension("Engineering", EvidenceOutcome.Fail, $"{order.PartNumber} rev {order.Revision} no longer exists."),
             { } r when r.IsEffectiveAt(asOf) => new ReadinessDimension("Engineering", EvidenceOutcome.Pass, $"{order.PartNumber} rev {order.Revision} is released and in force."),
+            { } r when parameters.Continuation is { } continuation && continuation.Permits(order, r, asOf) => new ReadinessDimension(
+                "Engineering", EvidenceOutcome.Pass,
+                $"{order.PartNumber} rev {order.Revision}: released change {continuation.Change.Number}, WIP disposition {continuation.Action.ActionId} authorizes completing this exact order at its old revision."),
             { } r when r.EffectiveTo is { } to && to <= asOf => new ReadinessDimension(
                 "Engineering",
                 EvidenceOutcome.Fail,
@@ -209,7 +214,7 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
     private IEnumerable<OperationCandidate> Candidates(SiteSnapshot snapshot, OrderReadinessRequest request, OrderOperationInfo op, DateTimeOffset asOf)
     {
         var workCenter = snapshot.WorkCenters.FirstOrDefault(w => w.Code == op.WorkCenterCode);
-        if (workCenter is null)
+        if (workCenter is not { Active: true })
         {
             yield return new OperationCandidate(null, false, "RequirementProfile", [new ReadinessDimension("RequirementProfile", EvidenceOutcome.Fail, $"Work center {op.WorkCenterCode} no longer exists.")]);
             yield break;
@@ -223,6 +228,11 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
 
         foreach (var machineCode in op.EligibleMachines.Order(StringComparer.Ordinal))
         {
+            if (!snapshot.Machines.Any(m => m.Code == machineCode && m.Active))
+            {
+                yield return new OperationCandidate(machineCode, false, "Equipment", [new ReadinessDimension("Equipment", EvidenceOutcome.Fail, $"{machineCode} is inactive or no longer exists.")]);
+                continue;
+            }
             var profile = snapshot.MachineActivities.FirstOrDefault(m => m.MachineCode == machineCode && m.ActivityCode == op.ActivityCode);
             if (profile is null)
             {

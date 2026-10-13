@@ -356,6 +356,18 @@ public class AnalystParserTests
     }
 
     [Fact]
+    public void Material_reconciliation_questions_scope_an_exact_order_and_actual_remnants()
+    {
+        var material = Parse("What became of the material issued to order 1042?").Report!;
+        Assert.Equal("material-reconciliation", material.ReportId);
+        Assert.Equal("order:1042", material.Parameters.Search);
+        Assert.Equal("Remnants", Parse("Show remnants").Report!.Parameters.Status);
+        Assert.Equal(("order:1042", "Remnants"),
+            (Parse("Show remnants from order 1042").Report!.Parameters.Search, Parse("Show remnants from order 1042").Report!.Parameters.Status));
+        Assert.Null(Parse("Show material reconciliation").Report!.Parameters.Search);
+    }
+
+    [Fact]
     public void Shelf_life_questions_carry_the_status_asked_about()
     {
         Assert.Equal("Expired", Parse("Which lots are expired?").Report!.Parameters.Status);

@@ -32,7 +32,8 @@ internal static class MaterialData
     }
 
     /// <summary>Approved purchase order lines and unfinished production orders, less what has been received.</summary>
-    public static async Task<IReadOnlyList<Supply>> SuppliesAsync(IKernelUnitOfWork uow, ForgePrincipal? principal, CancellationToken ct)
+    public static async Task<IReadOnlyList<Supply>> SuppliesAsync(IKernelUnitOfWork uow, ForgePrincipal? principal, CancellationToken ct,
+        IReadOnlyList<OrderInfo>? orderHeaders = null)
     {
         var inventory = uow.Store<IInventoryLookup>();
         var received = (await inventory.ListPurchaseReceiptsAsync(ct)).ToDictionary(r => (r.PoNumber, r.LineNumber), r => r.Received);
@@ -51,7 +52,7 @@ internal static class MaterialData
             }
         }
 
-        foreach (var order in await uow.Store<IExecutionLookup>().ListOrdersAsync(ct))
+        foreach (var order in orderHeaders ?? await uow.Store<IExecutionLookup>().ListOrdersAsync(ct))
         {
             if (order.Status is not (OrderStatus.Planned or OrderStatus.FirmPlanned or OrderStatus.Released or OrderStatus.Held))
             {
@@ -69,23 +70,28 @@ internal static class MaterialData
     }
 
     /// <summary>Material readiness inputs: available stock, issues, firm supply and every released order.</summary>
-    public static async Task<MaterialSnapshot> MaterialSnapshotAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct)
+    public static async Task<MaterialSnapshot> MaterialSnapshotAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct,
+        IReadOnlyList<OrderInfo>? orderHeaders = null, IReadOnlyList<OrderInfo>? loadedOrders = null,
+        IReadOnlyList<StockPosition>? positions = null)
     {
         var inventory = uow.Store<IInventoryLookup>();
-        var stock = (await Forge.Inventory.Contracts.ShelfLifeQueries.PositionsAsync(uow, null, time.GetUtcNow(), ct))
+        var stock = (positions ?? await Forge.Inventory.Contracts.ShelfLifeQueries.PositionsAsync(uow, null, time.GetUtcNow(), ct))
             .Where(p => p.AvailableForPlanning)
             .GroupBy(b => b.PartNumber, StringComparer.Ordinal)
             .OrderBy(g => g.Key, StringComparer.Ordinal)
             .Select(g => new MaterialStock(g.Key, g.Sum(b => b.Quantity)))
             .ToList();
         var issued = (await inventory.ListOrderIssuesAsync(ct)).Select(i => new MaterialIssued(i.OrderNumber, i.PartNumber, i.NetIssued)).ToList();
-        var supplies = (await SuppliesAsync(uow, null, ct)).Select(s => new MaterialSupply(s.Key, s.PartNumber, s.Quantity, s.DueDate, s.Description)).ToList();
-
         var execution = uow.Store<IExecutionLookup>();
+        orderHeaders ??= await execution.ListOrdersAsync(ct);
+        var supplies = (await SuppliesAsync(uow, null, ct, orderHeaders)).Select(s => new MaterialSupply(s.Key, s.PartNumber, s.Quantity, s.DueDate, s.Description)).ToList();
+        // These are full records read by this caller in the same unit of work, never a cross-snapshot cache.
+        var known = (loadedOrders ?? []).ToDictionary(o => o.OrderNumber);
         var orders = new List<MaterialOrder>();
-        foreach (var summary in (await execution.ListOrdersAsync(ct)).Where(o => o.Status == OrderStatus.Released).OrderBy(o => o.OrderNumber))
+        foreach (var summary in orderHeaders.Where(o => o.Status == OrderStatus.Released).OrderBy(o => o.OrderNumber))
         {
-            if (await execution.FindOrderAsync(summary.OrderNumber, ct) is { } order)
+            var order = known.GetValueOrDefault(summary.OrderNumber) ?? await execution.FindOrderAsync(summary.OrderNumber, ct);
+            if (order is not null)
             {
                 orders.Add(new MaterialOrder(order.OrderNumber, order.Priority, order.DueDate, order.Materials));
             }

@@ -52,6 +52,24 @@ internal sealed partial class PostgresInventoryStore(PostgresUnitOfWork uow) : I
     public Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct) =>
         ReadContainersAsync("ORDER BY created_at DESC, code LIMIT 500", ct);
 
+    public async Task<PackingRecords> PackingForLotsAsync(string partNumber, IReadOnlyCollection<string> lotNumbers, CancellationToken ct)
+    {
+        if (lotNumbers.Count == 0) return new PackingRecords([], []);
+        var lots = lotNumbers.Distinct(StringComparer.Ordinal).ToArray();
+        var containers = await ReadContainersAsync("""
+            WHERE EXISTS(SELECT 1 FROM inventory.container_content content
+                WHERE content.container_code=container.code AND content.part_number=$1 AND content.lot_number=ANY($2::text[]))
+            ORDER BY code
+            """, ct, partNumber, lots);
+        var shipments = await ShipmentsAsync(ShipmentSql + """
+             WHERE EXISTS(SELECT 1 FROM inventory.shipment_line line
+                WHERE line.shipment_id=shipment.shipment_id AND line.part_number=$1 AND line.lot_number=ANY($2::text[]))
+                OR container_code=ANY($3::text[])
+             ORDER BY shipment_id
+            """, ct, partNumber, lots, containers.Select(container => container.Code).ToArray());
+        return new PackingRecords(containers, shipments);
+    }
+
     private async Task<IReadOnlyList<ContainerInfo>> ReadContainersAsync(string suffix, CancellationToken ct, params object?[] args)
     {
         var heads = await ReadAsync("SELECT code, kind, status, created_by, created_at, shipment_id, shipped_at FROM inventory.container " + suffix,
@@ -509,6 +527,7 @@ public static class InventoryRegistration
         services.AddForgeStore<IOutsideProcessLookup>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IOutsideProcessStore>(uow => new PostgresInventoryStore(uow));
         services.AddSingleton<InventoryService>();
+        services.AddSingleton<IInventoryRecoveryReadiness, InventoryRecoveryReadiness>();
         return services;
     }
 }

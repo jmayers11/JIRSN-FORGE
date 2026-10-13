@@ -407,22 +407,23 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
             : throw new CommandRejectedException("not_dispositioned", $"NCR {ncr.NcrId} is {ncr.Status}; it is closed after its disposition is decided."), ct);
     }
 
-    public Task<CommandResult> OpenCapaAsync(OpenCapa c, CommandContext context, CancellationToken ct)
+    public async Task<CommandResult> OpenCapaAsync(OpenCapa c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        var spec = new CommandSpec(SourceContext, nameof(OpenCapa), Permissions.QualityDisposition, ResourceRef.Of("Capa"));
-        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        ResourceRef resource;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+            resource = await ResourceForCapaSourceAsync(read, c.NcrId, null, ct);
+        var spec = new CommandSpec(SourceContext, nameof(OpenCapa), Permissions.QualityDisposition, resource);
+        return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
-            if (c.NcrId is { } n && await uow.Store<IQualityLookup>().FindNcrAsync(n, ct) is null)
-            {
-                throw new CommandRejectedException("ncr_not_found", $"NCR {n} does not exist.");
-            }
+            if (await ResourceForCapaSourceAsync(uow, c.NcrId, null, ct) != resource)
+                throw new CommandRejectedException("capa_context_changed", "The corrective action's source context changed. Review it and retry.");
 
             var capa = new CapaInfo(0, c.NcrId, BusinessCode.RequireName(c.Title, "Title"), BusinessCode.RequireName(c.RootCause, "Root cause"), BusinessCode.RequireName(c.Action, "Action"),
                 c.DueDate, CapaStatus.Open, context.Actor, now, null, null, null, null);
             var capaId = await uow.Store<IQualityStore>().InsertCapaAsync(capa, ct);
             var id = capaId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return Outcome(context, "Capa", id, "Opened", $"Corrective action {id} opened, due {c.DueDate:yyyy-MM-dd}.", null, capa with { CapaId = capaId });
+            return Outcome(context, "Capa", id, "Opened", $"Corrective action {id} opened, due {c.DueDate:yyyy-MM-dd}.", null, capa with { CapaId = capaId }, resource);
         }, ct);
     }
 
@@ -488,25 +489,45 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
             ContractId: order?.ContractId?.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
-    private Task<CommandResult> CapaAsync<TCommand>(string commandType, long capaId, TCommand command, CommandContext context, string permission, bool reasonRequired, Func<CapaInfo, CapaInfo> change, CancellationToken ct)
+    /// <summary>A linked corrective action retains its NCR's current operational access context.</summary>
+    public static Task<ResourceRef> ResourceForCapaAsync(IKernelUnitOfWork uow, CapaInfo capa, CancellationToken ct) =>
+        ResourceForCapaSourceAsync(uow, capa.NcrId, capa.CapaId.ToString(System.Globalization.CultureInfo.InvariantCulture), ct);
+
+    private static async Task<ResourceRef> ResourceForCapaSourceAsync(IKernelUnitOfWork uow, long? ncrId, string? id, CancellationToken ct)
+    {
+        if (ncrId is not { } number) return ResourceRef.Of("Capa", id);
+        var ncr = await uow.Store<IQualityLookup>().FindNcrAsync(number, ct)
+            ?? throw new CommandRejectedException("ncr_not_found", "The corrective action's source NCR does not exist.");
+        return (await ResourceForNcrAsync(uow, ncr, ct)) with { Type = "Capa", Id = id };
+    }
+
+    private async Task<CommandResult> CapaAsync<TCommand>(string commandType, long capaId, TCommand command, CommandContext context, string permission, bool reasonRequired, Func<CapaInfo, CapaInfo> change, CancellationToken ct)
     {
         var id = capaId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var spec = new CommandSpec(SourceContext, commandType, permission, ResourceRef.Of("Capa", id), reasonRequired);
-        return pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
+        ResourceRef resource;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            var source = await read.Store<IQualityStore>().FindCapaAsync(capaId, ct);
+            resource = source is null ? ResourceRef.Of("Capa", id) : await ResourceForCapaAsync(read, source, ct);
+        }
+        var spec = new CommandSpec(SourceContext, commandType, permission, resource, reasonRequired);
+        return await pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
         {
             var store = uow.Store<IQualityStore>();
             var capa = await store.FindCapaAsync(capaId, ct)
                 ?? throw new CommandRejectedException("capa_not_found", $"Corrective action {id} does not exist.");
+            if (await ResourceForCapaAsync(uow, capa, ct) != resource)
+                throw new CommandRejectedException("capa_context_changed", "The corrective action's source context changed. Review it and retry.");
             var next = change(capa);
             await store.UpdateCapaAsync(next, now, ct);
-            return Outcome(context, "Capa", id, next.Status.ToString(), $"Corrective action {id}: {next.Status.ToString().ToLowerInvariant()}.", capa, next);
+            return Outcome(context, "Capa", id, next.Status.ToString(), $"Corrective action {id}: {next.Status.ToString().ToLowerInvariant()}.", capa, next, resource);
         }, ct);
     }
 
-    private CommandOutcome Outcome(CommandContext context, string kind, string id, string change, string message, object? before, object? after) => new(
+    private CommandOutcome Outcome(CommandContext context, string kind, string id, string change, string message, object? before, object? after, ResourceRef? resource = null) => new(
         CommandResult.Ok(id, message),
-        [pipeline.Event(new QualityRecordChanged(kind, id, change), context, SourceContext, kind, id)],
-        new AuditChange(kind, id, before is null ? null : CanonicalJson.Serialize(before), after is null ? null : CanonicalJson.Serialize(after)));
+        [pipeline.Event(new QualityRecordChanged(kind, id, change), context, SourceContext, kind, id, resource?.Program, resource?.Markings ?? DataMarking.None)],
+        new AuditChange(kind, id, before is null ? null : CanonicalJson.Serialize(before), after is null ? null : CanonicalJson.Serialize(after), resource?.Program, resource?.Markings ?? DataMarking.None));
 
     private static string Words(Disposition d) => d switch
     {

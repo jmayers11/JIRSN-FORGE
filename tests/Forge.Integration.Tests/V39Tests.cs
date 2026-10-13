@@ -57,6 +57,10 @@ public sealed class V39Tests(PostgresFixture postgres)
         var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
         await plant.Person("qe", "QualityEngineer");
         var (e, qe) = (plant.Engineer, plant.As("qe"));
+        await plant.Person("kiosk", "ShopFloorTerminal");
+        var kiosk = plant.As("kiosk");
+        await plant.Ok(plant.Admin, $"/api/workforce/people/{plant.People["sarah"]}/badge", new { badge = Sarah });
+        await plant.Ok(kiosk, "/api/shopfloor/clock-in", new { badge = Sarah });
         var order = await ReleasedOrderAsync(plant, planner);
         Assert.Null(Constraint(await Answer(planner, order)));
 
@@ -72,6 +76,9 @@ public sealed class V39Tests(PostgresFixture postgres)
         Assert.Equal(("Pass", "Pass", "Pass", "Fail"), (dimensions["Equipment"], dimensions["Material"], dimensions["Workforce"], dimensions["Tooling"]));
         var readiness = await Get(planner, $"/api/orders/{order}/readiness");
         Assert.DoesNotContain("Tooling", readiness.GetProperty("output").GetProperty("operations")[0].GetProperty("notEvaluated").EnumerateArray().Select(x => x.GetString()));
+        // Direct starts cannot bypass a required expired tool by omitting ToolCode.
+        await Rejected(plant, kiosk, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" }, "Tooling");
+        Assert.Empty((await Get(planner, $"/api/orders/{order}/shopfloor")).GetProperty("labor").EnumerateArray());
 
         // The report and the Analyst give the same answer.
         var report = await Get(planner, $"/api/reports/executable-operations?search={order}");
@@ -113,12 +120,17 @@ public sealed class V39Tests(PostgresFixture postgres)
         await plant.Person("kiosk", "ShopFloorTerminal");
         var (e, stores, kiosk) = (plant.Engineer, plant.As("stores"), plant.As("kiosk"));
         var order = await ReleasedOrderAsync(plant, planner);
+        await plant.Ok(plant.Admin, $"/api/workforce/people/{plant.People["sarah"]}/badge", new { badge = Sarah });
+        await plant.Ok(kiosk, "/api/shopfloor/clock-in", new { badge = Sarah });
 
         // Once slitting has a staging location, the coil must be there before the first operation starts.
         await plant.Ok(stores, "/api/inventory/locations", new { code = "SL-STAGE", siteCode = "PLANT1", name = "Slitting staging", kind = "Staging", workCenterCode = "SLIT-WC" });
         var notStaged = await Answer(planner, order);
         Assert.Equal("PointOfUse", Constraint(notStaged));
         Assert.Contains("COIL-AL needs 26, 0 there", notStaged.GetProperty("why").GetString(), StringComparison.Ordinal);
+        await Rejected(plant, kiosk, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" }, "PointOfUse");
+        await Rejected(plant, kiosk, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 20 }, "Predecessor");
+        Assert.Empty((await Get(planner, $"/api/orders/{order}/shopfloor")).GetProperty("labor").EnumerateArray());
         await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "COIL-AL", quantity = 30m, locationCode = "SL-STAGE", reason = "Staged for slitting" });
         Assert.Null(Constraint(await Answer(planner, order)));
 
@@ -135,8 +147,6 @@ public sealed class V39Tests(PostgresFixture postgres)
         await plant.Ok(e, $"/api/workforce/workers/{lee}/shift", new { shiftCode = "ALL" });
 
         // A hold on the order stops the shop floor; released by someone else, work starts.
-        await plant.Ok(plant.Admin, $"/api/workforce/people/{plant.People["sarah"]}/badge", new { badge = Sarah });
-        await plant.Ok(kiosk, "/api/shopfloor/clock-in", new { badge = Sarah });
         await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = order, partNumber = "COIL-AL", quantity = 26m, locationCode = "SL-STAGE" });
         var hold = Id(await plant.Ok(e, "/api/holds", new { kind = "Production", targetType = "Order", targetId = order.ToString(CultureInfo.InvariantCulture), reason = "Customer asked to wait for a drawing change" }));
         await Rejected(plant, kiosk, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" }, "on_hold");
@@ -181,10 +191,21 @@ public sealed class V39Tests(PostgresFixture postgres)
 
         await plant.Ok(e, "/api/engineering/document-training/policy", new { policy = "Enforce", reason = "Audit finding" });
         Assert.Equal("Training", Constraint(await Answer(planner, order)));
+        await plant.Person("kiosk", "ShopFloorTerminal");
+        var kiosk = plant.As("kiosk");
+        await plant.Ok(plant.Admin, $"/api/workforce/people/{plant.People["sarah"]}/badge", new { badge = Sarah });
+        await plant.Ok(kiosk, "/api/shopfloor/clock-in", new { badge = Sarah });
+        await Rejected(plant, kiosk, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" }, "Training");
 
         await Rejected(plant, e, "/api/engineering/document-training", new { personId = plant.People["sarah"], documentNumber = "WI-SLIT", revision = "Z" }, "revision_not_found", HttpStatusCode.NotFound);
         await plant.Ok(e, "/api/engineering/document-training", new { personId = plant.People["sarah"], documentNumber = "WI-SLIT", revision = "A", trainedOn = Day(-1) });
         Assert.Null(Constraint(await Answer(planner, order)));
+        const string michael = "B-MICHAEL-0309";
+        await plant.Ok(plant.Admin, $"/api/workforce/people/{plant.People["michael"]}/badge", new { badge = michael });
+        await plant.Ok(kiosk, "/api/shopfloor/clock-in", new { badge = michael });
+        // Sarah's training makes the planning candidate ready; it cannot authorize Michael.
+        await Rejected(plant, kiosk, "/api/shopfloor/start", new { badge = michael, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" }, "Training");
+        await plant.Ok(kiosk, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" });
         var records = await Get(e, $"/api/engineering/document-training?personId={plant.People["sarah"]}");
         Assert.Equal(("Enforce", "WI-SLIT"), (records.GetProperty("policy").GetProperty("policy").GetString(), Assert.Single(records.GetProperty("records").EnumerateArray()).GetProperty("documentNumber").GetString()));
     }

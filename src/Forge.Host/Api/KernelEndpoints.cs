@@ -4,6 +4,8 @@ using Forge.Kernel.Commands;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Postgres;
 using Forge.Kernel.Security;
+using Forge.Kernel.WorkAssignments;
+using Forge.Host.History;
 using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
@@ -154,8 +156,19 @@ public static class KernelEndpoints
         api.MapPost("/people/{personId:guid}/programs/{programId:guid}/revoke", (HttpContext http, Guid personId, Guid programId, ReasonRequest body, AccessService access, CancellationToken ct) =>
             Command(http, body.Reason, context => access.RevokeProgramAccessAsync(new RevokeProgramAccess(new PersonId(personId), new ProgramId(programId)), context, ct)));
 
-        api.MapGet("/audit", (HttpContext http, string? entityType, string? entityId, int? take, KernelReadStore reads, CancellationToken ct) =>
-            Read(http, Permissions.AuditRead, async principal => await reads.QueryAuditAsync(entityType, entityId, principal.Programs, take ?? 100, ct)));
+        api.MapGet("/audit", async (HttpContext http, string? entityType, string? entityId, int? take, KernelReadStore reads, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            var authorizer = http.RequestServices.GetRequiredService<IForgeAuthorizer>();
+            if (!principal.HasPermission(Permissions.AuditRead)
+                && principal.ScopedPermissions?.Any(grant => grant.Permission == Permissions.AuditRead) != true
+                && principal.DelegatedPermissions?.Any(grant => grant.Permission == Permissions.AuditRead) != true)
+                throw new ForgeAuthorizationException(authorizer.Authorize(principal, Permissions.AuditRead, ResourceRef.Of("Audit")));
+            var entries = await reads.QueryAuditAsync(entityType, entityId, principal.Programs, take ?? 100, ct, principal.Markings);
+            await using var uow = await http.RequestServices.GetRequiredService<Forge.Kernel.Access.IKernelUnitOfWorkFactory>().BeginSnapshotAsync(ct);
+            return Results.Ok(await AuditAccess.FilterAsync(uow, entries, principal, http.RequestServices.GetRequiredService<IWorkSourceResolver>(), authorizer, ct));
+        });
 
         api.MapGet("/audit/verify", (HttpContext http, KernelReadStore reads, CancellationToken ct) =>
             Read(http, Permissions.AuditRead, async _ => await reads.VerifyAuditChainAsync(ct)));

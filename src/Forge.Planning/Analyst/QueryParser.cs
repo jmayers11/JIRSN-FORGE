@@ -548,6 +548,21 @@ public static partial class QueryParser
             notes.Add($"Only order {wanted.Groups[1].Value}.");
         }
 
+        // A named order is an exact reconciliation scope, not an incidental match in another lot code.
+        if (entry.Id == "material-reconciliation")
+        {
+            if (OrderNumberRegex().Match(t) is { Success: true } materialOrder)
+            {
+                parameters = parameters with { Search = "order:" + materialOrder.Groups[1].Value };
+                notes.Add($"Only order {materialOrder.Groups[1].Value}.");
+            }
+            if (t.Contains(" remnant", StringComparison.Ordinal))
+            {
+                parameters = parameters with { Status = "Remnants" };
+                notes.Add("Only issued lots with a recorded positive remnant quantity.");
+            }
+        }
+
         // V3.1: "Where is lot L-104?", "What material is at outside processors?" — the lot, serial or custody asked about.
         // V3.2, V3.3: "What was roll R-100 split into?", "Trace roll R-100" — the instance asked about.
         if (entry.Id is "lot-lineage" or "genealogy-trace" && LotRegex().Match(t) is { Success: true } instance)

@@ -184,9 +184,9 @@ public static class DocumentEndpoints
                 return views;
             }));
         eng.MapPost("/attachments/{type}/{id}", (HttpContext http, string type, string id, AttachDocumentRequest b, DocumentService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.AttachAsync(new AttachDocument(TargetType(type), id, b.DocumentNumber, b.Revision, b.Purpose ?? DocumentPurpose.Information, b.Note), c, ct)));
+            AttachmentCommand(http, b.Reason, type, id, s, c => s.AttachAsync(new AttachDocument(TargetType(type), id, b.DocumentNumber, b.Revision, b.Purpose ?? DocumentPurpose.Information, b.Note), c, ct), ct));
         eng.MapPost("/attachments/{type}/{id}/file", (HttpContext http, string type, string id, AttachFileRequest b, DocumentService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.AttachFileAsync(new AttachFile(TargetType(type), id, b.FileSha256, b.FileName, b.Title, b.Type ?? DocumentType.Other, b.Markings ?? DataMarking.None, b.Note), c, ct)));
+            AttachmentCommand(http, b.Reason, type, id, s, c => s.AttachFileAsync(new AttachFile(TargetType(type), id, b.FileSha256, b.FileName, b.Title, b.Type ?? DocumentType.Other, b.Markings ?? DataMarking.None, b.Note), c, ct), ct));
         // V2.3: what item revisions are built to, applicability rules and the enforcement policy.
         eng.MapGet("/items/{part}/revisions/{rev}/documents", (HttpContext http, string part, string rev, bool? history, CancellationToken _) =>
             Read(http, Permissions.EngineeringRead, async principal =>
@@ -283,6 +283,25 @@ public static class DocumentEndpoints
     internal static bool CanSeeLink(ForgePrincipal principal, DocumentLinkInfo link) => DocumentAccess.CanSeeLink(principal, link);
 
     internal static string ReadPermission(DocumentTargetType type) => DocumentAccess.ReadPermission(type);
+
+    private static async Task<IResult> AttachmentCommand(HttpContext http, string? reason, string type, string id, DocumentService service,
+        Func<CommandContext, Task<CommandResult>> execute, CancellationToken ct)
+    {
+        try { return await Command(http, reason, execute); }
+        catch (ForgeAuthorizationException denied) when (SourceClassificationDenied(denied.Decision))
+        {
+            // The pipeline has already recorded the real source denial before any replay.
+            // An ordinary missing attachment permission, including a caller-supplied marking,
+            // retains its permission response. Reuse the source owner's visibility check.
+            if (denied.Decision.Reasons.Contains($"No assigned role grants '{Permissions.DocumentsAttach}'.", StringComparer.Ordinal)) throw;
+            var principal = await PrincipalAsync(http);
+            if (principal is null) throw;
+            await using var read = await Snapshot(http);
+            if (await service.VisibleTargetOrNullAsync(read, principal, TargetType(type), id, ct) is null)
+                throw new CommandRejectedException("target_not_found", $"{type} {id} does not exist.");
+            throw;
+        }
+    }
 
     private static DocumentTargetType TargetType(string raw) =>
         Enum.TryParse<DocumentTargetType>(raw, ignoreCase: true, out var type) && Enum.IsDefined(type) && !int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)

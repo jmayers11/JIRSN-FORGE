@@ -556,6 +556,9 @@ public sealed record ContainerContentInfo(int LineNumber, string PartNumber, dec
 /// <summary>A physical carton, crate or pallet and the stock identities inside it (V3.14).</summary>
 public sealed record ContainerInfo(string Code, ContainerKind Kind, ContainerStatus Status, string CreatedBy, DateTimeOffset CreatedAt, IReadOnlyList<ContainerContentInfo> Contents, long? ShipmentId = null, DateTimeOffset? ShippedAt = null);
 
+/// <summary>Packing source records for specified physical lots, without a screen's presentation limit.</summary>
+public sealed record PackingRecords(IReadOnlyList<ContainerInfo> Containers, IReadOnlyList<ShipmentInfo> Shipments);
+
 /// <summary>Spare parts used on a maintenance work order (issues less returns), by part.</summary>
 /// <param name="SubstitutesFor">Issued in place of this part through an approved alternate (V2.9); <paramref name="PrimaryNetIssued"/> is how much of it that covers.</param>
 /// <summary>Material for a project line (V2.10): received against purchases for it, and issued to it (issues less returns).</summary>
@@ -569,6 +572,8 @@ public sealed record DemandShipped(long DemandId, string PartNumber, decimal Shi
 /// <summary>What other contexts may ask Inventory.</summary>
 public interface IInventoryLookup
 {
+    Task<PackingRecords> PackingForLotsAsync(string partNumber, IReadOnlyCollection<string> lotNumbers, CancellationToken ct);
+
     Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct);
 
     Task<ContainerInfo?> FindContainerAsync(string code, CancellationToken ct);

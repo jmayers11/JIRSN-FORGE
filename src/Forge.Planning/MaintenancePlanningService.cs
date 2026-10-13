@@ -94,7 +94,7 @@ public sealed class MaintenancePlanningService(IKernelUnitOfWorkFactory unitOfWo
             orders.Add((await lookup.FindOrderAsync(summary.OrderNumber, ct))!);
         }
 
-        var material = (await MaterialPlanningService.RunMaterialAsync(uow, time, ct)).Output;
+        var material = (await MaterialPlanningService.RunMaterialAsync(uow, time, ct, principal)).Output;
         var quality = await ScheduleQuality.LoadAsync(uow, orders, ct);
         var horizonEnd = end + TimeSpan.FromDays(14);
         var limit = snapshot.AsOf.AddDays(62);

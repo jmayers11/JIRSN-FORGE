@@ -35,7 +35,7 @@ internal static class GoalEndpoints
             Read(http, Permissions.ScheduleRead, async principal =>
             {
                 await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
-                var lines = await GoalService.RiskAsync(uow, http.RequestServices.GetRequiredService<TimeProvider>(), http.RequestAborted);
+                var lines = await GoalService.RiskAsync(uow, http.RequestServices.GetRequiredService<TimeProvider>(), http.RequestAborted, principal);
                 return lines.Values.Where(l => l.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))).OrderBy(l => l.OrderNumber).ToList();
             }));
     }

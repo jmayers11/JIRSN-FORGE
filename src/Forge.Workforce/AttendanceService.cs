@@ -1,3 +1,4 @@
+using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
@@ -165,7 +166,7 @@ public sealed class AttendanceService(CommandPipeline pipeline, IBadgePinVerifie
                 CommandResult.Ok(id, badge.PinHash is null ? "PIN set." : "PIN changed."),
                 [pipeline.Event(new BadgePinSet(badge.PersonId), context, SourceContext, BadgeEntity, id)],
                 new AuditChange(BadgeEntity, id, badge.PinHash is null ? null : "pin", "pin"));
-        }, ct);
+        }, ct, authority: (uow, _) => BadgeAuthorityAsync(uow, c.Badge, BadgeEntity, ct));
     }
 
     public Task<CommandResult> ClockInAsync(ClockIn c, CommandContext context, CancellationToken ct)
@@ -202,7 +203,7 @@ public sealed class AttendanceService(CommandPipeline pipeline, IBadgePinVerifie
                     pipeline.Event(new PresenceRecorded(badge.PersonId, nameof(PresenceKind.ClockedIn), now + ClockInPresence), context, SourceContext, WorkerEntity, id),
                 ],
                 new AuditChange(WorkerEntity, id, null, CanonicalJson.Serialize(new { attendance = "in", attendanceId })));
-        }, ct);
+        }, ct, authority: (uow, _) => BadgeAuthorityAsync(uow, c.Badge, WorkerEntity, ct));
     }
 
     public Task<CommandResult> ClockOutAsync(ClockOut c, CommandContext context, CancellationToken ct)
@@ -230,7 +231,20 @@ public sealed class AttendanceService(CommandPipeline pipeline, IBadgePinVerifie
                     pipeline.Event(new PresenceEnded(badge.PersonId), context, SourceContext, WorkerEntity, id),
                 ],
                 new AuditChange(WorkerEntity, id, CanonicalJson.Serialize(new { attendance = "in", open.AttendanceId }), CanonicalJson.Serialize(new { attendance = "out", hours })));
-        }, ct);
+        }, ct, authority: (uow, _) => BadgeAuthorityAsync(uow, c.Badge, WorkerEntity, ct));
+    }
+
+    /// <summary>Resolve the current acting person before idempotent replay without retaining badge or PIN values.</summary>
+    private static async Task<CommandAuthority> BadgeAuthorityAsync(IKernelUnitOfWork uow, Secret badge, string entity, CancellationToken ct)
+    {
+        _ = Digest(badge); // preserve the source badge format validation and its nonsecret rejection
+        var holder = await uow.Store<IWorkforceLookup>().FindBadgeHolderAsync(badge.Reveal(), ct)
+            ?? throw new CommandRejectedException("unknown_badge", "Badge not recognized. See your supervisor.");
+        var personId = new PersonId(holder.PersonId);
+        var person = await uow.People.FindAsync(personId, ct);
+        if (person is not { IsActive: true })
+            throw new CommandRejectedException("person_inactive", "Person is not active.");
+        return new CommandAuthority(ResourceRef.Of(entity, personId), $"person:{holder.PersonId:D}");
     }
 
     private static string Digest(Secret badge)

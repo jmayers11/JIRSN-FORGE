@@ -38,7 +38,7 @@ public sealed class V327Tests(PostgresFixture postgres)
         using var answer = JsonDocument.Parse(json);
         Assert.False(answer.RootElement.GetProperty("notAuthorized").GetBoolean(), $"{kind}: {question}");
         Assert.Equal(reportId, answer.RootElement.GetProperty("interpretation").GetProperty("report").GetProperty("reportId").GetString());
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"{kind}: {question} exceeded the 10-second Analyst budget at 200+ business records ({stopwatch.Elapsed}).");
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"{kind}: {question} exceeded the 10-second Analyst budget with 200 actual records in each of all sixteen BN populations ({stopwatch.Elapsed}).");
         return answer.RootElement.Clone();
     }
 
@@ -59,8 +59,8 @@ public sealed class V327Tests(PostgresFixture postgres)
         await plant.Ok(engineer, "/api/engineering/items/REF-COIL/revisions", new { revision = "A" });
         await plant.Ok(plant.Approver, "/api/engineering/items/REF-COIL/revisions/A/release", new { reason = "V3.27 reference factory baseline" });
 
-        // Two hundred explicit business records per variant, created through the same commands as the UI.
-        // Ten orders are released so schedule/readiness questions exercise actual projections.
+        // Additional slitting records retain the original variant extremes and focused factual questions.
+        // The sixteen original BN populations are generated and verified by OriginalReferenceFactory below.
         long firstReleasedOrder = 0;
         for (var index = 1; index <= 100; index++)
         {
@@ -140,6 +140,9 @@ public sealed class V327Tests(PostgresFixture postgres)
         var processorLot = $"RF-{kind.ToUpperInvariant()}-002";
         await plant.Ok(stores, "/api/inventory/outside-processing/dispatch", new { partNumber = "REF-COIL", quantity = 5m, fromLocation = "STORES", processorLocation = "REF-EXTERNAL", lotNumber = processorLot, purchaseOrder = serviceOrder, purchaseOrderLine = 1, reason = "Send identified material for reference processing" });
 
+        var factory = await OriginalReferenceFactory.BuildAsync(plant, planner, kind, clock.GetUtcNow());
+        await factory.VerifyPopulationsAsync(app);
+
         // A machine-only disruption preserves feasible work through the other eligible slitter.
         var beforeDisruption = await planner.GetFromJsonAsync<JsonElement[]>("/api/readiness/operations");
         var beforeOperation = (beforeDisruption ?? []).Single(operation => operation.GetProperty("orderNumber").GetInt64() == firstReleasedOrder && operation.GetProperty("sequence").GetInt32() == 10);
@@ -175,6 +178,7 @@ public sealed class V327Tests(PostgresFixture postgres)
 
         await plant.Ok(kiosk, "/api/shopfloor/clock-out", new { badge });
         clock.Advance(TimeSpan.FromDays(1));
+        await factory.VerifyUniversalQuestionsAsync(plant, planner, kind, clock.GetUtcNow(), clock.Advance);
         var outside = await AskWithinBudget(planner, kind, "What material is at outside processors?", "stock-positions");
         var outsideRow = Assert.Single(outside.GetProperty("rows").EnumerateArray());
         Assert.Equal(("REF-COIL", processorLot, "REF-EXTERNAL", "Outside processor REF-PROCESSOR", 5m),

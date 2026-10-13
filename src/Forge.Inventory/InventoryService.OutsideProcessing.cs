@@ -22,55 +22,10 @@ public sealed partial class InventoryService
         var spec = new CommandSpec(SourceContext, nameof(DispatchOutsideProcess), Permissions.InventoryTransact, ResourceRef.Of("OutsideProcess", key), true);
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
-            var item = await ItemAsync(uow, part, ct);
-            var lot = RequireLot(item, c.LotNumber);
-            var quantity = RequireQuantity(item, c.Quantity);
-            var from = await CompanyLocationAsync(uow, c.FromLocation, ct);
-            var processor = await ActiveLocationAsync(uow, c.ProcessorLocation, ct);
-            if (processor.Kind != LocationKind.ExternalProcessor)
-                throw new CommandRejectedException("processor_location_required", $"{processor.Code} is not an outside-processor location.");
-            var po = await RequireProcessorPoAsync(uow, c.PurchaseOrder, c.PurchaseOrderLine, processor.CustodianSupplier!, ct);
             var store = uow.Store<IInventoryStore>();
-            await store.LockPartAsync(item.PartNumber, ct);
-            await RequireStockAsync(uow, item.PartNumber, from.Code, lot, StockStatus.Released, quantity, ct);
-            await RequireUsableAsync(uow, item, lot, now, ct);
-            await HoldGate.RequireNoneAsync(uow, new HoldCheck(HoldActivity.Ship, Parts: [part], LotList: [new HoldLot(part, lot!)], SupplierCode: processor.CustodianSupplier), ct);
-            var package = await uow.Store<ITechnicalPackageLookup>().FindPackageAsync(po.PoNumber, c.PurchaseOrderLine, ct)
-                ?? throw new CommandRejectedException("processor_package_required", "The approved service purchase order must have its recorded technical package.");
-            var instance = (await uow.Store<IInventoryLookup>().ListLotsAsync(part, ct)).Single(l => l.LotNumber == lot);
-            var revision = Optional(c.MaterialRevision) ?? instance.PartRevision;
-            if (Optional(c.MaterialRevision) is { } requestedRevision)
-            {
-                if (instance.PartRevision != requestedRevision || !(await uow.Store<IEngineeringLookup>().ListRevisionsAsync(part, ct)).Any(r => r.Revision == requestedRevision && r.Status == RevisionStatus.Released))
-                    throw new CommandRejectedException("material_configuration_mismatch", "The sent material revision must match the identified lot and a released item revision.");
-            }
-            var specification = Optional(c.SpecificationDocument);
-            var specificationRevision = Optional(c.SpecificationRevision);
-            Guid? programId = null;
-            var markings = DataMarking.None;
-            if (specification is not null)
-            {
-                var document = await uow.Store<IDocumentLookup>().FindDocumentAsync(specification, ct);
-                if (document is null || !DocumentAccess.CanSee(context.Principal, document))
-                    throw new CommandRejectedException("process_specification_unavailable", "The process specification is unavailable to the sender.");
-                var applicable = document.Current;
-                if (applicable is null || (specificationRevision is not null && applicable.Revision != specificationRevision)
-                    || applicable.FileSha256 is null || applicable.EffectiveFrom > DateOnly.FromDateTime(now.UtcDateTime)
-                    || applicable.EffectiveTo < DateOnly.FromDateTime(now.UtcDateTime))
-                    throw new CommandRejectedException("process_specification_not_applicable", "Send an applicable controlled process specification with its recorded file.");
-                specificationRevision = applicable.Revision;
-                programId = document.ProgramId;
-                markings = document.Markings;
-            }
-            else if (specificationRevision is not null)
-                throw new CommandRejectedException("process_specification_required", "A specification revision needs its document number.");
-            var priorDispatches = await uow.Store<IOutsideProcessLookup>().ListDispatchesAsync(key, ct);
-            var prior = priorDispatches.Count == 0 ? null : priorDispatches[0];
-            if (!c.RequireCertificate && !context.Principal.HasPermission(Permissions.QualityDisposition,
-                new ResourceRef("OutsideProcess", key, programId is { } program ? new ProgramId(program) : null)))
-                throw new CommandRejectedException("certificate_waiver_authority_required", "Quality disposition authority is required to waive the processor certificate requirement.");
-            if (prior is not null && (prior.MaterialRevision != revision || prior.SpecificationDocument != specification || prior.SpecificationRevision != specificationRevision || prior.RequireCertificate != c.RequireCertificate))
-                throw new CommandRejectedException("process_configuration_changed", "This lot and service order already have a sent configuration; use a new service order for a changed process.");
+            await store.LockPartAsync(part, ct);
+            var prepared = await PrepareOutsideProcessDispatchAsync(uow, c, context.Principal, now, ct);
+            var (item, lot, quantity, from, processor, po, package, revision, specification, specificationRevision, programId, markings) = prepared;
             var reason = $"Outside processing dispatch PO {po.PoNumber}/{c.PurchaseOrderLine}";
             var txn = new NewTransaction(InventoryTransactionKind.Transfer, item.PartNumber, quantity, from.Code, StockStatus.Released, processor.Code, StockStatus.Released, lot,
                 PoNumber: po.PoNumber, PoLine: c.PurchaseOrderLine, Reason: reason, PartRevision: revision);
@@ -82,6 +37,67 @@ public sealed partial class InventoryService
                 [pipeline.Event(new InventoryMoved(txnId, nameof(InventoryTransactionKind.Transfer), item.PartNumber, quantity, from.Code, processor.Code), context, SourceContext, "OutsideProcess", key)],
                 new AuditChange("OutsideProcess", key, null, CanonicalJson.Serialize(new { transaction = txn, configuration = snapshot })));
         }, ct);
+    }
+
+    /// <summary>Runs the dispatch command's source gates without locking or moving stock.</summary>
+    public static async Task CheckOutsideProcessDispatchAsync(IKernelUnitOfWork uow, DispatchOutsideProcess command, ForgePrincipal principal, DateTimeOffset now, CancellationToken ct) =>
+        _ = await PrepareOutsideProcessDispatchAsync(uow, command, principal, now, ct);
+
+    private sealed record PreparedOutsideDispatch(ItemInfo Item, string? Lot, decimal Quantity, LocationInfo From, LocationInfo Processor,
+        PurchaseOrderInfo Po, TechnicalPackage Package, string? Revision, string? Specification, string? SpecificationRevision, Guid? ProgramId, DataMarking Markings);
+
+    private static async Task<PreparedOutsideDispatch> PrepareOutsideProcessDispatchAsync(IKernelUnitOfWork uow, DispatchOutsideProcess c, ForgePrincipal principal, DateTimeOffset now, CancellationToken ct)
+    {
+        var part = BusinessCode.Require(c.PartNumber, "Part");
+        var key = $"{part}:{c.LotNumber?.Trim().ToUpperInvariant()}:PO{c.PurchaseOrder}-L{c.PurchaseOrderLine}";
+        var item = await ItemAsync(uow, part, ct);
+        var lot = RequireLot(item, c.LotNumber);
+        var quantity = RequireQuantity(item, c.Quantity);
+        var from = await CompanyLocationAsync(uow, c.FromLocation, ct);
+        var processor = await ActiveLocationAsync(uow, c.ProcessorLocation, ct);
+        if (processor.Kind != LocationKind.ExternalProcessor)
+            throw new CommandRejectedException("processor_location_required", $"{processor.Code} is not an outside-processor location.");
+        var po = await RequireProcessorPoAsync(uow, c.PurchaseOrder, c.PurchaseOrderLine, processor.CustodianSupplier!, ct);
+        await RequireStockAsync(uow, item.PartNumber, from.Code, lot, StockStatus.Released, quantity, ct);
+        await RequireUsableAsync(uow, item, lot, now, ct);
+        await HoldGate.RequireNoneAsync(uow, new HoldCheck(HoldActivity.Ship, Parts: [part], LotList: [new HoldLot(part, lot!)], SupplierCode: processor.CustodianSupplier), ct);
+        var package = await uow.Store<ITechnicalPackageLookup>().FindPackageAsync(po.PoNumber, c.PurchaseOrderLine, ct)
+            ?? throw new CommandRejectedException("processor_package_required", "The approved service purchase order must have its recorded technical package.");
+        var instance = (await uow.Store<IInventoryLookup>().ListLotsAsync(part, ct)).Single(l => l.LotNumber == lot);
+        var revision = Optional(c.MaterialRevision) ?? instance.PartRevision;
+        if (Optional(c.MaterialRevision) is { } requestedRevision)
+        {
+            if (instance.PartRevision != requestedRevision || !(await uow.Store<IEngineeringLookup>().ListRevisionsAsync(part, ct)).Any(r => r.Revision == requestedRevision && r.Status == RevisionStatus.Released))
+                throw new CommandRejectedException("material_configuration_mismatch", "The sent material revision must match the identified lot and a released item revision.");
+        }
+        var specification = Optional(c.SpecificationDocument);
+        var specificationRevision = Optional(c.SpecificationRevision);
+        Guid? programId = null;
+        var markings = DataMarking.None;
+        if (specification is not null)
+        {
+            var document = await uow.Store<IDocumentLookup>().FindDocumentAsync(specification, ct);
+            if (document is null || !DocumentAccess.CanSee(principal, document))
+                throw new CommandRejectedException("process_specification_unavailable", "The process specification is unavailable to the sender.");
+            var applicable = document.Current;
+            if (applicable is null || (specificationRevision is not null && applicable.Revision != specificationRevision)
+                || applicable.FileSha256 is null || applicable.EffectiveFrom > DateOnly.FromDateTime(now.UtcDateTime)
+                || applicable.EffectiveTo < DateOnly.FromDateTime(now.UtcDateTime))
+                throw new CommandRejectedException("process_specification_not_applicable", "Send an applicable controlled process specification with its recorded file.");
+            specificationRevision = applicable.Revision;
+            programId = document.ProgramId;
+            markings = document.Markings;
+        }
+        else if (specificationRevision is not null)
+            throw new CommandRejectedException("process_specification_required", "A specification revision needs its document number.");
+        var priorDispatches = await uow.Store<IOutsideProcessLookup>().ListDispatchesAsync(key, ct);
+        var prior = priorDispatches.Count == 0 ? null : priorDispatches[0];
+        if (!c.RequireCertificate && !principal.HasPermission(Permissions.QualityDisposition,
+            new ResourceRef("OutsideProcess", key, programId is { } program ? new ProgramId(program) : null)))
+            throw new CommandRejectedException("certificate_waiver_authority_required", "Quality disposition authority is required to waive the processor certificate requirement.");
+        if (prior is not null && (prior.MaterialRevision != revision || prior.SpecificationDocument != specification || prior.SpecificationRevision != specificationRevision || prior.RequireCertificate != c.RequireCertificate))
+            throw new CommandRejectedException("process_configuration_changed", "This lot and service order already have a sent configuration; use a new service order for a changed process.");
+        return new(item, lot, quantity, from, processor, po, package, revision, specification, specificationRevision, programId, markings);
     }
 
     public Task<CommandResult> ReturnFromOutsideProcessAsync(ReturnFromOutsideProcess c, CommandContext context, CancellationToken ct)

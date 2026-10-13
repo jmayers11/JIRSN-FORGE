@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Forge.Engineering.Contracts;
+using Forge.Host.History;
 using Forge.Host.Propagation;
 using Forge.Kernel.Postgres;
 using Microsoft.Extensions.DependencyInjection;
@@ -105,6 +106,75 @@ public sealed class V25Tests(PostgresFixture postgres)
         while (await relay.RelayBatchAsync(100, CancellationToken.None) > 0)
         {
         }
+    }
+
+    private sealed record RecordedPropagationEvent(Guid Id, string Type, string Context, string EntityType,
+        string EntityId, DateTimeOffset At, Guid? Cause, string? Reason);
+
+    private static async Task VerifyRecordedPropagationCauseMapAsync(ForgeApp app, string changeNumber, long planned, long released)
+    {
+        // Owner-approved V3.22 acceptance uses this available real engineering propagation chain.
+        // It is source-record proof, not a reconstruction of the unavailable original numeric §54.
+        // Positive events come only from ReleaseChange and the existing subscriber's normal commands.
+        var events = new List<RecordedPropagationEvent>();
+        await using (var connection = await app.Services.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand("""
+            SELECT event_id,event_type,envelope::jsonb->>'sourceContext',entity_type,entity_id,occurred_at,causation_id,envelope::jsonb->>'reason'
+            FROM kernel.event_log
+            WHERE (event_type='EngineeringChangeReleased' AND entity_type='EngineeringChange' AND entity_id=$1)
+               OR (event_type='OrderRevisionChanged' AND entity_type='ProductionOrder' AND entity_id=ANY($2::text[]))
+               OR (event_type='OrderDocumentationReissued' AND entity_type='OrderDocumentation' AND entity_id=$3)
+            ORDER BY sequence
+            """, connection))
+        {
+            command.Parameters.AddWithValue(changeNumber);
+            command.Parameters.AddWithValue(new[] { planned.ToString(CultureInfo.InvariantCulture), released.ToString(CultureInfo.InvariantCulture) });
+            command.Parameters.AddWithValue(released.ToString(CultureInfo.InvariantCulture));
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                events.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4),
+                    reader.GetFieldValue<DateTimeOffset>(5), reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.IsDBNull(7) ? null : reader.GetString(7)));
+        }
+
+        var release = Assert.Single(events, source => source.Type == "EngineeringChangeReleased");
+        Assert.Equal(("Engineering", "EngineeringChange", changeNumber, "CCB approved"),
+            (release.Context, release.EntityType, release.EntityId, release.Reason));
+        Assert.Null(release.Cause);
+        var effects = events.Where(source => source.Id != release.Id).ToArray();
+        Assert.Equal(3, effects.Length);
+        Assert.Equal(new[] { planned, released }.Order(), effects.Where(source => source.Type == "OrderRevisionChanged")
+            .Select(source => long.Parse(source.EntityId, CultureInfo.InvariantCulture)).Order());
+        var reissue = Assert.Single(effects, source => source.Type == "OrderDocumentationReissued");
+        Assert.Equal(("Engineering", "OrderDocumentation", released.ToString(CultureInfo.InvariantCulture)),
+            (reissue.Context, reissue.EntityType, reissue.EntityId));
+        Assert.All(effects.Where(source => source.Type == "OrderRevisionChanged"), source => Assert.Equal(("Execution", "ProductionOrder"), (source.Context, source.EntityType)));
+        Assert.All(effects, source => Assert.Equal(release.Id, source.Cause));
+        Assert.All(effects, source => Assert.Equal("Propagation of a released engineering change", source.Reason));
+
+        var principal = await app.Services.GetRequiredService<KernelReadStore>().ResolvePrincipalBySubjectAsync("planner", CancellationToken.None);
+        Assert.NotNull(principal);
+        // Seed the read window with effects only. CauseMap must recover the earlier actual release
+        // by following the recorded causation IDs, rather than merely finding a shared correlation.
+        var from = effects.Min(source => source.At);
+        var to = effects.Max(source => source.At);
+        Assert.True(release.At < from, "The command release must precede its asynchronously propagated effects.");
+        var map = await app.Services.GetRequiredService<CauseMapReadStore>().LoadAsync(principal!, from, to, CancellationToken.None);
+        foreach (var source in events)
+        {
+            var step = Assert.Single(map.Steps, step => step.EventId == source.Id);
+            Assert.Equal((source.Type, source.Context, source.EntityType, source.EntityId, source.At, source.Reason, "event:" + source.Id.ToString("D")),
+                (step.EventType, step.SourceContext, step.EntityType, step.EntityId, step.At, step.Reason, step.Trace));
+        }
+        foreach (var effect in effects)
+        {
+            var link = Assert.Single(map.Links, link => link.EffectEventId == effect.Id);
+            Assert.Equal(release.Id, link.CauseEventId);
+            Assert.DoesNotContain(effect.Id, map.EventsWithoutVisibleCause);
+        }
+        // Revision propagation and documentation reissue are recorded siblings of the release.
+        // Their execution order must never invent an unsupported revision -> document cause link.
+        Assert.DoesNotContain(map.Links, link => effects.Any(effect => effect.Id == link.CauseEventId)
+            && effects.Any(effect => effect.Id == link.EffectEventId));
     }
 
     private static Dictionary<string, (int Expected, int Done, int Waiting, int Failed)> Counts(JsonElement view) =>
@@ -214,16 +284,7 @@ public sealed class V25Tests(PostgresFixture postgres)
         Assert.Empty(before.GetProperty("propagation").GetProperty("steps").EnumerateArray());
 
         await PropagateAsync(app);
-        await using (var connection = await app.Services.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync())
-        await using (var causation = new NpgsqlCommand("""
-            SELECT count(*) FROM kernel.event_log child
-            JOIN kernel.event_log cause ON cause.event_id=child.causation_id
-            WHERE cause.event_type='EngineeringChangeReleased' AND cause.entity_id=$1
-            """, connection))
-        {
-            causation.Parameters.AddWithValue(ecn);
-            Assert.True((long)(await causation.ExecuteScalarAsync())! > 0, "Propagation events must name the released change event as their recorded cause.");
-        }
+        await VerifyRecordedPropagationCauseMapAsync(app, ecn, planned, released);
 
         var view = await Get(e, url);
         Assert.True(view.GetProperty("propagation").GetProperty("status").GetString() == "Complete", view.GetRawText());
@@ -275,11 +336,62 @@ public sealed class V25Tests(PostgresFixture postgres)
         Assert.Equal(HttpStatusCode.Forbidden, (await Try(plant, bob, $"/api/engineering/change-actions/{wip}/resolve", new { resolution = "Scrap", notes = "x" })).Status);
         await Rejected(plant, qe, $"/api/engineering/change-actions/{wip}/resolve", new { resolution = "CompleteAtOldRevision" }, "notes_required");
         await Rejected(plant, qe, $"/api/engineering/change-actions/{wip}/resolve", new { resolution = "Ship it", notes = "x" }, "invalid_resolution");
-        await plant.Ok(qe, $"/api/engineering/change-actions/{wip}/resolve", new { resolution = "CompleteAtOldRevision", notes = "Deviation DV-21: customer accepts rev A for this lot" });
-        await Rejected(plant, qe, $"/api/engineering/change-actions/{wip}/resolve", new { resolution = "Scrap", notes = "x" }, "action_resolved");
+
+        // A stopped WIP operator cannot silently restart a superseded engineering snapshot while
+        // its authoritative Quality disposition is still open. Stopping also avoids the legitimate
+        // already-on-this-operation no-change response, which would not prove a fresh start gate.
+        await plant.Ok(k, "/api/shopfloor/stop", new { badge = Sarah });
+        var stoppedLabor = (await Get(planner, $"/api/orders/{inProgress}/shopfloor")).GetProperty("labor");
+        var originalLabor = Assert.Single(stoppedLabor.EnumerateArray());
+        Assert.Equal(JsonValueKind.String, originalLabor.GetProperty("endedAt").ValueKind);
+        var restart = new { badge = Sarah, orderNumber = inProgress, sequence = 10, machineCode = "SLITTER-A" };
+        var deniedRestart = await Try(plant, k, "/api/shopfloor/start", restart);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, deniedRestart.Status);
+        Assert.Contains("operation_not_ready", deniedRestart.Body, StringComparison.Ordinal);
+        Assert.Contains("Engineering", deniedRestart.Body, StringComparison.Ordinal);
+        Assert.Equal(stoppedLabor.GetRawText(), (await Get(planner, $"/api/orders/{inProgress}/shopfloor")).GetProperty("labor").GetRawText());
+        var beforeDisposition = (await Get(planner, $"/api/orders/{inProgress}/readiness")).GetProperty("output").GetProperty("operations");
+        var beforeEngineering = Assert.Single(Assert.Single(beforeDisposition.EnumerateArray(), operation => operation.GetProperty("sequence").GetInt32() == 10)
+            .GetProperty("dimensions").EnumerateArray(), dimension => dimension.GetProperty("name").GetString() == "Engineering");
+        Assert.Equal("Fail", beforeEngineering.GetProperty("outcome").GetString());
+
+        // A normal resolved action for another source record/part is not continuation authority
+        // for this WIP snapshot, even though both actions belong to the same released change.
         var review = Action("PurchaseReview");
         await Rejected(plant, bob, $"/api/engineering/change-actions/{review}/resolve", new { resolution = "SupplierNotified" }, "notes_required");
         await plant.Ok(bob, $"/api/engineering/change-actions/{review}/resolve", new { resolution = "SupplierNotified", notes = "Rev B drawing sent to Acme (J. Smith)" });
+        var unrelatedResolution = await Try(plant, k, "/api/shopfloor/start", restart);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, unrelatedResolution.Status);
+        Assert.Contains("Engineering", unrelatedResolution.Body, StringComparison.Ordinal);
+        Assert.Equal(stoppedLabor.GetRawText(), (await Get(planner, $"/api/orders/{inProgress}/shopfloor")).GetProperty("labor").GetRawText());
+
+        await plant.Ok(qe, $"/api/engineering/change-actions/{wip}/resolve", new { resolution = "CompleteAtOldRevision", notes = "Deviation DV-21: customer accepts rev A for this lot" });
+        var resolvedWip = Assert.Single((await Get(e, url)).GetProperty("actions").EnumerateArray(), action => action.GetProperty("actionId").GetInt64() == wip);
+        Assert.Equal((ecn, inProgress.ToString(CultureInfo.InvariantCulture), "ROLL-100", "Resolved", "CompleteAtOldRevision", $"person:{plant.People["qe"]}"),
+            (resolvedWip.GetProperty("changeNumber").GetString(), resolvedWip.GetProperty("target").GetString(), resolvedWip.GetProperty("partNumber").GetString(), resolvedWip.GetProperty("status").GetString(), resolvedWip.GetProperty("resolution").GetString(), resolvedWip.GetProperty("resolvedBy").GetString()));
+        Assert.Equal("Deviation DV-21: customer accepts rev A for this lot", resolvedWip.GetProperty("notes").GetString());
+        Assert.Equal(JsonValueKind.String, resolvedWip.GetProperty("resolvedAt").ValueKind);
+
+        // The normal resolved WipDisposition contract authorizes this exact old-revision WIP,
+        // with its concession basis. Shared preview and transactional start must agree, while
+        // frozen engineering and the ended labor history retain their original revision/facts.
+        var afterDisposition = (await Get(planner, $"/api/orders/{inProgress}/readiness")).GetProperty("output").GetProperty("operations");
+        var afterEngineering = Assert.Single(Assert.Single(afterDisposition.EnumerateArray(), operation => operation.GetProperty("sequence").GetInt32() == 10)
+            .GetProperty("dimensions").EnumerateArray(), dimension => dimension.GetProperty("name").GetString() == "Engineering");
+        Assert.Equal("Pass", afterEngineering.GetProperty("outcome").GetString());
+        var restarted = await plant.Ok(k, "/api/shopfloor/start", restart);
+        Assert.Equal("ok", restarted.GetProperty("code").GetString());
+        var restartedLabor = (await Get(planner, $"/api/orders/{inProgress}/shopfloor")).GetProperty("labor").EnumerateArray().ToArray();
+        Assert.Equal(2, restartedLabor.Length);
+        var preservedLabor = Assert.Single(restartedLabor, labor => labor.GetProperty("laborId").GetInt64() == originalLabor.GetProperty("laborId").GetInt64());
+        Assert.Equal(originalLabor.GetRawText(), preservedLabor.GetRawText());
+        var currentLabor = Assert.Single(restartedLabor, labor => labor.GetProperty("endedAt").ValueKind == JsonValueKind.Null);
+        Assert.Equal((plant.People["sarah"], "SLITTER-A"), (currentLabor.GetProperty("personId").GetGuid(), currentLabor.GetProperty("machineCode").GetString()));
+        var continued = await Get(planner, $"/api/orders/{inProgress}");
+        Assert.Equal("A", continued.GetProperty("revision").GetString());
+        Assert.Equal(10.4m, Assert.Single(continued.GetProperty("materials").EnumerateArray()).GetProperty("requiredQuantity").GetDecimal());
+        await plant.Ok(k, "/api/shopfloor/stop", new { badge = Sarah });
+        await Rejected(plant, qe, $"/api/engineering/change-actions/{wip}/resolve", new { resolution = "Scrap", notes = "x" }, "action_resolved");
         foreach (var ack in actions.Where(a => a.GetProperty("kind").GetString() == "TrainingAcknowledgment"))
         {
             await plant.Ok(tc, $"/api/engineering/change-actions/{ack.GetProperty("actionId").GetInt64()}/resolve", new { resolution = "Acknowledged" });

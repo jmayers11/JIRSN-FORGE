@@ -90,7 +90,7 @@ public sealed class Phase8Tests(PostgresFixture postgres)
 
         // A program order the shipper cannot see, and a plain one.
         var falcon = Guid.Parse((await plant.Ok(pm, "/api/programs/", new { code = "FALCON", name = "Program Falcon" })).GetProperty("entityId").GetString()!);
-        foreach (var who in new[] { "pm", "planner", "eng" })
+        foreach (var who in new[] { "pm", "planner", "planner2", "eng" })
         {
             await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People[who]}/programs", new { programId = falcon, reason = "Falcon team" });
         }

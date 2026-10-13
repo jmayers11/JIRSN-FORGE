@@ -106,6 +106,10 @@ public sealed class AnalystService(
             answer = new AnalystAnswer(interpretation, rejected.Message, [], null, null, [], false, []);
         }
 
+        MaterialSourceVisibility access;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+            access = await MaterialSourceVisibility.LoadAsync(read, principal, ct, authorizer: authorizer);
+        answer = access.Answer(answer);
         if (narrate && narrator.Enabled && !answer.NotAuthorized && interpretation.Intent != AnalystIntent.Unsupported)
         {
             var facts = CanonicalJson.Serialize(new
@@ -124,7 +128,7 @@ public sealed class AnalystService(
             }
         }
 
-        return answer;
+        return access.Answer(answer);
     }
 
     private async Task<AnalystAnswer> AnswerAsync(ForgePrincipal principal, Interpretation i, AnalystVocabulary vocabulary, AnalystClock clock, DateTimeZone zone, CancellationToken ct)
@@ -521,7 +525,7 @@ public sealed class AnalystService(
                 orders.Add((await lookup.FindOrderAsync(summary.OrderNumber, ct))!);
             }
 
-            material = (await MaterialPlanningService.RunMaterialAsync(read, time, ct)).Output;
+            material = (await MaterialPlanningService.RunMaterialAsync(read, time, ct, principal)).Output;
             quality = await ScheduleQuality.LoadAsync(read, orders, ct);
         }
 

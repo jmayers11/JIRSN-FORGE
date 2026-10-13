@@ -94,28 +94,13 @@ public sealed partial class InventoryService
         ArgumentNullException.ThrowIfNull(c);
         return ShipmentAsync(nameof(ShipShipment), c.ShipmentId, c, context, Permissions.ShippingRelease, false, async (uow, shipment, now) =>
         {
-            if (shipment.Status != ShipmentStatus.Packed)
-            {
-                throw new CommandRejectedException("not_packed", $"Shipment {shipment.ShipmentId} is {shipment.Status}; it ships after it is packed.");
-            }
-
-            if (shipment.PackedBy == context.Actor)
-            {
-                throw new CommandRejectedException("separation_of_duties", "You packed this shipment; a different person must ship it.");
-            }
-
             var store = uow.Store<IInventoryStore>();
             foreach (var part in shipment.Lines.Select(l => l.PartNumber).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
             {
                 await store.LockPartAsync(part, ct);
             }
 
-            await CheckShippableAsync(uow, shipment, now, ct);
-            await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(uow, new Forge.Kernel.Holds.HoldCheck(
-                Forge.Kernel.Holds.HoldActivity.Ship,
-                Parts: shipment.Lines.Select(l => l.PartNumber).Distinct(StringComparer.Ordinal).ToList(),
-                LotList: shipment.Lines.Where(l => l.LotNumber is not null).Select(l => new Forge.Kernel.Holds.HoldLot(l.PartNumber, l.LotNumber!)).ToList(),
-                ShipmentId: shipment.ShipmentId), ct);
+            await CheckShipmentReleaseAsync(uow, shipment, context.Actor, now, ct);
             var transactions = new List<long>();
             foreach (var line in shipment.Lines)
             {
@@ -143,6 +128,21 @@ public sealed partial class InventoryService
             Task.FromResult<(ShipmentInfo, string, IReadOnlyList<EventEnvelope>)>(shipment.Status is ShipmentStatus.Open or ShipmentStatus.Packed
                 ? (shipment with { Status = ShipmentStatus.Cancelled, CancelReason = context.Reason }, "cancelled", [])
                 : throw new CommandRejectedException("not_cancellable", $"Shipment {shipment.ShipmentId} is {shipment.Status}.")), ct);
+    }
+
+    /// <summary>The command's read-only release gate, also used by private recovery trials. It never packs or ships.</summary>
+    public static async Task CheckShipmentReleaseAsync(IKernelUnitOfWork uow, ShipmentInfo shipment, string actor, DateTimeOffset now, CancellationToken ct)
+    {
+        if (shipment.Status != ShipmentStatus.Packed)
+            throw new CommandRejectedException("not_packed", $"Shipment {shipment.ShipmentId} is {shipment.Status}; it ships after it is packed.");
+        if (shipment.PackedBy == actor)
+            throw new CommandRejectedException("separation_of_duties", "You packed this shipment; a different person must ship it.");
+        await CheckShippableAsync(uow, shipment, now, ct);
+        await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(uow, new Forge.Kernel.Holds.HoldCheck(
+            Forge.Kernel.Holds.HoldActivity.Ship,
+            Parts: shipment.Lines.Select(l => l.PartNumber).Distinct(StringComparer.Ordinal).ToList(),
+            LotList: shipment.Lines.Where(l => l.LotNumber is not null).Select(l => new Forge.Kernel.Holds.HoldLot(l.PartNumber, l.LotNumber!)).ToList(),
+            ShipmentId: shipment.ShipmentId), ct);
     }
 
     /// <summary>Stock is there (released, at the line's location and lot) and is not on an undecided nonconformance.</summary>

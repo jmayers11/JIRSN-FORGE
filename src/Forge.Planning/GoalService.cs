@@ -212,14 +212,14 @@ public sealed class GoalService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
         var all = await uow.Store<IGoalStore>().ListAsync(includeClosed, ct);
         var history = (await uow.Store<IGoalStore>().ListForecastsAsync(null, ct)).ToLookup(f => f.GoalId);
         var status = all.ToDictionary(g => g.GoalId, g => g.Status);
-        return (await EvaluateAsync(uow, time, includeClosed, ct))
+        return (await EvaluateAsync(uow, time, includeClosed, ct, principal))
             .Where(g => Visible(principal, g.ProgramId))
             .Select(g => new GoalView(g, status[g.GoalId], history[g.GoalId].OrderByDescending(f => f.At).Take(20).ToList()))
             .ToList();
     }
 
     /// <summary>Every open goal evaluated now (shared with the goal-attainment report).</summary>
-    internal static async Task<IReadOnlyList<GoalAttainment>> EvaluateAsync(IKernelUnitOfWork uow, TimeProvider time, bool includeClosed, CancellationToken ct)
+    internal static async Task<IReadOnlyList<GoalAttainment>> EvaluateAsync(IKernelUnitOfWork uow, TimeProvider time, bool includeClosed, CancellationToken ct, ForgePrincipal? viewer = null)
     {
         var goals = await uow.Store<IGoalStore>().ListAsync(includeClosed, ct);
         if (goals.Count == 0)
@@ -247,7 +247,7 @@ public sealed class GoalService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
             }
         }
 
-        var risk = orders.Count == 0 ? new Dictionary<long, GoalRiskLine>() : await RiskAsync(uow, time, ct);
+        var risk = orders.Count == 0 ? new Dictionary<long, GoalRiskLine>() : await RiskAsync(uow, time, ct, viewer);
         var today = await MaterialData.TodayAsync(uow, time, ct);
         return GoalAttainmentEngine.Evaluate(goals, risk, orders, demand, today);
     }
@@ -256,7 +256,7 @@ public sealed class GoalService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
     /// Goal risk per released order: behind plan against the approved schedule, projection from a fresh
     /// finite-capacity schedule of the remaining work (the reforecast).
     /// </summary>
-    public static async Task<Dictionary<long, GoalRiskLine>> RiskAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct)
+    public static async Task<Dictionary<long, GoalRiskLine>> RiskAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct, ForgePrincipal? viewer = null)
     {
         var snapshot = await SnapshotLoader.LoadAsync(uow, time, ct);
         var lookup = uow.Store<IExecutionLookup>();
@@ -271,13 +271,15 @@ public sealed class GoalService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
             return new Dictionary<long, GoalRiskLine>();
         }
 
-        var material = (await MaterialPlanningService.RunMaterialAsync(uow, time, ct)).Output;
+        var material = (await MaterialPlanningService.RunMaterialAsync(uow, time, ct, viewer)).Output;
         var quality = await ScheduleQuality.LoadAsync(uow, released, ct);
         var reforecast = EngineRunner.Run(new SchedulingEngine(), snapshot, new ScheduleRequest(snapshot.AsOf, snapshot.AsOf.AddDays(ReforecastDays), released, material, quality), snapshot.AsOf).Output;
         var plan = (await uow.Store<IPlanningStore>().LatestAsync(ScheduleStatus.Approved, true, ct))?.Result;
         var actuals = released.SelectMany(o => o.Operations.Select(op => new GoalActualOperation(o.OrderNumber, op.Sequence, op.Status, op.CompletedAt))).ToList();
         var result = new GoalRiskEngine().Evaluate(new GoalRiskSnapshot(plan, actuals, reforecast), new GoalRiskRequest(snapshot.AsOf), snapshot.AsOf).Output;
-        return result.Lines.ToDictionary(l => l.OrderNumber);
+        if (viewer is null) return result.Lines.ToDictionary(l => l.OrderNumber);
+        var access = await MaterialSourceVisibility.LoadAsync(uow, viewer, ct, authorizer: new ForgeAuthorizer(time));
+        return result.Lines.ToDictionary(l => l.OrderNumber, l => l with { Evidence = l.Evidence.Select(access.Text).ToArray(), MissedOperations = l.MissedOperations.Select(access.Text).ToArray() });
     }
 
     private static void RequireDates(long? parent, DateOnly? requiredBy, int? leadDays)

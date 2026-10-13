@@ -1,4 +1,5 @@
 using Forge.Competency.Contracts;
+using Forge.Engineering.Contracts;
 using Forge.Execution.Contracts;
 using Forge.Execution.Engines;
 using Forge.Kernel.Access;
@@ -112,7 +113,7 @@ public interface IShopFloorStore
 /// presence, machine status and qualifications; a person in training may start only under a
 /// present, authorized trainer, and that never makes them qualified.
 /// </summary>
-public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthorizationEngine engine, IBadgePinVerifier pinVerifier)
+public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthorizationEngine engine, IBadgePinVerifier pinVerifier, IOperationStartCheck startCheck)
 {
     public const string SourceContext = "Execution";
     private const string OperationEntity = "OrderOperation";
@@ -148,10 +149,6 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
 
             var machine = await MachineAsync(uow, op, c.MachineCode, now, ct);
             await HoldGate.RequireNoneAsync(uow, HoldCheckFor(HoldActivity.StartWork, order, op, machine), ct);
-            if (!string.IsNullOrWhiteSpace(c.ToolCode))
-            {
-                await ToolUse.RecordAsync(uow, c.ToolCode, machine, op.ActivityCode, $"order {id}", now, context.Actor, ct);
-            }
             var required = op.RequiredQualifications.ToList();
             if (machine is not null && await uow.Store<IResourcesLookup>().FindMachineActivityAsync(machine, op.ActivityCode, ct) is { } activity)
             {
@@ -171,10 +168,11 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
                     throw new CommandRejectedException("trainer_required", check.Explanation);
             }
 
-            if (c.Safety is { Blocked: true } unsafeStart)
+            var readinessEvidence = await startCheck.RequireReadyAsync(uow, order, op, machine, worker.PersonId,
+                check.Decision == OperatorDecision.SupervisedTraining ? trainer?.PersonId : null, context.Principal, now, ct);
+            if (!string.IsNullOrWhiteSpace(c.ToolCode))
             {
-                // Human-defined safety rules are not overridden at a terminal.
-                throw new CommandRejectedException("unsafe_to_start", unsafeStart.Detail);
+                await ToolUse.RecordAsync(uow, c.ToolCode, machine, op.ActivityCode, $"order {id}", now, context.Actor, ct);
             }
 
             await store.MarkOperationStartedAsync(c.OrderNumber, c.Sequence, now, ct);
@@ -186,7 +184,7 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
                 var laborId = await store.InsertLaborAsync(worker.PersonId, c.OrderNumber, c.Sequence, op.WorkCenterCode, machine, LaborRole.Operator, null, required, now, context.Actor, ct);
                 events.Add(pipeline.Event(new OperationStarted(c.OrderNumber, c.Sequence, worker.PersonId, nameof(LaborRole.Operator), machine, laborId), context, SourceContext, OperationEntity, id, program));
                 message = $"{worker.DisplayName} started operation {id}{(machine is null ? string.Empty : " on " + machine)}.";
-                audit = new { person = worker.PersonId, role = nameof(LaborRole.Operator), machine, laborId, check = check.Explanation, safety = c.Safety?.Detail };
+                audit = new { person = worker.PersonId, role = nameof(LaborRole.Operator), machine, laborId, check = check.Explanation, readiness = readinessEvidence.Detail, requiredDocuments = readinessEvidence.RequiredDocuments };
             }
             else
             {
@@ -209,11 +207,11 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
                 events.Add(pipeline.Event(new OperationStarted(c.OrderNumber, c.Sequence, worker.PersonId, nameof(LaborRole.Trainee), machine, traineeLabor), context, SourceContext, OperationEntity, id, program));
                 events.Add(pipeline.Event(new OperationStarted(c.OrderNumber, c.Sequence, trainerPerson.PersonId, nameof(LaborRole.Trainer), machine, trainerLaborId), context, SourceContext, OperationEntity, id, program));
                 message = $"Supervised training started: {worker.DisplayName} on operation {id} under {trainerPerson.DisplayName}. No qualification is granted by this session.";
-                audit = new { trainee = worker.PersonId, trainer = trainerPerson.PersonId, sessionId, qualifications = check.Missing, machine, check = check.Explanation, safety = c.Safety?.Detail };
+                audit = new { trainee = worker.PersonId, trainer = trainerPerson.PersonId, sessionId, qualifications = check.Missing, machine, check = check.Explanation, readiness = readinessEvidence.Detail, requiredDocuments = readinessEvidence.RequiredDocuments };
             }
 
-            return new CommandOutcome(CommandResult.Ok(id, message), events, new AuditChange(OperationEntity, id, op.Status.ToString(), CanonicalJson.Serialize(audit), program));
-        }, ct);
+            return new CommandOutcome(CommandResult.Ok(id, message), events, new AuditChange(OperationEntity, id, op.Status.ToString(), CanonicalJson.Serialize(audit), program, readinessEvidence.Markings));
+        }, ct, authority: (uow, _) => OperationAuthorityAsync(uow, context, c.Badge, c.TrainerBadge, c.OrderNumber, c.Sequence, ct));
     }
 
     public Task<CommandResult> StopAsync(StopWork c, CommandContext context, CancellationToken ct)
@@ -240,7 +238,15 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
                     : $"Supervised session on {id} ended; trainee and trainer labor both stopped."),
                 events,
                 new AuditChange(OperationEntity, id, CanonicalJson.Serialize(new { open = ended.Select(e => e.LaborId) }), CanonicalJson.Serialize(new { ended = ended.Select(e => e.LaborId) }), program));
-        }, ct);
+        }, ct, authority: async (uow, _) =>
+        {
+            var worker = await HolderAsync(uow, c.Badge, ct);
+            var person = await uow.People.LoadPrincipalAsync(new PersonId(worker.PersonId), ct);
+            if (person is not { IsActive: true }) throw new CommandRejectedException("unknown_badge", "Badge not recognized. See your supervisor.");
+            // Stopping remains available for safe shutdown; the retry is nevertheless tied to
+            // the currently valid badged person, rather than the terminal alone.
+            return new CommandAuthority(spec.Resource, $"operator:{worker.PersonId:D}");
+        });
     }
 
     public Task<CommandResult> ReportAsync(ReportProduction c, CommandContext context, CancellationToken ct)
@@ -342,7 +348,7 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
                 events,
                 new AuditChange(OperationEntity, id, CanonicalJson.Serialize(new { good = op.GoodQuantity, scrap = op.ScrapQuantity, status = op.Status.ToString() }),
                     CanonicalJson.Serialize(new { good, scrap = op.ScrapQuantity + c.ScrapQuantity, status = c.CompleteOperation ? nameof(OperationStatus.Complete) : nameof(OperationStatus.InProgress), reportId, person = worker.PersonId }), program));
-        }, ct);
+        }, ct, authority: (uow, _) => OperationAuthorityAsync(uow, context, c.Badge, null, c.OrderNumber, c.Sequence, ct));
     }
 
     public Task<CommandResult> EvaluateTrainingAsync(EvaluateTraining c, CommandContext context, CancellationToken ct)
@@ -390,7 +396,16 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
                 CommandResult.Ok(id, $"Session {id} evaluated: {c.Evaluation}, signed by {trainer.DisplayName}. This is not certification; a certifier records the qualification."),
                 [pipeline.Event(new TrainingEvaluated(c.SessionId, session.TraineeId, session.TrainerId, c.Evaluation.ToString()), context, SourceContext, TrainingEntity, id, program)],
                 new AuditChange(TrainingEntity, id, null, CanonicalJson.Serialize(new { evaluation = c.Evaluation.ToString(), notes, signedBy = trainer.PersonId, method = "BadgeAndPin" }), program));
-        }, ct);
+        }, ct, authority: async (uow, _) =>
+        {
+            var session = await uow.Store<IExecutionLookup>().FindTrainingSessionAsync(c.SessionId, ct)
+                ?? throw new CommandRejectedException("training_session_not_found", "The training session does not exist.");
+            var trainer = await HolderAsync(uow, c.TrainerBadge, ct);
+            if (session.TrainerId != trainer.PersonId)
+                throw new CommandRejectedException("not_the_trainer", "Only the recorded trainer evaluates this session.");
+            var current = await OperationAuthorityAsync(uow, context, c.TrainerBadge, null, session.OrderNumber, session.Sequence, ct);
+            return current with { Resource = current.Resource with { Type = TrainingEntity, Id = c.SessionId.ToString(System.Globalization.CultureInfo.InvariantCulture) } };
+        });
     }
 
     /// <summary>Builds the engine's snapshot: qualification types and every worker with presence and records.</summary>
@@ -459,6 +474,53 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
         return (order, op, program);
     }
 
+    private static async Task<CommandAuthority> OperationAuthorityAsync(IKernelUnitOfWork uow, CommandContext context,
+        Secret badge, Secret? trainerBadge, long orderNumber, int sequence, CancellationToken ct)
+    {
+        var worker = await HolderAsync(uow, badge, ct);
+        var trainer = trainerBadge is null ? null : await HolderAsync(uow, trainerBadge, ct);
+        await uow.Store<IOrderCommitmentStore>().LockAsync(orderNumber, ct);
+        var order = await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct)
+            ?? throw new CommandRejectedException("order_not_found", "The order does not exist.");
+        foreach (var personId in new[] { (Guid?)worker.PersonId, trainer?.PersonId }.OfType<Guid>().Distinct())
+        {
+            var person = await uow.People.LoadPrincipalAsync(new PersonId(personId), ct);
+            if (person is not { IsActive: true } || order.ProgramId is { } program &&
+                (!context.Principal.Programs.Contains(new ProgramId(program)) || !person.Programs.Contains(new ProgramId(program))))
+            {
+                throw new CommandRejectedException("order_not_found", "The order is not available to the selected worker.");
+            }
+        }
+        var op = order.Operations.FirstOrDefault(o => o.Sequence == sequence)
+            ?? throw new CommandRejectedException("operation_not_found", "The order operation does not exist.");
+        var center = await uow.Store<IResourcesLookup>().FindWorkCenterAsync(op.WorkCenterCode, ct);
+        var area = center is null ? null : await uow.Store<IResourcesLookup>().FindSafetyAreaAsync(center.SafetyAreaCode, ct);
+        var documents = uow.Store<IDocumentLookup>();
+        var documentNumbers = (await documents.ListRequirementsAsync(order.PartNumber, order.Revision, false, ct))
+            .Where(d => d.OperationSequence is null || d.OperationSequence == sequence).Select(d => d.DocumentNumber)
+            .Concat((await documents.ListLinksAsync(DocumentTargetType.ProductionOrder, orderNumber.ToString(System.Globalization.CultureInfo.InvariantCulture), null, false, ct))
+                .Where(d => d.Purpose == DocumentPurpose.Follow).Select(d => d.DocumentNumber)).Distinct(StringComparer.Ordinal);
+        var markings = DataMarking.None;
+        foreach (var number in documentNumbers)
+        {
+            var document = await documents.FindDocumentAsync(number, ct);
+            if (document is null) continue;
+            markings |= document.Markings;
+            if (!DocumentAccess.CanSee(context.Principal, document))
+                throw new ForgeAuthorizationException(new AuthorizationDecision(false, ["The terminal cannot access a required controlled document."]));
+            foreach (var personId in new[] { (Guid?)worker.PersonId, trainer?.PersonId }.OfType<Guid>().Distinct())
+            {
+                var person = await uow.People.LoadPrincipalAsync(new PersonId(personId), ct);
+                if (person is null || !DocumentAccess.CanSee(person, document))
+                    throw new CommandRejectedException("operation_not_ready", "A selected worker cannot access a required controlled document.");
+            }
+        }
+        return new CommandAuthority(new ResourceRef(OperationEntity, OperationId(orderNumber, sequence),
+            order.ProgramId is { } p ? new ProgramId(p) : null, markings, FacilityId: area?.SiteCode,
+            WorkCenterId: op.WorkCenterCode, ContractId: order.ContractId?.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            $"operator:{worker.PersonId:D};trainer:{trainer?.PersonId.ToString("D")}");
+    }
+
     private static async Task<string?> MachineAsync(IKernelUnitOfWork uow, OrderOperationInfo op, string? requested, DateTimeOffset now, CancellationToken ct)
     {
         string? machine;
@@ -487,6 +549,8 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
         }
 
         var down = (await uow.Store<IMaintenanceLookup>().ListDowntimeAsync(now, now.AddTicks(1), ct)).FirstOrDefault(w => w.MachineCode == machine && w.Covers(now));
+        if (await uow.Store<IResourcesLookup>().FindMachineAsync(machine, ct) is not { Active: true })
+            throw new CommandRejectedException("machine_unavailable", "The selected machine is inactive or no longer exists.");
         if (down is not null)
         {
             throw new CommandRejectedException("machine_down", $"{machine} is down ({down.Kind}: {down.Reason}). Choose another machine or wait for maintenance.");

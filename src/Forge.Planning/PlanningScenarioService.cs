@@ -1,4 +1,5 @@
 using Forge.Execution.Contracts;
+using Forge.Inventory.Contracts;
 using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Engines;
@@ -32,7 +33,8 @@ public sealed class PlanningScenarioService(
     CommandPipeline pipeline,
     IKernelUnitOfWorkFactory unitOfWork,
     IForgeAuthorizer authorizer,
-    TimeProvider time)
+    TimeProvider time,
+    IInventoryRecoveryReadiness inventoryReadiness)
 {
     private const string Entity = "PlanningScenario";
 
@@ -92,18 +94,27 @@ public sealed class PlanningScenarioService(
         List<OrderInfo> orders;
         IReadOnlyList<OrderMaterialStatus> material;
         IReadOnlyDictionary<long, OrderQuality> quality;
+        RecoverySourceFacts recoverySources;
+        MaterialSourceVisibility sourceVisibility;
         await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
         {
             snapshot = await SnapshotLoader.LoadAsync(read, time, ct);
             var execution = read.Store<IExecutionLookup>();
+            var headers = await execution.ListOrdersAsync(ct);
             orders = [];
-            foreach (var row in (await execution.ListOrdersAsync(ct)).Where(o => o.Status == OrderStatus.Released && Visible(principal, o.ProgramId)).OrderBy(o => o.OrderNumber))
+            foreach (var row in headers.Where(o => o.Status == OrderStatus.Released && Visible(principal, o.ProgramId)).OrderBy(o => o.OrderNumber))
             {
                 if (await execution.FindOrderAsync(row.OrderNumber, ct) is { } order) orders.Add(order);
             }
 
-            material = (await MaterialPlanningService.RunMaterialAsync(read, time, ct)).Output;
+            var positions = await ShelfLifeQueries.PositionsAsync(read, null, snapshot.AsOf, ct);
+            var locations = await read.Store<IInventoryLookup>().ListLocationsAsync(ct);
+            var materialInputs = await MaterialData.MaterialSnapshotAsync(read, time, ct, headers, orders, positions);
+            sourceVisibility = await MaterialSourceVisibility.LoadAsync(read, principal, ct, headers, authorizer);
+            material = sourceVisibility.ForEvaluation(EngineRunner.Run(new MaterialEngine(), materialInputs, new MaterialRequest(), snapshot.AsOf).Output);
             quality = await ScheduleQuality.LoadAsync(read, orders, ct);
+            recoverySources = await RecoverySourceFacts.LoadAsync(read, principal, scenario.Change, snapshot, orders, materialInputs,
+                positions, locations, inventoryReadiness, ct, sourceVisibility);
         }
 
         var asOf = snapshot.AsOf;
@@ -111,6 +122,9 @@ public sealed class PlanningScenarioService(
         if (scenario.Change.OrderNumber is { } selectedOrder)
             Require(orders.FirstOrDefault(o => o.OrderNumber == selectedOrder), "order_not_found", "The selected released order is outside the current visible order set.");
         var (proposedSnapshot, proposedOrders, proposedMaterial, description) = Apply(scenario.Change, snapshot, orders, material, principal, asOf, scenario.ScenarioId);
+        var proposedMaterialInputs = RecoverySourceFacts.ApplyScenarioMaterial(scenario.Change, proposedOrders, material, recoverySources.Material);
+        proposedMaterial = sourceVisibility.ForEvaluation(EngineRunner.Run(new MaterialEngine(), proposedMaterialInputs, new MaterialRequest(), asOf).Output);
+        recoverySources = recoverySources with { Material = proposedMaterialInputs };
         var request = new ScheduleRequest(asOf, horizon, orders, material, quality);
         var proposedRequest = new ScheduleRequest(asOf, horizon, proposedOrders, proposedMaterial, quality);
         var baseline = EngineRunner.Run(new SchedulingEngine(), snapshot, request, asOf).Output;
@@ -142,7 +156,7 @@ public sealed class PlanningScenarioService(
             .Where(x => x.BaselineHours != x.ProposedHours).Take(100).ToArray();
 
         return new PlanningScenarioResult(id, asOf, 14, description, impacts, skills,
-            RecoveryOptionEvaluator.Evaluate(scenario.Change, proposedSnapshot, proposedOrders, proposedMaterial, quality, baseline, proposed, principal, authorizer),
+            RecoveryOptionEvaluator.Evaluate(scenario.Change, proposedSnapshot, proposedOrders, proposedMaterial, quality, baseline, proposed, principal, authorizer, recoverySources),
             "Scenario-only comparison. Both plans use the same authorized current snapshot, released-order set, MRP material readiness, quality gates and finite-capacity engines. No source record or approved schedule was changed.");
     }
 
@@ -247,6 +261,12 @@ public sealed class PlanningScenarioService(
         if (string.IsNullOrWhiteSpace(command.Name) || command.Name.Trim().Length > 100)
             throw new CommandRejectedException("invalid_scenario_name", "A scenario name is required and may contain at most 100 characters.");
         var change = command.Change ?? throw new CommandRejectedException("invalid_scenario", "A scenario change is required.");
+        var selections = change.RecoverySelections ?? [];
+        if (selections.Count > 15 || selections.Any(s => s is null || !RecoveryCatalog.Options.Any(d => d.Id == s.OptionId))
+            || selections.Select(s => s.OptionId).Distinct(StringComparer.Ordinal).Count() != selections.Count)
+            throw new CommandRejectedException("invalid_recovery_selections", "Supply at most one selection for each of the fifteen V3 recovery option IDs.");
+        if (selections.Any(s => s.PersonIds is { Count: > 100 }))
+            throw new CommandRejectedException("invalid_recovery_staffing", "A recovery trial may select at most 100 workers.");
         if (change.Kind is ScenarioChangeKind.MachineUnavailable or ScenarioChangeKind.PersonUnavailable)
         {
             if (change.StartsAt is null || change.DurationHours is < 1 or > 336)

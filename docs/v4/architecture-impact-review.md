@@ -1,6 +1,8 @@
 # JIRSN Forge V4 — Architecture Impact Review
 
-Date: 2026-10-12. Status: **PROPOSED — architecture review only; Product Owner approval required before implementation.**
+Review checkpoint: 2026-10-12. Status at that checkpoint: **PROPOSED — architecture review only; Product Owner approval required before implementation.**
+
+**Current authorization, 2026-10-13:** the Product Owner explicitly approved V4 to start after V3 completion. The approval-stop statements below describe the historical review checkpoint and are superseded by that conditional instruction. Complete and verify V3 first; see AI_HANDOFF.md and docs/v3-source-reconciliation.md for the current gate. Pending organization-specific policy decisions and licensed normative verification retain their stated limits; implementation approval does not manufacture those decisions or a conformity claim.
 
 Inspected baseline: product commit `c298a7fb9376a2bd8a344de2f37bcdd5e09a0a1b`, handoff commit `e54a679`. No V4 application code, migrations, endpoints, permissions or tests were implemented. No V3 application code was changed. The previous V3 local verification remains historical evidence: Planning 278, Kernel 33, Architecture 32, Integration 148 and Node 34 passed. Those tests do not prove the proposed V4 scenarios.
 

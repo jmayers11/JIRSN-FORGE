@@ -73,6 +73,87 @@ public class OrderReadinessTests
     }
 
     [Fact]
+    public void Superseded_wip_continuation_requires_exact_released_source_order_part_revision_and_complete_old_decision()
+    {
+        var order = WipOrder();
+        var old = RevisionA with { EffectiveTo = Now.AddMinutes(-10) };
+        var continuation = Continuation(old);
+        Assert.True(continuation.Permits(order, old, Now));
+        var allowed = engine.Evaluate(StaffedSlitting().Build(), new OrderReadinessRequest(order, old, Continuation: continuation), Now).Output.Operations[0];
+        Assert.True(allowed.Executable);
+        Assert.Contains(allowed.Dimensions, dimension => dimension.Name == "Engineering"
+            && dimension.Outcome == EvidenceOutcome.Pass && dimension.Detail.Contains("WIP disposition 41", StringComparison.Ordinal));
+
+        var wrongSources = new[]
+        {
+            continuation with { Action = continuation.Action with { Status = ChangeActionStatus.Open } },
+            continuation with { Action = continuation.Action with { Resolution = nameof(WipResolution.ReworkToNewRevision) } },
+            continuation with { Action = continuation.Action with { Kind = ChangeActionKind.PurchaseReview } },
+            continuation with { Action = continuation.Action with { Target = "99999" } },
+            continuation with { Action = continuation.Action with { PartNumber = "OTHER-PART" } },
+            continuation with { Action = continuation.Action with { ProgramId = Guid.NewGuid() } },
+            continuation with { Action = continuation.Action with { ChangeNumber = "OTHER-CHANGE" } },
+            continuation with { Action = continuation.Action with { Revision = "C" } },
+            continuation with { Action = continuation.Action with { ResolvedBy = null } },
+            continuation with { Action = continuation.Action with { ResolvedAt = Now.AddMinutes(1) } },
+            continuation with { Action = continuation.Action with { Notes = null } },
+            continuation with { Change = continuation.Change with { Status = ChangeStatus.Approved } },
+            continuation with { Change = continuation.Change with { Lines = [continuation.Change.Lines[0] with { FromRevision = "X" }] } },
+            continuation with { Change = continuation.Change with { Lines = [continuation.Change.Lines[0] with { RemovedAt = Now }] } },
+            continuation with { SupersedingRevision = continuation.SupersedingRevision with { EffectiveFrom = Now.AddMinutes(-11) } },
+        };
+        foreach (var wrong in wrongSources)
+        {
+            Assert.False(wrong.Permits(order, old, Now));
+            var blocked = engine.Evaluate(StaffedSlitting().Build(), new OrderReadinessRequest(order, old, Continuation: wrong), Now).Output.Operations[0];
+            Assert.Equal("Engineering", blocked.PrimaryConstraint);
+        }
+        Assert.False(continuation.Permits(Order(), old, Now)); // a future order is not the recorded WIP
+        Assert.False(continuation.Permits(order with { Revision = "X" }, old, Now));
+    }
+
+    [Fact]
+    public void Authorized_old_revision_continuation_does_not_bypass_order_or_safety_gates()
+    {
+        var old = RevisionA with { EffectiveTo = Now.AddMinutes(-10) };
+        var continuation = Continuation(old);
+        var held = WipOrder() with { Status = OrderStatus.Held };
+        var blocked = engine.Evaluate(StaffedSlitting().Build(), new OrderReadinessRequest(held, old, Continuation: continuation), Now).Output.Operations[0];
+        Assert.Equal("Order", blocked.PrimaryConstraint);
+        var absent = Slitting().SlittingAreaRule();
+        absent.Add("Sarah", InSlitting(StageRoll), true, UnavailabilityKind.CallOut, SlitII, FirstAid);
+        absent.Add("Michael", InSlitting(Kitting), true, null, SlitII);
+        var unsafeOperation = engine.Evaluate(absent.Build(), new OrderReadinessRequest(WipOrder(), old, Continuation: continuation), Now).Output.Operations[0];
+        Assert.Equal("Safety", unsafeOperation.PrimaryConstraint);
+        Assert.Contains(unsafeOperation.Dimensions, dimension => dimension.Name == "Engineering" && dimension.Outcome == EvidenceOutcome.Pass);
+    }
+
+    private static OrderInfo WipOrder()
+    {
+        var order = Order();
+        return order with { Operations = order.Operations.Select(operation => operation.Sequence == 10
+            ? operation with { Status = OperationStatus.InProgress } : operation).ToArray() };
+    }
+
+    private static WipContinuationEvidence Continuation(RevisionInfo old)
+    {
+        var line = new ChangeLineInfo("ECN-WIP", 1, ChangeLineKind.ItemRevision, null, "ROLL-100", "A", "B", null,
+            "person:author", Now.AddHours(-1), null, null);
+        var change = new ChangeInfo(
+            Number: "ECN-WIP", Title: "Reviewed WIP transition", Class: ChangeClass.Minor, Type: ChangeType.Design,
+            Priority: ChangePriority.Routine, Reason: "Released engineering change", Description: null, ProgramId: null,
+            Customer: null, RequestedEffective: null, Status: ChangeStatus.Released, ReviewRound: 1,
+            Originator: "person:author", CreatedAt: Now.AddHours(-1), SubmittedAt: Now.AddMinutes(-20),
+            ApprovedBy: "person:reviewer", ApprovedAt: Now.AddMinutes(-15), ReleasedBy: "person:releaser",
+            ReleasedAt: Now.AddMinutes(-10), EffectiveFrom: DateOnly.FromDateTime(Now.UtcDateTime),
+            ClosedBy: null, ClosedAt: null, ClosedReason: null, Lines: [line], Reviews: []);
+        var action = new ChangeActionInfo(41, change.Number, ChangeActionKind.WipDisposition, "10001", "ROLL-100", null, "B",
+            null, null, "Recorded WIP", ChangeActionStatus.Resolved, nameof(WipResolution.CompleteAtOldRevision),
+            "Approved customer deviation DV-WIP", "system:propagation", Now.AddMinutes(-9), "person:quality", Now.AddMinutes(-8));
+        return new WipContinuationEvidence(change, action, new RevisionInfo("ROLL-100", "B", RevisionStatus.Released, old.EffectiveTo, null));
+    }
+
+    [Fact]
     public void Absence_blocks_every_eligible_machine_on_safety()
     {
         var f = Slitting().SlittingAreaRule();

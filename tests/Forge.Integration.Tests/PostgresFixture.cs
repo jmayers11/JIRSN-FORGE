@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Globalization;
 using Npgsql;
 
@@ -16,6 +17,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     private string adminConnectionString = string.Empty;
     private string? restoreBaselineArchive;
     private string? restoreBaselineConnection;
+    private readonly ConcurrentBag<string> createdDatabases = [];
 
     public bool UsesRestoredBaseline => restoreBaselineArchive is not null;
 
@@ -80,6 +82,7 @@ public sealed class PostgresFixture : IAsyncLifetime
             await admin.OpenAsync();
             await using var cmd = new NpgsqlCommand($"CREATE DATABASE {name}", admin);
             await cmd.ExecuteNonQueryAsync();
+            createdDatabases.Add(name);
         }
 
         var connectionString = new NpgsqlConnectionStringBuilder(adminConnectionString) { Database = name, Pooling = true }.ConnectionString;
@@ -130,16 +133,24 @@ public sealed class PostgresFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        if (restoreBaselineArchive is not null) File.Delete(restoreBaselineArchive);
         if (containerId is not null)
         {
             await Docker($"rm -f {containerId}");
         }
-        else if (restoreBaselineConnection is not null)
+        else
         {
-            var database = new NpgsqlConnectionStringBuilder(restoreBaselineConnection).Database!;
-            await DropDatabaseAsync(database);
+            // Docker tears down every test database with its container. An external test
+            // server must receive the equivalent cleanup, limited to this fixture's names.
+            // Never enumerate or remove databases belonging to other runs or real users.
+            var failures = new List<Exception>();
+            foreach (var database in createdDatabases.Distinct(StringComparer.Ordinal))
+            {
+                try { await DropDatabaseAsync(database); }
+                catch (NpgsqlException ex) { failures.Add(new InvalidOperationException($"Cleanup failed for this fixture's database {database}.", ex)); }
+            }
+            if (failures.Count > 0) throw new AggregateException("Disposable test database cleanup did not complete.", failures);
         }
+        if (restoreBaselineArchive is not null) File.Delete(restoreBaselineArchive);
     }
 
     public async Task DropDatabaseAsync(string database)
@@ -152,7 +163,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         {
             // Removing a migrated database can exceed Npgsql's default 30 seconds after
             // the full suite's disk workload. Bound cleanup without hiding a failure.
-            CommandTimeout = 120,
+            CommandTimeout = 300,
         };
         await drop.ExecuteNonQueryAsync();
     }

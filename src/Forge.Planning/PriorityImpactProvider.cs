@@ -2,6 +2,7 @@ using Forge.Execution.Contracts;
 using Forge.Kernel.Access;
 using Forge.Kernel.Engines;
 using Forge.Kernel.Serialization;
+using Forge.Kernel.Security;
 using Forge.Planning.Engines;
 using Forge.Quality.Contracts;
 
@@ -12,7 +13,7 @@ public sealed class PriorityImpactProvider : IPriorityImpactProvider
 {
     private const int HorizonDays = 14;
 
-    public async Task<PriorityChangePreview> PreviewAsync(IKernelUnitOfWork uow, long orderNumber, int newPriority, DateTimeOffset asOf, CancellationToken ct)
+    public async Task<PriorityChangePreview> PreviewAsync(IKernelUnitOfWork uow, long orderNumber, int newPriority, DateTimeOffset asOf, CancellationToken ct, ForgePrincipal? viewer = null)
     {
         ArgumentNullException.ThrowIfNull(uow);
         if (newPriority is < 1 or > 9)
@@ -67,6 +68,11 @@ public sealed class PriorityImpactProvider : IPriorityImpactProvider
                 after[number].Explanation))
             .ToList();
 
+        if (viewer is not null)
+        {
+            var access = await MaterialSourceVisibility.LoadAsync(uow, viewer, ct, authorizer: new ForgeAuthorizer(timeAtPreview));
+            changes = changes.Select(o => o with { ExplanationBefore = access.Text(o.ExplanationBefore), ExplanationAfter = access.Text(o.ExplanationAfter) }).ToList();
+        }
         return new PriorityChangePreview(orderNumber, target.Priority, newPriority, normalizedAsOf, fingerprint, changes);
     }
 

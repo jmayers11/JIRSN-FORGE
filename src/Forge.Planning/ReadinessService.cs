@@ -41,7 +41,7 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
 
         var revision = (await uow.Store<IEngineeringLookup>().ListRevisionsAsync(order.PartNumber, ct)).SingleOrDefault(r => r.Revision == order.Revision);
         var material = order.Status == OrderStatus.Released
-            ? (await MaterialPlanningService.RunMaterialAsync(uow, time, ct)).Output.FirstOrDefault(m => m.OrderNumber == order.OrderNumber)
+            ? (await MaterialPlanningService.RunMaterialAsync(uow, time, ct, principal)).Output.FirstOrDefault(m => m.OrderNumber == order.OrderNumber)
             : null;
         var quality = order.Status is OrderStatus.Released or OrderStatus.Held
             ? await uow.Store<IQualityLookup>().GetOrderQualityAsync(order.OrderNumber, order.PartNumber, ct)
@@ -50,7 +50,8 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         var documentation = await DocumentationService.ForOrderAsync(uow, order, snapshot.AsOf, principal, ct);
         var pointOfUse = material is null ? null : await PointOfUseAsync(uow, snapshot.AsOf, ct);
         var training = await TrainingAsync(uow, documentation, ct);
-        return EngineRunner.Run(orders, snapshot, new OrderReadinessRequest(order, revision, material, quality, documentation, pointOfUse, training), snapshot.AsOf);
+        var continuations = await WipContinuationFacts.LoadAsync(uow, [order], snapshot.AsOf, ct);
+        return EngineRunner.Run(orders, snapshot, new OrderReadinessRequest(order, revision, material, quality, documentation, pointOfUse, training, continuations.GetValueOrDefault(order.OrderNumber)), snapshot.AsOf);
     }
 
     /// <summary>Released, usable stock at points of use, and the work centers that have a point-of-use location (V3.9).</summary>

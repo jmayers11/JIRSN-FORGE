@@ -3,6 +3,8 @@ using Forge.Engineering.Contracts;
 using Forge.Execution.Contracts;
 using Forge.Inventory.Contracts;
 using Forge.Kernel.Access;
+using Forge.Kernel.Commands;
+using Forge.Kernel.Holds;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.WorkAssignments;
@@ -17,17 +19,69 @@ using Forge.Resources.Contracts;
 namespace Forge.Host.WorkInbox;
 
 /// <summary>Inbox context comes from the same owning records as the eventual domain command.</summary>
-public sealed class WorkSourceResolver(TimeProvider time) : IWorkSourceResolver
+public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver holdTargets, IDocumentTargetResolver documentTargets) : IWorkSourceResolver, ICommandSourceResolver
 {
+    public async Task<CommandAuthority> ResolveAsync(IKernelUnitOfWork uow, CommandSpec spec, CommandContext context, DateTimeOffset now, CancellationToken ct)
+    {
+        var source = spec.Resource.Id is { } id ? await ResolveAsync(uow, spec.Resource.Type, id, ct) : null;
+        if (source is null || source.Resources.Count == 0) return new CommandAuthority(spec.Resource);
+        ResourceRef Merge(ResourceRef current) => current with
+        {
+            Type = spec.Resource.Type, Id = spec.Resource.Id,
+            Program = current.Program ?? spec.Resource.Program,
+            Markings = current.Markings | spec.Resource.Markings,
+            FacilityId = current.FacilityId ?? spec.Resource.FacilityId,
+            WorkCenterId = current.WorkCenterId ?? spec.Resource.WorkCenterId,
+            ContractId = current.ContractId ?? spec.Resource.ContractId,
+            CustomerId = current.CustomerId ?? spec.Resource.CustomerId,
+            ShiftId = current.ShiftId ?? spec.Resource.ShiftId,
+            Amount = spec.Resource.Amount ?? current.Amount,
+            Currency = spec.Resource.Currency ?? current.Currency,
+        };
+        // A command can carry a prospective source (for example a new B requisition on an
+        // existing A purchase order). Current records cannot replace that required scope.
+        // A wholly generic spec adds no authority dimension and would incorrectly deny a
+        // scoped caller after the actual record has supplied the missing context.
+        var explicitContext = spec.Resource.Program is not null || spec.Resource.Markings != DataMarking.None
+            || spec.Resource.FacilityId is not null || spec.Resource.WorkCenterId is not null
+            || spec.Resource.ContractId is not null || spec.Resource.CustomerId is not null
+            || spec.Resource.ShiftId is not null || spec.Resource.Amount is not null || spec.Resource.Currency is not null;
+        var resources = source.Resources.Select(Merge)
+            .Concat(explicitContext ? [spec.Resource] : Array.Empty<ResourceRef>()).Distinct().ToArray();
+        return new CommandAuthority(resources[0], AdditionalResources: resources.Skip(1).ToArray());
+    }
+
     public async Task<WorkSource?> ResolveAsync(IKernelUnitOfWork uow, string type, string id, CancellationToken ct)
     {
         var number = long.TryParse(id.Split('/')[0], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
         switch (type)
         {
+            case "Order":
+            case "ProductionOrder":
+            case "OrderOperation":
+                var orderKey = id.Split('/');
+                var sourceOrder = await uow.Store<IExecutionLookup>().FindOrderAsync(number, ct);
+                if (sourceOrder is null) return null;
+                int? operationSequence = orderKey.Length == 2 && int.TryParse(orderKey[1], NumberStyles.None, CultureInfo.InvariantCulture, out var orderSequence) ? orderSequence : null;
+                return new(Permissions.OrdersRead, [await OrderResourceAsync(uow, type, id, number, operationSequence, ct)]);
+            case "Ncr":
             case "NCR":
                 var ncr = await uow.Store<IQualityLookup>().FindNcrAsync(number, ct);
                 return ncr is null ? null : new(Permissions.QualityRead,
                     [await Forge.Quality.QualityService.ResourceForNcrAsync(uow, ncr, ct)], ncr.Status != NcrStatus.Closed, DecisionAvailable: ncr.Status == NcrStatus.AwaitingApproval);
+            case "Capa":
+            case "CAPA":
+                var capa = await uow.Store<Forge.Quality.IQualityStore>().FindCapaAsync(number, ct);
+                return capa is null ? null : new(Permissions.QualityRead,
+                    [await Forge.Quality.QualityService.ResourceForCapaAsync(uow, capa, ct)], capa.Status != CapaStatus.Verified);
+            case "Hold":
+                var hold = (await uow.Store<IHoldLookup>().ListHoldsAsync(true, ct)).FirstOrDefault(row => row.HoldId == number);
+                if (hold is null) return null;
+                var target = await holdTargets.ResolveAsync(uow, hold.TargetType, hold.TargetId, hold.TargetPart, ct);
+                if (target is null) return null;
+                var heldSource = await ResolveAsync(uow, hold.TargetType.ToString(), hold.TargetId, ct);
+                return new(Permissions.HoldsRead, heldSource?.Resources.Select(resource => resource with { Type = "Hold", Id = id }).ToArray()
+                    ?? [new ResourceRef("Hold", id, Program(target.ProgramId))], hold.Active);
             case "Inspection":
                 var inspection = (await uow.Store<IQualityLookup>().ListInspectionsAsync(null, int.MaxValue, ct)).FirstOrDefault(row => row.InspectionId == number);
                 return inspection is null ? null : new(Permissions.QualityRead, [await OrderResourceAsync(uow, "Inspection", id, inspection.OrderNumber, inspection.Sequence, ct)]);
@@ -82,12 +136,33 @@ public sealed class WorkSourceResolver(TimeProvider time) : IWorkSourceResolver
                 if (schedule is null) return null;
                 var scheduleResources = (schedule.Result?.Operations ?? []).Select(operation => new ResourceRef("Schedule", id, Program(operation.ProgramId), FacilityId: operation.SiteCode, WorkCenterId: operation.WorkCenterCode)).Distinct().ToList();
                 return new(Permissions.ScheduleRead, scheduleResources.Count == 0 ? [ResourceRef.Of("Schedule", id)] : scheduleResources, schedule.Status == ScheduleStatus.Proposed);
+            case "Document":
             case "DocumentRevision":
-                var split = id.Split(" rev ", 2, StringSplitOptions.None);
-                var document = split.Length == 2 ? await uow.Store<IDocumentLookup>().FindDocumentAsync(split[0], ct) : null;
-                var documentRevision = document?.Revisions.FirstOrDefault(row => row.Revision == split[1]);
-                return document is null || documentRevision is null ? null : new(Permissions.EngineeringRead,
-                    [new ResourceRef("DocumentRevision", id, Program(document.ProgramId), document.Markings)], documentRevision.Status == DocumentRevisionStatus.InReview);
+                string[] split = type == "Document" ? [id] : id.Contains(" rev ", StringComparison.Ordinal) ? id.Split(" rev ", 2, StringSplitOptions.None) : id.Split('/', 2);
+                var document = await uow.Store<IDocumentLookup>().FindDocumentAsync(split[0], ct);
+                var documentRevision = split.Length == 2 ? document?.Revisions.FirstOrDefault(row => row.Revision == split[1]) : null;
+                return document is null ? null : new(Permissions.EngineeringRead,
+                    [new ResourceRef(type, id, Program(document.ProgramId), document.Markings)], type == "Document" || documentRevision?.Status == DocumentRevisionStatus.InReview);
+            case "DocumentLink":
+                var documents = uow.Store<IDocumentLookup>();
+                if (long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var linkId))
+                {
+                    var link = await documents.FindLinkAsync(linkId, ct);
+                    var linkedDocument = link is null ? null : await documents.FindDocumentAsync(link.DocumentNumber, ct);
+                    if (link is null || linkedDocument is null) return null;
+                    var linkedSource = await ResolveAsync(uow, link.TargetType.ToString(), link.TargetId, ct);
+                    return new(linkedSource?.ReadPermission ?? DocumentAccess.ReadPermission(link.TargetType), linkedSource?.Resources.Select(resource => resource with
+                    { Type = type, Id = id, Markings = resource.Markings | linkedDocument.Markings | link.TargetMarkings }).ToArray()
+                        ?? [new ResourceRef(type, id, Program(link.ProgramId), linkedDocument.Markings | link.TargetMarkings)]);
+                }
+                var attachment = id.Split(':', 2);
+                if (attachment.Length != 2 || !Enum.TryParse<DocumentTargetType>(attachment[0], out var attachmentType)) return null;
+                var attachmentTarget = await documentTargets.ResolveAsync(uow, attachmentType, attachment[1], ct);
+                if (attachmentTarget is null) return null;
+                var attachmentSource = await ResolveAsync(uow, attachmentType.ToString(), attachment[1], ct);
+                return new(attachmentTarget.ReadPermission, attachmentSource?.Resources.Select(resource => resource with
+                    { Type = type, Id = id, Markings = resource.Markings | attachmentTarget.Markings }).ToArray()
+                    ?? [new ResourceRef(type, id, Program(attachmentTarget.ProgramId), attachmentTarget.Markings)]);
             case "EngineeringReview":
             case "EngineeringChange":
                 var changeNumber = type == "EngineeringReview" ? id.Split('/')[0] : id;
@@ -154,6 +229,13 @@ public sealed class WorkSourceResolver(TimeProvider time) : IWorkSourceResolver
                 var delegation = await uow.Store<Forge.Kernel.Access.IDelegationStore>().FindAsync(delegationId, ct);
                 return delegation is null ? null : new(Permissions.AccessManage, [Forge.Kernel.Access.DelegationAuthority.Resource(delegation.Scopes, id)],
                     delegation.Status == Forge.Kernel.Access.DelegationStatus.PendingApproval && delegation.ExpiresAt > time.GetUtcNow());
+            case "Machine":
+                return await uow.Store<IResourcesLookup>().FindMachineAsync(id, ct) is null ? null
+                    : new(Permissions.ResourcesRead, [await MachineResourceAsync(uow, type, id, id, ct)]);
+            case "WorkCenter":
+                var sourceCenter = await uow.Store<IResourcesLookup>().FindWorkCenterAsync(id, ct);
+                var sourceArea = sourceCenter is null ? null : await uow.Store<IResourcesLookup>().FindSafetyAreaAsync(sourceCenter.SafetyAreaCode, ct);
+                return sourceCenter is null ? null : new(Permissions.ResourcesRead, [new ResourceRef(type, id, FacilityId: sourceArea?.SiteCode, WorkCenterId: sourceCenter.Code)]);
             default:
                 return null;
         }

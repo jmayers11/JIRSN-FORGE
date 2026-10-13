@@ -44,7 +44,8 @@ public sealed class MaterialPlanningService(IKernelUnitOfWorkFactory unitOfWork,
         var part = string.IsNullOrWhiteSpace(partNumber) ? null : BusinessCode.Require(partNumber, "Part");
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
         var snapshot = await MaterialData.MrpSnapshotAsync(uow, time, principal, ct);
-        return EngineRunner.Run(mrp, snapshot, new MrpRequest(part), time.GetUtcNow());
+        var run = EngineRunner.Run(mrp, snapshot, new MrpRequest(part), time.GetUtcNow());
+        return (await MaterialSourceVisibility.LoadAsync(uow, principal, ct, authorizer: authorizer)).Mrp(run);
     }
 
     /// <summary>Material status of every released order the reader can see.</summary>
@@ -54,11 +55,7 @@ public sealed class MaterialPlanningService(IKernelUnitOfWorkFactory unitOfWork,
         Demand(principal, Permissions.ReadinessRead, "Readiness");
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
         var run = await RunMaterialAsync(uow, time, ct);
-        var hidden = (await uow.Store<Forge.Execution.Contracts.IExecutionLookup>().ListOrdersAsync(ct))
-            .Where(o => o.ProgramId is { } p && !principal.Programs.Contains(new ProgramId(p)))
-            .Select(o => o.OrderNumber)
-            .ToHashSet();
-        return run with { Output = run.Output.Where(o => !hidden.Contains(o.OrderNumber)).ToList() };
+        return (await MaterialSourceVisibility.LoadAsync(uow, principal, ct, authorizer: authorizer)).Material(run);
     }
 
     /// <summary>Stock position of every item that has stock, supply, allocations or safety stock.</summary>
@@ -103,10 +100,13 @@ public sealed class MaterialPlanningService(IKernelUnitOfWorkFactory unitOfWork,
     }
 
     /// <summary>Allocation across all released orders; callers pick out the orders they may show.</summary>
-    internal static async Task<EngineRun<IReadOnlyList<OrderMaterialStatus>>> RunMaterialAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct)
+    internal static async Task<EngineRun<IReadOnlyList<OrderMaterialStatus>>> RunMaterialAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct, ForgePrincipal? viewer = null)
     {
         var snapshot = await MaterialData.MaterialSnapshotAsync(uow, time, ct);
-        return EngineRunner.Run(new MaterialEngine(), snapshot, new MaterialRequest(), time.GetUtcNow());
+        var run = EngineRunner.Run(new MaterialEngine(), snapshot, new MaterialRequest(), time.GetUtcNow());
+        if (viewer is null) return run;
+        var access = await MaterialSourceVisibility.LoadAsync(uow, viewer, ct, authorizer: new ForgeAuthorizer(time));
+        return run with { Output = access.ForEvaluation(run.Output) };
     }
 
     private void Demand(ForgePrincipal principal, string permission, string resource)

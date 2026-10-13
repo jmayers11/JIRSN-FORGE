@@ -1,9 +1,12 @@
 using Forge.Kernel.Security;
+using Forge.Kernel.Access;
+using Forge.Kernel.WorkAssignments;
 using Npgsql;
 
 namespace Forge.Host.Notifications;
 
-public sealed class NotificationReadStore(NpgsqlDataSource dataSource)
+public sealed class NotificationReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWorkFactory unitOfWork,
+    IWorkSourceResolver sources, IForgeAuthorizer authorizer)
 {
     public async Task<IReadOnlyList<NotificationInboxItem>> InboxAsync(ForgePrincipal principal, bool openOnly, bool unreadOnly, CancellationToken ct)
     {
@@ -30,7 +33,11 @@ public sealed class NotificationReadStore(NpgsqlDataSource dataSource)
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             result.Add(new NotificationInboxItem(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7), reader.GetString(8), reader.GetString(9), reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetString(11), reader.GetFieldValue<DateTimeOffset>(12), reader.IsDBNull(13) ? null : reader.GetFieldValue<DateTimeOffset>(13), reader.IsDBNull(14) ? null : reader.GetFieldValue<DateTimeOffset>(14), reader.IsDBNull(15) ? null : reader.GetFieldValue<DateTimeOffset>(15), reader.GetString(16)));
-        return result;
+        await using var sourceSnapshot = await unitOfWork.BeginSnapshotAsync(ct);
+        var visible = new List<NotificationInboxItem>();
+        foreach (var item in result)
+            if (await NotificationSourceAccess.CanSeeAsync(sourceSnapshot, sources, authorizer, principal, item.EntityType, item.EntityId, ct)) visible.Add(item);
+        return visible;
     }
 
     public async Task<IReadOnlyList<NotificationRule>> RulesAsync(CancellationToken ct)
@@ -48,14 +55,18 @@ public sealed class NotificationReadStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var cmd = new NpgsqlCommand("""
-            SELECT a.program_id FROM kernel.notification_alert a
+            SELECT a.program_id,a.entity_type,a.entity_id FROM kernel.notification_alert a
             JOIN kernel.notification_inbox i ON i.alert_id=a.alert_id
             WHERE a.alert_id=$1 AND i.person_id=$2 AND i.recipient_role=ANY($3)
               AND (a.program_id IS NULL OR a.program_id=ANY($4::uuid[])) AND (a.markings & $5)=a.markings
             """, connection);
         cmd.Parameters.AddWithValue(alertId); cmd.Parameters.AddWithValue(principal.PersonId.Value); cmd.Parameters.AddWithValue(principal.Roles.ToArray()); cmd.Parameters.AddWithValue(principal.Programs.Select(p => p.Value).ToArray()); cmd.Parameters.AddWithValue((int)principal.Markings);
-        var value = await cmd.ExecuteScalarAsync(ct);
-        return value switch { null => (null, false), DBNull => (null, true), Guid id => (id, true), _ => (null, false) };
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return (null, false);
+        var program = reader.IsDBNull(0) ? (Guid?)null : reader.GetGuid(0);
+        await using var sourceSnapshot = await unitOfWork.BeginSnapshotAsync(ct);
+        var visible = await NotificationSourceAccess.CanSeeAsync(sourceSnapshot, sources, authorizer, principal, reader.GetString(1), reader.GetString(2), ct);
+        return (program, visible);
     }
 
     public async Task<IReadOnlyList<string>> EventTypesAsync(CancellationToken ct)

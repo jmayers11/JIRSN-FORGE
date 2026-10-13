@@ -1,5 +1,6 @@
 using Forge.Kernel.Access;
 using Forge.Kernel.Events;
+using Forge.Kernel.Identity;
 
 namespace Forge.Execution.Contracts;
 
@@ -30,7 +31,7 @@ public sealed record PriorityChangePreview(
 /// <summary>Planning computes a time-bounded, deterministic projection from the caller's unit of work.</summary>
 public interface IPriorityImpactProvider
 {
-    Task<PriorityChangePreview> PreviewAsync(IKernelUnitOfWork uow, long orderNumber, int newPriority, DateTimeOffset asOf, CancellationToken ct);
+    Task<PriorityChangePreview> PreviewAsync(IKernelUnitOfWork uow, long orderNumber, int newPriority, DateTimeOffset asOf, CancellationToken ct, Forge.Kernel.Security.ForgePrincipal? viewer = null);
 }
 
 public sealed record ChangeOrderPriority(

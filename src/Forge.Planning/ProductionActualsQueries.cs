@@ -64,11 +64,16 @@ public sealed class ProductionActualsQueries(IKernelUnitOfWorkFactory unitOfWork
         {
             var partLedger = await inventory.ListTransactionsAsync(byPart.Key, null, 1_000_000, ct);
             var positions = StockPosition.From(await inventory.ListBalancesAsync(byPart.Key, ct), locations);
+            var orderNumbers = byPart.Select(order => order.OrderNumber).ToHashSet();
+            var producedLots = partLedger.Where(transaction => transaction.Kind == InventoryTransactionKind.ProductionReceipt
+                    && transaction.OrderNumber is { } number && orderNumbers.Contains(number) && transaction.LotNumber is not null)
+                .Select(transaction => transaction.LotNumber!).Distinct(StringComparer.Ordinal).ToArray();
+            var packing = await inventory.PackingForLotsAsync(byPart.Key, producedLots, ct);
             foreach (var order in byPart)
             {
                 var inspections = await quality.ListInspectionsAsync(order.OrderNumber, 10_000, ct);
                 var orderLedger = partLedger.Where(t => t.OrderNumber == order.OrderNumber).ToList();
-                result.Add(OrderQuantityStates.For(order, rework, inspections, ncrs, orderLedger, partLedger, positions));
+                result.Add(OrderQuantityStates.For(order, rework, inspections, ncrs, orderLedger, partLedger, positions, packing.Containers, packing.Shipments));
             }
         }
 

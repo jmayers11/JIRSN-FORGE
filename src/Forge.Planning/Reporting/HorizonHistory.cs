@@ -146,10 +146,11 @@ public sealed class HorizonHistoryService(IKernelUnitOfWorkFactory unitOfWork, I
                 : $"Schedule {(before is null ? "none" : Id(before.VersionId))} → {(after is null ? "none" : Id(after.VersionId))}: "
                     + $"{Count("Later")} later, {Count("Earlier")} earlier, {Count("Status changed")} changed delivery status, {Count("Added")} added, {Count("Removed")} removed, {Count("Unchanged")} unchanged.";
 
-        return new HorizonComparison(
+        var comparison = new HorizonComparison(
             at1, at2, Version(before), Version(after), between.Select(v => Version(v)!).ToList(),
             Count("Later"), Count("Earlier"), Count("Added"), Count("Removed"), Count("Status changed"), Count("Unchanged"),
             headline, shown, site, false);
+        return (await MaterialSourceVisibility.LoadAsync(uow, principal, ct, authorizer: authorizer)).Comparison(comparison);
     }
 
     /// <summary>

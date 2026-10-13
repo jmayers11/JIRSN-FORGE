@@ -71,8 +71,11 @@ public static class PlanningEndpoints
         planning.MapPost("/schedules/{versionId:long}/approve", (HttpContext http, long versionId, ReasonRequest b, ScheduleService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ApproveAsync(new ApproveSchedule(versionId), c, ct)));
         planning.MapGet("/schedules/{selector}", (HttpContext http, string selector, CancellationToken _) =>
-            ReadStore<IPlanningStore>(http, Permissions.ScheduleRead, async (store, ct) =>
+            Read(http, Permissions.ScheduleRead, async principal =>
             {
+                var ct = http.RequestAborted;
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(ct);
+                var store = uow.Store<IPlanningStore>();
                 var version = selector switch
                 {
                     "proposed" => await store.LatestAsync(ScheduleStatus.Proposed, true, ct),
@@ -80,22 +83,20 @@ public static class PlanningEndpoints
                     _ when long.TryParse(selector, out var id) => await store.FindVersionAsync(id, true, ct),
                     _ => null,
                 } ?? throw new Forge.Kernel.Commands.CommandRejectedException("schedule_not_found", $"No schedule '{selector}'.");
-                var principal = (await PrincipalAsync(http))!;
-                return version.Result is null ? version : version with { Result = Visible(principal, version.Result) };
+                var access = await MaterialSourceVisibility.LoadAsync(uow, principal, ct, authorizer: http.RequestServices.GetRequiredService<IForgeAuthorizer>());
+                return version with { Summary = access.Text(version.Summary), Result = version.Result is null ? null : access.Schedule(version.Result) };
             }));
 
         planning.MapGet("/constraints", (HttpContext http, bool? includeClosed, CancellationToken _) =>
-            ReadStore<IPlanningStore>(http, Permissions.ScheduleRead, async (store, ct) =>
+            Read(http, Permissions.ScheduleRead, async principal =>
             {
-                var principal = (await PrincipalAsync(http))!;
-                var hidden = await HiddenOrdersAsync(http, principal, ct);
+                var ct = http.RequestAborted;
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(ct);
+                var store = uow.Store<IPlanningStore>();
+                var access = await MaterialSourceVisibility.LoadAsync(uow, principal, ct, authorizer: http.RequestServices.GetRequiredService<IForgeAuthorizer>());
                 return (await store.ListConstraintsAsync(includeClosed ?? false, ct))
-                    .Where(c => c.AffectedOrders.Count == 0 || c.AffectedOrders.Any(o => !hidden.Contains(o)))
-                    .Select(c => c with
-                    {
-                        AffectedOrders = c.AffectedOrders.Where(o => !hidden.Contains(o)).ToList(),
-                        AffectedOperations = c.AffectedOperations.Where(o => !hidden.Contains(long.Parse(o.Split('/')[0], System.Globalization.CultureInfo.InvariantCulture))).ToList(),
-                    })
+                    .Where(c => c.AffectedOrders.Count == 0 || c.AffectedOrders.Any(access.CanSeeOrder))
+                    .Select(access.Constraint)
                     .ToList();
             }));
         planning.MapPost("/constraints/{id:long}/investigate", (HttpContext http, long id, ReasonRequest b, ScheduleService s, CancellationToken ct) =>
@@ -112,17 +113,4 @@ public static class PlanningEndpoints
         }).RequireAuthorization();
     }
 
-    /// <summary>Removes orders of programs the caller cannot see.</summary>
-    private static ScheduleResult Visible(ForgePrincipal principal, ScheduleResult result) => result with
-    {
-        Orders = result.Orders.Where(o => o.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))).ToList(),
-        Operations = result.Operations.Where(o => o.ProgramId is not { } p || principal.Programs.Contains(new ProgramId(p))).ToList(),
-    };
-
-    private static async Task<HashSet<long>> HiddenOrdersAsync(HttpContext http, ForgePrincipal principal, CancellationToken ct)
-    {
-        await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(ct);
-        var orders = await uow.Store<Forge.Execution.Contracts.IExecutionLookup>().ListOrdersAsync(ct);
-        return orders.Where(o => o.ProgramId is { } p && !principal.Programs.Contains(new ProgramId(p))).Select(o => o.OrderNumber).ToHashSet();
-    }
 }

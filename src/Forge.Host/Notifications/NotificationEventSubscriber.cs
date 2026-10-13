@@ -2,6 +2,7 @@ using System.Text.Json;
 using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Postgres;
+using Forge.Kernel.Security;
 using Npgsql;
 
 namespace Forge.Host.Notifications;
@@ -88,7 +89,7 @@ public sealed class NotificationEventSubscriber(NpgsqlDataSource dataSource, Tim
             if (await insert.ExecuteNonQueryAsync(ct) == 0) return;
         }
 
-        var recipients = await RecipientsAsync(connection, tx, rule.RecipientRoles, evt.ProgramId?.Value, ct);
+        var recipients = await RecipientsAsync(connection, tx, rule.RecipientRoles, evt.ProgramId?.Value, evt.Markings, ct);
         foreach (var recipient in recipients)
         {
             await using (var inbox = new NpgsqlCommand("INSERT INTO kernel.notification_inbox(alert_id,person_id,recipient_role) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", connection, tx))
@@ -101,7 +102,7 @@ public sealed class NotificationEventSubscriber(NpgsqlDataSource dataSource, Tim
         }
         if (rule.Channels.Contains("Email", StringComparer.Ordinal) && rule.EscalationSeconds is { } escalation)
         {
-            foreach (var recipient in await RecipientsAsync(connection, tx, rule.EscalationRoles, evt.ProgramId?.Value, ct))
+            foreach (var recipient in await RecipientsAsync(connection, tx, rule.EscalationRoles, evt.ProgramId?.Value, evt.Markings, ct))
                 await QueueEmailAsync(connection, tx, time, alertId, recipient, "Escalation", visibleAt.AddSeconds(escalation), evt.EventId, ct);
         }
         // A resolution closes outstanding delayed notices before they are dispatched.
@@ -144,14 +145,14 @@ public sealed class NotificationEventSubscriber(NpgsqlDataSource dataSource, Tim
             foreach (var recipient in recipients) await QueueEmailAsync(connection, tx, time, alertId, recipient, "Resolution", time.GetUtcNow(), evt.EventId, ct);
     }
 
-    private static async Task<List<Recipient>> RecipientsAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string[] roles, Guid? programId, CancellationToken ct)
+    private static async Task<List<Recipient>> RecipientsAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string[] roles, Guid? programId, DataMarking markings, CancellationToken ct)
     {
         if (roles.Length == 0) return [];
-        var sql = "SELECT p.person_id, min(ra.role) FROM kernel.person p JOIN kernel.role_assignment ra ON ra.person_id=p.person_id WHERE p.is_active AND ra.role=ANY($1) AND (ra.expires_at IS NULL OR ra.expires_at>now()) AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM kernel.program_access pa WHERE pa.person_id=p.person_id AND pa.program_id=$2)) GROUP BY p.person_id ORDER BY p.person_id";
+        var sql = "SELECT p.person_id, min(ra.role) FROM kernel.person p JOIN kernel.role_assignment ra ON ra.person_id=p.person_id WHERE p.is_active AND ra.role=ANY($1) AND (ra.expires_at IS NULL OR ra.expires_at>now()) AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM kernel.program_access pa WHERE pa.person_id=p.person_id AND pa.program_id=$2)) AND (p.markings & $3)=$3 GROUP BY p.person_id ORDER BY p.person_id";
         // Older installs may have no expiry column only before V3.15, which is outside supported state.
         var found = new List<Recipient>();
         await using var cmd = new NpgsqlCommand(sql, connection, tx);
-        cmd.Parameters.AddWithValue(roles); cmd.Parameters.AddWithValue(programId ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue(roles); cmd.Parameters.AddWithValue(programId ?? (object)DBNull.Value); cmd.Parameters.AddWithValue((int)markings);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct)) found.Add(new Recipient(reader.GetGuid(0), reader.GetString(1)));
         return found;

@@ -49,8 +49,18 @@ public static class QualityEndpoints
             ReadStore<IQualityLookup>(http, Permissions.QualityRead, async (l, ct) => await l.ListPlansAsync(string.IsNullOrWhiteSpace(part) ? null : part.Trim().ToUpperInvariant(), ct)));
         api.MapGet("/gauges", (HttpContext http, CancellationToken _) =>
             ReadStore<Forge.Resources.Contracts.IToolLookup>(http, Permissions.QualityRead, async (l, ct) => GaugeInfo.From(await l.ListToolsAsync(ct), await l.ListToolTypesAsync(ct))));
-        api.MapGet("/capas", (HttpContext http, bool? includeVerified, CancellationToken _) =>
-            ReadStore<IQualityLookup>(http, Permissions.QualityRead, async (l, ct) => await l.ListCapasAsync(includeVerified ?? false, ct)));
+        api.MapGet("/capas", async (HttpContext http, bool? includeVerified, CancellationToken ct) =>
+            {
+                var principal = await PrincipalAsync(http);
+                if (principal is null) return NotRegistered();
+                var authorizer = http.RequestServices.GetRequiredService<IForgeAuthorizer>();
+                if (!HasQualityRead(principal)) throw new ForgeAuthorizationException(authorizer.Authorize(principal, Permissions.QualityRead, ResourceRef.Of("Capa")));
+                await using var uow = await Snapshot(http);
+                var visible = new List<CapaInfo>();
+                foreach (var capa in await uow.Store<IQualityLookup>().ListCapasAsync(includeVerified ?? false, ct))
+                    if (authorizer.Authorize(principal, Permissions.QualityRead, await QualityService.ResourceForCapaAsync(uow, capa, ct)).IsPermitted) visible.Add(capa);
+                return Results.Ok(visible);
+            });
         api.MapGet("/ncrs", async (HttpContext http, bool? includeClosed, CancellationToken ct) =>
             {
                 var principal = await PrincipalAsync(http);

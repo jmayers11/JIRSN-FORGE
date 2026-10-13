@@ -1,5 +1,13 @@
 # ADR 0029 — V3.5: production actuals and quantity states
 
+## Current checkpoint — 2026-10-13
+
+The corrections below supersede the historical V3.5 statements that stoppages never affect capacity and Packed remains zero. The resumed full `verify.cmd` gate passed on 2026-10-13 against the frozen 80-file source manifest on HEAD `7092a11`; the subsequent source commit is recorded in AI_HANDOFF.md. Release build: zero warnings/errors. Planning 303/303, Kernel 33/33, Architecture 32/32, restored PostgreSQL Integration 163/163 in 59.8970 minutes including cleanup, and Node 34/34: 565 passing tests. Evidence: `.forge-logs/verify-v3-reconciled.log` and `.forge-logs/verify-v3-reconciled.status`. Current counts and provenance are recorded separately from historical results in the completion checklist and source reconciliation. Earlier PASS records and the original migration count remain historical evidence.
+
+Recorded Execution stoppages, including setup and changeover, now enter the shared executable-capacity timeline with their source identity and observed reason. Planning unions overlapping Execution/Maintenance windows without counting the same lost time twice, and retains the difference between a reported reason, confirmed root cause and hypothetical scenario window.
+
+Quantity states derive from existing authoritative sources. Authorized production receipts contribute accepted quantity only after their normal inspection/NCR guards, including a policy with no required inspection. Packed is now derived from the order's actual production-receipt lot identities, current unshipped container contents and packed shipment lines. A linked container and its shipment count once. Shipped/cancelled associations are excluded using the latest container-associated shipment, so legitimate reuse follows its new current shipment. Untracked receipts cannot establish which order owns current stock or packing quantity and retain an explicit attribution note. Packing can overlap Released, Hold or Staged: those dimensions are not disjoint and must not be added together. Normal shipping, containers and inventory ledger remain the source; no second packing balance or QMS release aggregate is introduced.
+
 ## Context
 The V3 brief (L, K, AT) asks for production actuals that keep apart things Forge recorded loosely or not at all:
 - why a machine did not run (only maintenance downtime existed, with free text);
@@ -9,7 +17,7 @@ The V3 brief (L, K, AT) asks for production actuals that keep apart things Forge
 - where an order's quantity is: started, produced, pending inspection, accepted, released, hold, rework, scrap,
   packed, staged, shipped.
 
-## Decisions
+## Historical V3.5 decisions
 1. **Reason codes are data, not code.** `execution.reason_code` holds the plant's own words for downtime, scrap
    and rework. A downtime reason belongs to exactly one stoppage category. Codes are retired, never deleted, so
    what was recorded with them keeps them. Only `execution.reasons.manage` (manufacturing engineer) defines them.

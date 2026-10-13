@@ -389,29 +389,9 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         decimal issuedPrimary = 0;
         return PostAsync(nameof(IssueToOrder), c.PartNumber, c, context, Permissions.InventoryTransact, false, async (uow, item, now) =>
         {
-            var order = await ReleasedOrderAsync(uow, c.OrderNumber, context, ct);
+            var prepared = await PrepareIssueToOrderAsync(uow, item, c, context, now, ct);
+            var (order, needed, alternate, quantity, primaryQuantity, location, lot) = prepared;
             built = order;
-            var (needed, alternate, factor) = await NeededPartAsync(uow, order, item.PartNumber, c.AlternateFor, now, ct);
-            var required = order.Materials.Where(m => m.ComponentPartNumber == needed).Sum(m => m.RequiredQuantity);
-            if (required == 0)
-            {
-                throw new CommandRejectedException("not_on_order", $"Order {order.OrderNumber} does not use {needed}.");
-            }
-
-            var quantity = RequireQuantity(item, c.Quantity);
-            var primaryQuantity = alternate is null ? quantity : decimal.Round(quantity / factor, 6, MidpointRounding.AwayFromZero);
-            var issued = (await uow.Store<IInventoryLookup>().ListOrderIssuesAsync(ct)).FirstOrDefault(i => i.OrderNumber == order.OrderNumber && i.PartNumber == needed)?.NetIssued ?? 0;
-            if (issued + primaryQuantity > required)
-            {
-                throw new CommandRejectedException("over_issue", $"Order {order.OrderNumber} needs {required} {needed}; {issued} already issued, so at most {required - issued} more{(alternate is null ? string.Empty : $" ({(required - issued) * factor} {item.PartNumber} at {factor} per 1)")}. Over-issue is not allowed; scrap or adjust instead.");
-            }
-
-            var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
-            var lot = RequireLot(item, c.LotNumber);
-            await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
-            await RequireUsableAsync(uow, item, lot, now, ct);
-            await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(uow, new Forge.Kernel.Holds.HoldCheck(
-                Forge.Kernel.Holds.HoldActivity.IssueMaterial, order.OrderNumber, null, [item.PartNumber], lot is null ? null : new[] { new Forge.Kernel.Holds.HoldLot(item.PartNumber, lot) }, ProgramId: order.ProgramId), ct);
             var txn = new NewTransaction(InventoryTransactionKind.Issue, item.PartNumber, quantity, location.Code, StockStatus.Released, null, null, lot, OrderNumber: order.OrderNumber, Reason: context.Reason,
                 SubstitutesFor: alternate is null ? null : needed, AlternateId: alternate?.AlternateId, PrimaryQuantity: alternate is null ? null : primaryQuantity);
             (through, needs, issuedPrimary) = (alternate, needed, primaryQuantity);
@@ -424,6 +404,44 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         },
         (uow, item, txn, id, now) => AppendAsBuiltAsync(uow, built!, item, txn, id, AsBuiltKind.Issued, through, through is null ? null : needs, through is null ? null : issuedPrimary, context.Actor, now, ct),
         ct);
+    }
+
+    /// <summary>The material issue command's read-only source gate. It does not lock, issue, or append genealogy.</summary>
+    public static async Task CheckIssueToOrderAsync(IKernelUnitOfWork uow, IssueToOrder command, ForgePrincipal principal, DateTimeOffset now, CancellationToken ct)
+    {
+        var item = await ItemAsync(uow, BusinessCode.Require(command.PartNumber, "Part"), ct);
+        var context = new CommandContext(principal, Guid.Empty, "recovery-read-only", CommandSource.Api, null);
+        _ = await PrepareIssueToOrderAsync(uow, item, command, context, now, ct);
+    }
+
+    private sealed record PreparedIssue(OrderInfo Order, string Needed, AlternateInfo? Alternate, decimal Quantity,
+        decimal PrimaryQuantity, LocationInfo Location, string? Lot);
+
+    private static async Task<PreparedIssue> PrepareIssueToOrderAsync(IKernelUnitOfWork uow, ItemInfo item, IssueToOrder c, CommandContext context, DateTimeOffset now, CancellationToken ct)
+    {
+        var order = await ReleasedOrderAsync(uow, c.OrderNumber, context, ct);
+        var (needed, alternate, factor) = await NeededPartAsync(uow, order, item.PartNumber, c.AlternateFor, now, ct);
+        var required = order.Materials.Where(m => m.ComponentPartNumber == needed).Sum(m => m.RequiredQuantity);
+        if (required == 0)
+        {
+            throw new CommandRejectedException("not_on_order", $"Order {order.OrderNumber} does not use {needed}.");
+        }
+
+        var quantity = RequireQuantity(item, c.Quantity);
+        var primaryQuantity = alternate is null ? quantity : decimal.Round(quantity / factor, 6, MidpointRounding.AwayFromZero);
+        var issued = (await uow.Store<IInventoryLookup>().ListOrderIssuesAsync(ct)).FirstOrDefault(i => i.OrderNumber == order.OrderNumber && i.PartNumber == needed)?.NetIssued ?? 0;
+        if (issued + primaryQuantity > required)
+        {
+            throw new CommandRejectedException("over_issue", $"Order {order.OrderNumber} needs {required} {needed}; {issued} already issued, so at most {required - issued} more{(alternate is null ? string.Empty : $" ({(required - issued) * factor} {item.PartNumber} at {factor} per 1)")}. Over-issue is not allowed; scrap or adjust instead.");
+        }
+
+        var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
+        var lot = RequireLot(item, c.LotNumber);
+        await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
+        await RequireUsableAsync(uow, item, lot, now, ct);
+        await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(uow, new Forge.Kernel.Holds.HoldCheck(
+            Forge.Kernel.Holds.HoldActivity.IssueMaterial, order.OrderNumber, null, [item.PartNumber], lot is null ? null : new[] { new Forge.Kernel.Holds.HoldLot(item.PartNumber, lot) }, ProgramId: order.ProgramId), ct);
+        return new(order, needed, alternate, quantity, primaryQuantity, location, lot);
     }
 
     public Task<CommandResult> ReturnFromOrderAsync(ReturnFromOrder c, CommandContext context, CancellationToken ct)
@@ -503,20 +521,36 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
         ArgumentNullException.ThrowIfNull(c);
         return PostAsync(nameof(TransferStock), c.PartNumber, c, context, Permissions.InventoryTransact, false, async (uow, item, _) =>
         {
-            var from = await ActiveLocationAsync(uow, c.FromLocation, ct);
-            var to = await ActiveLocationAsync(uow, c.ToLocation, ct);
-            if (from.Code == to.Code)
-            {
-                throw new CommandRejectedException("same_location", "Transfer to a different location.");
-            }
-
-            var lot = RequireLot(item, c.LotNumber);
-            var quantity = RequireQuantity(item, c.Quantity);
-            await RequireStockAsync(uow, item.PartNumber, from.Code, lot, c.Status, quantity, ct);
+            var prepared = await PrepareTransferStockAsync(uow, item, c, ct);
+            var (from, to, lot, quantity) = prepared;
             var txn = new NewTransaction(InventoryTransactionKind.Transfer, item.PartNumber, quantity, from.Code, c.Status, to.Code, c.Status, lot, Reason: context.Reason);
             return (txn, $"Moved {quantity} {item.UnitOfMeasure} {item.PartNumber} from {from.Code} to {to.Code}.",
                 id => pipeline.Event(new InventoryMoved(id, nameof(InventoryTransactionKind.Transfer), item.PartNumber, quantity, from.Code, to.Code), context, SourceContext, StockEntity, item.PartNumber));
         }, ct);
+    }
+
+    /// <summary>The transfer command's read-only source gate; it never moves ledger quantity.</summary>
+    public static async Task CheckTransferStockAsync(IKernelUnitOfWork uow, TransferStock command, CancellationToken ct)
+    {
+        var item = await ItemAsync(uow, BusinessCode.Require(command.PartNumber, "Part"), ct);
+        _ = await PrepareTransferStockAsync(uow, item, command, ct);
+    }
+
+    private sealed record PreparedTransfer(LocationInfo From, LocationInfo To, string? Lot, decimal Quantity);
+
+    private static async Task<PreparedTransfer> PrepareTransferStockAsync(IKernelUnitOfWork uow, ItemInfo item, TransferStock c, CancellationToken ct)
+    {
+        var from = await ActiveLocationAsync(uow, c.FromLocation, ct);
+        var to = await ActiveLocationAsync(uow, c.ToLocation, ct);
+        if (from.Code == to.Code)
+        {
+            throw new CommandRejectedException("same_location", "Transfer to a different location.");
+        }
+
+        var lot = RequireLot(item, c.LotNumber);
+        var quantity = RequireQuantity(item, c.Quantity);
+        await RequireStockAsync(uow, item.PartNumber, from.Code, lot, c.Status, quantity, ct);
+        return new(from, to, lot, quantity);
     }
 
     public Task<CommandResult> ScrapAsync(ScrapStock c, CommandContext context, CancellationToken ct)

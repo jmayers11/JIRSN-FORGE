@@ -51,6 +51,11 @@ internal static class HoldEndpoints
             {
                 return await Command(http, b.Reason, c => s.ReleaseAsync(new ReleaseHold(id, b.ExpectedVersion, b.SignatureConfirmed, b.SignatureMeaning), c, ct, proof));
             }
+            catch (ForgeAuthorizationException denied) when (SourceClassificationDenied(denied.Decision))
+            {
+                // The pipeline retains the actual source denial and audit; the hold API conceals an unseen record.
+                throw new CommandRejectedException("hold_not_found", $"Hold {id} does not exist.");
+            }
             catch (CommandRejectedException rejection) when (rejection.Code == "step_up_required")
             {
                 // The normal command pipeline first records the rejected attempt, then this boundary sends the provider challenge.

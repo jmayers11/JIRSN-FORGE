@@ -31,10 +31,6 @@ public sealed record IssueBadgeRequest(string Badge, string? Reason);
 /// </summary>
 internal static class ShopFloorEndpoints
 {
-    // Readiness dimensions that stop work at a terminal. A missing qualification is not here: the
-    // operator-authorization engine handles it, including supervised training.
-    private static readonly HashSet<string> Blocking = new(StringComparer.Ordinal) { "Safety", "Equipment", "RequirementProfile" };
-
     public static void MapShopFloorEndpoints(this IEndpointRouteBuilder app)
     {
         var api = app.MapGroup("/api/shopfloor").RequireAuthorization();
@@ -70,7 +66,7 @@ internal static class ShopFloorEndpoints
                 ? Command(http, null, null, CommandSource.Terminal, c => s.SetBadgePinAsync(new SetBadgePin(badge, TrySecret(b.CurrentPin, out var current) ? current : null, pin), c, ct))
                 : Task.FromResult(BadBadge()));
 
-        api.MapPost("/start", async (HttpContext http, StartRequest b, ShopFloorService s, ReadinessService readiness, IKernelUnitOfWorkFactory uows, CancellationToken ct) =>
+        api.MapPost("/start", async (HttpContext http, StartRequest b, ShopFloorService s, CancellationToken ct) =>
         {
             if (!TrySecret(b.Badge, out var badge))
             {
@@ -78,8 +74,7 @@ internal static class ShopFloorEndpoints
             }
 
             Secret? trainer = TrySecret(b.TrainerBadge, out var t) ? t : null;
-            var safety = await SafetyAsync(http, readiness, uows, b, ct);
-            return await Command(http, null, null, CommandSource.Terminal, c => s.StartAsync(new StartOperation(badge, b.OrderNumber, b.Sequence, b.MachineCode, trainer, safety, b.ToolCode), c, ct));
+            return await Command(http, null, null, CommandSource.Terminal, c => s.StartAsync(new StartOperation(badge, b.OrderNumber, b.Sequence, b.MachineCode, trainer, ToolCode: b.ToolCode), c, ct));
         });
 
         api.MapPost("/stop", (HttpContext http, BadgeRequest b, ShopFloorService s, CancellationToken ct) =>
@@ -240,53 +235,6 @@ internal static class ShopFloorEndpoints
             training = sessions,
             queue,
         };
-    }
-
-    private static async Task<SafetyFinding?> SafetyAsync(HttpContext http, ReadinessService readiness, IKernelUnitOfWorkFactory uows, StartRequest b, CancellationToken ct)
-    {
-        var principal = await PrincipalAsync(http);
-        if (principal is null)
-        {
-            return null;
-        }
-
-        BadgeHolder? who;
-        OrderOperationInfo? op;
-        await using (var uow = await uows.BeginSnapshotAsync(ct))
-        {
-            // For supervised training the trainer is the qualified person at the machine.
-            var badge = string.IsNullOrWhiteSpace(b.TrainerBadge) ? b.Badge : b.TrainerBadge;
-            who = await uow.Store<IWorkforceLookup>().FindBadgeHolderAsync(badge, ct);
-            op = (await uow.Store<IExecutionLookup>().FindOrderAsync(b.OrderNumber, ct))?.Operations.FirstOrDefault(o => o.Sequence == b.Sequence);
-        }
-
-        if (who is not { IsWorker: true } || op is null)
-        {
-            return null; // The command rejects these with a precise reason.
-        }
-
-        var machine = string.IsNullOrWhiteSpace(b.MachineCode) ? (op.EligibleMachines.Count == 1 ? op.EligibleMachines[0] : null) : b.MachineCode.Trim().ToUpperInvariant();
-        if (op.EligibleMachines.Count > 0 && machine is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            var run = await readiness.PreviewReallocationAsync(
-                principal,
-                new AssignWork(new PersonId(who.PersonId), null, machine is null ? op.WorkCenterCode : null, machine, op.ActivityCode, false),
-                ct);
-            var work = run.Output.Impacts.FirstOrDefault(i => i.Kind == ImpactKind.NewWork);
-            return work is { Constraint: { } constraint } && Blocking.Contains(constraint)
-                ? new SafetyFinding(true, $"{constraint}: {work.Detail}")
-                : new SafetyFinding(false, work?.Detail ?? "Safety and machine checks passed.");
-        }
-        catch (CommandRejectedException e)
-        {
-            // Fail closed: if safety cannot be evaluated, work does not start.
-            return new SafetyFinding(true, "Safety could not be evaluated: " + e.Message);
-        }
     }
 
     private static async Task<HashSet<long>> HiddenOrdersAsync(IExecutionLookup exec, ForgePrincipal principal, CancellationToken ct) =>

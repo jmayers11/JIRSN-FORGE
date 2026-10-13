@@ -331,7 +331,7 @@ internal static class StandardReports
         new(
             new("material-reconciliation", "Material reconciliation", "Production",
                 "What became of the material issued to each production order, per part and lot: issued = consumed + returned + scrap + loss + remnant + remaining, within the part's yield tolerance. Unexplained material stays flagged until a later record explains it; nothing is scrapped to make it add up.",
-                [PartFilter, StatusFilter(Enum.GetNames<ReconciliationStatus>()), SearchFilter],
+                [PartFilter, StatusFilter([.. Enum.GetNames<ReconciliationStatus>(), "Remnants"]), SearchFilter],
                 [C("order", "Order", ReportColumnKind.Text), C("part", "Part", ReportColumnKind.Text), C("lot", "Lot / serial", ReportColumnKind.Text), C("issued", "Issued", ReportColumnKind.Number),
                  C("returned", "Returned", ReportColumnKind.Number), C("consumed", "Consumed", ReportColumnKind.Number), C("scrap", "Scrap", ReportColumnKind.Number), C("loss", "Loss", ReportColumnKind.Number),
                  C("remnant", "Remnant", ReportColumnKind.Number), C("remaining", "Remaining", ReportColumnKind.Number), C("unexplained", "Unexplained", ReportColumnKind.Number), C("status", "Status", ReportColumnKind.Text)],
@@ -740,6 +740,10 @@ internal static class StandardReports
     private static async Task<ReportBody> MaterialReconciliationAsync(ReportRun run, CancellationToken ct)
     {
         var p = run.Parameters;
+        var exactOrder = p.Search is { } search && search.StartsWith("order:", StringComparison.OrdinalIgnoreCase)
+            && long.TryParse(search.AsSpan(6), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var orderNumber)
+            ? (long?)orderNumber : null;
+        var onlyRemnants = string.Equals(p.Status, "Remnants", StringComparison.OrdinalIgnoreCase);
         var inventory = run.Uow.Store<IInventoryLookup>();
         var orders = (await run.Uow.Store<Forge.Execution.Contracts.IExecutionLookup>().ListOrdersAsync(ct)).ToDictionary(o => o.OrderNumber);
         var tolerances = (await inventory.ListYieldTolerancesAsync(ct)).ToDictionary(t => t.PartNumber, t => t.Percent, StringComparer.Ordinal);
@@ -748,14 +752,16 @@ internal static class StandardReports
         var rows = new List<ReportRow>();
         foreach (var group in byOrder.OrderBy(g => g.Key))
         {
-            if (!orders.TryGetValue(group.Key, out var order) || !run.Visible(order.ProgramId))
+            if ((exactOrder is { } selected && group.Key != selected) || !orders.TryGetValue(group.Key, out var order) || !run.Visible(order.ProgramId))
             {
                 continue;
             }
 
             foreach (var r in MaterialReconciliation.For(group.Key, group, transformations[group.Key], part => tolerances.GetValueOrDefault(part)))
             {
-                if (!ReportRun.Is(r.PartNumber, p.PartNumber) || !ReportRun.Is(r.Status.ToString(), p.Status) || !run.Matches(r.PartNumber, r.LotNumber, ReportRun.Id(r.OrderNumber)))
+                if (!ReportRun.Is(r.PartNumber, p.PartNumber)
+                    || (onlyRemnants ? r.Remnant <= 0 : !ReportRun.Is(r.Status.ToString(), p.Status))
+                    || (exactOrder is null && !run.Matches(r.PartNumber, r.LotNumber, ReportRun.Id(r.OrderNumber))))
                 {
                     continue;
                 }
@@ -853,7 +859,7 @@ internal static class StandardReports
     {
         var p = run.Parameters;
         var rows = new List<ReportRow>();
-        foreach (var g in await GoalService.EvaluateAsync(run.Uow, new FixedTime(run.Now), false, ct))
+        foreach (var g in await GoalService.EvaluateAsync(run.Uow, new FixedTime(run.Now), false, ct, run.Principal))
         {
             var id = Id(g.GoalId);
             if (!run.Visible(g.ProgramId) || !ReportRun.Is(g.State.ToString(), p.Status) || !run.Matches(id, g.Title, g.Kind.ToString(), string.Join(" ", g.Evidence)))

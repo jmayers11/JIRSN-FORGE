@@ -3,6 +3,11 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Forge.Engineering.Contracts;
+using Forge.Kernel.Access;
+using Forge.Kernel.Audit;
+using Forge.Kernel.Serialization;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 
 namespace Forge.Integration.Tests;
@@ -51,16 +56,52 @@ public sealed class V312Tests(PostgresFixture postgres)
             partNumber = "ROLL-100", revision = "A", supplierCode = "ACME", passed = true,
             results = new[] { new { characteristic = "Width", requirement = "100", measured = "100", pass = true } }, documentNumber = "PRIVATE-FAI", documentRevision = "A",
         })).GetProperty("entityId").GetString()!;
-        await plant.Ok(inspector, $"/api/engineering/attachments/Fai/{fai}/file", new { fileSha256 = sha, fileName = "supporting.pdf", type = "MeasurementRecord" });
+        var attachmentUrl = $"/api/engineering/attachments/Fai/{fai}/file";
+        var attachmentBody = new { fileSha256 = sha, fileName = "supporting.pdf", type = "MeasurementRecord" };
+        const string attachmentKey = "v312-private-source-attachment";
+        var original = await inspector.CommandAsync(attachmentUrl, attachmentBody, attachmentKey);
+        Assert.True(original.IsSuccessStatusCode, await original.Content.ReadAsStringAsync());
         var attachment = Assert.Single((await Get(inspector, $"/api/engineering/attachments/Fai/{fai}")).EnumerateArray());
         var reference = attachment.GetProperty("documentNumber").GetString()!;
         var detail = await Get(inspector, $"/api/engineering/documents/{reference}");
         Assert.Equal(program, detail.GetProperty("document").GetProperty("programId").GetGuid());
+        async Task<string> RecordedSource()
+        {
+            await using var read = await app.Services.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(CancellationToken.None);
+            var lookup = read.Store<IDocumentLookup>();
+            return CanonicalJson.Serialize(new
+            {
+                Links = await lookup.ListLinksAsync(DocumentTargetType.Fai, fai, null, true, CancellationToken.None),
+                Document = await lookup.FindDocumentAsync(reference, CancellationToken.None),
+            });
+        }
+        var recordedSource = await RecordedSource();
         await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["insp"]}/programs/{program}/revoke", new { reason = "Program assignment ended" });
         Assert.Equal(HttpStatusCode.NotFound, (await inspector.GetAsync(new Uri($"/api/engineering/attachments/Fai/{fai}", UriKind.Relative))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await inspector.GetAsync(new Uri($"/api/engineering/documents/{reference}", UriKind.Relative))).StatusCode);
         var denied = await plant.Try(inspector, $"/api/engineering/attachments/Fai/{fai}/file", new { fileSha256 = sha, fileName = "another.pdf" });
         Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        Assert.Contains("target_not_found", await denied.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        var replay = await inspector.CommandAsync(attachmentUrl, attachmentBody, attachmentKey);
+        Assert.Equal(HttpStatusCode.NotFound, replay.StatusCode);
+        Assert.Contains("target_not_found", await replay.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        var absent = await plant.Try(inspector, "/api/engineering/attachments/Fai/999999999/file", new { fileSha256 = sha, fileName = "another.pdf" });
+        Assert.Equal(HttpStatusCode.NotFound, absent.StatusCode);
+        Assert.Contains("target_not_found", await absent.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(recordedSource, await RecordedSource());
+        var auditorId = await plant.Person("fai-audit-reader", "Inspector", "Auditor");
+        await plant.Ok(plant.Admin, $"/api/kernel/people/{auditorId}/programs", new { programId = program, reason = "Independent review of protected evidence denials" });
+        var audited = await Get(plant.As("fai-audit-reader"), $"/api/kernel/audit?entityType=DocumentLink&entityId={Uri.EscapeDataString("Fai:" + fai)}");
+        var entries = audited.EnumerateArray().Select(row => row.GetProperty("entry").Deserialize<AuditEntry>(CanonicalJson.Options)!).ToArray();
+        var sourceDenials = entries.Where(entry => entry.Action == "AttachFile" && entry.Outcome == "Denied").ToArray();
+        Assert.Equal(2, sourceDenials.Length);
+        Assert.All(sourceDenials, entry =>
+        {
+            Assert.Equal(program, entry.ProgramId?.Value);
+            Assert.Equal("person:" + plant.People["insp"], entry.Actor);
+            Assert.Contains("No access to the program", entry.NewValue!, StringComparison.Ordinal);
+        });
+        Assert.True((await Get(plant.As("fai-audit-reader"), "/api/kernel/audit/verify")).GetProperty("intact").GetBoolean());
         Assert.Empty((await Get(inspector, "/api/reports/business-evidence")).GetProperty("rows").EnumerateArray());
         Assert.DoesNotContain((await Get(inspector, "/api/reports/document-register")).GetProperty("rows").EnumerateArray(), r => r.GetProperty("cells")[0].GetString() == reference);
         Assert.Empty((await Get(inspector, "/api/quality/fai")).EnumerateArray());

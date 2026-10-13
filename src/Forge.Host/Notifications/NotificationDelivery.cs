@@ -1,5 +1,9 @@
 using System.Net.Http.Json;
 using Forge.Kernel.Postgres;
+using Forge.Kernel.Access;
+using Forge.Kernel.Identity;
+using Forge.Kernel.Security;
+using Forge.Kernel.WorkAssignments;
 using Microsoft.Extensions.Hosting;
 using NodaTime;
 using Npgsql;
@@ -32,7 +36,8 @@ public sealed class UnconfiguredEmailProvider : INotificationEmailProvider
 }
 
 /// <summary>Retries email independently of business commands; provider failures are durable delivery state.</summary>
-public sealed class NotificationDeliveryService(NpgsqlDataSource dataSource, INotificationEmailProvider email, TimeProvider time)
+public sealed class NotificationDeliveryService(NpgsqlDataSource dataSource, INotificationEmailProvider email, TimeProvider time,
+    IKernelUnitOfWorkFactory unitOfWork, IWorkSourceResolver sources, IForgeAuthorizer authorizer)
 {
     public async Task<int> DispatchDueAsync(int limit, CancellationToken ct)
     {
@@ -42,7 +47,8 @@ public sealed class NotificationDeliveryService(NpgsqlDataSource dataSource, INo
         {
             await using var select = new NpgsqlCommand("""
                 SELECT d.delivery_id,d.alert_id,d.person_id,d.kind,d.idempotency_key,a.state,a.severity,a.confidence,a.title,a.message,a.resolution_message,a.deep_link,
-                       r.quiet_start,r.quiet_end,r.time_zone,i.acknowledged_at,d.attempts
+                       r.quiet_start,r.quiet_end,r.time_zone,i.acknowledged_at,d.attempts,
+                       d.recipient_role,a.source_context,a.entity_type,a.entity_id,a.program_id,a.markings
                 FROM kernel.notification_delivery d
                 JOIN kernel.notification_alert a ON a.alert_id=d.alert_id
                 JOIN kernel.notification_rule r ON r.rule_id=a.rule_id
@@ -56,7 +62,7 @@ public sealed class NotificationDeliveryService(NpgsqlDataSource dataSource, INo
             await using (var reader = await select.ExecuteReaderAsync(ct))
             {
                 while (await reader.ReadAsync(ct))
-                    jobs.Add(new DeliveryJob(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7), reader.GetString(8), reader.GetString(9), reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetFieldValue<TimeOnly>(12), reader.IsDBNull(13) ? null : reader.GetFieldValue<TimeOnly>(13), reader.GetString(14), reader.IsDBNull(15) ? null : reader.GetFieldValue<DateTimeOffset>(15), reader.GetInt32(16)));
+                    jobs.Add(new DeliveryJob(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7), reader.GetString(8), reader.GetString(9), reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetFieldValue<TimeOnly>(12), reader.IsDBNull(13) ? null : reader.GetFieldValue<TimeOnly>(13), reader.GetString(14), reader.IsDBNull(15) ? null : reader.GetFieldValue<DateTimeOffset>(15), reader.GetInt32(16), reader.GetString(17), reader.GetString(18), reader.GetString(19), reader.GetString(20), reader.IsDBNull(21) ? null : reader.GetGuid(21), (DataMarking)reader.GetInt32(22)));
             }
             foreach (var job in jobs)
             {
@@ -88,6 +94,11 @@ public sealed class NotificationDeliveryService(NpgsqlDataSource dataSource, INo
             var body = job.Kind == "Resolution" ? job.ResolutionMessage ?? "The condition has cleared." : job.Message;
             try
             {
+                if (!await CanDeliverAsync(job, ct))
+                {
+                    await CompleteAsync(job.DeliveryId, "Suppressed", "Recipient no longer has current access to this notification's source.", ct);
+                    continue;
+                }
                 await email.SendAsync(new NotificationEmailMessage(job.PersonId, subject, body, job.DeepLink, job.Severity, job.Confidence), job.IdempotencyKey, ct);
                 await CompleteAsync(job.DeliveryId, "Sent", null, ct);
             }
@@ -98,6 +109,16 @@ public sealed class NotificationDeliveryService(NpgsqlDataSource dataSource, INo
             }
         }
         return jobs.Count;
+    }
+
+    private async Task<bool> CanDeliverAsync(DeliveryJob job, CancellationToken ct)
+    {
+        await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
+        var principal = await uow.People.LoadPrincipalAsync(new PersonId(job.PersonId), ct);
+        if (principal is not { IsActive: true } || !principal.Roles.Contains(job.RecipientRole)
+            || job.ProgramId is { } program && !principal.Programs.Contains(new ProgramId(program))
+            || (job.Markings & ~principal.Markings) != DataMarking.None) return false;
+        return await NotificationSourceAccess.CanSeeAsync(uow, sources, authorizer, principal, job.EntityType, job.EntityId, ct);
     }
 
     private static DateTimeOffset? QuietUntil(DeliveryJob job, DateTimeOffset now)
@@ -139,7 +160,8 @@ public sealed class NotificationDeliveryService(NpgsqlDataSource dataSource, INo
 
     private sealed record DeliveryJob(Guid DeliveryId, Guid AlertId, Guid PersonId, string Kind, string IdempotencyKey, string State,
         string Severity, string Confidence, string Title, string Message, string? ResolutionMessage, string DeepLink,
-        TimeOnly? QuietStart, TimeOnly? QuietEnd, string TimeZone, DateTimeOffset? AcknowledgedAt, int Attempts);
+        TimeOnly? QuietStart, TimeOnly? QuietEnd, string TimeZone, DateTimeOffset? AcknowledgedAt, int Attempts,
+        string RecipientRole, string SourceContext, string EntityType, string EntityId, Guid? ProgramId, DataMarking Markings);
 }
 
 public sealed class NotificationDeliveryWorker(NotificationDeliveryService service, TimeProvider time, ILogger<NotificationDeliveryWorker> logger) : BackgroundService

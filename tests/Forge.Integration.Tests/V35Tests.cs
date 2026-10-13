@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Npgsql;
 
 namespace Forge.Integration.Tests;
 
@@ -53,6 +54,97 @@ public sealed class V35Tests(PostgresFixture postgres)
         {
             await plant.Ok(plant.Engineer, "/api/execution/reason-codes", new { code, kind, category, description });
         }
+    }
+
+    [Fact]
+    public async Task Packed_quantity_uses_actual_order_lots_counts_container_shipment_once_and_clears_after_shipping()
+    {
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
+        await plant.Person("packing-kiosk", "ShopFloorTerminal");
+        await plant.Person("packing-shipper", "Shipper");
+        var engineer = plant.Engineer;
+        var stores = plant.As("stores");
+        var kiosk = plant.As("packing-kiosk");
+        const string part = "PACKED-LOT";
+        const string badge = "B-PACK-DANA";
+        await plant.Ok(engineer, "/api/engineering/items", new
+        {
+            partNumber = part, description = "Tracked production packing regression", unitOfMeasure = "EA",
+            makeBuy = "Make", leadTimeDays = 1, lotTracked = true, serialized = false,
+        });
+        await plant.Ok(engineer, $"/api/engineering/items/{part}/revisions", new { revision = "A" });
+        await plant.Ok(engineer, $"/api/engineering/items/{part}/revisions/A/routing", new
+        {
+            sequence = 10, description = "Assemble", workCenterCode = "ASSY-WC", activityCode = "ASSEMBLE",
+            eligibleMachines = Array.Empty<string>(), requiredQualifications = Array.Empty<string>(),
+            setupMinutes = 0m, runMinutesPerUnit = 1m, crewSize = 1,
+        });
+        await plant.Ok(plant.Approver, $"/api/engineering/items/{part}/revisions/A/release", new { reason = "Independent reviewed production routing" });
+        await plant.Ok(engineer, "/api/resources/shifts", new
+        {
+            code = "PACK-ALL", siteCode = "PLANT1", name = "Packing regression shift",
+            start = "00:00:00", durationMinutes = 1440, days = new[] { 1, 2, 3, 4, 5, 6, 7 },
+        });
+        await plant.Ok(engineer, "/api/resources/work-centers/ASSY-WC/shifts", new { shiftCode = "PACK-ALL" });
+        await plant.Ok(engineer, $"/api/workforce/workers/{plant.People["dana"]}/shift", new { shiftCode = "PACK-ALL" });
+        await plant.Ok(plant.Admin, $"/api/workforce/people/{plant.People["dana"]}/badge", new { badge });
+        await plant.Ok(kiosk, "/api/shopfloor/clock-in", new { badge });
+        async Task<long> Produce(decimal quantity, string lot)
+        {
+            var order = Id(await plant.Ok(engineer, "/api/orders/", new { partNumber = part, quantity, dueDate = Day(10), priority = 3 }));
+            await plant.Ok(planner, $"/api/orders/{order}/release", new { reason = "Independent production release" });
+            await plant.Ok(kiosk, "/api/shopfloor/start", new { badge, orderNumber = order, sequence = 10 });
+            await plant.Ok(kiosk, "/api/shopfloor/report", new { badge, orderNumber = order, sequence = 10, good = quantity, scrap = 0m, complete = true });
+            await plant.Ok(stores, "/api/inventory/production-receipts", new { orderNumber = order, quantity, locationCode = "STORES", lotNumber = lot });
+            return order;
+        }
+        var mine = await Produce(20, "PACK-OWN");
+        var other = await Produce(10, "PACK-OTHER");
+        foreach (var (code, lot, quantity) in new[] { ("PACK-MINE", "PACK-OWN", 4m), ("PACK-OTHER", "PACK-OTHER", 6m) })
+        {
+            await plant.Ok(stores, "/api/inventory/containers", new { code, kind = "Carton", reason = "Record physical packing" });
+            await plant.Ok(stores, $"/api/inventory/containers/{code}/contents", new { partNumber = part, quantity, locationCode = "STORES", lotNumber = lot, reason = "Pack identified produced lot" });
+            await plant.Ok(stores, $"/api/inventory/containers/{code}/seal", new { reason = "Checked actual contents" });
+        }
+        await using (var connection = new NpgsqlConnection(app.ConnectionString))
+        {
+            await connection.OpenAsync();
+            // Valid unrelated empty containers put the produced lots beyond the ordinary
+            // 500-row screen window; an exact order quantity must still use its source lots.
+            await using var heads = new NpgsqlCommand("""
+                INSERT INTO inventory.container(code,kind,status,created_by,created_at)
+                SELECT 'PACK-UNRELATED-'||i,'Carton','Open','fixture:packing',now()+interval '1 minute'
+                FROM generate_series(1,501) AS series(i)
+                """, connection);
+            Assert.Equal(501, await heads.ExecuteNonQueryAsync());
+        }
+        decimal State(JsonElement states, string name) => states.GetProperty("states").EnumerateArray().Single(s => s.GetProperty("state").GetString() == name).GetProperty("quantity").GetDecimal();
+        var before = await Get(planner, $"/api/orders/{mine}/quantity-states");
+        Assert.Equal((4m, 20m), (State(before, "Packed"), State(before, "Released")));
+        Assert.Equal(6m, State(await Get(planner, $"/api/orders/{other}/quantity-states"), "Packed"));
+        var linked = Id(await plant.Ok(stores, "/api/inventory/shipments", new
+        {
+            customer = "Packing customer", containerCode = "PACK-MINE",
+            lines = new[] { new { partNumber = part, quantity = 4m, locationCode = "STORES", lotNumber = "PACK-OWN" } },
+            reason = "Associate already packed container",
+        }));
+        await plant.Ok(stores, $"/api/inventory/shipments/{linked}/pack", new { reason = "Check linked shipment" });
+        Assert.Equal(4m, State(await Get(planner, $"/api/orders/{mine}/quantity-states"), "Packed"));
+        var loose = Id(await plant.Ok(stores, "/api/inventory/shipments", new
+        {
+            customer = "Packing customer",
+            lines = new[] { new { partNumber = part, quantity = 3m, locationCode = "STORES", lotNumber = "PACK-OWN" } },
+            reason = "Pack a separate uncontained shipment",
+        }));
+        await plant.Ok(stores, $"/api/inventory/shipments/{loose}/pack", new { reason = "Check separate shipment" });
+        Assert.Equal(7m, State(await Get(planner, $"/api/orders/{mine}/quantity-states"), "Packed"));
+        await plant.Ok(stores, $"/api/inventory/shipments/{loose}/cancel", new { reason = "Customer cancelled this separate quantity" });
+        Assert.Equal(4m, State(await Get(planner, $"/api/orders/{mine}/quantity-states"), "Packed"));
+        await plant.Ok(plant.As("packing-shipper"), $"/api/inventory/shipments/{linked}/ship", new { carrier = "Carrier", reason = "Independent shipment release" });
+        var after = await Get(planner, $"/api/orders/{mine}/quantity-states");
+        Assert.Equal((0m, 4m), (State(after, "Packed"), State(after, "Shipped")));
+        Assert.Contains(after.GetProperty("notes").EnumerateArray(), note => note.GetString()!.Contains("overlap", StringComparison.Ordinal));
     }
 
     [Fact]

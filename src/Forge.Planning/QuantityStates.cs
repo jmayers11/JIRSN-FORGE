@@ -18,7 +18,7 @@ public sealed record QuantityState(string State, QuantityStateKind Kind, decimal
 /// An order's quantity through its states (V3.5, V3 brief K): ordered, started, produced, accepted, received and
 /// shipped so far; in process, in rework, in repair, pending inspection, released, on hold, staged and packed now;
 /// and scrapped. Every figure is derived from records that are never rewritten: production reports, rework records,
-/// inspections, NCRs and the inventory ledger.
+/// inspections, NCRs, inventory ledger, containers and shipment records.
 /// </summary>
 public sealed record OrderQuantityStates(long OrderNumber, string PartNumber, string Status, IReadOnlyList<QuantityState> States, IReadOnlyList<string> Notes)
 {
@@ -31,7 +31,9 @@ public sealed record OrderQuantityStates(long OrderNumber, string PartNumber, st
         IReadOnlyList<NcrInfo> ncrs,
         IReadOnlyList<InventoryTransaction> orderLedger,
         IReadOnlyList<InventoryTransaction> partLedger,
-        IReadOnlyList<StockPosition> partPositions)
+        IReadOnlyList<StockPosition> partPositions,
+        IReadOnlyList<ContainerInfo>? containers = null,
+        IReadOnlyList<ShipmentInfo>? shipments = null)
     {
         ArgumentNullException.ThrowIfNull(order);
         ArgumentNullException.ThrowIfNull(rework);
@@ -57,7 +59,7 @@ public sealed record OrderQuantityStates(long OrderNumber, string PartNumber, st
         // In process: everything that entered and is not yet produced, scrapped or taken back for rework or repair.
         var inProcess = Math.Max(0, started - produced - scrap - openRework - openRepair);
 
-        // Accepted: passed at the order's last inspection point, plus what an approved NCR accepted as it is.
+        // Accepted: inspection/NCR acceptance, supplemented below by authorized production receipts.
         var orderInspections = inspections.Where(i => i.OrderNumber == order.OrderNumber).ToList();
         var lastPoint = orderInspections.Count == 0 ? (int?)null : orderInspections.Max(i => i.Sequence);
         var passed = orderInspections.Where(i => i.Sequence == lastPoint && i.Result == InspectionResult.Pass).Sum(i => i.QuantityInspected);
@@ -65,17 +67,21 @@ public sealed record OrderQuantityStates(long OrderNumber, string PartNumber, st
         var accepted = Math.Min(produced, passed + usedAsIs);
         if (lastPoint is null && usedAsIs == 0)
         {
-            notes.Add("No inspection recorded on this order; accepted counts inspections passed and NCR quantities accepted as they are.");
+            notes.Add("No inspection recorded on this order; acceptance comes from approved use-as-is quantities or production receipts authorized under the applicable inspection and NCR requirements.");
         }
 
         // Into stock: production receipts of this order, then where those lots are now.
         var receipts = orderLedger.Where(t => t.Kind == InventoryTransactionKind.ProductionReceipt && t.OrderNumber == order.OrderNumber && t.PartNumber == order.PartNumber).ToList();
         var received = receipts.Sum(t => t.Quantity);
+        // A production receipt is the existing authorized acceptance/release decision: the command
+        // has checked its applicable inspection points and undecided NCRs, including a policy with
+        // no required inspection. Do not show its released quantity as never accepted.
+        accepted = Math.Min(produced, Math.Max(accepted, received));
         var lots = receipts.Where(t => t.LotNumber is not null).Select(t => t.LotNumber!).ToHashSet(StringComparer.Ordinal);
-        decimal pending = 0, released = 0, hold = 0, staged = 0, shipped = 0;
+        decimal pending = 0, released = 0, hold = 0, staged = 0, shipped = 0, packed = 0;
         if (receipts.Count > 0 && lots.Count == 0)
         {
-            notes.Add($"{order.PartNumber} is not lot-tracked, so its stock is not told apart by order; only what was received is shown.");
+            notes.Add($"{order.PartNumber} is not lot-tracked, so current stock and packed quantities cannot be attributed to this order; only what was received is shown.");
         }
         else
         {
@@ -100,6 +106,26 @@ public sealed record OrderQuantityStates(long OrderNumber, string PartNumber, st
             }
 
             shipped = partLedger.Where(t => t.Kind == InventoryTransactionKind.Shipment && t.PartNumber == order.PartNumber && t.LotNumber is { } lot && lots.Contains(lot)).Sum(t => t.Quantity);
+
+            var allContainers = containers ?? [];
+            var allShipments = shipments ?? [];
+            var latestContainerShipments = allShipments.Where(s => s.ContainerCode is not null)
+                .GroupBy(s => s.ContainerCode!, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.MaxBy(s => s.ShipmentId)!, StringComparer.Ordinal);
+            bool Mine(string part, string? lot) => part == order.PartNumber && lot is not null && lots.Contains(lot);
+            // A container's content is already a physical packing record, even before sealing.
+            // Use the latest associated shipment state so a cancelled/shipped association is
+            // excluded while a legitimately reused container can have a new current shipment.
+            packed = allContainers.Where(c => c.Status != ContainerStatus.Shipped && c.ShippedAt is null
+                    && (!latestContainerShipments.TryGetValue(c.Code, out var shipment)
+                        || shipment.Status is not (ShipmentStatus.Shipped or ShipmentStatus.Cancelled)))
+                .SelectMany(c => c.Contents).Where(line => Mine(line.PartNumber, line.LotNumber)).Sum(line => line.Quantity);
+            var containerCodes = allContainers.Select(c => c.Code).ToHashSet(StringComparer.Ordinal);
+            // Linked containers and packed shipment lines describe the same quantity. Count
+            // the container once; shipments without that record supply their own packing fact.
+            packed += allShipments.Where(s => s.Status == ShipmentStatus.Packed
+                    && (s.ContainerCode is null || !containerCodes.Contains(s.ContainerCode)))
+                .SelectMany(s => s.Lines).Where(line => Mine(line.PartNumber, line.LotNumber)).Sum(line => line.Quantity);
         }
 
         var notReceived = Math.Max(0, produced - received);
@@ -108,14 +134,14 @@ public sealed record OrderQuantityStates(long OrderNumber, string PartNumber, st
             notes.Add($"{repaired:0.###} of what was produced was repaired: usable, not to the drawing.");
         }
 
-        notes.Add("Packed is recorded from V3.14 (packaging and shipping); until then it is always 0.");
+        notes.Add("Packing, quality status and location are separate dimensions: Packed can overlap Released, Hold or Staged. These quantities are not disjoint and must not be added.");
         QuantityState S(string state, QuantityStateKind kind, decimal q, string why) => new(state, kind, q, why);
         return new OrderQuantityStates(order.OrderNumber, order.PartNumber, order.Status.ToString(),
         [
             S("Ordered", QuantityStateKind.SoFar, order.Quantity, "The order quantity."),
             S("Started", QuantityStateKind.SoFar, started, $"Good and scrap reported at the first operation{(first is null ? string.Empty : $" ({first.Sequence})")}."),
             S("Produced", QuantityStateKind.SoFar, produced, $"Good reported at the last operation{(last is null ? string.Empty : $" ({last.Sequence})")}, less what was taken back for rework or repair and not returned."),
-            S("Accepted", QuantityStateKind.SoFar, accepted, "Passed at the last inspection point, plus NCR quantities approved for use as is."),
+            S("Accepted", QuantityStateKind.SoFar, accepted, "Passed at the last inspection point, approved for use as is, or recorded by an authorized production receipt after applicable Quality checks."),
             S("Received", QuantityStateKind.SoFar, received, "Received into stock from production."),
             S("Shipped", QuantityStateKind.SoFar, shipped, "Shipped from the lots this order produced."),
             S("Scrapped", QuantityStateKind.SoFar, scrap, "Scrap reported at any operation, plus scrap from rework and repair."),
@@ -126,7 +152,7 @@ public sealed record OrderQuantityStates(long OrderNumber, string PartNumber, st
             S("Pending inspection", QuantityStateKind.Now, pending, "In stock from this order, waiting for inspection."),
             S("Released", QuantityStateKind.Now, released, "In stock from this order, released by quality, not at shipping."),
             S("Hold", QuantityStateKind.Now, hold, "In stock from this order, on quality hold."),
-            S("Packed", QuantityStateKind.Now, 0, "Packed into containers (V3.14)."),
+            S("Packed", QuantityStateKind.Now, packed, "Currently in unshipped containers or packed shipments from this order's produced lots; a linked container and shipment count once, and shipped/cancelled records are excluded."),
             S("Staged", QuantityStateKind.Now, staged, "Released and at a shipping location, ready to ship."),
         ], notes);
     }

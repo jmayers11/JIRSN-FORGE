@@ -3,6 +3,7 @@ using Forge.Kernel.Postgres;
 using Forge.Kernel.Security;
 using Forge.Host.History;
 using Forge.Planning.Reporting;
+using Forge.Planning;
 using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
@@ -72,13 +73,16 @@ public static class ReportsEndpoints
             var comparison = await s.CompareAsync(principal, at1, at2, includeUnchanged ?? false, ct);
             if (authorizer.Authorize(principal, Permissions.AuditRead, ResourceRef.Of("Audit")).IsPermitted)
             {
-                var entries = await reads.QueryAuditBetweenAsync(at1, at2, HistoryAuditTypes, principal.Programs, 5000, ct);
+                var entries = await reads.QueryAuditBetweenAsync(at1, at2, HistoryAuditTypes, principal.Programs, 5000, ct, principal.Markings);
+                await using var auditSnapshot = await http.RequestServices.GetRequiredService<Forge.Kernel.Access.IKernelUnitOfWorkFactory>().BeginSnapshotAsync(ct);
+                entries = await AuditAccess.FilterAsync(auditSnapshot, entries, principal, http.RequestServices.GetRequiredService<Forge.Kernel.WorkAssignments.IWorkSourceResolver>(), authorizer, ct);
                 comparison = HorizonHistoryService.WithAudit(comparison, entries);
             }
 
             comparison = comparison with { CauseMap = await causeMap.LoadAsync(principal, at1, at2, ct) };
-
-            return Results.Ok(comparison);
+            await using var projection = await http.RequestServices.GetRequiredService<Forge.Kernel.Access.IKernelUnitOfWorkFactory>().BeginSnapshotAsync(ct);
+            var sourceAccess = await MaterialSourceVisibility.LoadAsync(projection, principal, ct, authorizer: authorizer);
+            return Results.Ok(sourceAccess.Comparison(comparison));
         }).RequireAuthorization();
     }
 

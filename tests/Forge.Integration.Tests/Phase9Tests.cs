@@ -84,10 +84,11 @@ public sealed class Phase9Tests(PostgresFixture postgres)
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
         var (plant, planner, planner2) = await PlantAsync(app);
         await plant.Person("pm", "ProgramManager");
+        await plant.Person("schedule-reviewer", "Planner");
         var (tech, ship, kiosk, eng) = (plant.As("tech"), plant.As("ship"), plant.As("kiosk"), plant.Engineer);
 
         var falcon = Guid.Parse((await plant.Ok(plant.As("pm"), "/api/programs/", new { code = "FALCON", name = "Program Falcon" })).GetProperty("entityId").GetString()!);
-        foreach (var who in new[] { "pm", "planner", "eng" })
+        foreach (var who in new[] { "pm", "planner", "eng", "schedule-reviewer" })
         {
             await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People[who]}/programs", new { programId = falcon, reason = "Falcon team" });
         }
@@ -96,7 +97,7 @@ public sealed class Phase9Tests(PostgresFixture postgres)
         var secret = await ReleasedOrderAsync(plant, planner, 5m, 12, falcon);
         await plant.Ok(tech, "/api/maintenance/machines/SLITTER-B/down", new { description = "Blade drive fault" });
         var version = Id(await plant.Ok(planner, "/api/planning/schedules", new { horizonDays = 14 }));
-        await plant.Ok(planner2, $"/api/planning/schedules/{version}/approve", new { reason = "Reviewed" });
+        await plant.Ok(plant.As("schedule-reviewer"), $"/api/planning/schedules/{version}/approve", new { reason = "Source-authorized independent review" });
 
         // A terminal has no Analyst; the status lists suggestions and says no AI is configured.
         Assert.Equal(HttpStatusCode.Forbidden, (await kiosk.PostAsJsonAsync(new Uri("/api/analyst/ask", UriKind.Relative), new { question = "What is late?" })).StatusCode);

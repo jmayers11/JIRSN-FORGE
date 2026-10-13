@@ -92,17 +92,48 @@ public sealed class V310Tests(PostgresFixture postgres)
         var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
         await plant.Person("pm", "ProgramManager");
         await plant.Person("outsider", "Planner");
+        await plant.Person("hold-auditor", "Auditor", "ProgramManager");
         var program = Guid.Parse((await plant.Ok(plant.As("pm"), "/api/programs/", new { code = "PRIVATE", name = "Private program", customer = "Customer" })).GetProperty("entityId").GetString()!);
         await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["planner"]}/programs", new { programId = program, reason = "Program team" });
+        await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["hold-auditor"]}/programs", new { programId = program, reason = "Independent current-source audit review" });
         var order = Id(await plant.Ok(planner, "/api/orders/", new { partNumber = "ROLL-100", quantity = 10m, dueDate = Day(10), priority = 3, programId = program }));
         var hold = Id(await plant.Ok(planner, "/api/holds", new { kind = "Production", targetType = "Order", targetId = order.ToString(CultureInfo.InvariantCulture), reason = "Private production review" }));
         var outsider = plant.As("outsider");
+        var auditor = plant.As("hold-auditor");
+        var url = $"/api/holds/{hold}/release";
 
         Assert.Empty((await Get(outsider, "/api/holds")).EnumerateArray());
         await Rejected(plant, outsider, $"/api/holds/{hold}/release", new { reason = "Attempt outside program" }, "hold_not_found", HttpStatusCode.NotFound);
+        await Rejected(plant, outsider, $"/api/holds/{long.MaxValue}/release", new { reason = "Absent record has the same concealed result" }, "hold_not_found", HttpStatusCode.NotFound);
         Assert.Contains((await Get(planner, "/api/holds")).EnumerateArray(), h => h.GetProperty("holdId").GetInt64() == hold && h.GetProperty("active").GetBoolean());
-        await plant.Ok(planner, $"/api/holds/{hold}/release", new { reason = "Program review complete" });
+        var release = new { reason = "Program review complete" };
+        const string releaseKey = "private-hold-release-once";
+        var completed = await planner.CommandAsync(url, release, releaseKey);
+        var completedBody = await completed.Content.ReadAsStringAsync();
+        Assert.True(completed.IsSuccessStatusCode, completedBody);
+        var repeated = await planner.CommandAsync(url, release, releaseKey);
+        Assert.True(repeated.IsSuccessStatusCode, await repeated.Content.ReadAsStringAsync());
+        Assert.Equal(completedBody, await repeated.Content.ReadAsStringAsync());
         await Rejected(plant, outsider, $"/api/holds/{hold}/release", new { reason = "Retry outside program" }, "hold_not_found", HttpStatusCode.NotFound);
+        var released = Assert.Single((await Get(auditor, "/api/holds?includeReleased=true")).EnumerateArray(), h =>
+            h.GetProperty("holdId").ValueKind == JsonValueKind.Number && h.GetProperty("holdId").GetInt64() == hold);
+        Assert.False(released.GetProperty("active").GetBoolean());
+        var releasedBytes = released.GetRawText();
+        await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["planner"]}/programs/{program}/revoke", new { reason = "Withdraw membership after the successful source release" });
+        var revokedReplay = await planner.CommandAsync(url, release, releaseKey);
+        var revokedBody = await revokedReplay.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.NotFound, revokedReplay.StatusCode);
+        Assert.Equal("hold_not_found", JsonDocument.Parse(revokedBody).RootElement.GetProperty("code").GetString());
+        Assert.Equal(releasedBytes, Assert.Single((await Get(auditor, "/api/holds?includeReleased=true")).EnumerateArray(), h =>
+            h.GetProperty("holdId").ValueKind == JsonValueKind.Number && h.GetProperty("holdId").GetInt64() == hold).GetRawText());
+        var audit = (await Get(auditor, $"/api/kernel/audit?entityType=Hold&entityId={hold}")).EnumerateArray()
+            .Select(row => row.GetProperty("entry")).Where(entry => entry.GetProperty("action").GetString() == "ReleaseHold").ToArray();
+        Assert.Single(audit, entry => entry.GetProperty("outcome").GetString() == "Succeeded");
+        var denials = audit.Where(entry => entry.GetProperty("outcome").GetString() == "Denied").ToArray();
+        Assert.Equal(3, denials.Length);
+        Assert.All(denials, entry => Assert.Equal(program, entry.GetProperty("programId").GetProperty("value").GetGuid()));
+        Assert.Contains(denials, entry => entry.GetProperty("actor").GetString() == "person:" + plant.People["planner"]);
+        Assert.True((await Get(plant.Admin, "/api/kernel/audit/verify")).GetProperty("intact").GetBoolean());
     }
 
     [Fact]
