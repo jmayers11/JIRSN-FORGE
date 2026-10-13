@@ -1,6 +1,8 @@
 # Forge V4 architecture review package
 
-Status: **APPROVED TO START AFTER V3 COMPLETION.** Product Owner instruction, 2026-10-13: “V4 approved to start after V3 is completed.” The architecture review was completed on 2026-10-12; its approval stop is now superseded conditional on finishing and verifying V3 first. Licensed normative verification and pending design choices retain their explicit limits.
+Status: **IMPLEMENTATION STARTED — 2026-10-13, AFTER VERIFIED V3 COMPLETION.** Product Owner instruction: “V4 approved to start after V3 is completed.” V3 source `c879a9e` and completion records `ac2fea3` are committed. The historical architecture review stop is superseded. Licensed normative verification and organization-specific policy decisions retain their explicit limits.
+
+Continue with the [implementation plan](<C:/Users/wrest/Documents/JISRN Forge/docs/v4/implementation-plan.md>). The first current-access canonical resolver for existing production orders/operations is implemented and locally verified by a separate 379-test focused gate. The remaining V4.1 material, staging, labels and scan-to-execute gates are explicit. This is not a completed V4 release.
 
 Start with the [Architecture Impact Review](<C:/Users/wrest/Documents/JISRN Forge/docs/v4/architecture-impact-review.md>). Its twenty numbered sections correspond to all twenty requested deliverables. It includes the provisional ISO clause/transition maps, source reuse and actual gaps, domains/governance/evidence, scanning, database/API/UI/security/notification impacts, metrics, scenarios A–L, four organizational archetypes, dependency map and twenty pending decisions.
 

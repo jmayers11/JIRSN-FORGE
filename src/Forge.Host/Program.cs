@@ -15,6 +15,7 @@ using Forge.Host.Notifications;
 using Forge.Host.WorkInbox;
 using Forge.Host.Integrity;
 using Forge.Host.History;
+using Forge.Host.Identification;
 using Forge.Kernel.Access;
 using Forge.Kernel.Postgres;
 using Microsoft.AspNetCore.Authentication;
@@ -57,6 +58,7 @@ builder.Services.AddSingleton<WorkInboxStore>();
 builder.Services.AddSingleton<WorkSourceResolver>();
 builder.Services.AddSingleton<Forge.Kernel.WorkAssignments.IWorkSourceResolver>(sp => sp.GetRequiredService<WorkSourceResolver>());
 builder.Services.AddSingleton<Forge.Kernel.Commands.ICommandSourceResolver>(sp => sp.GetRequiredService<WorkSourceResolver>());
+builder.Services.AddSingleton<IdentificationResolver>();
 builder.Services.AddSingleton<IntegrityExceptionReadStore>();
 builder.Services.AddSingleton<CauseMapReadStore>();
 builder.Services.AddSingleton<NotificationDeliveryService>();
@@ -209,6 +211,7 @@ app.MapGet("/health/ready", async (NpgsqlDataSource db, CancellationToken ct) =>
 });
 
 app.MapUiEndpoints();
+app.MapIdentificationEndpoints();
 app.MapKernelEndpoints();
 app.MapScimEndpoints();
 app.MapOperationsEndpoints();
