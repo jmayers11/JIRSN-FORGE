@@ -50,7 +50,7 @@ public sealed record MaterialTaskRequest(MaterialTaskKind Kind, long? OrderNumbe
 
 public sealed record AllocateRequest(string FromLocation, string? LotNumber, string? Reason);
 
-public sealed record PickRequest(string ScannedLocation, string? ScannedLot, decimal? Quantity, string? Reason);
+public sealed record PickRequest(string ScannedLocation, string? ScannedLot, decimal? Quantity, string? Reason, ScannedMaterialIdentity? ScannedMaterial = null);
 
 public sealed record DeliverRequest(string ScannedLocation, string? Reason);
 
@@ -353,7 +353,7 @@ public static class MaterialsEndpoints
         api.MapPost("/tasks/{id:long}/allocate", (HttpContext http, long id, AllocateRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AllocateMaterialAsync(new AllocateMaterial(id, b.FromLocation, b.LotNumber), c, ct)));
         api.MapPost("/tasks/{id:long}/pick", (HttpContext http, long id, PickRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.PickMaterialAsync(new PickMaterial(id, b.ScannedLocation, b.ScannedLot, b.Quantity), c, ct)));
+            Command(http, b.Reason, c => s.PickMaterialAsync(new PickMaterial(id, b.ScannedLocation, b.ScannedLot, b.Quantity, b.ScannedMaterial), c, ct)));
         api.MapPost("/tasks/{id:long}/deliver", (HttpContext http, long id, DeliverRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DeliverMaterialAsync(new DeliverMaterial(id, b.ScannedLocation), c, ct)));
         api.MapPost("/tasks/{id:long}/cancel", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>

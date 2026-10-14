@@ -65,11 +65,13 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
         await using (var uow = await unitOfWork.BeginAsync(ct))
         {
             var now = time.GetUtcNow();
+            var sourceAuthorityResolved = false;
             try
             {
                 var current = authority is not null ? await authority(uow, now)
                     : sources is not null ? await sources.ResolveAsync(uow, spec, context, now, ct)
                     : new CommandAuthority(spec.Resource);
+                sourceAuthorityResolved = true;
                 spec = spec with { Resource = current.Resource };
                 foreach (var resource in new[] { current.Resource }.Concat(current.AdditionalResources ?? []))
                 {
@@ -128,10 +130,14 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
             }
             catch (CommandRejectedException ex)
             {
+                if (!sourceAuthorityResolved && authority is not null && sources is not null)
+                    spec = spec with { Resource = (await sources.ResolveAsync(uow, spec, context, now, ct)).Resource };
                 rejection = ex; // the transaction rolls back on dispose
             }
             catch (ForgeAuthorizationException ex)
             {
+                if (!sourceAuthorityResolved && authority is not null && sources is not null)
+                    spec = spec with { Resource = (await sources.ResolveAsync(uow, spec, context, now, ct)).Resource };
                 rejectedAuthority = ex.Decision;
             }
         }

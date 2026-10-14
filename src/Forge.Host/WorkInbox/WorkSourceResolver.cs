@@ -14,12 +14,14 @@ using Forge.Procurement.Contracts;
 using Forge.Projects;
 using Forge.Projects.Contracts;
 using Forge.Quality.Contracts;
+using Forge.Quality.Qms;
+using Forge.Host.History;
 using Forge.Resources.Contracts;
 
 namespace Forge.Host.WorkInbox;
 
 /// <summary>Inbox context comes from the same owning records as the eventual domain command.</summary>
-public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver holdTargets, IDocumentTargetResolver documentTargets) : IWorkSourceResolver, ICommandSourceResolver
+public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver holdTargets, IDocumentTargetResolver documentTargets, QmsOptions? qmsOptions = null) : IWorkSourceResolver, ICommandSourceResolver
 {
     public async Task<CommandAuthority> ResolveAsync(IKernelUnitOfWork uow, CommandSpec spec, CommandContext context, DateTimeOffset now, CancellationToken ct)
     {
@@ -56,6 +58,14 @@ public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver ho
         var number = long.TryParse(id.Split('/')[0], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
         switch (type)
         {
+            case "QmsRecord":
+            case "QmsRevision":
+                var qmsSubject = QmsSourceAccess.Subject(type, id);
+                if (qmsSubject is null || qmsOptions?.Configured != true) return null;
+                var qmsRecord = await uow.Store<IQmsLookup>().FindAsync(qmsSubject.Value.Code, ct);
+                if (qmsRecord is null || qmsRecord.OrganizationCode != qmsOptions.OrganizationCode
+                    || (qmsSubject.Value.Revision is { } qmsRevision && !qmsRecord.Revisions.Any(row => row.Revision == qmsRevision))) return null;
+                return new(Permissions.QmsRead, [QmsService.Resource(qmsRecord) with { Type = type, Id = id }]);
             case "Order":
             case "ProductionOrder":
             case "OrderOperation":
@@ -124,6 +134,7 @@ public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver ho
             case "Outage":
                 var outage = await uow.Store<IMaintenanceLookup>().FindOutageAsync(number, ct);
                 return outage is null ? null : new(Permissions.MaintenanceRead, [await MachineResourceAsync(uow, "Outage", id, outage.MachineCode, ct)], outage.Status == OutageStatus.Proposed);
+            case "MaterialTask":
             case "MaterialRequest":
                 var task = await uow.Store<IInventoryLookup>().FindMaterialTaskAsync(number, ct);
                 if (task is null) return null;

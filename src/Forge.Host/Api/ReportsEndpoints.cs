@@ -75,7 +75,8 @@ public static class ReportsEndpoints
             {
                 var entries = await reads.QueryAuditBetweenAsync(at1, at2, HistoryAuditTypes, principal.Programs, 5000, ct, principal.Markings);
                 await using var auditSnapshot = await http.RequestServices.GetRequiredService<Forge.Kernel.Access.IKernelUnitOfWorkFactory>().BeginSnapshotAsync(ct);
-                entries = await AuditAccess.FilterAsync(auditSnapshot, entries, principal, http.RequestServices.GetRequiredService<Forge.Kernel.WorkAssignments.IWorkSourceResolver>(), authorizer, ct);
+                entries = await AuditAccess.FilterAsync(auditSnapshot, entries, principal, http.RequestServices.GetRequiredService<Forge.Kernel.WorkAssignments.IWorkSourceResolver>(), authorizer,
+                    http.RequestServices.GetRequiredService<Forge.Quality.Qms.QmsService>(), ct);
                 comparison = HorizonHistoryService.WithAudit(comparison, entries);
             }
 

@@ -136,6 +136,15 @@ public static class Permissions
     public const string QualityDisposition = "quality.disposition";
     public const string QualityApprove = "quality.approve";
     public const string QualityRead = "quality.read";
+    /// <summary>Decide the exact product quantity/identity scope released by Quality, separately from physical shipment.</summary>
+    public const string QualityProductRelease = "quality.product.release";
+
+    /// <summary>Read governed QMS records in their actual organization/facility/program scope.</summary>
+    public const string QmsRead = "quality.qms.read";
+    public const string QmsManage = "quality.qms.manage";
+    public const string QmsReview = "quality.qms.review";
+    public const string QmsApprove = "quality.qms.approve";
+    public const string QmsPublish = "quality.qms.publish";
 
     public const string ShippingRelease = "inventory.shipping.ship";
 
@@ -204,6 +213,10 @@ public static class Roles
     /// <summary>Approves use-as-is dispositions and verifies corrective actions owned by someone else.</summary>
     public const string QualityManager = "QualityManager";
 
+    public const string QmsAuthor = "QmsAuthor";
+    public const string QmsReviewer = "QmsReviewer";
+    public const string QmsApprover = "QmsApprover";
+
     /// <summary>Confirms shipments leave the building. Never the person who packed them.</summary>
     public const string Shipper = "Shipper";
 
@@ -232,6 +245,9 @@ public static class Roles
     {
         [SecurityAdministrator] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.AccessManage, Permissions.PeopleRead, Permissions.AuditRead, Permissions.BadgesManage, Permissions.ProgramsDirectory],
         [Auditor] = [Permissions.HoldsRead, Permissions.AuditRead, Permissions.PeopleRead, Permissions.ProjectsRead],
+        [QmsAuthor] = [Permissions.QmsRead, Permissions.QmsManage, Permissions.EngineeringRead],
+        [QmsReviewer] = [Permissions.QmsRead, Permissions.QmsReview, Permissions.EngineeringRead],
+        [QmsApprover] = [Permissions.QmsRead, Permissions.QmsApprove, Permissions.QmsPublish, Permissions.EngineeringRead],
         [ManufacturingEngineer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ToolsManage, Permissions.ProductionReasonsManage, Permissions.RootCauseConfirm, Permissions.AssetsManage, Permissions.ObsolescenceRecord, Permissions.ResourcesManage, Permissions.ResourcesRead, Permissions.WorkforceManage, Permissions.WorkforceRead, Permissions.SafetyRulesRead, Permissions.CompetencyRead, Permissions.ReadinessRead, Permissions.EngineeringManage, Permissions.EngineeringRead, Permissions.OrdersManage, Permissions.OrdersRead, Permissions.MaintenanceRead, Permissions.ScheduleRead, Permissions.ShopFloorRead, Permissions.ItemPlanningManage, Permissions.InventoryRead, Permissions.MaterialPlanRead, Permissions.PurchasingRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.CotsPropose, Permissions.DocumentsManage, Permissions.DocumentsAttach, Permissions.ChangesManage, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.RequisitionRaise, Permissions.ProjectsRead, Permissions.ProjectsManage],
         [MaintenanceTechnician] = [Permissions.ToolsCalibrate, Permissions.ToolsHandle, Permissions.DowntimeReport, Permissions.MaintenancePlan, Permissions.MaintenanceRead, Permissions.MaintenanceWork, Permissions.ResourcesRead, Permissions.SparesIssue, Permissions.InventoryRead, Permissions.EngineeringRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach],
         [MaintenancePlanner] = [Permissions.HoldsRead, Permissions.ToolsManage, Permissions.ToolsHandle, Permissions.RootCauseConfirm, Permissions.OutageApprove, Permissions.AssetsManage, Permissions.MroManage, Permissions.ObsolescenceRecord, Permissions.MaintenanceProgram, Permissions.InventoryRead, Permissions.MaintenanceApprove, Permissions.MaintenancePlan, Permissions.MaintenanceRead, Permissions.DowntimeReport, Permissions.ResourcesRead, Permissions.ScheduleRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.CotsPropose, Permissions.EngineeringRead, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.MaintenanceAlternatesApprove, Permissions.RequisitionRaise, Permissions.DemandManage, Permissions.ProjectsRead, Permissions.ProjectsManage],

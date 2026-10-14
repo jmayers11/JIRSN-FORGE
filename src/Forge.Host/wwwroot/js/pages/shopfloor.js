@@ -1,8 +1,9 @@
-import { command, tryGet } from '../api.js';
+import { command, get, tryGet } from '../api.js';
 import { img } from '../icons.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, relative, toast, emptyBlock, manageDialogFocus, liveRegion } from '../ui.js';
 import { who } from '../people.js';
 import { isServiceUnavailable, createTerminalSession } from '../terminal-state.mjs';
+import { mountIdentificationInput, workQueueSelection } from '../identification-input.mjs';
 
 // The shop-floor terminal. A badge scanner types the badge and presses Enter (keyboard wedge); any
 // reader that does that works. The badge is held in memory only for this interaction and is
@@ -18,6 +19,7 @@ export async function shopFloorPage(page, ctx) {
   const idleMs = (Number.isInteger(idleTimeoutSeconds) && idleTimeoutSeconds >= 1 && idleTimeoutSeconds <= 3600 ? idleTimeoutSeconds : 60) * 1000;
   let idle = null;
   const dialogs = new Set();
+  let workIdentification = null;
 
   const canUse = ctx.me.roles.some(r => ['ShopFloorTerminal', 'Supervisor'].includes(r));
   if (!canUse) {
@@ -105,6 +107,7 @@ export async function shopFloorPage(page, ctx) {
 
   function render() {
     if (terminal.disposed) return;
+    workIdentification?.dispose(); workIdentification = null;
     operatorStatus.textContent = terminal.person ? `Current operator: ${terminal.person.displayName}.` : 'Terminal locked. Scan your badge.';
     if (!terminal.person) {
       page.innerHTML = `
@@ -161,6 +164,7 @@ export async function shopFloorPage(page, ctx) {
       </section>` : ''}
       ${p.isWorker && !labor ? `
       <section class="panel"><header><h2>Work you can start</h2><span class="spacer"></span><span class="muted">your work center, assignment and schedule</span></header>
+        <div data-work-identification></div><div data-identified-work></div>
         ${p.queue.length ? `<table class="table"><thead><tr><th>Order</th><th>Operation</th><th>Machine</th><th>Progress</th><th>Scheduled</th><th></th></tr></thead><tbody>
         ${p.queue.map((q, i) => `<tr>
           <td><b>#${q.orderNumber}</b><br><span class="muted">${esc(q.partNumber)} · due ${esc(fmtDate(q.dueDate))}</span></td>
@@ -198,6 +202,28 @@ export async function shopFloorPage(page, ctx) {
       start(q, sel ? sel.value : null, null, session);
     }));
     $$('[data-evaluate]', page).forEach(b => b.addEventListener('click', () => evaluate(Number(b.dataset.evaluate), session)));
+    const input = $('[data-work-identification]', page), selected = $('[data-identified-work]', page);
+    if (input) workIdentification = mountIdentificationInput(input, {
+      id: 'work-identification', label: 'Order or operation code (optional scan)', kinds: ['order', 'operation'],
+      loadConfig: () => get('/api/identification/config'), resolve: code => command('/api/identification/resolve', { code }),
+      isCurrent: () => terminal.isCurrent(session) && !terminal.busy,
+      onUnavailable: lockForOutage,
+      onClear: () => { selected.innerHTML = ''; },
+      onSelect: subject => {
+        const choices = workQueueSelection(subject, p.queue);
+        selected.innerHTML = `<div class="notice">Selected work. Choose the operation and press Start.</div>${choices.map((q, i) => `
+          <div class="field"><b>Order #${q.orderNumber}, operation ${q.operation.sequence}</b> — ${esc(q.operation.description)}
+          ${q.operation.eligibleMachines.length > 1 ? `<label for="identified-machine-${i}">Machine</label><select class="select" id="identified-machine-${i}">${q.operation.eligibleMachines.map(m => `<option ${m === q.scheduledMachine ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>` : ` · ${esc(q.operation.eligibleMachines[0] ?? '—')}`}
+          ${q.hold ? `<span class="pill bad">On hold</span><div class="faint">${esc(q.hold)}</div>` : `<button class="btn primary" data-identified-start="${i}" ${clocked ? '' : 'disabled title="Clock in first"'}>Start selected work</button>`}</div>`).join('')}`;
+        $$('[data-identified-start]', selected).forEach(button => button.addEventListener('click', () => {
+          if (!terminal.isCurrent(session) || terminal.busy || !workIdentification?.stage.selected) return;
+          const index = Number(button.dataset.identifiedStart), q = choices[index];
+          const machine = $(`#identified-machine-${index}`, selected)?.value ?? null;
+          workIdentification.stage.clear();
+          start(q, machine, null, session);
+        }));
+      },
+    });
   }
 
   async function start(q, machine, trainerBadge, session) {
@@ -331,6 +357,7 @@ export async function shopFloorPage(page, ctx) {
   return { dispose: () => {
     clearTimeout(idle);
     terminal.dispose();
+    workIdentification?.dispose(); workIdentification = null;
     closeDialogs();
     operatorStatus.remove();
     page.removeEventListener('click', onActivity);

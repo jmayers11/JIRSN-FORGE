@@ -4,6 +4,7 @@ using Forge.Kernel.Access;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.WorkAssignments;
+using Forge.Quality.Qms;
 using Microsoft.Extensions.Hosting;
 using NodaTime;
 using Npgsql;
@@ -37,7 +38,7 @@ public sealed class UnconfiguredEmailProvider : INotificationEmailProvider
 
 /// <summary>Retries email independently of business commands; provider failures are durable delivery state.</summary>
 public sealed class NotificationDeliveryService(NpgsqlDataSource dataSource, INotificationEmailProvider email, TimeProvider time,
-    IKernelUnitOfWorkFactory unitOfWork, IWorkSourceResolver sources, IForgeAuthorizer authorizer)
+    IKernelUnitOfWorkFactory unitOfWork, IWorkSourceResolver sources, IForgeAuthorizer authorizer, QmsService qms)
 {
     public async Task<int> DispatchDueAsync(int limit, CancellationToken ct)
     {
@@ -118,7 +119,7 @@ public sealed class NotificationDeliveryService(NpgsqlDataSource dataSource, INo
         if (principal is not { IsActive: true } || !principal.Roles.Contains(job.RecipientRole)
             || job.ProgramId is { } program && !principal.Programs.Contains(new ProgramId(program))
             || (job.Markings & ~principal.Markings) != DataMarking.None) return false;
-        return await NotificationSourceAccess.CanSeeAsync(uow, sources, authorizer, principal, job.EntityType, job.EntityId, ct);
+        return await NotificationSourceAccess.CanSeeAsync(uow, sources, authorizer, qms, principal, job.EntityType, job.EntityId, ct);
     }
 
     private static DateTimeOffset? QuietUntil(DeliveryJob job, DateTimeOffset now)

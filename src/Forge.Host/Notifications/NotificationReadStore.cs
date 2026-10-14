@@ -1,12 +1,13 @@
 using Forge.Kernel.Security;
 using Forge.Kernel.Access;
 using Forge.Kernel.WorkAssignments;
+using Forge.Quality.Qms;
 using Npgsql;
 
 namespace Forge.Host.Notifications;
 
 public sealed class NotificationReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWorkFactory unitOfWork,
-    IWorkSourceResolver sources, IForgeAuthorizer authorizer)
+    IWorkSourceResolver sources, IForgeAuthorizer authorizer, QmsService qms)
 {
     public async Task<IReadOnlyList<NotificationInboxItem>> InboxAsync(ForgePrincipal principal, bool openOnly, bool unreadOnly, CancellationToken ct)
     {
@@ -36,7 +37,7 @@ public sealed class NotificationReadStore(NpgsqlDataSource dataSource, IKernelUn
         await using var sourceSnapshot = await unitOfWork.BeginSnapshotAsync(ct);
         var visible = new List<NotificationInboxItem>();
         foreach (var item in result)
-            if (await NotificationSourceAccess.CanSeeAsync(sourceSnapshot, sources, authorizer, principal, item.EntityType, item.EntityId, ct)) visible.Add(item);
+            if (await NotificationSourceAccess.CanSeeAsync(sourceSnapshot, sources, authorizer, qms, principal, item.EntityType, item.EntityId, ct)) visible.Add(item);
         return visible;
     }
 
@@ -65,7 +66,7 @@ public sealed class NotificationReadStore(NpgsqlDataSource dataSource, IKernelUn
         if (!await reader.ReadAsync(ct)) return (null, false);
         var program = reader.IsDBNull(0) ? (Guid?)null : reader.GetGuid(0);
         await using var sourceSnapshot = await unitOfWork.BeginSnapshotAsync(ct);
-        var visible = await NotificationSourceAccess.CanSeeAsync(sourceSnapshot, sources, authorizer, principal, reader.GetString(1), reader.GetString(2), ct);
+        var visible = await NotificationSourceAccess.CanSeeAsync(sourceSnapshot, sources, authorizer, qms, principal, reader.GetString(1), reader.GetString(2), ct);
         return (program, visible);
     }
 

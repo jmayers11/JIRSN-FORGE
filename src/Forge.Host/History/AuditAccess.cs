@@ -5,6 +5,7 @@ using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.WorkAssignments;
 using Forge.Planning;
+using Forge.Quality.Qms;
 
 namespace Forge.Host.History;
 
@@ -13,7 +14,7 @@ public static class AuditAccess
 {
     public static async Task<IReadOnlyList<ChainedAuditEntry>> FilterAsync(IKernelUnitOfWork uow,
         IReadOnlyList<ChainedAuditEntry> entries, ForgePrincipal principal, IWorkSourceResolver sources,
-        IForgeAuthorizer authorizer, CancellationToken ct)
+        IForgeAuthorizer authorizer, QmsService qms, CancellationToken ct)
     {
         var visible = new List<ChainedAuditEntry>();
         var planningSources = await MaterialSourceVisibility.LoadAsync(uow, principal, ct, authorizer: authorizer);
@@ -26,12 +27,19 @@ public static class AuditAccess
             // Person snapshots describe assigned clearance/program membership, rather than
             // classification/ownership of the administrative person record itself.
             var sourceSnapshot = entry.EntityType != "Person";
+            var qmsSource = QmsSourceAccess.IsQms(entry.EntityType);
+            var source = qmsSource ? await sources.ResolveAsync(uow, entry.EntityType, entry.EntityId, ct) : null;
+            // QMS facility ownership is immutable. Resolve that dimension before evaluating
+            // a facility-scoped audit grant; historical program/marking bytes still apply.
             var recorded = new ResourceRef(entry.EntityType, entry.EntityId, entry.ProgramId,
-                entry.Markings | (sourceSnapshot ? SnapshotMarkings(entry.OldValue) | SnapshotMarkings(entry.NewValue) : DataMarking.None));
+                entry.Markings | (sourceSnapshot ? SnapshotMarkings(entry.OldValue) | SnapshotMarkings(entry.NewValue) : DataMarking.None),
+                FacilityId: source is { Resources.Count: > 0 } ? source.Resources[0].FacilityId : null);
             if (!authorizer.Authorize(principal, Permissions.AuditRead, recorded).IsPermitted) continue;
             if (sourceSnapshot && SnapshotPrograms(entry.OldValue).Concat(SnapshotPrograms(entry.NewValue))
                 .Any(program => !authorizer.Authorize(principal, Permissions.AuditRead, recorded with { Program = program }).IsPermitted)) continue;
-            var source = await sources.ResolveAsync(uow, entry.EntityType, entry.EntityId, ct);
+            if (!qmsSource) source = await sources.ResolveAsync(uow, entry.EntityType, entry.EntityId, ct);
+            if (qmsSource
+                && !await QmsSourceAccess.CanSeeAsync(uow, qms, principal, entry.EntityType, entry.EntityId, ct)) continue;
             if (source is null && RequiresSource(entry.EntityType)) continue;
             if (source is not null && source.Resources.Any(resource => !authorizer.Authorize(principal, Permissions.AuditRead, resource).IsPermitted)) continue;
             visible.Add(row);
@@ -40,7 +48,8 @@ public static class AuditAccess
     }
 
     private static bool RequiresSource(string type) => type is "Document" or "DocumentRevision" or "DocumentLink"
-        or "Ncr" or "NCR" or "Capa" or "CAPA" or "Hold" or "Order" or "ProductionOrder" or "OrderOperation";
+        or "Ncr" or "NCR" or "Capa" or "CAPA" or "Hold" or "Order" or "ProductionOrder" or "OrderOperation"
+        or "QmsRecord" or "QmsRevision";
 
     // Early entries did not populate the existing markings column. Their canonical snapshots
     // retain explicit classification; use it for visibility without modifying the hash chain.

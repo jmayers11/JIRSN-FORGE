@@ -1,12 +1,14 @@
-import { tryGet, command } from '../api.js';
+import { get, tryGet, command } from '../api.js';
 import { img } from '../icons.js';
 import { who } from '../people.js';
-import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from '../ui.js';
+import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithReason, toast, manageDialogFocus } from '../ui.js';
 import { formModal, qty, canAction } from '../forms.js';
 import { serialDrawer, traceDrawer } from '../genealogy.js';
 import { loadShelfLife, shelfLifeTab, bindShelfLifeTab, appendPartShelfLife } from '../shelflife.js';
 import { loadReceiving, receivingTab, bindReceivingTab, receivingCount } from '../receiving.js';
 import { outsideProcessingTab, bindOutsideProcessingTab } from '../outside-processing.js';
+import { mountIdentificationInput, materialPickSelection } from '../identification-input.mjs';
+import { isServiceUnavailable } from '../terminal-state.mjs';
 
 // Inventory (spec §11, §49): every quantity is the sum of ledger entries, and every entry says who,
 // when, why and what it relates to. Adjustments, count variances and quality releases need a second person.
@@ -31,6 +33,9 @@ export async function inventoryPage(page, ctx) {
   const mroManager = canAction(me, 'inventory.mro.manage');
   let tab = ctx.query.get('tab') ?? 'stock';
   let data = {};
+  let disposed = false, pageGeneration = 0;
+  const taskDialogs = new Set();
+  const closeTaskDialogs = () => { for (const close of [...taskDialogs]) close(); };
 
   async function load() {
     const [summary, locations, requests, ledger, items, orders, resources, mro, suppliers, tasks, programs, due] = await Promise.all([
@@ -52,6 +57,85 @@ export async function inventoryPage(page, ctx) {
   const statusField = (value = 'Released') => ({ name: 'status', label: 'Quality status', type: 'select', value, options: [['Released', 'Released'], ['Inspection', 'Inspection'], ['Hold', 'Hold']] });
   const reload = async () => { await load(); render(); };
   const shares = text => (text ?? '').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean).map(x => { const [lotNumber, q] = x.split(/\s+/); return { lotNumber: lotNumber.toUpperCase(), quantity: Number(q) }; });
+
+  function scanTask(task, picking) {
+    closeTaskDialogs();
+    const context = pageGeneration;
+    const scrim = document.createElement('div'); scrim.className = 'scrim'; scrim.setAttribute('aria-hidden', 'true');
+    const modal = document.createElement('div'); modal.className = 'modal';
+    modal.innerHTML = `<h2>${picking ? 'Pick' : 'Deliver'} task ${task.taskId}</h2>
+      <div class="muted">${picking ? `Pick ${qty(task.quantity)} ${esc(task.partNumber)} from ${esc(task.fromLocation)}${task.lotNumber ? `, lot ${esc(task.lotNumber)}` : ''}.` : `Deliver ${qty(task.pickedQuantity)} ${esc(task.partNumber)} to ${esc(task.toLocation)}.`} Review any resolved code, then confirm below.</div>
+      <div data-location-identification></div>
+      <div class="field"><label for="task-scanned-location">${picking ? 'Source' : 'Destination'} location code (manual)</label><input class="input mono" id="task-scanned-location" autocomplete="off"></div>
+      ${picking && task.lotNumber ? '<div data-material-identification></div><div class="field"><label for="task-scanned-lot">Lot number (manual)</label><input class="input mono" id="task-scanned-lot" autocomplete="off"></div>' : ''}
+      ${picking ? `<div class="field"><label for="task-picked-quantity">Quantity picked</label><input class="input" id="task-picked-quantity" type="number" min="0" step="any" value="${esc(task.quantity)}"></div>` : ''}
+      <div class="field"><label for="task-reason">Reason (optional, recorded with the action)</label><textarea class="input" id="task-reason" rows="2"></textarea></div>
+      <div class="notice bad hidden" data-task-error role="alert" aria-live="assertive"></div>
+      <div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-task-confirm>${picking ? 'Picked' : 'Delivered'}</button></div>`;
+    let closed = false, busy = false, releaseFocus = () => {}, scannedMaterial = null;
+    let locationSelected = false, materialSelected = false;
+    const widgets = [];
+    const current = () => !closed && !disposed && context === pageGeneration && page.isConnected && modal.isConnected;
+    const close = () => {
+      if (closed) return;
+      closed = true; for (const widget of widgets) widget.dispose();
+      scannedMaterial = null; scrim.remove(); modal.remove(); taskDialogs.delete(close); releaseFocus();
+    };
+    taskDialogs.add(close); scrim.onclick = close;
+    document.body.append(scrim, modal);
+    const onUnavailable = () => { close(); toast('Forge could not confirm availability. Reopen the task when it is available; check the record before retrying an action.', true); };
+    const common = { loadConfig: () => get('/api/identification/config'), resolve: code => command('/api/identification/resolve', { code }), isCurrent: () => current() && !busy, onUnavailable };
+    const location = $('#task-scanned-location', modal);
+    const locationWidget = mountIdentificationInput($('[data-location-identification]', modal), {
+      ...common, id: 'task-location-identification', label: 'Location code (optional scan)', kinds: ['location'],
+      onSelect: subject => {
+        const expected = picking ? task.fromLocation : task.toLocation;
+        if (subject.locationCode !== expected || subject.status !== 'Active') throw new Error('Select the active location assigned to this task.');
+        location.value = subject.locationCode; locationSelected = true;
+      },
+      onClear: () => { if (locationSelected) location.value = ''; locationSelected = false; },
+    });
+    widgets.push(locationWidget);
+    location.addEventListener('input', () => { locationSelected = false; locationWidget.stage.clear(); });
+    if (picking && task.lotNumber) {
+      const lot = $('#task-scanned-lot', modal);
+      const materialWidget = mountIdentificationInput($('[data-material-identification]', modal), {
+        ...common, id: 'task-material-identification', label: 'Material code (optional scan)', kinds: ['material'],
+        onSelect: subject => { scannedMaterial = materialPickSelection(subject, task); lot.value = scannedMaterial.lotNumber; materialSelected = true; },
+        onClear: () => { scannedMaterial = null; if (materialSelected) lot.value = ''; materialSelected = false; },
+      });
+      widgets.push(materialWidget);
+      lot.addEventListener('input', () => { scannedMaterial = null; materialSelected = false; materialWidget.stage.clear(); });
+    }
+    $('[data-cancel]', modal).addEventListener('click', close);
+    const confirm = $('[data-task-confirm]', modal), error = $('[data-task-error]', modal);
+    confirm.addEventListener('click', async () => {
+      if (!current() || busy) return;
+      error.classList.add('hidden');
+      const body = { scannedLocation: locationSelected ? location.value : location.value.trim().toUpperCase() };
+      if (picking) {
+        const lot = $('#task-scanned-lot', modal);
+        if (lot) body.scannedLot = materialSelected ? lot.value : lot.value.trim().toUpperCase();
+        if (scannedMaterial) body.scannedMaterial = scannedMaterial;
+        body.quantity = Number($('#task-picked-quantity', modal).value);
+      }
+      if (!body.scannedLocation || (picking && task.lotNumber && !body.scannedLot) || (picking && !(body.quantity > 0))) {
+        error.textContent = 'Give the location, required lot and a positive picked quantity.'; error.classList.remove('hidden'); return;
+      }
+      busy = true; confirm.disabled = true;
+      for (const widget of widgets) widget.stage.clear();
+      try {
+        const result = await command(`/api/inventory/tasks/${task.taskId}/${picking ? 'pick' : 'deliver'}`, body, $('#task-reason', modal).value.trim() || undefined);
+        if (!current()) return;
+        close(); toast(result.message ?? 'Saved.'); await reload();
+      } catch (failure) {
+        if (!current()) return;
+        if (isServiceUnavailable(failure)) { onUnavailable(); return; }
+        error.textContent = failure.message; error.classList.remove('hidden');
+      } finally { busy = false; if (current()) confirm.disabled = false; }
+    });
+    releaseFocus = manageDialogFocus(modal, close);
+  }
 
   // V3.1: where a location sits, what it serves, and who holds stock there.
   const placeFields = l => [
@@ -399,6 +483,8 @@ export async function inventoryPage(page, ctx) {
   }
 
   function render() {
+    if (disposed) return;
+    pageGeneration++; closeTaskDialogs();
     const pending = data.requests.data?.length ?? 0;
     const buttons = [
       handler && ['receive', 'Receive'], handler && ['issue', 'Issue to order'], handler && ['return', 'Return'], handler && ['move', 'Move'],
@@ -445,15 +531,8 @@ export async function inventoryPage(page, ctx) {
       title: `Allocate task ${x.taskId}`, detail: `${qty(x.quantity)} ${x.partNumber} to ${x.toLocation}. The stock is held for this task until it is delivered or cancelled.`, confirmLabel: 'Allocate',
       fields: [{ name: 'fromLocation', label: 'From', type: 'select', options: locs(), required: true }, { ...lotField, value: x.lotNumber ?? '' }],
     }, (v, reason) => command(`/api/inventory/tasks/${x.taskId}/allocate`, { ...v, lotNumber: v.lotNumber || null }, reason), reload); }));
-    $$('[data-task-pick]', page).forEach(b => b.addEventListener('click', () => { const x = task(b.dataset.taskPick); formModal({
-      title: `Pick task ${x.taskId}`, detail: `Go to ${x.fromLocation} and scan it${x.lotNumber ? `, then scan lot ${x.lotNumber}` : ''}. Pick less if the location is short.`, confirmLabel: 'Picked',
-      fields: [{ name: 'scannedLocation', label: 'Scan the location', code: true, required: true }, ...(x.lotNumber ? [{ name: 'scannedLot', label: 'Scan the lot', code: true, required: true }] : []),
-        { name: 'quantity', label: 'Quantity picked', type: 'number', step: 'any', min: 0, value: x.quantity, required: true }],
-    }, (v, reason) => command(`/api/inventory/tasks/${x.taskId}/pick`, { ...v, quantity: Number(v.quantity) }, reason), reload); }));
-    $$('[data-task-deliver]', page).forEach(b => b.addEventListener('click', () => { const x = task(b.dataset.taskDeliver); formModal({
-      title: `Deliver task ${x.taskId}`, detail: `Take ${qty(x.pickedQuantity)} ${x.partNumber} to ${x.toLocation} and scan it there.`, confirmLabel: 'Delivered',
-      fields: [{ name: 'scannedLocation', label: 'Scan the destination', code: true, required: true }],
-    }, (v, reason) => command(`/api/inventory/tasks/${x.taskId}/deliver`, v, reason), reload); }));
+    $$('[data-task-pick]', page).forEach(b => b.addEventListener('click', () => scanTask(task(b.dataset.taskPick), true)));
+    $$('[data-task-deliver]', page).forEach(b => b.addEventListener('click', () => scanTask(task(b.dataset.taskDeliver), false)));
     $$('[data-task-cancel]', page).forEach(b => b.addEventListener('click', async () => {
       const done = await confirmWithReason({ title: `Cancel task ${b.dataset.taskCancel}`, detail: 'Anything allocated is free again. Nothing moves.', confirmLabel: 'Cancel task' },
         reason => command(`/api/inventory/tasks/${b.dataset.taskCancel}/cancel`, {}, reason));
@@ -534,5 +613,6 @@ export async function inventoryPage(page, ctx) {
 
   await load();
   render();
+  return { dispose: () => { disposed = true; pageGeneration++; closeTaskDialogs(); } };
 }
 

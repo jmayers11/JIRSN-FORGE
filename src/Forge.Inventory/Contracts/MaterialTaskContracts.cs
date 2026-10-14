@@ -26,6 +26,9 @@ public enum MaterialTaskStatus
     Cancelled,
 }
 
+/// <summary>The exact part and physical identity read by a typed material scan; no authority or quantity is implied.</summary>
+public sealed record ScannedMaterialIdentity(string PartNumber, string LotNumber);
+
 /// <summary>A piece of material-movement work (V3.4). Only delivery moves stock in the ledger.</summary>
 public sealed record MaterialTask(
     long TaskId,

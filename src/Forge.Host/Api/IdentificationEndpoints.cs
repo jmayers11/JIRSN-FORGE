@@ -10,6 +10,20 @@ internal static class IdentificationEndpoints
 {
     public static void MapIdentificationEndpoints(this IEndpointRouteBuilder app)
     {
+        app.MapGet("/api/identification/config", async (HttpContext http, IdentificationResolver resolver) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            try
+            {
+                return Results.Ok(resolver.GetConfiguration());
+            }
+            catch (IdentificationException error) when (error.Code == "identification_not_configured")
+            {
+                return Failure(error, StatusCodes.Status503ServiceUnavailable);
+            }
+        }).RequireAuthorization();
+
         app.MapPost("/api/identification/resolve", async (HttpContext http, ResolveIdentificationRequest request, IdentificationResolver resolver, CancellationToken ct) =>
         {
             var principal = await PrincipalAsync(http);
@@ -27,9 +41,12 @@ internal static class IdentificationEndpoints
                     "identification_not_found" => StatusCodes.Status404NotFound,
                     _ => StatusCodes.Status400BadRequest,
                 };
-                return Results.Problem(title: "Identification unavailable", detail: error.Message, statusCode: status,
-                    extensions: new Dictionary<string, object?> { ["code"] = error.Code });
+                return Failure(error, status);
             }
         }).RequireAuthorization();
     }
+
+    private static IResult Failure(IdentificationException error, int status) =>
+        Results.Problem(title: "Identification unavailable", detail: error.Message, statusCode: status,
+            extensions: new Dictionary<string, object?> { ["code"] = error.Code });
 }

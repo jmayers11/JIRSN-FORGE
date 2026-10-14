@@ -284,6 +284,13 @@ internal sealed partial class PostgresInventoryStore(PostgresUnitOfWork uow) : I
                 NullableText(r, 5), Enum.Parse<LocationLevel>(r.GetString(6)), r.GetBoolean(7), NullableText(r, 8), NullableText(r, 9), NullableText(r, 10)),
             ct);
 
+    public async Task<LocationInfo?> FindLocationAsync(string code, CancellationToken ct) =>
+        (await ReadAsync(
+            "SELECT code, site_code, name, kind, active, parent_code, level, nettable, work_center_code, machine_code, custodian_supplier FROM inventory.location WHERE code = $1",
+            r => new LocationInfo(r.GetString(0), r.GetString(1), r.GetString(2), Enum.Parse<LocationKind>(r.GetString(3)), r.GetBoolean(4),
+                NullableText(r, 5), Enum.Parse<LocationLevel>(r.GetString(6)), r.GetBoolean(7), NullableText(r, 8), NullableText(r, 9), NullableText(r, 10)),
+            ct, code)).SingleOrDefault();
+
     public Task<IReadOnlyList<StockBalance>> ListBalancesAsync(string? partNumber, CancellationToken ct) =>
         ReadAsync(
             "SELECT part_number, location_code, lot_number, status, quantity FROM inventory.balance WHERE quantity <> 0 AND ($1::text IS NULL OR part_number = $1) ORDER BY part_number, location_code, lot_number NULLS FIRST, status",
@@ -317,6 +324,17 @@ internal sealed partial class PostgresInventoryStore(PostgresUnitOfWork uow) : I
                 r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9)),
             ct,
             Text(partNumber));
+
+    public async Task<LotInfo?> FindLotAsync(string partNumber, string lotNumber, CancellationToken ct) =>
+        (await ReadAsync(
+            """
+            SELECT part_number, lot_number, supplier_lot, first_received_at, part_revision, identity_kind, manufactured_on, expires_on, retest_due, opened_at
+            FROM inventory.lot WHERE part_number = $1 AND lot_number = $2
+            """,
+            r => new LotInfo(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4), Enum.Parse<IdentityKind>(r.GetString(5)),
+                r.IsDBNull(6) ? null : r.GetFieldValue<DateOnly>(6), r.IsDBNull(7) ? null : r.GetFieldValue<DateOnly>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateOnly>(8),
+                r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9)),
+            ct, partNumber, lotNumber)).SingleOrDefault();
 
     public Task<IReadOnlyList<OrderIssue>> ListOrderIssuesAsync(CancellationToken ct) =>
         ReadAsync(

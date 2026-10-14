@@ -580,6 +580,9 @@ public interface IInventoryLookup
 
     Task<IReadOnlyList<LocationInfo>> ListLocationsAsync(CancellationToken ct);
 
+    /// <summary>One recorded location by its exact authoritative code.</summary>
+    Task<LocationInfo?> FindLocationAsync(string code, CancellationToken ct);
+
     /// <summary>Non-zero balances, optionally for one part, by part, location, lot and status.</summary>
     Task<IReadOnlyList<StockBalance>> ListBalancesAsync(string? partNumber, CancellationToken ct);
 
@@ -593,6 +596,9 @@ public interface IInventoryLookup
     Task<IReadOnlyList<ShipmentInfo>> ListShippedForDemandsAsync(IReadOnlyCollection<long> demandIds, CancellationToken ct);
 
     Task<IReadOnlyList<LotInfo>> ListLotsAsync(string? partNumber, CancellationToken ct);
+
+    /// <summary>One physical identity by its exact part and lot keys, including identities with no current stock.</summary>
+    Task<LotInfo?> FindLotAsync(string partNumber, string lotNumber, CancellationToken ct);
 
     Task<IReadOnlyList<OrderIssue>> ListOrderIssuesAsync(CancellationToken ct);
 

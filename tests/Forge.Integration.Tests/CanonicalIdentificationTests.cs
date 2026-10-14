@@ -1,4 +1,7 @@
 using Forge.Host.Identification;
+using Forge.Inventory;
+using Forge.Inventory.Contracts;
+using Forge.Kernel.Serialization;
 
 namespace Forge.Integration.Tests;
 
@@ -62,5 +65,57 @@ public sealed class CanonicalIdentificationTests
         Assert.Equal("foreign_namespace", Assert.Throws<IdentificationException>(() => CanonicalIdentification.Parse("forge:v1:PlantA:order:1", "planta")).Code);
         Assert.Equal("foreign_namespace", Assert.Throws<IdentificationException>(() => CanonicalIdentification.Parse("forge:v1:Other:operation:1:10", "N")).Code);
         Assert.Equal("invalid_identification", Assert.Throws<IdentificationException>(() => CanonicalIdentification.Parse("forge:v1:Other:order:01", "N")).Code);
+    }
+
+    [Fact]
+    public void Composite_keys_roundtrip_exact_UTF8_and_do_not_normalize_or_alias_separators()
+    {
+        const string code = "forge:v1:N:material:PART%2F50%25:LOT%2F%C3%A9";
+        var material = CanonicalIdentification.Parse(code, "N");
+        Assert.Equal(("PART/50%", "LOT/é", "material"), (material.PartNumber, material.LotNumber, material.Kind));
+        Assert.Null(material.OrderNumber);
+        Assert.Null(material.Sequence);
+        Assert.Equal(code, material.Code);
+        var location = CanonicalIdentification.Parse("forge:v1:N:location:RACK%2F%25%C3%A9", "N");
+        Assert.Equal("RACK/%é", location.LocationCode);
+        Assert.Equal("%C3%A9", CanonicalIdentification.EncodeKey("é"));
+        Assert.Equal("e%CC%81", CanonicalIdentification.EncodeKey("e\u0301"));
+        var part = new string('界', 40);
+        var lot = new string('é', 40);
+        var longCode = "forge:v1:N:material:" + CanonicalIdentification.EncodeKey(part) + ":" + CanonicalIdentification.EncodeKey(lot);
+        Assert.True(longCode.Length > 256);
+        var longMaterial = CanonicalIdentification.Parse(longCode, "N");
+        Assert.Equal(part, longMaterial.PartNumber);
+        Assert.Equal(lot, longMaterial.LotNumber);
+        Assert.Equal(1024, CanonicalIdentification.MaxCodeLength);
+        Assert.Equal(40, CanonicalIdentification.MaxKeyLength);
+    }
+
+    [Fact]
+    public void Escaping_rejects_noncanonical_aliases_invalid_UTF8_empty_and_oversized_keys()
+    {
+        string[] invalid =
+        [
+            "forge:v1:N:material:P", "forge:v1:N:material::L", "forge:v1:N:material:P:", "forge:v1:N:material:P:L:extra",
+            "forge:v1:N:location:", "forge:v1:N:location:A/B", "forge:v1:N:location:A%", "forge:v1:N:location:A%2",
+            "forge:v1:N:location:A%2fB", "forge:v1:N:location:%41", "forge:v1:N:location:é", "forge:v1:N:location:%C0%AF",
+            "forge:v1:N:location:%ED%A0%80", "forge:v1:N:location:%F4%90%80%80", "forge:v1:N:location:%00",
+            "forge:v1:N:location:%20", "forge:v1:N:location:%C2%A0", "forge:v1:N:location:" + new string('A', 41),
+            "forge:v1:N:material:" + new string('P', 41) + ":L", "forge:v1:N:location:" + new string('A', 1025),
+        ];
+        foreach (var code in invalid)
+            Assert.Equal("invalid_identification", Assert.Throws<IdentificationException>(() => CanonicalIdentification.Parse(code, "N")).Code);
+        Assert.Equal("invalid_identification", Assert.Throws<IdentificationException>(() => CanonicalIdentification.EncodeKey("\uD800")).Code);
+        Assert.Equal("foreign_namespace", Assert.Throws<IdentificationException>(() => CanonicalIdentification.Parse("forge:v1:Other:material:P:L", "N")).Code);
+    }
+
+    [Fact]
+    public void Legacy_pick_fingerprint_is_preserved_and_typed_material_is_bound_into_replay()
+    {
+        var legacy = new PickMaterial(17, "WH1", "SAME/LOT", 2m);
+        Assert.Equal(CanonicalJson.Serialize(new { taskId = 17L, scannedLocation = "WH1", scannedLot = "SAME/LOT", quantity = (decimal?)2m }), CanonicalJson.Serialize(legacy));
+        var typed = legacy with { ScannedMaterial = new ScannedMaterialIdentity("PART-A", "SAME/LOT") };
+        Assert.NotEqual(CanonicalJson.Fingerprint(legacy), CanonicalJson.Fingerprint(typed));
+        Assert.NotEqual(CanonicalJson.Fingerprint(typed), CanonicalJson.Fingerprint(typed with { ScannedMaterial = new("PART-B", "SAME/LOT") }));
     }
 }

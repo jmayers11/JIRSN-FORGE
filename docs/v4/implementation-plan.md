@@ -1,6 +1,14 @@
 # V4 implementation and continuation plan
 
+**Current authorization — 2026-10-14:** the owner explicitly requested continued V4 work until everything is completed and authorized existing free resets at exhaustion. The active goal covers all V4.1–V4.6, current acceptance evidence and Claude records. Use `docs/v4/completion-checklist.md` for all 38 capabilities and scenarios A–L; the earlier first-step completion below remains historical verified evidence, not an end to the V4 objective. Organization-specific effective decisions and licensed/physical/deployment evidence retain their explicit validation boundaries.
+
 Started: 2026-10-13, after verified V3 completion. Product Owner approval: “V4 approved to start after V3 is completed.” The original review STOP is historical; implementation approval is active. V3 source is `c879a9e65a15eecd46fd05bab37b29a6016dd6b9`, completion handoff/log `ac2fea3`. V3's 565-test PASS does not prove V4 behavior.
+
+## Governed definitions and material identification checkpoint — 2026-10-14
+
+The foundation gate passes 517 tests: Planning 303, Kernel 37, Architecture 32, Integration 67 and browser 78. Release build has zero warnings/errors in 27.36 seconds; Integration completes in 32.6996 minutes including fixture-owned cleanup. All 665 source/test hashes are unchanged; migration total is 91 and syntax passes all 48 JS/MJS modules. ADR 0053 records typed Quality-owned profile/process/policy/requirement lifecycle, mixed-source audit/notification authority, exact material/location keys and optional typed transactional pick validation. This checkpoint leaves the complete V4 increments open.
+
+Next integrate exact governed policy adoptions, all owner-backed identifier categories, controlled templates/copies/aliases/print artifacts, and provider-bound server sessions with accepted audit/event links. Draft packages are isolated in ignored `.forge-logs/v4-next-drafts/` until promoted and separately verified. Then continue exact quantity inspection/product release, calibration impact/investigations, the remaining governance/provider/customer/audit/CAPA/KPI/review capabilities and all scenarios A–L.
 
 ## First implementation step — canonical work identification
 

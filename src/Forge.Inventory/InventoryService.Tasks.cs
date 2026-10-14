@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json.Serialization;
 using Forge.Execution.Contracts;
 using Forge.Inventory.Contracts;
 using Forge.Kernel.Access;
@@ -16,7 +17,8 @@ public sealed record RequestMaterial(MaterialTaskKind Kind, long? OrderNumber, s
 public sealed record AllocateMaterial(long TaskId, string FromLocation, string? LotNumber);
 
 /// <param name="Quantity">What was actually picked; less than the task when the location was short.</param>
-public sealed record PickMaterial(long TaskId, string ScannedLocation, string? ScannedLot, decimal? Quantity = null);
+public sealed record PickMaterial(long TaskId, string ScannedLocation, string? ScannedLot, decimal? Quantity = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ScannedMaterialIdentity? ScannedMaterial = null);
 
 public sealed record DeliverMaterial(long TaskId, string ScannedLocation);
 
@@ -166,6 +168,10 @@ public sealed partial class InventoryService
         ArgumentNullException.ThrowIfNull(c);
         return ChangeTaskAsync(nameof(PickMaterial), c.TaskId, c, context, MaterialTaskStatus.Allocated, false, async (uow, task, now) =>
         {
+            if (c.ScannedMaterial is { } material
+                && (!string.Equals(material.PartNumber, task.PartNumber, StringComparison.Ordinal)
+                    || task.LotNumber is null || !string.Equals(material.LotNumber, task.LotNumber, StringComparison.Ordinal)))
+                throw new CommandRejectedException("scan_mismatch", "Scanned material does not match this task's part and lot.");
             Scanned(c.ScannedLocation, task.FromLocation!, "location");
             if (task.LotNumber is { } lot)
             {

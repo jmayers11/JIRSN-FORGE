@@ -15,6 +15,7 @@ import { inventoryPage } from './pages/inventory.js';
 import { mrpPage } from './pages/mrp.js';
 import { procurementPage } from './pages/procurement.js';
 import { qualityPage } from './pages/quality.js';
+import { qmsPage } from './pages/qms.js';
 import { shippingPage } from './pages/shipping.js';
 import { programsPage } from './pages/programs.js';
 import { projectsPage } from './pages/projects.js';
@@ -49,6 +50,7 @@ const NAV = [
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
+  { route: 'qms', label: 'Quality Management', icon: 'quality', page: qmsPage },
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
   { route: 'shipping', label: 'Shipping', icon: 'suppliers', page: shippingPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
@@ -63,6 +65,7 @@ const ROLE_TITLES = {
   Auditor: 'Auditor', MaterialHandler: 'Material Handler', InventoryController: 'Inventory Controller', Buyer: 'Buyer',
   PurchasingManager: 'Purchasing Manager', ShopFloorTerminal: 'Shop Floor Terminal', Inspector: 'Inspector',
   QualityEngineer: 'Quality Engineer', QualityManager: 'Quality Manager', Shipper: 'Shipper',
+  QmsAuthor: 'QMS Author', QmsReviewer: 'QMS Reviewer', QmsApprover: 'QMS Approver',
   ProgramManager: 'Program Manager', MaintenancePlanner: 'Maintenance Planner', FacilitiesManager: 'Facilities Manager',
   DocumentController: 'Document Controller', ChangeBoard: 'Change Board',
 };

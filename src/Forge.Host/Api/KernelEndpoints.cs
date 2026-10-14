@@ -167,7 +167,8 @@ public static class KernelEndpoints
                 throw new ForgeAuthorizationException(authorizer.Authorize(principal, Permissions.AuditRead, ResourceRef.Of("Audit")));
             var entries = await reads.QueryAuditAsync(entityType, entityId, principal.Programs, take ?? 100, ct, principal.Markings);
             await using var uow = await http.RequestServices.GetRequiredService<Forge.Kernel.Access.IKernelUnitOfWorkFactory>().BeginSnapshotAsync(ct);
-            return Results.Ok(await AuditAccess.FilterAsync(uow, entries, principal, http.RequestServices.GetRequiredService<IWorkSourceResolver>(), authorizer, ct));
+            return Results.Ok(await AuditAccess.FilterAsync(uow, entries, principal, http.RequestServices.GetRequiredService<IWorkSourceResolver>(), authorizer,
+                http.RequestServices.GetRequiredService<Forge.Quality.Qms.QmsService>(), ct));
         });
 
         api.MapGet("/audit/verify", (HttpContext http, KernelReadStore reads, CancellationToken ct) =>
