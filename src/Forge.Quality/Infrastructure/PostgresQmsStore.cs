@@ -20,6 +20,7 @@ internal sealed class PostgresQmsStore(PostgresUnitOfWork uow) : IQmsStore
 
     public async Task LockSourceAsync(string kind, string code, string revision, CancellationToken ct)
     {
+        if (uow.IsReadOnly) return;
         var sql = kind == "DocumentRevision"
             ? "SELECT d.number FROM engineering.document d JOIN engineering.document_revision r ON r.document_number=d.number WHERE d.number=$1 AND r.revision=$2 FOR SHARE OF d,r"
             : "SELECT d.code FROM quality.qms_record d JOIN quality.qms_revision r ON r.code=d.code WHERE d.code=$1 AND r.revision::text=$2 FOR SHARE OF d,r";
@@ -148,6 +149,11 @@ public static class QmsRegistration
         services.AddForgeStore<IQmsStore>(uow => new PostgresQmsStore(uow));
         services.AddForgeStore<IQmsLookup>(uow => new PostgresQmsStore(uow));
         services.AddSingleton<QmsService>();
+        services.AddForgeStore<IQmsPolicyAdoptionStore>(uow => new PostgresQmsPolicyAdoptionStore(uow));
+        services.AddForgeStore<IQmsPolicyAdoptionLookup>(uow => new PostgresQmsPolicyAdoptionStore(uow));
+        services.AddSingleton<QmsPolicyAdoptionService>();
+        services.AddSingleton<QmsPolicyReader>();
+        services.AddSingleton<IQmsPolicyReader>(sp => sp.GetRequiredService<QmsPolicyReader>());
         // AddForgeQuality already embeds/discovers this assembly's additive migrations.
         return services;
     }

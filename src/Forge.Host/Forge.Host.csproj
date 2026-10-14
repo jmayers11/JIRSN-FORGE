@@ -19,5 +19,6 @@
     <ProjectReference Include="..\Forge.Projects\Forge.Projects.csproj" />
     <ProjectReference Include="..\Forge.Planning\Forge.Planning.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="ZXing.Net" />
   </ItemGroup>
 </Project>

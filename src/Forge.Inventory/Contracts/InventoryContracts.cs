@@ -558,6 +558,7 @@ public sealed record ContainerInfo(string Code, ContainerKind Kind, ContainerSta
 
 /// <summary>Packing source records for specified physical lots, without a screen's presentation limit.</summary>
 public sealed record PackingRecords(IReadOnlyList<ContainerInfo> Containers, IReadOnlyList<ShipmentInfo> Shipments);
+public sealed record TransformationOutputInfo(long TransformationId, long OrderNumber, int? OperationSequence, TransformationLine Line);
 
 /// <summary>Spare parts used on a maintenance work order (issues less returns), by part.</summary>
 /// <param name="SubstitutesFor">Issued in place of this part through an approved alternate (V2.9); <paramref name="PrimaryNetIssued"/> is how much of it that covers.</param>
@@ -572,6 +573,8 @@ public sealed record DemandShipped(long DemandId, string PartNumber, decimal Shi
 /// <summary>What other contexts may ask Inventory.</summary>
 public interface IInventoryLookup
 {
+    Task<bool> IsRecordedRemnantAsync(string partNumber, string lotNumber, CancellationToken ct);
+    Task<TransformationOutputInfo?> FindTransformationOutputAsync(long transformationId, int lineNumber, CancellationToken ct);
     Task<PackingRecords> PackingForLotsAsync(string partNumber, IReadOnlyCollection<string> lotNumbers, CancellationToken ct);
 
     Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct);

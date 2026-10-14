@@ -7,7 +7,7 @@ using NpgsqlTypes;
 
 namespace Forge.Quality.Infrastructure;
 
-internal sealed class PostgresQualityStore(PostgresUnitOfWork uow) : IQualityStore, IQualityLookup, IWorkHoldLookup
+internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQualityStore, IQualityLookup, IWorkHoldLookup
 {
     private const string NcrSql =
         """

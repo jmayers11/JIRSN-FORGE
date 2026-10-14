@@ -106,6 +106,11 @@ public static class DocumentEndpoints
             var document = await VisibleDocumentAsync(uow, principal, number, ct);
             var revision = document.Revisions.FirstOrDefault(r => string.Equals(r.Revision, rev, StringComparison.OrdinalIgnoreCase) && r.FileSha256 is not null)
                 ?? throw new CommandRejectedException("file_not_found", $"{document.Number} revision {rev} has no file.");
+            var generatedAccess = await http.RequestServices.GetRequiredService<IGeneratedContentOwnerAccess>()
+                .CheckAsync(uow, principal, revision.FileSha256!, ct);
+            if (generatedAccess.KnownBinding && !generatedAccess.IsPermitted)
+                throw new ForgeAuthorizationException(generatedAccess.Denial
+                    ?? new(false, ["The generated file's owning sources are inaccessible."]), generatedAccess.DeniedResource);
             var bytes = await uow.Store<IDocumentLookup>().ReadFileAsync(revision.FileSha256!, ct)
                 ?? throw new CommandRejectedException("file_not_found", "The file is missing.");
             http.Response.Headers["X-Content-Type-Options"] = "nosniff";

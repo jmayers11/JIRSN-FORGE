@@ -45,6 +45,7 @@ public static partial class QmsContentRules
             if (!Enum.IsDefined(policy.PolicyKind)) Reject("policy_kind", "Select a recognized policy kind.");
             Text(policy.Statement); Owner(policy.OwnerPersonId); Text(policy.CommunicationMethod); Text(policy.ReviewInterval); Explicit(policy.AcknowledgmentRequired);
             var rules = policy.Rules;
+            if (rules is not null) QmsPolicyRuleValidation.ValidateExtensions(rules);
             var count = rules is null ? 0 : new object?[] { rules.Execution, rules.ProductRelease, rules.LabelCopy, rules.AttemptRetention }.Count(x => x is not null);
             var operational = policy.PolicyKind is QmsPolicyKind.Execution or QmsPolicyKind.ProductRelease or QmsPolicyKind.LabelCopy or QmsPolicyKind.AttemptRetention;
             if (count != (operational ? 1 : 0) || (policy.PolicyKind == QmsPolicyKind.Execution) != (rules?.Execution is not null)
@@ -87,6 +88,10 @@ public static partial class QmsContentRules
         foreach (var r in content.Profile?.Requirements ?? []) yield return (r, QmsRecordKind.Requirement);
         foreach (var r in content.Profile?.NonApplicability ?? []) yield return (new(r.RequirementCode, r.Revision), QmsRecordKind.Requirement);
         foreach (var r in content.Process?.Dependencies ?? []) yield return (r, QmsRecordKind.Process);
+        foreach (var r in (content.Policy?.Rules?.Execution?.Presentation?.OperationRules ?? [])
+            .Where(rule => rule.Process is not null).Select(rule => rule.Process!)
+            .GroupBy(reference => (BusinessCode.Require(reference.Code, "Process"), reference.Revision)).Select(group => group.First()))
+            yield return (r, QmsRecordKind.Process);
     }
     public static IEnumerable<QmsDocumentReference> DocumentsFor(QmsContent content) =>
         (content.Documents ?? []).Concat((content.Requirement?.StandardReferences ?? []).Where(s => s.VerificationDocument is not null).Select(s => s.VerificationDocument!)).Distinct();

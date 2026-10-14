@@ -50,8 +50,9 @@ public sealed class ForgeAuthorizer(TimeProvider? time = null) : IForgeAuthorize
     }
 }
 
-public sealed class ForgeAuthorizationException(AuthorizationDecision decision)
+public sealed class ForgeAuthorizationException(AuthorizationDecision decision, ResourceRef? owningResource = null)
     : Exception("Not authorized: " + string.Join(" ", decision.Reasons))
 {
     public AuthorizationDecision Decision { get; } = decision;
+    public ResourceRef? OwningResource { get; } = owningResource;
 }

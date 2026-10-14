@@ -40,6 +40,14 @@ public sealed record AuditEntry
     public ProgramId? ProgramId { get; init; }
 
     public DataMarking Markings { get; init; }
+
+    /// <summary>Actual command ownership dimensions, including failures before a business identity is created.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ResourceRef? OwningResource { get; init; }
+
+    /// <summary>Hash of exact same-transaction evidence, covered by this audit entry's chain hash.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? ContextFingerprint { get; init; }
 }
 
 /// <summary>An audit entry as stored, with its position in the tamper-evident hash chain.</summary>

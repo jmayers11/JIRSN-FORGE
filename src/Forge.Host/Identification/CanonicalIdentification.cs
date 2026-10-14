@@ -10,12 +10,20 @@ public sealed partial record CanonicalIdentification(string Code, string Namespa
     public const string NamespaceConfigurationKey = "Forge:Identification:Namespace";
     public const int MaxCodeLength = 1024;
     public const int MaxKeyLength = 40;
-    public static IReadOnlyList<string> SupportedKinds { get; } = Array.AsReadOnly(new[] { "order", "operation", "material", "location" });
+    public static IReadOnlyList<string> SupportedKinds { get; } = Array.AsReadOnly(new[] {
+        "person", "order", "operation", "traveler", "material", "batch", "roll", "serial", "wip", "remnant",
+        "machine", "workcenter", "tool", "gauge", "location", "container", "package", "inspection", "shipment",
+        "output", "label", "alias", "instruction" });
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
     public string? PartNumber { get; init; }
     public string? LotNumber { get; init; }
     public string? LocationCode { get; init; }
+    public string? Key { get; init; }
+    public Guid? Id { get; init; }
+    public long? RecordNumber { get; init; }
+    public int? LineNumber { get; init; }
+    public string? Revision { get; init; }
 
     public static bool IsValidNamespace(string? value) => value is not null && NamespacePattern().IsMatch(value);
 
@@ -35,13 +43,16 @@ public sealed partial record CanonicalIdentification(string Code, string Namespa
         switch (components[3])
         {
             case "order":
+            case "traveler":
             case "operation":
-                if ((components[3] == "order" ? components.Length != 5 : components.Length != 6)
+            case "wip":
+                var operationKind = components[3] is "operation" or "wip";
+                if ((!operationKind ? components.Length != 5 : components.Length != 6)
                     || !PositiveDigits(components[4])
                     || !long.TryParse(components[4], NumberStyles.None, CultureInfo.InvariantCulture, out var orderNumber))
                     throw Invalid();
                 int? sequence = null;
-                if (components[3] == "operation")
+                if (operationKind)
                 {
                     if (!PositiveDigits(components[5])
                         || !int.TryParse(components[5], NumberStyles.None, CultureInfo.InvariantCulture, out var parsedSequence))
@@ -51,6 +62,10 @@ public sealed partial record CanonicalIdentification(string Code, string Namespa
                 result = new(code, components[2], components[3], orderNumber, sequence);
                 break;
             case "material":
+            case "batch":
+            case "roll":
+            case "serial":
+            case "remnant":
                 if (components.Length != 6) throw Invalid();
                 result = new(code, components[2], components[3], null, null)
                 { PartNumber = DecodeKey(components[4]), LotNumber = DecodeKey(components[5]) };
@@ -58,6 +73,39 @@ public sealed partial record CanonicalIdentification(string Code, string Namespa
             case "location":
                 if (components.Length != 5) throw Invalid();
                 result = new(code, components[2], components[3], null, null) { LocationCode = DecodeKey(components[4]) };
+                break;
+            case "machine":
+            case "workcenter":
+            case "tool":
+            case "gauge":
+            case "container":
+            case "package":
+                if (components.Length != 5) throw Invalid();
+                result = new(code, components[2], components[3], null, null) { Key = DecodeKey(components[4]) };
+                break;
+            case "person":
+            case "label":
+            case "alias":
+                if (components.Length != 5 || !Guid.TryParseExact(components[4], "D", out var id) || id == Guid.Empty
+                    || components[4] != id.ToString("D")) throw Invalid();
+                result = new(code, components[2], components[3], null, null) { Id = id };
+                break;
+            case "inspection":
+            case "shipment":
+            case "output":
+                if ((components[3] == "output" ? components.Length != 6 : components.Length != 5)
+                    || !PositiveDigits(components[4]) || !long.TryParse(components[4], NumberStyles.None, CultureInfo.InvariantCulture, out var number)) throw Invalid();
+                int? line = null;
+                if (components[3] == "output")
+                {
+                    if (!PositiveDigits(components[5]) || !int.TryParse(components[5], NumberStyles.None, CultureInfo.InvariantCulture, out var parsedLine)) throw Invalid();
+                    line = parsedLine;
+                }
+                result = new(code, components[2], components[3], null, null) { RecordNumber = number, LineNumber = line };
+                break;
+            case "instruction":
+                if (components.Length != 6) throw Invalid();
+                result = new(code, components[2], components[3], null, null) { Key = DecodeKey(components[4]), Revision = DecodeKey(components[5]) };
                 break;
             default:
                 throw Invalid();

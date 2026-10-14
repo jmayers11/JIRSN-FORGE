@@ -6,7 +6,7 @@ using Forge.Kernel.Security;
 namespace Forge.Host.Api;
 
 /// <summary>Shared request handling: resolve the Forge principal, build the command context, check permissions.</summary>
-internal static class ApiSupport
+internal static partial class ApiSupport
 {
     public const string IdempotencyHeader = "Idempotency-Key";
     public const string CorrelationHeader = "X-Correlation-Id";
@@ -54,7 +54,13 @@ internal static class ApiSupport
         var time = http.RequestServices.GetRequiredService<TimeProvider>();
         var correlation = Guid.TryParse(http.Request.Headers[CorrelationHeader], out var supplied) ? supplied : ForgeIds.New(time);
         http.Response.Headers[CorrelationHeader] = correlation.ToString();
-        return (new CommandContext(principal, correlation, "person:" + principal.PersonId + ":" + key + (step is null ? string.Empty : ":" + step), source, reason), null);
+        var (scanReference, scanError) = ScanReference(http);
+        if (scanError is not null) return (null, scanError);
+        return (new CommandContext(principal, correlation, "person:" + principal.PersonId + ":" + key + (step is null ? string.Empty : ":" + step), source, reason)
+        {
+            ScanSession = scanReference,
+            Authentication = AuthenticationEvidence(http),
+        }, null);
     }
 
     /// <summary>Runs a read with the caller's principal after checking one permission.</summary>

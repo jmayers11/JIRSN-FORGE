@@ -141,7 +141,7 @@ test('execution policy form never supplies default determinations and sends only
   fire(modal.querySelector('#f-policyKind'), 'change');
   assert.equal(modal.querySelector('#f-requireQualification').value, ''); fire(modal.querySelector('[data-qms-confirm]'), 'click'); await flush();
   assert.equal(h.calls.filter(call => call.body).length, 0); assert.match(modal.querySelector('[data-qms-error]').textContent, /Require qualification is required/);
-  fill(modal, { requireQualification: 'true', requirePresentOperator: 'true', requireReleasedDocuments: 'true', revalidateAtCommit: 'true' }); fire(modal.querySelector('[data-qms-confirm]'), 'click'); await flush();
+  fill(modal, { requireQualification: 'true', requirePresentOperator: 'true', requireReleasedDocuments: 'true', revalidateAtCommit: 'true', extensionEnabled: 'false' }); fire(modal.querySelector('[data-qms-confirm]'), 'click'); await flush();
   const policy = h.calls.find(call => call.body)?.body.content.policy;
   assert.deepEqual(policy.rules, { execution: { requireQualification: true, requirePresentOperator: true, requireReleasedDocuments: true, revalidateAtCommit: true } }); assert.equal(policy.acknowledgmentRequired, true);
 });
@@ -149,7 +149,7 @@ test('execution policy form never supplies default determinations and sends only
 test('retention policy captures explicit evidence retention and bounded raw-attempt limits', async t => {
   const h = await pageHarness(t, { records: [], kind: 'Policy' }), modal = h.create(); header(modal, 'RETENTION');
   fill(modal, { policyKind: 'AttemptRetention', statement: 'Our retention policy', ownerPersonId: authorId, communicationMethod: 'Published procedure', reviewInterval: 'Annual', acknowledgmentRequired: 'false' }); fire(modal.querySelector('#f-policyKind'), 'change');
-  fill(modal, { preserveDeniedAttempts: 'true', preserveSourceLink: 'true', neverRewriteAuditChain: 'true', minimumRetentionDays: 365, maximumRawAttemptAgeDays: 14, maximumStoredRawAttempts: 5000 }); fire(modal.querySelector('[data-qms-confirm]'), 'click'); await flush();
+  fill(modal, { preserveDeniedAttempts: 'true', preserveSourceLink: 'true', neverRewriteAuditChain: 'true', minimumRetentionDays: 365, maximumRawAttemptAgeDays: 14, maximumStoredRawAttempts: 5000, extensionEnabled: 'false' }); fire(modal.querySelector('[data-qms-confirm]'), 'click'); await flush();
   assert.deepEqual(h.calls.find(call => call.body)?.body.content.policy.rules, { attemptRetention: { preserveDeniedAttempts: true, preserveSourceLink: true, neverRewriteAuditChain: true, minimumRetentionDays: 365, maximumRawAttemptAgeDays: 14, maximumStoredRawAttempts: 5000 } });
 });
 

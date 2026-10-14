@@ -4,7 +4,13 @@
 
 Started: 2026-10-13, after verified V3 completion. Product Owner approval: “V4 approved to start after V3 is completed.” The original review STOP is historical; implementation approval is active. V3 source is `c879a9e65a15eecd46fd05bab37b29a6016dd6b9`, completion handoff/log `ac2fea3`. V3's 565-test PASS does not prove V4 behavior.
 
-## Governed definitions and material identification checkpoint — 2026-10-14
+## Presentations, policy and server session checkpoint — 2026-10-14
+
+ADR0054 records the separately verified639-test checkpoint: Planning303,Kernel44,Architecture32,Integration122 and browser138. Release has zero warnings/errors in1:20.38; Integration29.3522 minutes includes fixture-owned cleanup and browser1.8832098s has no failures/cancellations/skips/todos. All733 frozen source/test hashes remain unchanged. Active migrations total96; all50 JS/MJS modules pass syntax; restored ZXing.Net0.16.11 dependency scan finds no vulnerable direct/transitive packages. Earlier runtime/browser/compile failures remain separate evidence.
+
+All nineteen primitive owner identities, governed label/template/copy/alias/print lifecycle, generated artifact protection, exact approved policy adoption and provider/channel/operator-bound server sessions are implemented at this checkpoint. Start/report commands retain ordinary owner validation and accepted audit/event links. Complete V4.1 still needs inventory movement bindings and bounded raw telemetry/retention; physical device validation remains explicit. Next promote exact acceptance and its child NCR/CAPA source adapter, then planning/retention and the remaining investigation/commercial/audit/CAPA/review packages. No draft inherits this PASS.
+
+## Historical governed definitions and material identification checkpoint — 2026-10-14
 
 The foundation gate passes 517 tests: Planning 303, Kernel 37, Architecture 32, Integration 67 and browser 78. Release build has zero warnings/errors in 27.36 seconds; Integration completes in 32.6996 minutes including fixture-owned cleanup. All 665 source/test hashes are unchanged; migration total is 91 and syntax passes all 48 JS/MJS modules. ADR 0053 records typed Quality-owned profile/process/policy/requirement lifecycle, mixed-source audit/notification authority, exact material/location keys and optional typed transactional pick validation. This checkpoint leaves the complete V4 increments open.
 

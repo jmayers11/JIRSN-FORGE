@@ -4,7 +4,7 @@ import { fieldHtml, readFields, canAction } from '../forms.js';
 import { who } from '../people.js';
 import { isServiceUnavailable } from '../terminal-state.mjs';
 
-const KINDS = ['Profile', 'Process', 'Policy', 'Requirement'];
+const KINDS = ['Profile', 'Process', 'Policy', 'Requirement', 'Adoption'];
 const POLICY_KINDS = ['Quality', 'EthicalBehavior', 'Execution', 'ProductRelease', 'LabelCopy', 'AttemptRetention', 'OtherOrganization'];
 const REQUIREMENT_CLASSES = ['ISO', 'Industry', 'Customer', 'Organization', 'Optional', 'Statutory'];
 const APPLICABILITY = ['Applicable', 'NotApplicable', 'PendingDetermination'];
@@ -28,6 +28,10 @@ const RULE_FIELDS = {
   AttemptRetention: ['preserveDeniedAttempts', 'preserveSourceLink', 'neverRewriteAuditChain'],
 };
 const ruleNames = { requireQualification: 'Require qualification', requirePresentOperator: 'Require a present operator', requireReleasedDocuments: 'Require released documents', revalidateAtCommit: 'Revalidate when committing', requireIndependentDecision: 'Require an independent release decision', requireRequiredInspectionEvidence: 'Require the specified inspection evidence', requireDispositionedNonconformities: 'Require dispositioned nonconformities', requireCopyAuthorization: 'Require copy authorization', retainCopyReason: 'Retain the reason for a copy', preserveDeniedAttempts: 'Preserve denied attempts', preserveSourceLink: 'Preserve the authoritative source link', neverRewriteAuditChain: 'Preserve the immutable audit chain' };
+const EXTENSION = { Execution: 'presentation', LabelCopy: 'lifecycle', AttemptRetention: 'telemetry' };
+const SCAN_KINDS = ['Order', 'Operation', 'Material', 'Location', 'Machine', 'WorkCenter', 'Tool', 'Gauge', 'ControlledInstruction', 'Container'];
+const SELECTOR_FIELDS = [text('workCenterCode', 'Actual work center (optional)', { required: false }), text('activityCode', 'Actual activity (optional)', { required: false }), text('machineCode', 'Actual machine (optional)', { required: false }), text('operationSequence', 'Operation sequence (optional)', { type: 'number', min: 1, required: false }), text('partNumber', 'Actual part number (optional)', { required: false }), text('partRevision', 'Exact part revision (optional)', { required: false })];
+const processFields = [text('processCode', 'Approved process code (optional)', { required: false }), text('processRevision', 'Exact process revision (optional)', { type: 'number', min: 1, required: false })];
 
 function ownerField(directory, value) {
   const people = directory?.data;
@@ -38,7 +42,7 @@ function ownerField(directory, value) {
 }
 
 function contentDefinition(kind, content, directory) {
-  const section = content?.[kind.toLowerCase()] ?? {}, fields = [], groups = [];
+  const section = kind === 'Adoption' ? content ?? {} : content?.[kind.toLowerCase()] ?? {}, fields = [], groups = [];
   const add = (...values) => fields.push(...values);
   const group = (name, label, definitions, values = [], minimum = 0) => groups.push({ name, label, fields: definitions, values, minimum });
   if (kind === 'Profile') {
@@ -59,13 +63,15 @@ function contentDefinition(kind, content, directory) {
   } else if (kind === 'Policy') {
     add(choice('policyKind', 'Policy kind', POLICY_KINDS, { value: section.policyKind }), paragraph('statement', 'Policy statement', { value: section.statement }), ownerField(directory, section.ownerPersonId),
       paragraph('communicationMethod', 'Communication method', { value: section.communicationMethod }), text('reviewInterval', 'Organization-defined review interval', { value: section.reviewInterval }), determination('acknowledgmentRequired', 'Require acknowledgment?', section.acknowledgmentRequired));
+  } else if (kind === 'Adoption') {
+    add(choice('purpose', 'Governed policy purpose', ['Execution', 'ProductRelease', 'LabelCopy', 'AttemptRetention'], { value: section.purpose }), text('policyCode', 'Exact policy record code', { value: section.policyCode }), text('policyRevision', 'Exact policy revision', { type: 'number', min: 1, value: section.policyRevision }), ...SELECTOR_FIELDS.map(field => ({ ...field, value: section.selector?.[field.name] })), ...processFields.map(field => ({ ...field, value: field.name === 'processCode' ? section.process?.code : section.process?.revision })), text('riskClassCode', 'Organization-defined risk class (optional)', { required: false, value: section.riskClassCode }), paragraph('riskBasis', 'Human basis for the risk declaration', { required: false, value: section.riskBasis }), paragraph('basis', 'Basis for applying this exact policy to the declared scope', { value: section.basis }));
   } else {
     add(text('title', 'Requirement title', { value: section.title }), choice('classification', 'Requirement classification', REQUIREMENT_CLASSES, { value: section.classification }),
       paragraph('requirementText', 'Organization’s requirement or interpretation', { value: section.requirementText }), choice('applicability', 'Applicability determination', APPLICABILITY, { value: section.applicability }),
       paragraph('applicabilityBasis', 'Human basis for applicability', { value: section.applicabilityBasis }), ownerField(directory, section.ownerPersonId));
     group('standardReferences', 'Edition-qualified standard references', [text('standard', 'Standard identifier'), text('edition', 'Edition'), text('clause', 'Clause reference'), choice('verification', 'Authorized-source verification', VERIFICATION), paragraph('verificationBasis', 'Verification basis'), text('verificationDocumentNumber', 'Verification document number', { required: false }), text('verificationDocumentRevision', 'Exact verification document revision', { required: false })], (section.standardReferences ?? []).map(ref => ({ ...ref, verificationDocumentNumber: ref.verificationDocument?.documentNumber, verificationDocumentRevision: ref.verificationDocument?.revision })));
   }
-  group('documents', 'Controlled Engineering document references', documentFields, content?.documents);
+  if (kind !== 'Adoption') group('documents', 'Controlled Engineering document references', documentFields, content?.documents);
   return { fields, groups, section };
 }
 
@@ -75,11 +81,43 @@ function policyRuleFields(kind, rules = {}) {
   if (kind === 'ProductRelease') fields.push(text('releasePermission', 'Product release action', { value: 'quality.product.release', readonly: true, hint: 'Records a quality product-release decision separately from shipping. Existing evidence and source-authority checks remain enforced.' }));
   if (kind === 'LabelCopy') fields.push(text('maximumCopiesPerRequest', 'Maximum copies per request', { type: 'number', min: 1, value: values.maximumCopiesPerRequest }));
   if (kind === 'AttemptRetention') fields.push(text('minimumRetentionDays', 'Minimum evidence retention (days)', { type: 'number', min: 1, value: values.minimumRetentionDays }), text('maximumRawAttemptAgeDays', 'Maximum raw-attempt age (days)', { type: 'number', min: 1, value: values.maximumRawAttemptAgeDays }), text('maximumStoredRawAttempts', 'Maximum stored raw attempts', { type: 'number', min: 1, value: values.maximumStoredRawAttempts }));
+  if (EXTENSION[kind]) fields.push(determination('extensionEnabled', 'Define the governed feature controls in this policy?', rules && Object.hasOwn(rules, kind.charAt(0).toLowerCase() + kind.slice(1)) ? !!values[EXTENSION[kind]] : null));
   return fields;
 }
 
-function contentFrom(kind, values, groups, ruleValues) {
+function policyExtension(kind, rule = {}) {
+  const values = rule?.[EXTENSION[kind]] ?? {}, fields = [], groups = [];
+  const explicit = names => fields.push(...names.map(name => determination(name, labels(name), values[name])));
+  if (kind === 'Execution') {
+    fields.push(text('sessionExpirySeconds', 'Session expiry (seconds)', { type: 'number', min: 1, value: values.sessionExpirySeconds }));
+    explicit(['requireServerSession', 'requireCurrentAuthenticatedOperator', 'requireTrustedWorkstation']);
+    fields.push(choice('providerAssurance', 'Required provider assurance', ['Authenticated', 'StepUp'], { value: values.providerAssurance }));
+    groups.push({ name: 'operationRules', label: 'Operation/process scan requirements', fields: [text('code', 'Rule code'), ...SELECTOR_FIELDS, ...processFields, text('riskClassCode', 'Organization-defined risk class (optional)', { required: false }), paragraph('requiredScans', 'Required subject kinds (one per line)', { required: false, hint: SCAN_KINDS.join(', ') }), determination('allowManualSelection', 'Allow manual selection?'), determination('requireInstructionRevision', 'Require the exact instruction revision?'), determination('requireTrustedTerminalContext', 'Require validated trusted terminal context?')], values: (values.operationRules ?? []).map(value => ({ ...value, ...value.selector, processCode: value.process?.code, processRevision: value.process?.revision, requiredScans: lines(value.requiredScans), allowManualSelection: String(value.allowManualSelection), requireInstructionRevision: String(value.requireInstructionRevision), requireTrustedTerminalContext: String(value.requireTrustedTerminalContext) })), minimum: 1 });
+  } else if (kind === 'LabelCopy') {
+    fields.push(choice('activeCopyMode', 'Active copy mode', ['SingleActive', 'MultipleActive'], { value: values.activeCopyMode }), text('maximumActiveCopies', 'Maximum active copies per physical subject', { type: 'number', min: 1, value: values.maximumActiveCopies }));
+    explicit(['allowReprint', 'allowReplacement', 'allowVoid', 'replacementVoidsPriorCopy', 'requireIndependentCopyAuthorization', 'allowAliasCreate', 'allowAliasReplacement', 'allowAliasVoid']);
+    fields.push(choice('requiredConfirmation', 'Required physical confirmation', ['None', 'OperatorObservedPrinting', 'OperatorObservedPrintingAndAttachment'], { value: values.requiredConfirmation }), paragraph('allowedSubjectKinds', 'Allowed authoritative subject kinds (one per line)', { value: lines(values.allowedSubjectKinds) }), paragraph('allowedSymbologies', 'Allowed symbologies (one per line)', { value: lines(values.allowedSymbologies), hint: 'Code128, QR, DataMatrix or GS1DataMatrix. A policy choice does not make an unsupported renderer available.' }));
+    groups.push({ name: 'allowedTemplates', label: 'Allowed exact label-template versions', fields: [text('code', 'Template code'), text('version', 'Exact governed template version', { type: 'number', min: 1 })], values: values.allowedTemplates, minimum: 1 });
+  } else if (kind === 'AttemptRetention') {
+    fields.push(choice('payloadMode', 'Captured payload mode', ['NoPayload', 'NormalizedReferencesOnly'], { value: values.payloadMode }), text('maximumCapturedReferenceCharacters', 'Maximum captured reference characters', { type: 'number', min: 1, value: values.maximumCapturedReferenceCharacters }));
+    explicit(['retainDeclaredAdapter', 'retainDeclaredDevice', 'retainCaptureMethod']);
+  }
+  return { fields, groups };
+}
+
+function selectorAndProcess(values) {
+  const selector = Object.fromEntries(SELECTOR_FIELDS.map(field => [field.name, values[field.name] ?? null]));
+  if (!!values.processCode !== !!values.processRevision) throw new Error('A process reference needs both its code and exact revision.');
+  return { selector, process: values.processCode ? { code: values.processCode, revision: values.processRevision } : null };
+}
+
+function contentFrom(kind, values, groups, ruleValues, extensionValues = {}, extensionGroups = {}) {
   const documents = groups.documents, section = { ...values };
+  if (kind === 'Adoption') {
+    const { selector, process } = selectorAndProcess(values);
+    if (values.riskClassCode && !values.riskBasis) throw new Error('A declared risk class requires a human basis.');
+    return { purpose: values.purpose, policyCode: values.policyCode, policyRevision: values.policyRevision, selector, process, riskClassCode: values.riskClassCode, riskBasis: values.riskBasis, basis: values.basis };
+  }
   if (kind === 'Profile') {
     for (const name of ['products', 'services', 'customerRequirements', 'statutoryRequirements']) section[name] = lineValues(values[name]);
     section.climateRelevant = booleanValue(values.climateRelevant);
@@ -91,6 +129,15 @@ function contentFrom(kind, values, groups, ruleValues) {
     section.acknowledgmentRequired = booleanValue(values.acknowledgmentRequired);
     for (const name of RULE_FIELDS[values.policyKind] ?? []) ruleValues[name] = booleanValue(ruleValues[name]);
     if (values.policyKind === 'ProductRelease') ruleValues.releasePermission = 'quality.product.release';
+    const { extensionEnabled, ...baseRules } = ruleValues; ruleValues = baseRules;
+    if (extensionEnabled === 'true') {
+      const kind = values.policyKind, extension = { ...extensionValues };
+      const booleanNames = kind === 'Execution' ? ['requireServerSession', 'requireCurrentAuthenticatedOperator', 'requireTrustedWorkstation'] : kind === 'LabelCopy' ? ['allowReprint', 'allowReplacement', 'allowVoid', 'replacementVoidsPriorCopy', 'requireIndependentCopyAuthorization', 'allowAliasCreate', 'allowAliasReplacement', 'allowAliasVoid'] : ['retainDeclaredAdapter', 'retainDeclaredDevice', 'retainCaptureMethod'];
+      for (const name of booleanNames) extension[name] = booleanValue(extensionValues[name]);
+      if (kind === 'Execution') extension.operationRules = extensionGroups.operationRules.map(value => ({ code: value.code, ...selectorAndProcess(value), riskClassCode: value.riskClassCode, requiredScans: lineValues(value.requiredScans), allowManualSelection: booleanValue(value.allowManualSelection), requireInstructionRevision: booleanValue(value.requireInstructionRevision), requireTrustedTerminalContext: booleanValue(value.requireTrustedTerminalContext) }));
+      if (kind === 'LabelCopy') { extension.allowedSubjectKinds = lineValues(extensionValues.allowedSubjectKinds); extension.allowedSymbologies = lineValues(extensionValues.allowedSymbologies); extension.allowedTemplates = extensionGroups.allowedTemplates; }
+      ruleValues[EXTENSION[kind]] = extension;
+    }
     section.rules = RULE_FIELDS[values.policyKind] ? { [values.policyKind.charAt(0).toLowerCase() + values.policyKind.slice(1)]: ruleValues } : null;
   } else section.standardReferences = groups.standardReferences.map(ref => {
     const { verificationDocumentNumber, verificationDocumentRevision, ...reference } = ref;
@@ -107,8 +154,8 @@ function sectionHtml(title, values) {
 }
 
 function contentHtml(kind, content) {
-  const section = content?.[kind.toLowerCase()] ?? {};
-  return Object.entries(section).map(([name, value]) => name === 'rules' ? Object.entries(value ?? {}).map(([ruleKind, rules]) => `<h3>${esc(labels(ruleKind))} determinations</h3>${Object.entries(rules).map(([rule, setting]) => sectionHtml(labels(rule), setting)).join('')}`).join('') : sectionHtml(labels(name), value)).join('') + sectionHtml('Controlled document references', content?.documents ?? []);
+  const section = kind === 'Adoption' ? content ?? {} : content?.[kind.toLowerCase()] ?? {};
+  return Object.entries(section).map(([name, value]) => name === 'rules' ? Object.entries(value ?? {}).map(([ruleKind, rules]) => `<h3>${esc(labels(ruleKind))} determinations</h3>${Object.entries(rules).map(([rule, setting]) => typeof setting === 'object' && !Array.isArray(setting) ? `<h4>${esc(labels(rule))}</h4>${Object.entries(setting ?? {}).map(([name, value]) => sectionHtml(labels(name), value)).join('')}` : sectionHtml(labels(rule), setting)).join('')}`).join('') : typeof value === 'object' && !Array.isArray(value) ? `<h3>${esc(labels(name))}</h3>${Object.entries(value ?? {}).map(([name, value]) => sectionHtml(labels(name), value)).join('')}` : sectionHtml(labels(name), value)).join('') + (kind === 'Adoption' ? '' : sectionHtml('Controlled document references', content?.documents ?? []));
 }
 
 const authored = (revision, actor) => [revision.createdBy, revision.lastEditedBy,
@@ -127,8 +174,9 @@ export async function qmsPage(page, ctx) {
 
   async function load() {
     const token = ++generation; closeDialogs();
-    const [status, records, directory] = await Promise.all([tryGet('/api/quality/qms/status'), tryGet(`/api/quality/qms/records?kind=${kind}`), tryGet('/api/kernel/directory')]);
+    const [status, records, directory] = await Promise.all([tryGet('/api/quality/qms/status'), tryGet(kind === 'Adoption' ? '/api/quality/qms/adoptions' : `/api/quality/qms/records?kind=${kind}`), tryGet('/api/kernel/directory')]);
     if (!current(token)) return;
+    if (kind === 'Adoption' && records.data) records.data = records.data.map(record => ({ ...record, kind: 'Adoption' }));
     data = { status, records, directory }; render();
   }
 
@@ -182,10 +230,18 @@ export async function qmsPage(page, ctx) {
           groups[group.name] = rows.map(row => Object.fromEntries(Object.entries(readFields(row, row.qmsFields)).map(([name, value]) => [name.slice(row.qmsPrefix.length), value])));
         }
         const policyFields = selectedKind === 'Policy' ? modal.querySelector('[data-qms-policy-rules]').qmsFields : [];
-        const content = contentFrom(selectedKind, values, groups, readFields(modal, policyFields));
+        const extension = selectedKind === 'Policy' ? modal.querySelector('[data-qms-policy-rules]').qmsExtension : null;
+        const extensionValues = readFields(modal, extension?.fields ?? []), extensionGroups = {};
+        for (const group of extension?.groups ?? []) {
+          const rows = [...modal.querySelector(`[data-qms-extension-group="${group.name}"]`).querySelector('[data-qms-rows]').children];
+          if (rows.length < group.minimum) throw new Error(`Record at least ${group.minimum} ${group.label.toLowerCase()}.`);
+          extensionGroups[group.name] = rows.map(row => Object.fromEntries(Object.entries(readFields(row, row.qmsFields)).map(([name, value]) => [name.slice(row.qmsPrefix.length), value])));
+        }
+        const content = contentFrom(selectedKind, values, groups, readFields(modal, policyFields), extensionValues, extensionGroups);
         if (!live() || !allowed('manage', record)) throw new Error('This editing context is no longer active.');
-        const route = record ? `/api/quality/qms/records/${key(record.code)}/revisions${newRevision ? '' : `/${revision.revision}/edit`}` : '/api/quality/qms/records';
-        return command(route, record ? { expectedVersion: revision.version, content } : { ...headers, programId: headers.programId || null, kind: selectedKind, content }, reason);
+        const base = selectedKind === 'Adoption' ? '/api/quality/qms/adoptions' : '/api/quality/qms/records';
+        const route = record ? `${base}/${key(record.code)}/revisions${newRevision ? '' : `/${revision.revision}/edit`}` : base;
+        return command(route, record ? { expectedVersion: revision.version, content } : { ...headers, programId: headers.programId || null, ...(selectedKind === 'Adoption' ? {} : { kind: selectedKind }), content }, reason);
       });
     const modal = form.modal;
     let nextRow = 0;
@@ -206,8 +262,32 @@ export async function qmsPage(page, ctx) {
       const rules = $('[data-qms-policy-rules]', modal), select = $('#f-policyKind', modal);
       const showRules = () => {
         const fields = policyRuleFields(select.value, definition.section.rules); rules.qmsFields = fields;
-        rules.innerHTML = fields.length ? `<h3>${esc(labels(select.value))} determinations</h3><div class="faint">Record each organization determination explicitly. Existing manufacturing and audit safeguards remain enforced.</div>${fields.map(fieldHtml).join('')}` : '<div class="faint">This policy kind has no typed operational rules.</div>';
+        rules.innerHTML = fields.length ? `<h3>${esc(labels(select.value))} determinations</h3><div class="faint">Record each organization determination explicitly. Existing manufacturing and audit safeguards remain enforced.</div>${fields.map(fieldHtml).join('')}<div data-qms-policy-extension></div>` : '<div class="faint">This policy kind has no typed operational rules.</div>';
+        rules.qmsExtension = null;
+        const enabled = $('#f-extensionEnabled', rules);
+        const showExtension = () => {
+          const target = $('[data-qms-policy-extension]', rules);
+          if (!target) return;
+          if (enabled?.value !== 'true') { target.innerHTML = ''; rules.qmsExtension = null; return; }
+          const kind = select.value, definition = policyExtension(kind, rulesFor(kind)); rules.qmsExtension = definition;
+          target.innerHTML = `<h3>${esc(labels(EXTENSION[kind]))} governance</h3>${definition.fields.map(fieldHtml).join('')}${definition.groups.map(group => `<section class="panel" data-qms-extension-group="${group.name}"><h4>${esc(group.label)}</h4><div data-qms-rows></div><button class="btn small" type="button" data-qms-add>Add entry</button></section>`).join('')}`;
+          let index = 0;
+          for (const group of definition.groups) {
+            const section = $(`[data-qms-extension-group="${group.name}"]`, target), rows = $('[data-qms-rows]', section);
+            const add = (value = {}) => {
+              if (!form.live()) return;
+              const row = document.createElement('div'); row.className = 'form-grid'; row.qmsPrefix = `extension-${group.name}-${index++}-`;
+              row.qmsFields = group.fields.map(field => ({ ...field, name: `${row.qmsPrefix}${field.name}`, value: value[field.name] }));
+              row.innerHTML = `${row.qmsFields.map(fieldHtml).join('')}<button class="btn small ghost" type="button" data-qms-remove>Remove this entry</button>`;
+              rows.append(row); $('[data-qms-remove]', row).addEventListener('click', () => row.remove());
+            };
+            for (const value of group.values ?? []) add(value);
+            $('[data-qms-add]', section).addEventListener('click', () => add());
+          }
+        };
+        enabled?.addEventListener('change', showExtension); showExtension();
       };
+      const rulesFor = kind => definition.section.rules?.[kind.charAt(0).toLowerCase() + kind.slice(1)] ?? {};
       select.addEventListener('change', showRules); showRules();
     }
   }
@@ -219,16 +299,16 @@ export async function qmsPage(page, ctx) {
     dialog(`${labels(action)} ${record.code} revision ${revision.revision}`, `This action uses recorded version ${revision.version}. The server rechecks the current record, exact sources, permissions and separation of duties.`, fields.map(fieldHtml).join(''), labels(action), (modal, reason, live) => {
       const note = readFields(modal, fields).qmsNote;
       if (!live() || !allowed(permission, record)) throw new Error('This decision context is no longer active.');
-      return command(`/api/quality/qms/records/${key(record.code)}/revisions/${revision.revision}/${action}`, { expectedVersion: revision.version, note }, reason);
+      return command(`/api/quality/qms/${record.kind === 'Adoption' ? 'adoptions' : 'records'}/${key(record.code)}/revisions/${revision.revision}/${action}`, { expectedVersion: revision.version, note }, reason);
     });
   }
 
   async function openRecord(code) {
     const token = ++generation; closeDialogs();
-    const result = await tryGet(`/api/quality/qms/records/${key(code)}`);
+    const result = await tryGet(`/api/quality/qms/${kind === 'Adoption' ? 'adoptions' : 'records'}/${key(code)}`);
     if (!current(token)) return;
     if (result.error) { toast(result.error.message, true); return; }
-    const record = { ...result.data.record, revisions: result.data.revisions };
+    const record = kind === 'Adoption' ? { ...result.data, kind: 'Adoption' } : { ...result.data.record, revisions: result.data.revisions };
     data.records.data = (data.records.data ?? []).filter(item => item.code !== code).concat(record);
     selectedCode = code; selectedRevision = record.revisions.at(-1)?.revision; render();
   }

@@ -5,7 +5,7 @@ using Npgsql;
 
 namespace Forge.Resources.Infrastructure;
 
-internal sealed class PostgresResourcesStore(PostgresUnitOfWork uow) : IResourcesStore, IResourcesLookup
+internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : IResourcesStore, IResourcesLookup
 {
     public async Task<bool> InsertAsync(string kind, string code, string name, string? parent, string? description, DateTimeOffset at, string actor, CancellationToken ct)
     {

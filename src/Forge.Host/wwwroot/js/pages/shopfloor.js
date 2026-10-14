@@ -4,6 +4,7 @@ import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, relative, toast, emptyBloc
 import { who } from '../people.js';
 import { isServiceUnavailable, createTerminalSession } from '../terminal-state.mjs';
 import { mountIdentificationInput, workQueueSelection } from '../identification-input.mjs';
+import { mountScanSession, operationIdentificationCode } from '../scan-session.mjs';
 
 // The shop-floor terminal. A badge scanner types the badge and presses Enter (keyboard wedge); any
 // reader that does that works. The badge is held in memory only for this interaction and is
@@ -20,6 +21,27 @@ export async function shopFloorPage(page, ctx) {
   let idle = null;
   const dialogs = new Set();
   let workIdentification = null;
+  let scanWork = null, scanContext = 0;
+
+  function clearScanWork() {
+    scanContext++;
+    scanWork?.controller?.dispose(); scanWork?.element.remove(); scanWork = null;
+  }
+
+  async function stageWork(work, session, machineCode = null) {
+    if (!terminal.isCurrent(session) || terminal.busy) return;
+    clearScanWork();
+    const context = scanContext, element = document.createElement('section'); element.className = 'panel';
+    $('[data-scan-session-host]', page)?.append(element);
+    element.innerHTML = '<div class="muted">Reading staging configuration…</div>';
+    const pending = { element, work, session, machineCode, controller: null }; scanWork = pending;
+    try {
+      const config = await get('/api/identification/config');
+      if (!terminal.isCurrent(session) || context !== scanContext) return;
+      const controller = await mountScanSession(element, { operationCode: operationIdentificationCode(config, work.orderNumber, work.operation.sequence), operatorPersonId: terminal.person.personId, machineCode, badge: session.badge, isCurrent: () => terminal.isCurrent(session) && context === scanContext, canMutate: () => !terminal.busy, onUnavailable: lockForOutage, drivers: ctx.scannerDrivers ?? {} });
+      if (!terminal.isCurrent(session) || context !== scanContext) controller.dispose(); else pending.controller = controller;
+    } catch (error) { if (terminal.isCurrent(session) && context === scanContext) { element.innerHTML = `<div class="notice bad" role="alert">${esc(error.message)}</div>`; } }
+  }
 
   const canUse = ctx.me.roles.some(r => ['ShopFloorTerminal', 'Supervisor'].includes(r));
   if (!canUse) {
@@ -40,6 +62,7 @@ export async function shopFloorPage(page, ctx) {
   function lockTerminal() {
     clearTimeout(idle);
     terminal.clear();
+    clearScanWork();
     closeDialogs();
     render();
   }
@@ -87,11 +110,24 @@ export async function shopFloorPage(page, ctx) {
   }
 
   async function act(path, body, ok, quiet = false, session = terminal.capture()) {
+    const machineCode = (path === '/api/shopfloor/report' ? terminal.person?.labor?.machineCode : body.machineCode) ?? null;
+    if (scanWork && ['/api/shopfloor/start', '/api/shopfloor/report'].includes(path) && (scanWork.machineCode !== machineCode || scanWork.work.orderNumber !== body.orderNumber || scanWork.work.operation.sequence !== body.sequence)) clearScanWork();
+    const staged = scanWork && terminal.isCurrent(scanWork.session) && scanWork.work.orderNumber === body.orderNumber && scanWork.work.operation.sequence === body.sequence
+      && ['/api/shopfloor/start', '/api/shopfloor/report'].includes(path) ? scanWork.controller?.snapshot : null;
     const token = terminal.beginAction(session);
     if (!token) return null;
     try {
-      const r = await command(path, body);
+      if (['/api/shopfloor/start', '/api/shopfloor/report'].includes(path)) {
+        const requirements = await get(`/api/identification/scan-sessions/requirements?orderNumber=${encodeURIComponent(body.orderNumber)}&sequence=${encodeURIComponent(body.sequence)}${machineCode ? `&machineCode=${encodeURIComponent(machineCode)}` : ''}`);
+        if (!terminal.isCurrent(token)) return null;
+        if (requirements?.adopted !== false && requirements?.adopted !== true) throw Object.assign(new Error('Forge did not confirm the applicable work-staging requirements. Refresh the current work before continuing.'), { status: 409 });
+        if (requirements.required && (!staged || !(requirements.requiredKinds ?? []).every(kind => (scanWork?.controller?.view?.selections ?? []).some(selection => selection.kind.toLowerCase() === kind.toLowerCase())))) throw Object.assign(new Error('The current adopted policy requires a server-owned scan session. Stage this operation’s required references before continuing.'), { status: 422 });
+      }
+      const r = await command(path, body, undefined, staged ? { scanSession: staged } : undefined);
       if (!terminal.isCurrent(token)) return null;
+      if (staged && scanWork?.controller) await scanWork.controller.refresh();
+      if (!terminal.isCurrent(token)) return null;
+      if (path === '/api/shopfloor/stop' || path === '/api/shopfloor/clock-out' || (path === '/api/shopfloor/report' && body.complete)) clearScanWork();
       toast(r?.message ?? r?.clockedOut?.message ?? ok ?? 'Done.');
       await identify(token.badge, token);
       return r;
@@ -125,6 +161,7 @@ export async function shopFloorPage(page, ctx) {
     const clocked = p.clockedInSince;
     const myOp = labor ? p.queue.find(q => q.orderNumber === labor.orderNumber && q.operation.sequence === labor.sequence) : null;
     const awaiting = (p.training ?? []).filter(t => t.trainerId === p.personId && !t.evaluation);
+    if (scanWork && (!terminal.isCurrent(scanWork.session) || (labor && (scanWork.work.orderNumber !== labor.orderNumber || scanWork.work.operation.sequence !== labor.sequence || scanWork.machineCode !== (labor.machineCode ?? null))))) clearScanWork();
     page.innerHTML = `
       <div class="page-head">
         <div><h1>${esc(p.displayName)}</h1>
@@ -154,7 +191,7 @@ export async function shopFloorPage(page, ctx) {
           <label class="check"><input id="complete" type="checkbox"> Operation complete</label>
           <button class="btn primary big" type="submit">Report</button>
         </form>`}
-        <div style="margin-top:12px"><button class="btn danger" id="stop">Stop work</button></div>
+        <div style="margin-top:12px"><button class="btn" data-stage-current-work>Stage current operation references</button> <button class="btn danger" id="stop">Stop work</button></div>
       </section>` : ''}
       ${awaiting.length ? `
       <section class="panel"><header><h2>Training to evaluate</h2></header>
@@ -162,6 +199,7 @@ export async function shopFloorPage(page, ctx) {
           <td>${esc(fmtDateTime(t.startedAt))}${t.endedAt ? '' : ' · <span class="c-warn">in progress</span>'}</td>
           <td><button class="btn" data-evaluate="${t.sessionId}">Evaluate &amp; sign</button></td></tr>`).join('')}</tbody></table>
       </section>` : ''}
+      <div data-scan-session-host></div>
       ${p.isWorker && !labor ? `
       <section class="panel"><header><h2>Work you can start</h2><span class="spacer"></span><span class="muted">your work center, assignment and schedule</span></header>
         <div data-work-identification></div><div data-identified-work></div>
@@ -174,7 +212,7 @@ export async function shopFloorPage(page, ctx) {
             : esc(q.operation.eligibleMachines[0] ?? '—')}</td>
           <td>${fmtNumber(q.operation.goodQuantity, 3)} / ${fmtNumber(q.orderQuantity, 3)}</td>
           <td>${q.scheduledStart ? esc(fmtDateTime(q.scheduledStart)) : '<span class="faint">—</span>'}${q.scheduledForYou ? '<br><span class="pill info">Scheduled for you</span>' : ''}</td>
-          <td>${q.hold ? `<span class="pill bad">On hold</span><div class="faint" style="max-width:260px">${esc(q.hold)}</div>` : `<button class="btn primary" data-start="${i}" ${clocked ? '' : 'disabled title="Clock in first"'}>Start</button>`}</td></tr>`).join('')}
+          <td>${q.hold ? `<span class="pill bad">On hold</span><div class="faint" style="max-width:260px">${esc(q.hold)}</div>` : `<button class="btn" data-stage-work="${i}">Stage references</button> <button class="btn primary" data-start="${i}" ${clocked ? '' : 'disabled title="Clock in first"'}>Start</button>`}</td></tr>`).join('')}
         </tbody></table>` : emptyBlock('Nothing to start', 'No released work at your work center, your assignment or in the schedule for you.')}
       </section>` : ''}`;
 
@@ -199,9 +237,13 @@ export async function shopFloorPage(page, ctx) {
     $$('[data-start]', page).forEach(b => b.addEventListener('click', () => {
       const q = p.queue[Number(b.dataset.start)];
       const sel = $(`[data-machine="${b.dataset.start}"]`, page);
-      start(q, sel ? sel.value : null, null, session);
+      start(q, sel ? sel.value : q.operation.eligibleMachines[0] ?? null, null, session);
     }));
     $$('[data-evaluate]', page).forEach(b => b.addEventListener('click', () => evaluate(Number(b.dataset.evaluate), session)));
+    if (scanWork && terminal.isCurrent(scanWork.session)) $('[data-scan-session-host]', page)?.append(scanWork.element);
+    $$('[data-stage-work]', page).forEach(button => button.addEventListener('click', () => { const q = p.queue[Number(button.dataset.stageWork)]; stageWork(q, session, $(`[data-machine="${button.dataset.stageWork}"]`, page)?.value ?? q.operation.eligibleMachines[0] ?? null); }));
+    $('[data-stage-current-work]', page)?.addEventListener('click', () => stageWork(myOp ?? { orderNumber: labor.orderNumber, operation: { sequence: labor.sequence } }, session, labor.machineCode ?? null));
+    $$('[data-machine]', page).forEach(select => select.addEventListener('change', () => { const q = p.queue[Number(select.dataset.machine)]; if (scanWork?.work.orderNumber === q.orderNumber && scanWork.work.operation.sequence === q.operation.sequence && scanWork.machineCode !== select.value) clearScanWork(); }));
     const input = $('[data-work-identification]', page), selected = $('[data-identified-work]', page);
     if (input) workIdentification = mountIdentificationInput(input, {
       id: 'work-identification', label: 'Order or operation code (optional scan)', kinds: ['order', 'operation'],
@@ -214,11 +256,13 @@ export async function shopFloorPage(page, ctx) {
         selected.innerHTML = `<div class="notice">Selected work. Choose the operation and press Start.</div>${choices.map((q, i) => `
           <div class="field"><b>Order #${q.orderNumber}, operation ${q.operation.sequence}</b> — ${esc(q.operation.description)}
           ${q.operation.eligibleMachines.length > 1 ? `<label for="identified-machine-${i}">Machine</label><select class="select" id="identified-machine-${i}">${q.operation.eligibleMachines.map(m => `<option ${m === q.scheduledMachine ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>` : ` · ${esc(q.operation.eligibleMachines[0] ?? '—')}`}
-          ${q.hold ? `<span class="pill bad">On hold</span><div class="faint">${esc(q.hold)}</div>` : `<button class="btn primary" data-identified-start="${i}" ${clocked ? '' : 'disabled title="Clock in first"'}>Start selected work</button>`}</div>`).join('')}`;
+          ${q.hold ? `<span class="pill bad">On hold</span><div class="faint">${esc(q.hold)}</div>` : `<button class="btn" data-identified-stage="${i}">Stage selected operation</button> <button class="btn primary" data-identified-start="${i}" ${clocked ? '' : 'disabled title="Clock in first"'}>Start selected work</button>`}</div>`).join('')}`;
+        $$('[data-identified-stage]', selected).forEach(button => button.addEventListener('click', () => { if (!terminal.isCurrent(session) || terminal.busy) return; const index = Number(button.dataset.identifiedStage), q = choices[index]; stageWork(q, session, $(`#identified-machine-${index}`, selected)?.value ?? q.operation.eligibleMachines[0] ?? null); }));
+        choices.forEach((q, index) => $(`#identified-machine-${index}`, selected)?.addEventListener('change', event => { if (scanWork?.work.orderNumber === q.orderNumber && scanWork.work.operation.sequence === q.operation.sequence && scanWork.machineCode !== event.target.value) clearScanWork(); }));
         $$('[data-identified-start]', selected).forEach(button => button.addEventListener('click', () => {
           if (!terminal.isCurrent(session) || terminal.busy || !workIdentification?.stage.selected) return;
           const index = Number(button.dataset.identifiedStart), q = choices[index];
-          const machine = $(`#identified-machine-${index}`, selected)?.value ?? null;
+          const machine = $(`#identified-machine-${index}`, selected)?.value ?? q.operation.eligibleMachines[0] ?? null;
           workIdentification.stage.clear();
           start(q, machine, null, session);
         }));
@@ -357,6 +401,7 @@ export async function shopFloorPage(page, ctx) {
   return { dispose: () => {
     clearTimeout(idle);
     terminal.dispose();
+    clearScanWork();
     workIdentification?.dispose(); workIdentification = null;
     closeDialogs();
     operatorStatus.remove();

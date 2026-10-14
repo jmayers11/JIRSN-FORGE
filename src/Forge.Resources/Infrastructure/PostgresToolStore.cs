@@ -6,7 +6,7 @@ using NpgsqlTypes;
 namespace Forge.Resources.Infrastructure;
 
 /// <summary>Tool types, tools and their history (V3.8).</summary>
-internal sealed class PostgresToolStore(PostgresUnitOfWork uow) : IToolLookup, IToolStore
+internal sealed partial class PostgresToolStore(PostgresUnitOfWork uow) : IToolLookup, IToolStore
 {
     private const string ToolSql =
         """

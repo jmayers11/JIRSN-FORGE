@@ -34,7 +34,7 @@ public sealed record CommandOutcome(CommandResult Result, IReadOnlyList<EventEnv
 /// the same transaction. Denials and business-rule rejections are audited in their own transaction
 /// (the rejected change itself is rolled back).
 /// </summary>
-public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeAuthorizer authorizer, TimeProvider time, ICommandSourceResolver? sources = null)
+public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeAuthorizer authorizer, TimeProvider time, ICommandSourceResolver? sources = null, ICommandTransactionParticipant? participant = null, ICommandTransactionParticipantFactory? participants = null)
 {
     public TimeProvider Time => time;
 
@@ -84,11 +84,22 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
                 }
                 if (spec.ReasonRequired && string.IsNullOrWhiteSpace(context.Reason))
                     throw new CommandRejectedException("reason_required", "A reason is required for this change.");
-                var requestHash = CanonicalJson.Fingerprint(new
-                {
-                    version = 2, spec.SourceContext, spec.CommandType, command,
-                    context.Actor, context.Source, current.SubjectIdentity,
-                });
+                var transactionParticipant = participant ?? participants?.Create();
+                var transactionEvidence = transactionParticipant is null ? null
+                    : await transactionParticipant.ValidateAsync(uow, spec, command!, context, current, now, ct);
+                // Preserve the established fingerprint bytes for ordinary commands.
+                var requestHash = context.ScanSession is null && transactionEvidence is null
+                    ? CanonicalJson.Fingerprint(new
+                    {
+                        version = 2, spec.SourceContext, spec.CommandType, command,
+                        context.Actor, context.Source, current.SubjectIdentity,
+                    })
+                    : CanonicalJson.Fingerprint(new
+                    {
+                        version = 3, spec.SourceContext, spec.CommandType, command,
+                        context.Actor, context.Source, current.SubjectIdentity, context.ScanSession,
+                        EvidenceFingerprint = transactionEvidence?.Fingerprint,
+                    });
                 var prior = await uow.Idempotency.ReserveAsync(context.IdempotencyKey, spec.CommandType, requestHash, now, ct);
                 if (prior is not null)
                 {
@@ -101,12 +112,14 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
                     await uow.Outbox.EnqueueAsync(envelope, ct);
                 }
 
+                Guid? acceptedAuditId = null;
                 if (outcome.Change is { } change)
                 {
+                    acceptedAuditId = ForgeIds.New(time);
                     await uow.Audit.AppendAsync(
                         new AuditEntry
                         {
-                            AuditId = ForgeIds.New(time),
+                            AuditId = acceptedAuditId.Value,
                             RecordedAt = now,
                             Actor = context.Actor,
                             Action = spec.CommandType,
@@ -120,9 +133,14 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
                             CorrelationId = context.CorrelationId,
                             ProgramId = change.Program ?? spec.Resource.Program,
                             Markings = change.Markings | spec.Resource.Markings,
+                            OwningResource = spec.Resource,
+                            ContextFingerprint = transactionEvidence?.Fingerprint,
                         },
                         ct);
                 }
+
+                if (transactionEvidence is not null)
+                    await transactionParticipant!.RecordAcceptedAsync(uow, spec, context, outcome, acceptedAuditId, transactionEvidence, now, ct);
 
                 await uow.Idempotency.CompleteAsync(context.IdempotencyKey, outcome.Result, ct);
                 await uow.CommitAsync(ct);
@@ -136,7 +154,9 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
             }
             catch (ForgeAuthorizationException ex)
             {
-                if (!sourceAuthorityResolved && authority is not null && sources is not null)
+                if (ex.OwningResource is { } deniedResource)
+                    spec = spec with { Resource = deniedResource };
+                else if (!sourceAuthorityResolved && authority is not null && sources is not null)
                     spec = spec with { Resource = (await sources.ResolveAsync(uow, spec, context, now, ct)).Resource };
                 rejectedAuthority = ex.Decision;
             }
@@ -192,6 +212,7 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
                 CorrelationId = context.CorrelationId,
                 ProgramId = spec.Resource.Program,
                 Markings = spec.Resource.Markings,
+                OwningResource = spec.Resource,
             },
             ct);
 

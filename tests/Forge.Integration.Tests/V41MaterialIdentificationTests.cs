@@ -99,7 +99,8 @@ public sealed class V41MaterialIdentificationTests(PostgresFixture postgres)
             Assert.Equal(HttpStatusCode.OK, metadataResponse.StatusCode);
             using var metadata = JsonDocument.Parse(await metadataResponse.Content.ReadAsStringAsync());
             Assert.Equal(Namespace, metadata.RootElement.GetProperty("namespace").GetString());
-            Assert.Equal(new[] { "order", "operation", "material", "location" }, metadata.RootElement.GetProperty("supportedKinds").EnumerateArray().Select(value => value.GetString()));
+            foreach (var retainedKind in new[] { "order", "operation", "material", "location" })
+                Assert.Contains(retainedKind, metadata.RootElement.GetProperty("supportedKinds").EnumerateArray().Select(value => value.GetString()));
             Assert.Equal(1024, metadata.RootElement.GetProperty("maxCodeLength").GetInt32());
             Assert.Equal(40, metadata.RootElement.GetProperty("maxKeyLength").GetInt32());
         }

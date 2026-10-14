@@ -27,7 +27,7 @@ public sealed class PostgresUnitOfWorkFactory(NpgsqlDataSource dataSource, IEnum
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
-            return new PostgresUnitOfWork(connection, transaction, registrations, time.GetUtcNow());
+            return new PostgresUnitOfWork(connection, transaction, registrations, time.GetUtcNow(), readOnly);
         }
         catch
         {
@@ -46,12 +46,13 @@ public sealed class PostgresUnitOfWork : IKernelUnitOfWork
     private readonly Dictionary<Type, object> created = [];
     private bool completed;
 
-    internal PostgresUnitOfWork(NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyDictionary<Type, Func<PostgresUnitOfWork, object>> registrations, DateTimeOffset now)
+    internal PostgresUnitOfWork(NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyDictionary<Type, Func<PostgresUnitOfWork, object>> registrations, DateTimeOffset now, bool readOnly = false)
     {
         this.connection = connection;
         this.transaction = transaction;
         this.registrations = registrations;
         Now = now;
+        IsReadOnly = readOnly;
         People = new PostgresPeopleStore(this);
         Outbox = new PostgresOutbox(this);
         Audit = new PostgresAuditWriter(this);
@@ -61,6 +62,9 @@ public sealed class PostgresUnitOfWork : IKernelUnitOfWork
     public IPeopleStore People { get; }
 
     public DateTimeOffset Now { get; }
+
+    /// <summary>Repeatable read snapshots cannot take PostgreSQL row locks; commands retain those locks.</summary>
+    public bool IsReadOnly { get; }
 
     public IEventOutbox Outbox { get; }
 

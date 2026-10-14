@@ -63,6 +63,9 @@ public interface IResourceUsage
 /// </summary>
 public interface IResourcesLookup
 {
+    Task<MachineInfo?> FindRecordedMachineAsync(string code, CancellationToken ct);
+    Task<WorkCenterInfo?> FindRecordedWorkCenterAsync(string code, CancellationToken ct);
+    Task<SafetyAreaInfo?> FindRecordedSafetyAreaAsync(string code, CancellationToken ct);
     Task<IReadOnlyList<SiteInfo>> ListSitesAsync(CancellationToken ct);
 
     Task<IReadOnlyList<SafetyAreaInfo>> ListSafetyAreasAsync(CancellationToken ct);

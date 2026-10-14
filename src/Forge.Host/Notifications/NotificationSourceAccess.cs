@@ -2,6 +2,7 @@ using Forge.Kernel.Access;
 using Forge.Kernel.Security;
 using Forge.Kernel.WorkAssignments;
 using Forge.Host.History;
+using Forge.Host.WorkInbox;
 using Forge.Quality.Qms;
 
 namespace Forge.Host.Notifications;
@@ -12,6 +13,8 @@ internal static class NotificationSourceAccess
     public static async Task<bool> CanSeeAsync(IKernelUnitOfWork uow, IWorkSourceResolver sources,
         IForgeAuthorizer authorizer, QmsService qms, ForgePrincipal principal, string type, string id, CancellationToken ct)
     {
+        if (OwnedSourceFamilies.Contains(type))
+            return await OwnedSourceFamilies.CanReadAsync(uow, sources, principal, type, id, ct);
         if (QmsSourceAccess.IsQms(type)) return await QmsSourceAccess.CanSeeAsync(uow, qms, principal, type, id, ct);
         var source = await sources.ResolveAsync(uow, type, id, ct);
         if (source is null) return type is not ("Order" or "ProductionOrder" or "OrderOperation" or "Ncr" or "NCR" or "Capa" or "CAPA" or "Document" or "DocumentRevision" or "DocumentLink" or "Hold" or "Machine" or "WorkCenter");

@@ -272,6 +272,7 @@ public sealed record ToolingCheck(bool Required, bool Ready, IReadOnlyList<strin
 
 public interface IToolLookup
 {
+    Task<ToolTypeInfo?> FindToolTypeAsync(string code, CancellationToken ct);
     Task<IReadOnlyList<ToolTypeInfo>> ListToolTypesAsync(CancellationToken ct);
 
     Task<IReadOnlyList<ToolInfo>> ListToolsAsync(CancellationToken ct);

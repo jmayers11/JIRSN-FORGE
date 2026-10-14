@@ -120,7 +120,7 @@ public interface IDocumentStore
 /// released; reference documents are uncontrolled attachments and never production authority. Documents
 /// are invisible to people without their program or markings, everywhere.
 /// </summary>
-public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentTargetResolver targets)
+public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentTargetResolver targets, IGeneratedContentOwnerAccess? generatedContent = null)
 {
     public const string SourceContext = EngineeringService.SourceContext;
 
@@ -151,6 +151,7 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
         var spec = new CommandSpec(SourceContext, nameof(StoreDocumentFile), Permissions.DocumentsAttach, ResourceRef.Of(FileEntity, sha));
         return pipeline.ExecuteAsync(spec, new { Sha256 = sha, content.Length, FileName = name }, context, async (uow, now) =>
         {
+            await RequireGeneratedContentAsync(uow, context.Principal, sha, ct);
             if (!await uow.Store<IDocumentStore>().InsertFileAsync(sha, content, now, context.Actor, ct))
             {
                 return CommandOutcome.NoChange(CommandResult.NoChange(sha, $"{name} is already stored."));
@@ -231,7 +232,7 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
                 throw new CommandRejectedException("open_revision", $"Revision {open.Revision} is still {open.Status}; release or obsolete it before starting another.");
             }
 
-            var (sha, name, size) = await FileAsync(uow, c.FileSha256, c.FileName, document.Authority == DocumentAuthority.Reference, ct);
+            var (sha, name, size) = await FileAsync(uow, context.Principal, c.FileSha256, c.FileName, document.Authority == DocumentAuthority.Reference, ct);
             var status = document.Authority == DocumentAuthority.Reference ? DocumentRevisionStatus.Uncontrolled : DocumentRevisionStatus.Draft;
             var record = new DocumentRevisionInfo(number, revision, status, sha, name, size, Optional(c.ChangeNote, 2000), c.ReviewBy, context.Actor, now,
                 null, null, null, null, null, null, null, null, null, null);
@@ -254,7 +255,7 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
                 throw new CommandRejectedException("not_draft", $"Revision {current.Revision} is {current.Status}; only a draft is edited.");
             }
 
-            var (sha, name, size) = await FileAsync(uow, c.FileSha256, c.FileName, false, ct);
+            var (sha, name, size) = await FileAsync(uow, context.Principal, c.FileSha256, c.FileName, false, ct);
             var updated = current with { FileSha256 = sha, FileName = name, FileSize = size, ChangeNote = Optional(c.ChangeNote, 2000), ReviewBy = c.ReviewBy };
             return updated == current ? null : (updated, "Edited", "draft updated");
         }, ct);
@@ -391,7 +392,7 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
         {
             RequireKnownMarkings(c.Markings);
             var target = await VisibleTargetAsync(uow, c.TargetType, c.TargetId, context, ct);
-            var (sha, name, size) = await FileAsync(uow, c.FileSha256, c.FileName, true, ct);
+            var (sha, name, size) = await FileAsync(uow, context.Principal, c.FileSha256, c.FileName, true, ct);
             var store = uow.Store<IDocumentStore>();
             var number = $"REF-{await store.NextReferenceNumberAsync(ct):D6}";
             var document = new DocumentInfo(number, Title(string.IsNullOrWhiteSpace(c.Title) ? name! : c.Title), c.Type, DocumentAuthority.Reference, null, null, target.ProgramId, c.Markings | target.Markings, context.Actor, now, []);
@@ -528,7 +529,7 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
         await VisibleTargetOrNullAsync(uow, context.Principal, type, id, ct)
             ?? throw new CommandRejectedException("target_not_found", $"{Describe(type)} {id} does not exist.");
 
-    private static async Task<(string? Sha, string? Name, long? Size)> FileAsync(IKernelUnitOfWork uow, string? rawSha, string? rawName, bool required, CancellationToken ct)
+    private async Task<(string? Sha, string? Name, long? Size)> FileAsync(IKernelUnitOfWork uow, ForgePrincipal principal, string? rawSha, string? rawName, bool required, CancellationToken ct)
     {
         var sha = rawSha?.Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(sha))
@@ -541,6 +542,7 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
             throw new CommandRejectedException("invalid_file", "That is not a stored file reference.");
         }
 
+        await RequireGeneratedContentAsync(uow, principal, sha, ct);
         var file = await uow.Store<IDocumentLookup>().FindFileAsync(sha, ct)
             ?? throw new CommandRejectedException("file_not_found", "That file has not been uploaded.");
         return (sha, FileName(rawName), file.SizeBytes);

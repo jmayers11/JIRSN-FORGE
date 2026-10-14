@@ -98,6 +98,7 @@ async function terminalPage(t, route = () => null, idleTimeoutSeconds = 60) {
     if (override) return Promise.resolve(override);
     if (path === '/api/execution/reason-codes') return Promise.resolve(response([]));
     if (path === '/api/identification/config') return Promise.resolve(response(config));
+    if (path.startsWith('/api/identification/scan-sessions/requirements?')) return Promise.resolve(response({ adopted: false, required: false, manualAllowed: true, requiredKinds: [] }));
     if (path === '/api/identification/resolve') return Promise.resolve(response(operation(17)));
     if (path === '/api/shopfloor/identify') return Promise.resolve(response(person(body.badge)));
     return Promise.resolve(response({ message: 'Started.' }));

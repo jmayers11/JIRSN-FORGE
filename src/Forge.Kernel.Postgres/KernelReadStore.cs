@@ -58,7 +58,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
         await using var cmd = dataSource.CreateCommand(
             """
             SELECT sequence, audit_id, recorded_at, actor, on_behalf_of, action, outcome, entity_type, entity_id,
-                   old_value, new_value, reason, source, correlation_id, program_id, markings, previous_hash, hash
+                   old_value, new_value, reason, source, correlation_id, program_id, markings, previous_hash, hash, owning_resource, context_fingerprint
             FROM kernel.audit_log
             WHERE ($1::text IS NULL OR entity_type = $1)
               AND ($2::text IS NULL OR entity_id = $2)
@@ -83,7 +83,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
         await using var cmd = dataSource.CreateCommand(
             """
             SELECT sequence, audit_id, recorded_at, actor, on_behalf_of, action, outcome, entity_type, entity_id,
-                   old_value, new_value, reason, source, correlation_id, program_id, markings, previous_hash, hash
+                   old_value, new_value, reason, source, correlation_id, program_id, markings, previous_hash, hash, owning_resource, context_fingerprint
             FROM kernel.audit_log
             WHERE recorded_at > $1 AND recorded_at <= $2 AND outcome = 'Succeeded'
               AND entity_type = ANY($3)
@@ -107,7 +107,7 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
         await using var cmd = dataSource.CreateCommand(
             """
             SELECT sequence, audit_id, recorded_at, actor, on_behalf_of, action, outcome, entity_type, entity_id,
-                   old_value, new_value, reason, source, correlation_id, program_id, markings, previous_hash, hash
+                   old_value, new_value, reason, source, correlation_id, program_id, markings, previous_hash, hash, owning_resource, context_fingerprint
             FROM kernel.audit_log ORDER BY sequence
             """);
         var entries = await ReadAudit(cmd, ct);
@@ -143,6 +143,8 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
                 CorrelationId = reader.GetGuid(13),
                 ProgramId = reader.IsDBNull(14) ? null : new ProgramId(reader.GetGuid(14)),
                 Markings = (DataMarking)reader.GetInt32(15),
+                OwningResource = reader.IsDBNull(18) ? null : System.Text.Json.JsonSerializer.Deserialize<ResourceRef>(reader.GetString(18), Forge.Kernel.Serialization.CanonicalJson.Options),
+                ContextFingerprint = reader.IsDBNull(19) ? null : reader.GetString(19),
             };
             list.Add(new ChainedAuditEntry(
                 reader.GetInt64(0),

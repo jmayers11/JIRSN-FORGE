@@ -67,9 +67,17 @@ export async function get(path) {
 }
 
 /** Sends a command. `reason` is recorded in the audit trail with the change. */
-export async function command(path, body = {}, reason) {
+export async function command(path, body = {}, reason, options = {}) {
   const payload = reason ? { ...body, reason } : body;
-  return handle(await fetch(path, { method: 'POST', headers: { ...headers(true), 'Idempotency-Key': uuid() }, body: JSON.stringify(payload) }));
+  const commandHeaders = { ...headers(true), 'Idempotency-Key': options.idempotencyKey ?? uuid() };
+  if (options.scanSession) {
+    const { id, version } = options.scanSession;
+    if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+        || !Number.isSafeInteger(version) || version <= 0) throw new Error('Use the current server scan session reference.');
+    commandHeaders['X-Forge-Scan-Session'] = id;
+    commandHeaders['X-Forge-Scan-Version'] = String(version);
+  }
+  return handle(await fetch(path, { method: 'POST', headers: commandHeaders, body: JSON.stringify(payload) }));
 }
 
 /** Stores a file (at most 50 MB) and returns its SHA-256 reference, which documents and attachments then name. */

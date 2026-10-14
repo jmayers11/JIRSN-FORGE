@@ -66,6 +66,8 @@ const ROLE_TITLES = {
   PurchasingManager: 'Purchasing Manager', ShopFloorTerminal: 'Shop Floor Terminal', Inspector: 'Inspector',
   QualityEngineer: 'Quality Engineer', QualityManager: 'Quality Manager', Shipper: 'Shipper',
   QmsAuthor: 'QMS Author', QmsReviewer: 'QMS Reviewer', QmsApprover: 'QMS Approver',
+  QmsPolicyConsumer: 'QMS Policy Consumer', LabelAuthor: 'Label Author', LabelApprover: 'Label Approver',
+  LabelPrinter: 'Label Printer', IdentificationAdministrator: 'Identification Administrator', ScanOperator: 'Scan Operator',
   ProgramManager: 'Program Manager', MaintenancePlanner: 'Maintenance Planner', FacilitiesManager: 'Facilities Manager',
   DocumentController: 'Document Controller', ChangeBoard: 'Change Board',
 };

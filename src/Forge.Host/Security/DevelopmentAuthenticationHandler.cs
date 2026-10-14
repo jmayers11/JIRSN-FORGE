@@ -47,6 +47,18 @@ public sealed class DevelopmentAuthenticationHandler(
             claims.Add(new Claim("scope", configuration["Forge:Authentication:DevelopmentScopes"]!));
         }
 
+        // Explicit server-only test/development claims. Request bodies and scanner headers supply none of these.
+        foreach (var (setting, claim, maximum) in new[]
+        {
+            ("DevelopmentProviderSessionId", "sid", 200),
+            ("DevelopmentWorkstationId", "forge_workstation", 100),
+        })
+        {
+            var value = configuration["Forge:Authentication:" + setting];
+            if (!string.IsNullOrWhiteSpace(value) && value.Length <= maximum && !value.Any(char.IsControl))
+                claims.Add(new Claim(claim, value));
+        }
+
         var identity = new ClaimsIdentity(
             claims, SchemeName);
         return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName)));

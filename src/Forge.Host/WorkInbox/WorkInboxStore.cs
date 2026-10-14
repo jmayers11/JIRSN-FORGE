@@ -55,6 +55,8 @@ public sealed class WorkInboxStore(NpgsqlDataSource dataSource, IKernelUnitOfWor
         var visible = new List<ApprovalInboxItem>();
         foreach (var candidate in candidates)
         {
+            if (OwnedSourceFamilies.Contains(candidate.WorkType)
+                && !await OwnedSourceFamilies.CanReadAsync(uow, sources, principal, candidate.WorkType, candidate.WorkId, ct)) continue;
             var source = await sources.ResolveAsync(uow, candidate.WorkType, candidate.WorkId, ct);
             if (source is not { IsActive: true, DecisionAvailable: true } || source.Resources.Count == 0 || source.DecisionExcludedActors?.Contains("person:" + principal.PersonId.Value.ToString("D"), StringComparer.Ordinal) == true || source.Resources.Any(resource =>
                 !authorizer.Authorize(principal, source.ReadPermission, resource).IsPermitted || !authorizer.Authorize(principal, candidate.Permission, resource).IsPermitted)) continue;
@@ -70,6 +72,8 @@ public sealed class WorkInboxStore(NpgsqlDataSource dataSource, IKernelUnitOfWor
         var visible = new List<WorkAssignment>();
         foreach (var assignment in await uow.Store<IWorkAssignmentStore>().ListAsync(principal.PersonId, ct))
         {
+            if (OwnedSourceFamilies.Contains(assignment.WorkType)
+                && !await OwnedSourceFamilies.CanReadAsync(uow, sources, principal, assignment.WorkType, assignment.WorkId, ct)) continue;
             var source = await sources.ResolveAsync(uow, assignment.WorkType, assignment.WorkId, ct);
             if (source is null || source.Resources.Count == 0 || source.Resources.Any(resource => !authorizer.Authorize(principal, source.ReadPermission, resource).IsPermitted)) continue;
             visible.Add(new(assignment.AssignmentId, assignment.WorkType, assignment.WorkId, assignment.Title, assignment.DeepLink, assignment.Status,

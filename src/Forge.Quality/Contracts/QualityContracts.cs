@@ -147,6 +147,7 @@ public sealed record OrderQuality(long OrderNumber, IReadOnlyList<int> PlannedSe
 /// <summary>What other contexts may ask Quality.</summary>
 public interface IQualityLookup
 {
+    Task<InspectionInfo?> FindInspectionAsync(long inspectionId, CancellationToken ct);
     Task<IReadOnlyList<InspectionPlanInfo>> ListPlansAsync(string? partNumber, CancellationToken ct);
 
     Task<IReadOnlyList<InspectionInfo>> ListInspectionsAsync(long? orderNumber, int take, CancellationToken ct);

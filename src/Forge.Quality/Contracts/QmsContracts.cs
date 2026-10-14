@@ -23,12 +23,15 @@ public sealed record QmsProfileContent(string OrganizationName, string Scope, IR
 public sealed record QmsProcessContent(string Name, IReadOnlyList<string> Inputs, IReadOnlyList<string> Outputs,
     Guid OwnerPersonId, IReadOnlyList<QmsRevisionReference> Dependencies, IReadOnlyList<string> Resources,
     IReadOnlyList<string> RiskConsiderations, IReadOnlyList<QmsMonitoring> Monitoring);
-public sealed record QmsExecutionRules(bool? RequireQualification, bool? RequirePresentOperator, bool? RequireReleasedDocuments, bool? RevalidateAtCommit);
+public sealed record QmsExecutionRules(bool? RequireQualification, bool? RequirePresentOperator, bool? RequireReleasedDocuments, bool? RevalidateAtCommit,
+    QmsExecutionPresentationRules? Presentation = null);
 public sealed record QmsProductReleaseRules(bool? RequireIndependentDecision, bool? RequireRequiredInspectionEvidence,
     bool? RequireDispositionedNonconformities, string ReleasePermission);
-public sealed record QmsLabelCopyRules(bool? RequireCopyAuthorization, int? MaximumCopiesPerRequest, bool? RetainCopyReason);
+public sealed record QmsLabelCopyRules(bool? RequireCopyAuthorization, int? MaximumCopiesPerRequest, bool? RetainCopyReason,
+    QmsLabelLifecycleRules? Lifecycle = null);
 public sealed record QmsAttemptRetentionRules(int? MinimumRetentionDays, int? MaximumRawAttemptAgeDays,
-    int? MaximumStoredRawAttempts, bool? PreserveDeniedAttempts, bool? PreserveSourceLink, bool? NeverRewriteAuditChain);
+    int? MaximumStoredRawAttempts, bool? PreserveDeniedAttempts, bool? PreserveSourceLink, bool? NeverRewriteAuditChain,
+    QmsTelemetryRules? Telemetry = null);
 /// <summary>Governed definitions for consumers; recording these does not disable existing manufacturing or audit guards.</summary>
 public sealed record QmsPolicyRules(QmsExecutionRules? Execution = null, QmsProductReleaseRules? ProductRelease = null,
     QmsLabelCopyRules? LabelCopy = null, QmsAttemptRetentionRules? AttemptRetention = null);

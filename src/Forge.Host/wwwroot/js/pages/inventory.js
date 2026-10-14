@@ -9,6 +9,7 @@ import { loadReceiving, receivingTab, bindReceivingTab, receivingCount } from '.
 import { outsideProcessingTab, bindOutsideProcessingTab } from '../outside-processing.js';
 import { mountIdentificationInput, materialPickSelection } from '../identification-input.mjs';
 import { isServiceUnavailable } from '../terminal-state.mjs';
+import { mountLabelsPanel } from '../identification-labels.js';
 
 // Inventory (spec §11, §49): every quantity is the sum of ledger entries, and every entry says who,
 // when, why and what it relates to. Adjustments, count variances and quality releases need a second person.
@@ -36,6 +37,9 @@ export async function inventoryPage(page, ctx) {
   let disposed = false, pageGeneration = 0;
   const taskDialogs = new Set();
   const closeTaskDialogs = () => { for (const close of [...taskDialogs]) close(); };
+  const labelPanels = new Set();
+  let labelSelection = 0;
+  const closeLabelPanels = () => { labelSelection++; for (const panel of labelPanels) panel.dispose(); labelPanels.clear(); };
 
   async function load() {
     const [summary, locations, requests, ledger, items, orders, resources, mro, suppliers, tasks, programs, due] = await Promise.all([
@@ -484,7 +488,7 @@ export async function inventoryPage(page, ctx) {
 
   function render() {
     if (disposed) return;
-    pageGeneration++; closeTaskDialogs();
+    pageGeneration++; closeTaskDialogs(); closeLabelPanels();
     const pending = data.requests.data?.length ?? 0;
     const buttons = [
       handler && ['receive', 'Receive'], handler && ['issue', 'Issue to order'], handler && ['return', 'Return'], handler && ['move', 'Move'],
@@ -564,6 +568,8 @@ export async function inventoryPage(page, ctx) {
   }
 
   async function partDrawer(part) {
+    closeLabelPanels();
+    const labelContext = pageGeneration;
     const d = drawer(`${part}${item(part) ? ` — ${item(part).description}` : ''}`, '<div class="muted">Loading…</div>');
     const [stock, ledger, lots, policy] = await Promise.all([tryGet(`/api/inventory/positions?part=${encodeURIComponent(part)}`), tryGet(`/api/inventory/transactions?part=${encodeURIComponent(part)}&take=100`),
       tryGet(`/api/inventory/lots?part=${encodeURIComponent(part)}`), tryGet(`/api/inventory/merge-policy/${encodeURIComponent(part)}`)]);
@@ -574,7 +580,7 @@ export async function inventoryPage(page, ctx) {
     d.element.innerHTML = `
       <h3 style="margin:0">Where it is</h3>
       ${stock.error ? errorBlock(stock.error, 'stock') : stock.data.length ? `<table class="table"><thead><tr><th>Location</th><th>Instance</th><th>Quality</th><th>Custody</th><th>Point of use</th><th>Planning</th><th class="num">Qty</th></tr></thead><tbody>
-        ${stock.data.map(b => `<tr><td>${esc(b.locationPath)}</td><td>${b.lotNumber ? `${esc(b.lotNumber)} <span class="faint">${esc(kindOf(b.lotNumber) ?? '')}</span> <button class="btn small ghost" data-trace="${esc(b.lotNumber)}">Trace</button> <button class="btn small ghost" data-lineage="${esc(b.lotNumber)}">Splits</button>${handler && divisible && b.custody === 'Company' ? ` <button class="btn small ghost" data-split='${esc(JSON.stringify({ partNumber: part, lotNumber: b.lotNumber, locationCode: b.locationCode, status: b.qualityStatus }))}'>Split</button>` : ''}` : '—'}</td><td><span class="pill ${STATUS_TONE[b.qualityStatus]}">${esc(b.qualityStatus)}</span></td>
+        ${stock.data.map(b => `<tr><td>${esc(b.locationPath)}</td><td>${b.lotNumber ? `${esc(b.lotNumber)} <span class="faint">${esc(kindOf(b.lotNumber) ?? '')}</span> <button class="btn small ghost" data-trace="${esc(b.lotNumber)}">Trace</button> <button class="btn small ghost" data-lineage="${esc(b.lotNumber)}">Splits</button>${canAction(me, 'identification.read') ? ` <button class="btn small ghost" data-label-lot="${esc(b.lotNumber)}" data-label-location="${esc(b.locationCode)}">Labels</button>` : ''}${handler && divisible && b.custody === 'Company' ? ` <button class="btn small ghost" data-split='${esc(JSON.stringify({ partNumber: part, lotNumber: b.lotNumber, locationCode: b.locationCode, status: b.qualityStatus }))}'>Split</button>` : ''}` : '—'}</td><td><span class="pill ${STATUS_TONE[b.qualityStatus]}">${esc(b.qualityStatus)}</span></td>
           <td>${b.custody === 'Company' ? 'Company' : `<span class="pill warn">${esc(custodyText(b))}</span>`}</td><td>${esc(b.pointOfUseWorkCenter ? `${b.pointOfUseWorkCenter}${b.machineCode ? ` · ${b.machineCode}` : ''}` : '—')}</td>
           <td>${b.availableForPlanning ? 'Counts' : '<span class="faint">Not counted</span>'}</td><td class="num">${qty(b.quantity)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None on hand.</div>'}
       ${divisible ? `<div class="notice" style="margin-top:8px">Merging lots: ${p?.allowed ? `allowed${p.sameRevisionRequired ? ', within one revision' : ''}${p.sameSupplierLotRequired ? ', within one supplier lot' : ''}` : 'never'}${p?.setBy && p.setBy !== 'system' ? ` <span class="faint">· set by ${esc(who(p.setBy))}: ${esc(p.reason)}</span>` : ''}
@@ -583,11 +589,21 @@ export async function inventoryPage(page, ctx) {
         ${controller ? ' <button class="btn small" data-yield>Change</button>' : ''}</div>
       <div id="shelf-life"></div>
       <div id="lineage"></div>
+      <div id="inventory-labels"></div>
       <h3 style="margin:0">How it got there</h3>
       ${ledger.error ? errorBlock(ledger.error, 'ledger') : ledger.data.length ? ledgerTable(ledger.data) : '<div class="muted">No transactions.</div>'}
       <div class="faint"><a href="#/material-plan?part=${encodeURIComponent(part)}">Open the material plan for ${esc(part)} →</a></div>`;
     $$('[data-trace]', d.element).forEach(b => b.addEventListener('click', () => traceDrawer({ part, lot: b.dataset.trace })));
     $$('[data-split]', d.element).forEach(b => b.addEventListener('click', () => actions.split(JSON.parse(b.dataset.split))));
+    $$('[data-label-lot]', d.element).forEach(button => button.addEventListener('click', async () => {
+      closeLabelPanels();
+      if (disposed || labelContext !== pageGeneration || !d.element.isConnected) return;
+      const selection = labelSelection;
+      const panel = $('#inventory-labels', d.element), location = (data.locations.data ?? []).find(item => item.code === button.dataset.labelLocation);
+      panel.innerHTML = '<div class="muted">Loading label presentation records…</div>';
+      const controller = await mountLabelsPanel(panel, { me, partNumber: part, lotNumber: button.dataset.labelLot, facilityCode: location?.siteCode ?? null, isCurrent: () => !disposed && labelContext === pageGeneration && selection === labelSelection && d.element.isConnected });
+      if (disposed || labelContext !== pageGeneration || selection !== labelSelection || !d.element.isConnected) controller.dispose(); else labelPanels.add(controller);
+    }));
     appendPartShelfLife(d.element.querySelector('#shelf-life'), part, item(part), me, async () => { await reload(); partDrawer(part); });
     $$('[data-lineage]', d.element).forEach(b => b.addEventListener('click', async () => {
       const { data: g, error } = await tryGet(`/api/inventory/lots/${encodeURIComponent(part)}/${encodeURIComponent(b.dataset.lineage)}/lineage`);
@@ -613,6 +629,6 @@ export async function inventoryPage(page, ctx) {
 
   await load();
   render();
-  return { dispose: () => { disposed = true; pageGeneration++; closeTaskDialogs(); } };
+  return { dispose: () => { disposed = true; pageGeneration++; closeTaskDialogs(); closeLabelPanels(); } };
 }
 

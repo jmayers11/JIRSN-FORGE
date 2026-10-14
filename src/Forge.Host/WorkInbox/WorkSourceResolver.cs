@@ -21,8 +21,12 @@ using Forge.Resources.Contracts;
 namespace Forge.Host.WorkInbox;
 
 /// <summary>Inbox context comes from the same owning records as the eventual domain command.</summary>
-public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver holdTargets, IDocumentTargetResolver documentTargets, QmsOptions? qmsOptions = null) : IWorkSourceResolver, ICommandSourceResolver
+public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver holdTargets, IDocumentTargetResolver documentTargets,
+    QmsOptions? qmsOptions = null, OwnedSourceAccess? ownedSources = null) : IWorkSourceResolver, ICommandSourceResolver, IOwnedSourceResolver
 {
+    public Task<bool> CanReadOwnedSourceAsync(IKernelUnitOfWork uow, ForgePrincipal principal, string type, string id, CancellationToken ct) =>
+        ownedSources is null ? Task.FromResult(false) : ownedSources.CanReadAsync(uow, principal, type, id, ct);
+
     public async Task<CommandAuthority> ResolveAsync(IKernelUnitOfWork uow, CommandSpec spec, CommandContext context, DateTimeOffset now, CancellationToken ct)
     {
         var source = spec.Resource.Id is { } id ? await ResolveAsync(uow, spec.Resource.Type, id, ct) : null;
@@ -55,6 +59,8 @@ public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver ho
 
     public async Task<WorkSource?> ResolveAsync(IKernelUnitOfWork uow, string type, string id, CancellationToken ct)
     {
+        if (OwnedSourceFamilies.Contains(type))
+            return ownedSources is null ? null : await ownedSources.ResolveAsync(uow, type, id, ct);
         var number = long.TryParse(id.Split('/')[0], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
         switch (type)
         {
@@ -93,7 +99,7 @@ public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver ho
                 return new(Permissions.HoldsRead, heldSource?.Resources.Select(resource => resource with { Type = "Hold", Id = id }).ToArray()
                     ?? [new ResourceRef("Hold", id, Program(target.ProgramId))], hold.Active);
             case "Inspection":
-                var inspection = (await uow.Store<IQualityLookup>().ListInspectionsAsync(null, int.MaxValue, ct)).FirstOrDefault(row => row.InspectionId == number);
+                var inspection = await uow.Store<IQualityLookup>().FindInspectionAsync(number, ct);
                 return inspection is null ? null : new(Permissions.QualityRead, [await OrderResourceAsync(uow, "Inspection", id, inspection.OrderNumber, inspection.Sequence, ct)]);
             case "PurchaseOrder":
                 var po = await uow.Store<IProcurementLookup>().FindPurchaseOrderAsync(number, ct);

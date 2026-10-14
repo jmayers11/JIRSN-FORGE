@@ -310,13 +310,17 @@ internal sealed class PostgresAuditWriter(PostgresUnitOfWork uow) : IAuditWriter
         await using var insert = uow.Command(
             """
             INSERT INTO kernel.audit_log (audit_id, recorded_at, actor, on_behalf_of, action, outcome, entity_type, entity_id,
-                old_value, new_value, reason, source, correlation_id, program_id, markings, previous_hash, hash)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                old_value, new_value, reason, source, correlation_id, program_id, markings, previous_hash, hash, owning_resource, context_fingerprint)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             RETURNING sequence
             """,
             entry.AuditId, entry.RecordedAt, entry.Actor, entry.OnBehalfOf, entry.Action, entry.Outcome, entry.EntityType, entry.EntityId,
             entry.OldValue, entry.NewValue, entry.Reason, entry.Source, entry.CorrelationId, entry.ProgramId?.Value, (int)entry.Markings,
-            previous, hash);
+            previous, hash, new NpgsqlParameter
+            {
+                NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Jsonb,
+                Value = entry.OwningResource is null ? DBNull.Value : CanonicalJson.Serialize(entry.OwningResource),
+            }, entry.ContextFingerprint);
         var sequence = (long)(await insert.ExecuteScalarAsync(ct))!;
         return new ChainedAuditEntry(sequence, entry, previous, hash);
     }
