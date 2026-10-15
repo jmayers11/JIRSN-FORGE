@@ -16,6 +16,7 @@ import { mrpPage } from './pages/mrp.js';
 import { procurementPage } from './pages/procurement.js';
 import { qualityPage } from './pages/quality.js';
 import { qmsPage } from './pages/qms.js';
+import { qmsPlanningPage } from './pages/qms-planning.js';
 import { qmsAuditPage } from './pages/qms-audit.js';
 import { qmsReviewPage } from './pages/qms-review.js';
 import { qmsMetricsPage } from './pages/qms-metrics.js';
@@ -35,32 +36,33 @@ import { loadDirectory } from './people.js';
 
 const NAV = [
   { route: 'home', label: 'Home', icon: 'dashboard', page: horizonPage },
-  { route: 'horizon', label: 'Horizon', icon: 'analytics', page: timelinePage },
+  { route: 'horizon', label: 'Horizon', icon: 'horizon', page: timelinePage },
   { route: 'programs', label: 'Programs', icon: 'trend', page: programsPage },
   { route: 'projects', label: 'Projects', icon: 'calendar', page: projectsPage },
   { route: 'orders', label: 'Production Orders', icon: 'orders', page: ordersPage },
   { route: 'engineering', label: 'Engineering', icon: 'blade', page: engineeringPage },
   { route: 'scheduling', label: 'Scheduling', icon: 'planning', page: schedulingPage },
-  { route: 'scenarios', label: 'Scenarios', icon: 'planning', page: scenariosPage },
+  { route: 'scenarios', label: 'Scenarios', icon: 'scenarios', page: scenariosPage },
   { route: 'material-plan', label: 'Material Plan', icon: 'material', page: mrpPage },
   { route: 'work-centers', label: 'Work Centers', icon: 'production', page: workCentersPage },
   { route: 'shop-floor', label: 'Shop Floor', icon: 'operator', page: shopFloorPage },
-  { route: 'plant-setup', label: 'Plant Setup', icon: 'workorder', page: plantSetupPage },
+  { route: 'plant-setup', label: 'Plant Setup', icon: 'factory', page: plantSetupPage },
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
-  { route: 'shift-continuity', label: 'Shift Continuity', icon: 'timeline', page: shiftContinuityPage },
+  { route: 'shift-continuity', label: 'Shift Continuity', icon: 'handover', page: shiftContinuityPage },
   { route: 'notifications', label: 'Notifications', icon: 'bell', page: notificationsPage },
-  { route: 'my-work', label: 'My Work', icon: 'workorder', page: workInboxPage },
-  { route: 'integrity', label: 'Data Integrity', icon: 'quality', page: integrityPage },
+  { route: 'my-work', label: 'My Work', icon: 'inbox', page: workInboxPage },
+  { route: 'integrity', label: 'Data Integrity', icon: 'integrity', page: integrityPage },
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
-  { route: 'qms', label: 'Quality Management', icon: 'quality', page: qmsPage },
-  { route: 'qms-audit', label: 'Audits & CAPA', icon: 'quality', page: qmsAuditPage },
-  { route: 'qms-review', label: 'QMS Reviews', icon: 'quality', page: qmsReviewPage },
+  { route: 'qms', label: 'Quality Management', icon: 'qms', page: qmsPage },
+  { route: 'qms-planning', label: 'QMS Planning', icon: 'target', page: qmsPlanningPage },
+  { route: 'qms-audit', label: 'Audits & CAPA', icon: 'audit', page: qmsAuditPage },
+  { route: 'qms-review', label: 'QMS Reviews', icon: 'review', page: qmsReviewPage },
   { route: 'qms-metrics', label: 'Quality Metrics', icon: 'analytics', page: qmsMetricsPage },
-  { route: 'commercial-quality', label: 'Customer & Provider Quality', icon: 'quality', page: commercialQualityPage },
+  { route: 'commercial-quality', label: 'Customer & Provider Quality', icon: 'commercial', page: commercialQualityPage },
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
-  { route: 'shipping', label: 'Shipping', icon: 'suppliers', page: shippingPage },
+  { route: 'shipping', label: 'Shipping', icon: 'truck', page: shippingPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: analystPage },
 ];

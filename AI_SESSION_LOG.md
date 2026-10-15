@@ -572,3 +572,41 @@ V4 local software implementation and acceptance are complete. The tree remains u
 External follow-up remains: authorized review of the licensed ISO text, actual organization scope/policy/owner decisions, production Nexus/Sentinel/email setup, physical scanners/printers/shared-terminal exercises, assistive-technology study and production disaster-recovery/accessibility validation. These are environment and human-approval boundaries; Forge tests do not certify conformity. The current disposition is in `docs/v4/completion-checklist.md`; Claude should treat it and the top checkpoint in `AI_HANDOFF.md` as current, with older dated entries as history. Do not repeat the full 1.7-hour test suite absent source changes or a concrete risk.
 
 Refreshed the local preview from the verified Release binaries into the immutable `.forge-logs/preview-runtime/v4-complete-20261015` snapshot. Confirmed the listener process path is that snapshot and `http://localhost:5080/` responds HTTP200. The host logs an existing shared Windows DataProtection key-ring read warning while serving the UI; the shared key directory was not changed.
+
+## Claude review of the V4 handoff: icons and UI gaps (2026-10-15)
+
+**Agent:** Claude (Claude Opus 5.5), in a cloud session linked to this PC.
+
+**Objective.** The user asked Claude to review Codex's V3/V4 handoff and add anything that was missed, especially missing icons and UI that could be implemented.
+
+**Work completed.**
+- Audited the nav icons in `app.js` against `wwwroot/img/icons/`.
+  - Two entries referenced PNGs that did not exist: Notifications (`bell`) and Shift Continuity (`timeline`).
+  - Eleven entries shared four icons, and Shipping borrowed `suppliers`.
+- Drew 13 icons in the house style and wired them into the nav. `tools/make-nav-icons.py` regenerates them.
+- Found that `pages/qms-planning.js` (V4.3) was built and tested but never imported, so users could not open it. Routed it as `#/qms-planning`.
+- Compared all 647 API routes with the UI's fetch paths. The confirmed gaps are recorded as a prioritized backlog in `AI_HANDOFF.md`, under "Claude review of the V4 handoff". The largest are:
+  - V4.2 trace investigations and measurement findings;
+  - product acceptance and release;
+  - workforce and competency administration;
+  - safety rules;
+  - security administration;
+  - FAI recording.
+- Recorded three other things the handoff missed:
+  - the lower handoff sections are stale (V3.9 era);
+  - V4 is still uncommitted;
+  - `verify.cmd` runs only 3 of the 15 UI test files.
+
+**Verification.**
+- `node --check` passes on `app.js`.
+- `node --test tests/ui/*.test.mjs` passes 180 of 180.
+- No server code changed, so the C# suite was not rerun.
+- The immutable preview snapshot does not include these UI changes.
+
+**Files.**
+- New: `src/Forge.Host/wwwroot/img/icons/icon-{bell,handover,horizon,integrity,qms,target,audit,review,commercial,scenarios,inbox,factory,truck}.png`.
+- New: `tools/make-nav-icons.py`.
+- Modified: `src/Forge.Host/wwwroot/js/app.js`, `AI_HANDOFF.md` and `AI_SESSION_LOG.md`.
+- Backup: `.forge-logs/app.js.before-icons`.
+
+Nothing was committed, pushed or deployed.

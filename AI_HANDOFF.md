@@ -15,6 +15,115 @@ The working tree is uncommitted and contains the V4 implementation. The 2026-10-
 
 **Claude continuation:** use `docs/v4/completion-checklist.md` as the current disposition and this checkpoint as authoritative over older dated notes. No local code gate remains open. Continue only with the external validation work when the authorized organization, licensed source, devices, connectors, or production environment are available. If new requirements or evidence are supplied, update the relevant row and run focused tests followed by `verify.cmd` for source changes. Preserve `forge.local.cmd` as an in-memory configuration source only; never print or copy it.
 
+## Claude review of the V4 handoff: icons and UI gaps (2026-10-15)
+
+Claude reviewed this handoff against the working tree after Codex's V4 checkpoint. It found two problems that this file did not record: missing navigation icons, and API features with no screen. Claude fixed the icons and the one unreachable page. Everything else is a backlog for the next session.
+
+**Changed in this review.** These changes are uncommitted, in the same working tree as V4.
+
+* **New icons in `src/Forge.Host/wwwroot/img/icons/`.**
+  - Two nav entries pointed at PNGs that did not exist, so the browser showed a broken image:
+    - Notifications used `bell`.
+    - Shift Continuity used `timeline`.
+  - Eleven entries shared four icons:
+    - six used `quality`;
+    - two used `workorder`;
+    - two used `planning`;
+    - Horizon and Quality Metrics both used `analytics`.
+  - Shipping borrowed `suppliers`.
+  - Added 13 icons in the house style (glossy orange, gunmetal, light grey, transparent background, 56px): `bell`, `handover`, `horizon`, `integrity`, `qms`, `target`, `audit`, `review`, `commercial`, `scenarios`, `inbox`, `factory` and `truck`.
+  - `tools/make-nav-icons.py` regenerates them. It needs Python with Pillow and takes the output folder as its argument.
+* **`wwwroot/js/app.js`.**
+  - The nav now uses the new icons. Every nav icon resolves to a PNG that exists.
+  - **The QMS Planning page is now reachable.** `pages/qms-planning.js` was built in V4.3 and covered by `tests/ui/qms-planning.test.mjs`, but nothing imported it, so users could not open it. It covers:
+    - evaluation methods;
+    - risks and opportunities;
+    - metric definitions;
+    - objectives;
+    - changes;
+    - retention schedules;
+    - improvements.
+  - It is now routed at `#/qms-planning` ("QMS Planning"), after Quality Management. The original `app.js` is saved at `.forge-logs/app.js.before-icons`.
+* **Verification.**
+  - `node --check app.js` passes.
+  - All `tests/ui/*.test.mjs` pass: 180 of 180.
+  - The C# suite was not rerun, because no server code changed.
+  - The preview at `.forge-logs/preview-runtime/v4-complete-20261015` is an immutable snapshot, so it does not show these changes. Republish the preview to see them.
+
+**UI not yet implemented (backlog).**
+
+Claude compared all 647 routes in `src/Forge.Host/Api/*.cs` with the `/api/...` paths in `wwwroot/js`, then checked each candidate by hand. The routes below are covered by API tests and, in most cases, by the sample-plant seed, but no screen calls them. Priority reflects what an operator or quality lead would hit first.
+
+*High: V4 features that cannot be used without a screen.*
+
+1. **Trace investigations and measurement findings (V4.2).**
+   - Routes:
+     - `/api/quality/investigations/trace` for list, create, refresh, assessments, hold-links and close;
+     - `/api/quality/investigations/assessments/{id}/…`;
+     - `/api/quality/investigations/measurement-findings` for list, create, edit and decide.
+   - Nothing in the UI calls them.
+   - Suggested home: a tab on Quality, linked from genealogy trace results and from calibration impact.
+2. **Product acceptance and exact-quantity product release (V4.2).**
+   - Routes:
+     - `/api/quality/acceptance/criteria`, including revisions, edit and lifecycle;
+     - `/api/quality/acceptance/inspections`;
+     - `/api/quality/acceptance/product-releases`, with `withdraw`;
+     - `/api/inventory/product-releases/{id}/consume`;
+     - `GET /api/quality/acceptance/return-cohorts/{id}`.
+   - Suggested home: Quality, with release status shown on the Shipping and Inventory lot views.
+3. **Workforce and competency administration.** Only the qualification-type list is read, by Plant Setup. The Workforce page is read-only, and none of these writes has a screen:
+   - `POST /api/workforce/workers/{id}` to register a worker, plus `/assignment`, `/assignment/end`, `/presence`, `/departure`, `/unavailability` and `/shift`;
+   - `/api/workforce/people/{id}/badge` and `/badge/revoke`;
+   - `/api/competency/people/{id}/training`, `/certifications`, `/suspensions` and `/revocations`, and `GET /api/competency/people/{id}`;
+   - `/api/competency/qualification-types/{code}/prerequisites`;
+   - `POST /api/readiness/reallocation-preview/{id}`.
+4. **Safety rules.** `/api/safety-rules` handles list, drafts, publish, discard and retire, and has no UI at all.
+5. **Security administration.** These routes have no UI:
+   - `/api/kernel/roles`, including permissions and permission-scopes, with grant and revoke;
+   - `/api/kernel/people/{id}/roles`, with revoke;
+   - `/api/kernel/separation-policies/{policy}`;
+   - `/api/kernel/approval-thresholds/{permission}`.
+
+   Settings shows only the user's own identity, delegations and the audit log. Roles can be changed today only through the API or the seed.
+
+*Medium: actions missing from screens that already exist.*
+
+6. **FAI (V3.11).**
+   - Receiving shows FAI status, but no screen can:
+     - record an FAI determination (`POST /api/quality/fai-determinations`);
+     - list FAI records (`GET /api/quality/fai`);
+     - record an FAI (`POST /api/quality/fai`).
+   - Without these, a receipt blocked on "FAI required" cannot be cleared from the UI.
+7. **Receiving.** `receiving.js` has Ship back and Replacement buttons, but none for:
+   - RTV credit (`POST /api/inventory/rtvs/{id}/credit`);
+   - customer-return prepare-inspection (`POST /api/inventory/customer-returns/{id}/prepare-inspection`).
+8. **Containers.** `/api/inventory/containers` handles list, create, contents and seal, with no UI.
+9. **Tools.** `tools.js` has no action to move a tool (`/tools/{code}/move`) or record a use (`/tools/{code}/uses`). Use-limit validity therefore only changes through the API.
+10. **Site closures.** `POST /api/resources/sites/{site}/closures` has no screen. Plant Setup shows shifts but cannot add a plant shutdown.
+
+*Low: read-only endpoints that could enrich existing pages.*
+
+11. These read endpoints have no UI:
+    - `/api/planning/goal-risk` (would fit Programs or Horizon);
+    - `/api/analyst/brief` (would fit as Analyst's opening summary);
+    - `/api/readiness/machines/{machine}`;
+    - `/api/inventory/selection` (a FIFO/FEFO pick preview on Inventory);
+    - `/api/engineering/documents/{n}/signature-verification/{rev}` (a "verify signature" button);
+    - `/api/identification/scan-acceptances/{id}`;
+    - `/api/quality/qms/policy-current/{purpose}`.
+
+**Not counted as gaps.**
+
+* `/api/inventory/tasks/{id}/pick` and `/deliver` are reached through the V4.1 scan session, by design.
+* By-id GETs used only by tests and detail fetches were left out.
+* `/health/live` is not a UI route.
+
+**Other items this handoff missed.**
+
+* **Stale lower sections.** "Historical Project Status → Planned Features", "Known Issues" and "Recent Changes" below still describe the V3.9 state. For example, they say "Finish V3.9, then V3.10…" and "V3.9 is extracted on the PC and waiting for its test run". They are historical, and the current open work is the backlog above.
+* **Uncommitted work.** The whole V4 implementation (about 145 paths) is uncommitted, and the last commit is `aa56b5d`. Commit V4 as its own change, with the icon and nav work as a separate commit, so the verified V4 tree can be recovered on its own.
+* **The UI test list in `verify.cmd`.** It runs only three UI test files: terminal-state, accessibility and ui-authority. The other twelve files in `tests/ui/`, including every QMS page test, scan-session and identification, are not part of the canonical gate. Add them, for example with `node --test tests/ui/*.test.mjs`. They take about 2 seconds.
+
 ## QMS change and improvement acceptance checkpoint — 2026-10-14
 
 V4.3 R07 and R36 now have passing end-to-end PostgreSQL acceptance cases in `QmsPlanningCaseTests`. Controlled change links the approved QMS change to an actual Engineering change and effective process, then requires independent impact review, an owned task, independent task verification, implementation verification, effectiveness assessment, independent acceptance and closure. Improvement links an actual Engineering origin and traverses evaluation, implementation, independent verification, effectiveness and closure; incomplete before/after measurement is explicitly retained as null, and a one-sided/unsupported numeric claim is rejected. The current case-test class passes3/3, including the earlier risk lifecycle. Evidence: `.forge-logs/qms-planning-cases-current.log` and `.status` (PASS); focused new case logs are `.forge-logs/qms-controlled-change-current.*` (1/1 PASS) and `.forge-logs/qms-improvement-case-current.*` (1/1 PASS). Two change-test fixture failures and an improvement-test compile failure are preserved separately. Canonical record codes, required monitoring, and the actual seven-field improvement assessment contract were used; no governance rules were weakened.
@@ -247,6 +356,8 @@ Every increment below was verified on this PC before it was committed. Verificat
 
 ### Planned Features
 
+> **Historical (V3.9 era).** V3.9–V3.28 and V4 are complete. See "Claude review of the V4 handoff" near the top for the current UI and icon backlog.
+
 The plan is the "V3 plan" Claude Doc. Its increments map the brief's sections A–CC; the next ones, in order:
 
 1. Finish V3.9, then V3.10 and V3.11 (packaged).
@@ -257,6 +368,8 @@ The plan is the "V3 plan" Claude Doc. Its increments map the brief's sections A�
 3. V3.13 to V3.28, per the plan doc. Read it before starting each increment.
 
 ## Known Issues
+
+> The git-lock and computer-use items below still apply. The V3.10 package-order item is historical, because V3.9–V3.11 are committed. Open UI gaps are listed in "Claude review of the V4 handoff" near the top.
 
 * **Git cannot delete its own temporary and lock files from the linked session.**
   - Severity: Low (housekeeping).
@@ -280,6 +393,8 @@ The plan is the "V3 plan" Claude Doc. Its increments map the brief's sections A�
   - Fix: the foreign key now points at `resources.tool`. Listed here only so nobody reintroduces it.
 
 ## Recent Changes
+
+> **Historical (V3.9 era).** V3.9–V3.28 and V4 are complete. See "Claude review of the V4 handoff" near the top for the current UI and icon backlog.
 
 * **Summary of the latest session:**
   - Verified and committed V3.7 (goal attainment, with the paused goal-risk work taken over) and V3.8 (tooling and calibration).
