@@ -610,3 +610,48 @@ Refreshed the local preview from the verified Release binaries into the immutabl
 - Backup: `.forge-logs/app.js.before-icons`.
 
 Nothing was committed, pushed or deployed.
+
+## Claude: implementing the UI backlog (2026-10-15)
+
+**Agent:** Claude (Claude Opus 5.5), in a cloud session linked to this PC.
+
+**Objective.** Continue from the handoff review and build the screens for APIs that had none.
+
+**Work completed.** The details are in `AI_HANDOFF.md`, under "UI backlog built".
+- New pages:
+  - Investigations: V4.2 trace investigations and measurement findings.
+  - Product Acceptance: criteria, inspection results sheet, exact-quantity release, look up, withdraw and consume.
+  - Safety Rules.
+  - Access Control: people, roles, programs, role policy, separation and thresholds.
+- A Workforce "Manage people" panel for worker, presence, badge and qualification commands.
+- New actions on existing screens:
+  - Receiving: FAI decide and record, RTV credit, return preparation, and governed-restock fields;
+  - Tools: move and record use;
+  - Plant Setup: site closures;
+  - Shipping: containers.
+- Moved the role catalog to `roles.js` and added the three audit roles.
+- Added four icons.
+- `verify.cmd` now runs all UI test files.
+
+**Verification.**
+- All 18 UI test files pass (202 checks).
+- Checked live on port 5090 against the local database as dev-admin, qm, qe and eng:
+  - all pages rendered;
+  - all icons loaded;
+  - the only console errors were expected 403s;
+  - no commands were submitted.
+- The full `verify.cmd` was not rerun, because no server code changed.
+
+**Open.**
+- List endpoints for acceptance inspections and releases.
+- GETs for site closures and for role policy state.
+- Low-priority read-only endpoints.
+- Grouping the 35-entry nav.
+
+**Files.**
+- New pages: `pages/{investigations,acceptance,safety-rules,access,workforce-admin}.js` and `roles.js`.
+- Changed: `app.js`, `workforce.js`, `receiving.js`, `tools.js`, `plantsetup.js` and `shipping.js`.
+- New icons: `icon-{acceptance,trace,safety,access}.png`.
+- New tests: `tests/ui/{investigations,acceptance,admin-pages,screen-actions}.test.mjs`.
+- Also changed: `verify.cmd`, `tools/make-nav-icons.py`, the handoff and this log.
+- Added `.forge-logs/ui-check.cmd`, which is gitignored.

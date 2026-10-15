@@ -21,7 +21,7 @@ set "FORGE_TEST_RESTORE_BASELINE=1"
 echo PostgreSQL integration tests use restored migrated databases.>> "%LOG%"
 dotnet test Forge.slnx --no-build -c Release -nologo --logger "console;verbosity=normal" >> "%LOG%" 2>&1 || goto fail
 echo === UI hardening checks ===>> "%LOG%"
-node --test tests/ui/terminal-state.test.mjs tests/ui/accessibility.test.mjs tests/ui/ui-authority.test.mjs >> "%LOG%" 2>&1 || goto fail
+for %%f in (tests\ui\*.test.mjs) do node --test "%%f" >> "%LOG%" 2>&1 || goto fail
 echo PASS> .forge-logs\verify.status
 exit /b 0
 :fail

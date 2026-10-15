@@ -10,6 +10,13 @@ import { attachmentsDrawer } from '../attachments.js';
 
 const TONE = { Open: 'none', Packed: 'info', Shipped: 'ok', Cancelled: 'bad' };
 
+export function containerRows(list, handler) {
+  return list.map(c => `<tr><td><b class="mono">${esc(c.code)}</b> <span class="faint">${esc(c.kind)}</span></td>
+    <td><span class="pill ${c.status === 'Open' ? 'info' : c.status === 'Sealed' ? 'warn' : 'ok'}">${esc(c.status)}</span>${c.shipmentId ? `<div class="faint">shipment ${esc(c.shipmentId)}</div>` : ''}</td>
+    <td>${(c.contents ?? []).map(l => `<div>${qty(l.quantity)} × ${esc(l.partNumber)}${l.lotNumber ? ` lot ${esc(l.lotNumber)}` : ''} <span class="faint">from ${esc(l.locationCode)}</span></div>`).join('') || '<span class="muted">Empty</span>'}</td>
+    <td class="row-actions">${handler && c.status === 'Open' ? `<button class="btn small" data-container-add="${esc(c.code)}">Pack stock</button>${(c.contents ?? []).length ? `<button class="btn small ghost" data-container-seal="${esc(c.code)}">Seal</button>` : ''}` : ''}</td></tr>`).join('');
+}
+
 export async function shippingPage(page, ctx) {
   const me = ctx.me;
   const handler = canAction(me, 'inventory.transact');
@@ -19,14 +26,41 @@ export async function shippingPage(page, ctx) {
   let data = {};
 
   async function load() {
-    const [shipments, demand, stock, items] = await Promise.all([
-      tryGet(`/api/inventory/shipments?includeClosed=${showClosed}`), tryGet('/api/planning/demand'), tryGet('/api/inventory/stock'), tryGet('/api/engineering/items'),
+    const [shipments, demand, stock, items, containers] = await Promise.all([
+      tryGet(`/api/inventory/shipments?includeClosed=${showClosed}`), tryGet('/api/planning/demand'), tryGet('/api/inventory/stock'), tryGet('/api/engineering/items'), tryGet('/api/inventory/containers'),
     ]);
-    data = { shipments, demand, stock, items };
+    data = { shipments, demand, stock, items, containers };
   }
   const reload = async () => { await load(); render(); };
   const mine = actor => actor === `person:${me.personId}`;
   const available = () => (data.stock.data ?? []).filter(b => b.status === 'Released' && b.quantity > 0);
+
+  function containerPanel() {
+    const list = (data.containers.data ?? []).filter(c => showClosed || c.status !== 'Shipped');
+    return `<section class="panel"><header><h2>Containers</h2><div class="spacer"></div>${handler ? '<button class="btn small" id="new-container">New container</button>' : ''}</header>
+      ${data.containers.error ? errorBlock(data.containers.error, 'containers') : !list.length ? emptyBlock('No open containers', 'Cartons, crates and pallets are packed with released stock, then sealed before they ship.') : `
+      <table class="table"><thead><tr><th>Container</th><th>Status</th><th>Contents</th><th></th></tr></thead><tbody>${containerRows(list, handler)}</tbody></table>`}</section>`;
+  }
+
+  function newContainer() {
+    formModal({ title: 'New container', confirmLabel: 'Create', reasonRequired: false,
+      fields: [{ name: 'code', label: 'Container code', code: true, required: true, placeholder: 'e.g. PLT-0042' }, { name: 'kind', label: 'Kind', type: 'select', options: [['Carton', 'Carton'], ['Crate', 'Crate'], ['Pallet', 'Pallet']] }] },
+    (v, reason) => command('/api/inventory/containers', v, reason), reload);
+  }
+
+  function packContainer(code) {
+    const stock = available();
+    formModal({ title: `Pack stock into ${code}`, detail: stock.length ? 'Only released stock can be packed.' : 'There is no released stock to pack.', confirmLabel: 'Pack', reasonRequired: false,
+      fields: [{ name: 'bucket', label: 'Stock', type: 'select', required: true, blank: '— choose —', options: stock.map((b, i) => [i, `${b.partNumber}${b.lotNumber ? ` lot ${b.lotNumber}` : ''} at ${b.locationCode} (${qty(b.quantity)})`]) },
+        { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true }] },
+    (v, reason) => { const b = stock[Number(v.bucket)]; if (!(v.quantity > 0) || v.quantity > b.quantity) throw new Error(`Pack between 0 and ${qty(b.quantity)}.`);
+      return command(`/api/inventory/containers/${encodeURIComponent(code)}/contents`, { partNumber: b.partNumber, quantity: v.quantity, locationCode: b.locationCode, lotNumber: b.lotNumber ?? null, status: 'Released' }, reason); }, reload);
+  }
+
+  function sealContainer(code) {
+    formModal({ title: `Seal ${code}`, detail: 'A sealed container cannot take more stock. It ships as a unit.', fields: [], confirmLabel: 'Seal', reasonRequired: true },
+      (_, reason) => command(`/api/inventory/containers/${encodeURIComponent(code)}/seal`, {}, reason), reload);
+  }
 
   function render() {
     const list = data.shipments.data ?? [];
@@ -43,6 +77,7 @@ export async function shippingPage(page, ctx) {
       <section class="panel"><header><h2>Shipments</h2></header>
         ${data.shipments.error ? errorBlock(data.shipments.error, 'shipments') : !list.length ? emptyBlock('No open shipments', handler ? 'Start one from a demand below, or for any customer.' : 'A material handler puts shipments together.') : list.map(card).join('')}
       </section>
+      ${containerPanel()}
       <section class="panel"><header><h2>Demand still to ship</h2></header>
         ${data.demand.error ? errorBlock(data.demand.error, 'demand') : !toShip.length ? emptyBlock('Nothing waiting to ship', 'Customer orders and contract deliveries recorded on the Material Plan appear here until they have shipped.') : `
         <table class="table"><thead><tr><th>Demand</th><th>Customer</th><th>Part</th><th class="num">Ordered</th><th class="num">Shipped</th><th class="num">To ship</th><th>Need date</th><th class="num">Available now</th><th></th></tr></thead><tbody>
@@ -59,6 +94,9 @@ export async function shippingPage(page, ctx) {
 
     $('#closed', page).onchange = async e => { showClosed = e.target.checked; await reload(); };
     $('#new', page)?.addEventListener('click', () => create(null));
+    $('#new-container', page)?.addEventListener('click', newContainer);
+    $$('[data-container-add]', page).forEach(b => b.addEventListener('click', () => packContainer(b.dataset.containerAdd)));
+    $$('[data-container-seal]', page).forEach(b => b.addEventListener('click', () => sealContainer(b.dataset.containerSeal)));
     $$('[data-from-demand]', page).forEach(b => b.addEventListener('click', () => create((data.demand.data ?? []).find(d => d.demandId === Number(b.dataset.fromDemand)))));
     $$('[data-pack]', page).forEach(b => b.addEventListener('click', () => step(b.dataset.pack, 'pack', 'Pack', 'Confirms the stock is there and nothing on it is on an open NCR. Someone else ships it.', false)));
     $$('[data-ship]', page).forEach(b => b.addEventListener('click', () => ship(Number(b.dataset.ship))));

@@ -2,6 +2,7 @@ import { tryGet } from '../api.js';
 import { esc, fmtNumber, errorBlock, emptyBlock } from '../ui.js';
 import { roleTitle } from '../app.js';
 import { appendPresence, appendDocumentTraining } from '../executable.js';
+import { appendWorkforceAdmin } from './workforce-admin.js';
 
 export async function workforcePage(page, ctx) {
   const now = Date.now();
@@ -33,4 +34,6 @@ export async function workforcePage(page, ctx) {
   // V3.9: presence levels, and training on controlled documents.
   await appendPresence(page);
   await appendDocumentTraining(page, ctx.me);
+  // Worker, presence, badge and qualification commands.
+  await appendWorkforceAdmin(page, ctx.me);
 }

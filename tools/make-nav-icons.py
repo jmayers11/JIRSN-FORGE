@@ -240,7 +240,40 @@ def target(c):  # QMS planning: objectives
     paint(c, union(stroke([(246, 266), (430, 82)], 26), poly([(400, 40), (470, 40), (470, 110), (430, 82)])), METAL, METAL_RIM, 6)
 
 
+def acceptance(c):  # Product acceptance: a box with an approval stamp
+    paint(c, poly([(60, 200), (300, 200), (300, 450), (60, 450)]), METAL, METAL_RIM)
+    paint(c, poly([(60, 200), (130, 130), (370, 130), (300, 200)]), METAL, METAL_RIM, 8, gloss=False)
+    paint(c, poly([(300, 200), (370, 130), (370, 380), (300, 450)]), METAL, METAL_RIM, 8, gloss=False)
+    paint(c, rrect((140, 200, 220, 280), 4), PAPER, PAPER_RIM, 3, gloss=False)
+    paint(c, disc(360, 350, 120), ORANGE, ORANGE_RIM)
+    paint(c, stroke([(300, 352), (345, 397), (425, 307)], 36), PAPER, PAPER_RIM, 4, gloss=False)
+
+
+def trace(c):  # Investigations: a magnifier over a branching trace
+    lines = union(stroke([(70, 120), (200, 120)], 26), stroke([(200, 120), (300, 60)], 26), stroke([(200, 120), (300, 190)], 26), stroke([(70, 120), (70, 400)], 26))
+    paint(c, lines, METAL, METAL_RIM, 5, gloss=False)
+    for (x, y) in ((70, 120), (300, 60), (300, 190), (70, 400)):
+        paint(c, disc(x, y, 34), METAL, METAL_RIM, 6)
+    paint(c, stroke([(360, 380), (460, 480)], 56), METAL, METAL_RIM, 8)
+    paint(c, disc(290, 310, 100), PAPER, PAPER_RIM, 4)
+    paint(c, ring(290, 310, 118, 42), ORANGE, ORANGE_RIM, 7)
+
+
+def safety(c):  # Safety rules: a hard hat
+    paint(c, shape(lambda d: d.chord([96, 110, 416, 430], 180, 360, fill=255)), ORANGE, ORANGE_RIM)
+    paint(c, rrect((40, 262, 472, 322), 26), ORANGE, ORANGE_RIM)
+    paint(c, rrect((236, 100, 276, 270), 14), METAL, METAL_RIM, 5, gloss=False)
+    paint(c, rrect((120, 360, 392, 410), 20), METAL, METAL_RIM, 6, gloss=False)
+
+
+def access(c):  # Access control: a padlock with a key-hole
+    paint(c, ring(256, 190, 110, 46), METAL, METAL_RIM, 8)
+    paint(c, minus(rrect((90, 200, 422, 470), 36), mask()), ORANGE, ORANGE_RIM)
+    paint(c, union(disc(256, 310, 36), poly([(236, 320), (276, 320), (290, 410), (222, 410)])), METAL, METAL_RIM, 5, gloss=False)
+
+
 ICONS = {
+    'acceptance': acceptance, 'trace': trace, 'safety': safety, 'access': access,
     'bell': bell, 'handover': handover, 'horizon': horizon, 'integrity': integrity, 'qms': qms, 'audit': audit,
     'review': review, 'commercial': commercial, 'scenarios': scenarios, 'inbox': inbox, 'factory': factory,
     'truck': truck, 'target': target,

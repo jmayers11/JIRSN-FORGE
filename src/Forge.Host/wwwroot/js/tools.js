@@ -31,7 +31,7 @@ export async function appendTools(container, machines, me) {
         <td>${v.validity.valid ? '<span class="pill ok">Yes</span>' : `<span class="pill bad">No</span><div class="faint">${esc(v.validity.problems.join(' '))}</div>`}</td>
         <td class="nowrap">${t.status === 'Retired' ? '' : `<button class="btn small ghost" data-tool-history="${esc(t.code)}">History</button>
           ${calibrate && t.status === 'Available' ? ` <button class="btn small ghost" data-tool-cal="${esc(t.code)}">Calibrate</button>` : ''}
-          ${handle && t.status === 'Available' ? ` <button class="btn small ghost" data-tool-service="${esc(t.code)}">Send for service</button> <button class="btn small ghost" data-tool-condition="${esc(t.code)}">Condition</button>` : ''}
+          ${handle && t.status === 'Available' ? ` <button class="btn small ghost" data-tool-service="${esc(t.code)}">Send for service</button> <button class="btn small ghost" data-tool-condition="${esc(t.code)}">Condition</button> <button class="btn small ghost" data-tool-move="${esc(t.code)}">Move</button> <button class="btn small ghost" data-tool-use="${esc(t.code)}">Record use</button>` : ''}
           ${handle && t.status === 'OutForService' ? ` <button class="btn small" data-tool-return="${esc(t.code)}">Back from service</button>` : ''}`}</td></tr>`; }).join('')}</tbody></table>`}`;
     const typeOptions = (types.data ?? []).filter(t => t.active).map(t => [t.code, `${t.code} — ${t.name} (${t.kind})`]);
     $$('[data-tool-type]', section).forEach(b => b.addEventListener('click', () => formModal({
@@ -83,6 +83,17 @@ export async function appendTools(container, machines, me) {
       title: `Condition of ${b.dataset.toolCondition}`, confirmLabel: 'Record', reasonRequired: true,
       fields: [{ name: 'condition', label: 'Condition', type: 'select', options: CONDITIONS.map(c => [c, c]) }],
     }, (v, reason) => command(`/api/resources/tools/${encodeURIComponent(b.dataset.toolCondition)}/condition`, v, reason), load)));
+    $$('[data-tool-move]', section).forEach(b => b.addEventListener('click', () => formModal({
+      title: `Move ${b.dataset.toolMove}`, detail: 'Where the tool is and who has it. A tool with a person is in their custody until moved back.', confirmLabel: 'Move', reasonRequired: true,
+      fields: [{ name: 'custody', label: 'Custody', type: 'select', options: [['InHouse', 'In house'], ['WithPerson', 'With a person'], ['AtVendor', 'At a vendor']] },
+        { name: 'location', label: 'Location (in house)', code: true }, { name: 'custodian', label: 'Custodian (person or vendor)' }],
+    }, (v, reason) => command(`/api/resources/tools/${encodeURIComponent(b.dataset.toolMove)}/move`, { location: v.location, custody: v.custody, custodian: v.custodian }, reason), load)));
+    $$('[data-tool-use]', section).forEach(b => b.addEventListener('click', () => formModal({
+      title: `Record use of ${b.dataset.toolUse}`, detail: 'Uses count toward the usage limit and the service interval. Uses on the shop floor are recorded automatically.', confirmLabel: 'Record', reasonRequired: true,
+      fields: [{ name: 'uses', label: 'Uses', type: 'number', min: 1, value: 1, required: true }, { name: 'machineCode', label: 'Machine (optional)', code: true },
+        { name: 'activityCode', label: 'Activity (optional)', code: true }, { name: 'reference', label: 'Reference (order, job or note)' }],
+    }, (v, reason) => { if (!Number.isSafeInteger(v.uses) || v.uses < 1) throw new Error('Uses is a whole number of at least 1.');
+      return command(`/api/resources/tools/${encodeURIComponent(b.dataset.toolUse)}/uses`, v, reason); }, load)));
   };
   await load();
 }

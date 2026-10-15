@@ -17,6 +17,10 @@ import { procurementPage } from './pages/procurement.js';
 import { qualityPage } from './pages/quality.js';
 import { qmsPage } from './pages/qms.js';
 import { qmsPlanningPage } from './pages/qms-planning.js';
+import { investigationsPage } from './pages/investigations.js';
+import { acceptancePage } from './pages/acceptance.js';
+import { safetyRulesPage } from './pages/safety-rules.js';
+import { accessPage } from './pages/access.js';
 import { qmsAuditPage } from './pages/qms-audit.js';
 import { qmsReviewPage } from './pages/qms-review.js';
 import { qmsMetricsPage } from './pages/qms-metrics.js';
@@ -33,6 +37,7 @@ import { workInboxPage } from './pages/work-inbox.js';
 import { integrityPage } from './pages/integrity.js';
 import { scenariosPage } from './pages/scenarios.js';
 import { loadDirectory } from './people.js';
+import { roleTitle } from './roles.js';
 
 const NAV = [
   { route: 'home', label: 'Home', icon: 'dashboard', page: horizonPage },
@@ -48,6 +53,7 @@ const NAV = [
   { route: 'shop-floor', label: 'Shop Floor', icon: 'operator', page: shopFloorPage },
   { route: 'plant-setup', label: 'Plant Setup', icon: 'factory', page: plantSetupPage },
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
+  { route: 'safety-rules', label: 'Safety Rules', icon: 'safety', page: safetyRulesPage },
   { route: 'shift-continuity', label: 'Shift Continuity', icon: 'handover', page: shiftContinuityPage },
   { route: 'notifications', label: 'Notifications', icon: 'bell', page: notificationsPage },
   { route: 'my-work', label: 'My Work', icon: 'inbox', page: workInboxPage },
@@ -55,6 +61,8 @@ const NAV = [
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
+  { route: 'acceptance', label: 'Product Acceptance', icon: 'acceptance', page: acceptancePage },
+  { route: 'investigations', label: 'Investigations', icon: 'trace', page: investigationsPage },
   { route: 'qms', label: 'Quality Management', icon: 'qms', page: qmsPage },
   { route: 'qms-planning', label: 'QMS Planning', icon: 'target', page: qmsPlanningPage },
   { route: 'qms-audit', label: 'Audits & CAPA', icon: 'audit', page: qmsAuditPage },
@@ -65,23 +73,11 @@ const NAV = [
   { route: 'shipping', label: 'Shipping', icon: 'truck', page: shippingPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: analystPage },
+  { route: 'access', label: 'Access Control', icon: 'access', page: accessPage },
 ];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
 
-const ROLE_TITLES = {
-  SecurityAdministrator: 'Security Administrator', ManufacturingEngineer: 'Manufacturing Engineer', Planner: 'Planner',
-  Supervisor: 'Supervisor', SafetyEngineer: 'Safety Engineer', SafetyApprover: 'Safety Approver', Certifier: 'Certifier',
-  TrainingCoordinator: 'Training Coordinator', EngineeringApprover: 'Engineering Approver', MaintenanceTechnician: 'Maintenance Technician',
-  Auditor: 'Auditor', MaterialHandler: 'Material Handler', InventoryController: 'Inventory Controller', Buyer: 'Buyer',
-  PurchasingManager: 'Purchasing Manager', ShopFloorTerminal: 'Shop Floor Terminal', Inspector: 'Inspector',
-  QualityEngineer: 'Quality Engineer', QualityManager: 'Quality Manager', CustomerCommunicationsApprover: 'Customer Communications Approver', Shipper: 'Shipper',
-  QmsAuthor: 'QMS Author', QmsReviewer: 'QMS Reviewer', QmsApprover: 'QMS Approver',
-  QmsPolicyConsumer: 'QMS Policy Consumer', LabelAuthor: 'Label Author', LabelApprover: 'Label Approver',
-  LabelPrinter: 'Label Printer', IdentificationAdministrator: 'Identification Administrator', ScanOperator: 'Scan Operator',
-  ProgramManager: 'Program Manager', MaintenancePlanner: 'Maintenance Planner', FacilitiesManager: 'Facilities Manager',
-  DocumentController: 'Document Controller', ChangeBoard: 'Change Board',
-};
-export const roleTitle = r => ROLE_TITLES[r] ?? r;
+export { roleTitle };
 
 // Brand artwork is cut from the JIRSN Forge identity sheet (img/brand); replace those files to update it everywhere.
 const brand = () => `<div class="brand"><img class="lockup" src="/img/brand/forge-logo-primary.png" alt="JIRSN Forge"></div>`;

@@ -59,7 +59,7 @@ export async function plantSetupPage(page, ctx) {
               <div class="row-actions">${btn('edit-activity', 'Edit', { code: a.code })}${retireBtn('ActivityType', a)}</div></div>`).join('') || '<span class="muted">None yet.</span>'}
           </section>
           <section class="panel"><header><h2>Shifts</h2></header>
-            ${sites.map(s => `<div class="plant-sub"><b>${esc(s.name)}</b> ${btn('add-shift', '+ Shift', { site: s.code })}</div>
+            ${sites.map(s => `<div class="plant-sub"><b>${esc(s.name)}</b> ${btn('add-shift', '+ Shift', { site: s.code })} ${btn('add-closure', '+ Closure', { site: s.code }, 'ghost')}</div>
               ${r.shifts.filter(x => x.siteCode === s.code).map(x => `<div class="plant-row"><div><b>${esc(x.code)}</b><div class="faint">${esc(shiftText(x))}</div></div></div>`).join('') || '<div class="muted">No shifts yet: work centers without a shift have no working time.</div>'}`).join('') || '<span class="muted">Add a site first.</span>'}
           </section>
         </div>
@@ -243,6 +243,10 @@ export async function plantSetupPage(page, ctx) {
       { name: 'hours', label: 'Length (hours)', type: 'number', value: '8', step: '0.25', required: true },
       { name: 'days', label: 'Days', type: 'days', value: [1, 2, 3, 4, 5], required: true }] },
     (v, reason) => command('/api/resources/shifts', { code: v.code, siteCode: d.site, name: v.name, start: `${v.start}:00`.slice(0, 8), durationMinutes: Math.round(Number(v.hours) * 60), days: v.days }, reason)),
+
+    'add-closure': d => formModal({ title: `Close ${d.site} for a day`, detail: 'A plant closure (holiday or shutdown) removes that day from capacity for every work center at the site.', confirmLabel: 'Add closure', reasonRequired: true, fields: [
+      { name: 'date', label: 'Date', type: 'date', required: true }, { name: 'note', label: 'Why (for example, the holiday name)' }] },
+    (v, reason) => command(`/api/resources/sites/${enc(d.site)}/closures`, { date: v.date, note: v.note }, reason)),
 
     retire: d => confirmWithReason({ title: `Retire ${KIND[d.kind]} ${d.code}`, detail: 'It stays in history but nothing new can be planned, assigned or run there. Forge refuses if anything still depends on it.', confirmLabel: 'Retire' },
       reason => command(`/api/resources/${PATH[d.kind]}/${enc(d.code)}/retire`, {}, reason)).then(done),

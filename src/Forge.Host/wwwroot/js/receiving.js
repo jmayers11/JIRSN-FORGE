@@ -10,6 +10,23 @@ const FAI = {
   NotApplicable: ['none', 'n/a'], NotRequired: ['none', 'Not required'], PendingDetermination: ['warn', 'Pending determination'], Required: ['bad', 'Required — not done'], Complete: ['ok', 'Complete'],
 };
 
+/** "PART:REV@SUPPLIER" into its parts; null when the receipt has no supplier subject. */
+export function faiParts(subject) {
+  const m = /^([^:]+):([^@]+)@(.+)$/.exec(subject ?? '');
+  return m ? { partNumber: m[1], revision: m[2], supplierCode: m[3] } : null;
+}
+
+/** "characteristic | requirement | measured | pass/fail", one result per line. */
+export function faiResults(text) {
+  const lines = String(text ?? '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) throw new Error('Record the result of each characteristic checked.');
+  return lines.map((line, i) => {
+    const [characteristic, requirement, measured, result] = line.split('|').map(p => p.trim());
+    if (!characteristic || !/^(pass|fail|ok|ng|yes|no)$/i.test(result ?? '')) throw new Error(`Result line ${i + 1}: use "characteristic | requirement | measured | pass or fail".`);
+    return { characteristic, requirement: requirement || null, measured: measured || null, pass: /^(pass|ok|yes)$/i.test(result) };
+  });
+}
+
 export async function loadReceiving() {
   const [receipts, rejections, rtvs, returns] = await Promise.all([
     tryGet('/api/inventory/receiving?take=100'), tryGet('/api/inventory/rejections?open=true'), tryGet('/api/inventory/rtvs?open=true'), tryGet('/api/inventory/customer-returns'),
@@ -26,6 +43,8 @@ export function receivingTab(rec, me) {
   const disposition = canAction(me, 'quality.disposition');
   const approve = canAction(me, 'quality.approve');
   const move = canAction(me, 'inventory.transact');
+  const plan = canAction(me, 'quality.plan');
+  const credit = canAction(me, 'purchasing.approve');
   const open = (rec.receipts.data ?? []).filter(r => r.remaining > 0 || r.inspections.length === 0);
   const pendingReturns = (rec.returns.data ?? []).filter(r => !r.disposition);
   return `
@@ -36,7 +55,7 @@ export function receivingTab(rec, me) {
       <td>${esc(r.receipt.partNumber)}${r.receipt.lotNumber ? ` <span class="faint">lot ${esc(r.receipt.lotNumber)}</span>` : ''}</td><td>${esc(r.supplierCode ?? '—')}${r.receipt.poNumber ? ` · PO ${r.receipt.poNumber}` : ''}</td>
       <td class="num">${qty(r.receipt.quantity)}</td><td class="num">${qty(r.accepted)}</td><td class="num">${qty(r.rejected)}</td><td class="num">${qty(r.remaining)}</td>
       <td><span class="pill ${cls}" title="${esc(r.faiSubject)}">${esc(label)}</span></td>
-      <td><button class="btn small ghost" data-receipt-evidence="${r.receipt.transactionId}">Evidence</button>${r.inspections.map(i => `<button class="btn small ghost" data-inspection-evidence="${i.inspectionId}">Inspection ${i.inspectionId} evidence</button>`).join('')}${inspect && r.remaining > 0 ? `<button class="btn small" data-inspect="${r.receipt.transactionId}" data-left="${r.remaining}">Inspect</button>` : ''}</td></tr>`; }).join('')}
+      <td><button class="btn small ghost" data-receipt-evidence="${r.receipt.transactionId}">Evidence</button>${r.inspections.map(i => `<button class="btn small ghost" data-inspection-evidence="${i.inspectionId}">Inspection ${i.inspectionId} evidence</button>`).join('')}${plan && r.faiStatus === 'PendingDetermination' && faiParts(r.faiSubject) ? `<button class="btn small" data-fai-decide="${esc(r.faiSubject)}">Decide FAI</button>` : ''}${inspect && r.faiStatus === 'Required' && faiParts(r.faiSubject) ? `<button class="btn small" data-fai-record="${esc(r.faiSubject)}">Record FAI</button>` : ''}${inspect && r.remaining > 0 ? `<button class="btn small" data-inspect="${r.receipt.transactionId}" data-left="${r.remaining}">Inspect</button>` : ''}</td></tr>`; }).join('')}
     </tbody></table>`}
     <h3>Rejected material</h3>
     ${!(rec.rejections.data ?? []).length ? '<div class="muted">No rejected material waiting for a decision.</div>' : `
@@ -50,14 +69,14 @@ export function receivingTab(rec, me) {
     <table class="table"><thead><tr><th>RTV</th><th>Part</th><th>Supplier</th><th class="num">Qty</th><th>Status</th><th></th></tr></thead><tbody>
     ${rec.rtvs.data.map(r => `<tr><td>${r.rtvId}</td><td>${esc(r.partNumber)}${r.lotNumber ? ` <span class="faint">lot ${esc(r.lotNumber)}</span>` : ''}</td><td>${esc(r.supplierCode ?? '—')}</td><td class="num">${qty(r.quantity)}</td>
       <td>${esc(r.status)}${r.forRework ? ' <span class="faint">(rework)</span>' : ''}</td>
-      <td>${move && r.status === 'Open' ? `<button class="btn small" data-rtv-ship="${r.rtvId}">Ship back</button>` : ''}${move && r.status === 'Shipped' ? `<button class="btn small" data-rtv-replace="${r.rtvId}" data-qty="${r.quantity}">Receive replacement</button>` : ''}</td></tr>`).join('')}
+      <td>${move && r.status === 'Open' ? `<button class="btn small" data-rtv-ship="${r.rtvId}">Ship back</button>` : ''}${move && r.status === 'Shipped' ? `<button class="btn small" data-rtv-replace="${r.rtvId}" data-qty="${r.quantity}">Receive replacement</button>` : ''}${credit && r.status === 'Shipped' ? `<button class="btn small ghost" data-rtv-credit="${r.rtvId}">Record credit</button>` : ''}</td></tr>`).join('')}
     </tbody></table>`}
     <h3>Customer returns</h3>
     ${move ? '<div class="toolbar"><button class="btn small" data-rma-add>+ Customer return</button></div>' : ''}
     ${!pendingReturns.length ? '<div class="muted">No customer returns waiting for a decision.</div>' : `
     <table class="table"><thead><tr><th>Return</th><th>Customer</th><th>Shipment</th><th>Part</th><th class="num">Qty</th><th>Why</th><th></th></tr></thead><tbody>
     ${pendingReturns.map(r => `<tr><td>${r.rmaId}</td><td>${esc(r.customer)}</td><td>${r.shipmentId}</td><td>${esc(r.partNumber)}${r.lotNumber ? ` lot ${esc(r.lotNumber)}` : ''}</td><td class="num">${qty(r.quantity)}</td><td>${esc(r.reason)}</td>
-      <td>${disposition ? `<button class="btn small" data-rma-dispose="${r.rmaId}">Disposition</button>` : ''}</td></tr>`).join('')}
+      <td>${move ? `<button class="btn small ghost" data-rma-prepare="${r.rmaId}" data-qty="${r.quantity}">Prepare inspection</button>` : ''}${disposition ? `<button class="btn small" data-rma-dispose="${r.rmaId}" data-qty="${r.quantity}">Disposition</button>` : ''}</td></tr>`).join('')}
     </tbody></table>`}`;
 }
 
@@ -102,6 +121,26 @@ export function bindReceivingTab(page, locations, reload, me) {
   }, (v, reason) => command('/api/inventory/customer-returns', { ...v, shipmentId: Number(v.shipmentId), quantity: Number(v.quantity), lotNumber: v.lotNumber || null }, reason), reload)));
   $$('[data-rma-dispose]', page).forEach(b => b.addEventListener('click', () => formModal({
     title: `Disposition return ${b.dataset.rmaDispose}`, confirmLabel: 'Decide', reasonRequired: true,
-    fields: [{ name: 'disposition', label: 'Disposition', type: 'select', options: [['Restock', 'Restock (release)'], ['Rework', 'Rework (stays on hold)'], ['Scrap', 'Scrap']] }],
-  }, (v, reason) => command(`/api/inventory/customer-returns/${b.dataset.rmaDispose}/disposition`, v, reason), reload)));
+    detail: 'Where governed return acceptance is configured, a restock names the independent product release for the prepared return cohort.',
+    fields: [{ name: 'disposition', label: 'Disposition', type: 'select', options: [['Restock', 'Restock (release)'], ['Rework', 'Rework (stays on hold)'], ['Scrap', 'Scrap']] },
+      { name: 'decisionId', label: 'Product release decision (governed restock)', type: 'number', min: 1 }, { name: 'expectedDecisionVersion', label: 'Release decision version', type: 'number', min: 1 },
+      { name: 'quantity', label: 'Quantity (governed disposition)', type: 'number', min: 0, step: 'any' }],
+  }, (v, reason) => command(`/api/inventory/customer-returns/${b.dataset.rmaDispose}/disposition`, { disposition: v.disposition, decisionId: v.decisionId, expectedDecisionVersion: v.expectedDecisionVersion, quantity: v.quantity }, reason), reload)));
+  $$('[data-rma-prepare]', page).forEach(b => b.addEventListener('click', () => formModal({
+    title: `Prepare return ${b.dataset.rmaPrepare} for inspection`, detail: 'Identifies the exact returned quantity as a cohort that product acceptance inspects and releases.', confirmLabel: 'Prepare', reasonRequired: true,
+    fields: [{ name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', value: b.dataset.qty, required: true }, { name: 'locationCode', label: 'Inspection location (optional)', type: 'select', blank: '— where it is now —', options: locations }],
+  }, (v, reason) => command(`/api/inventory/customer-returns/${b.dataset.rmaPrepare}/prepare-inspection`, { quantity: v.quantity, locationCode: v.locationCode }, reason), reload)));
+  $$('[data-rtv-credit]', page).forEach(b => b.addEventListener('click', () => formModal({
+    title: `Record supplier credit for return ${b.dataset.rtvCredit}`, detail: 'Closes the return to vendor: the supplier credited it instead of replacing it.', confirmLabel: 'Record credit', reasonRequired: true, fields: [],
+  }, (v, reason) => command(`/api/inventory/rtvs/${b.dataset.rtvCredit}/credit`, {}, reason), reload)));
+  $$('[data-fai-decide]', page).forEach(b => b.addEventListener('click', () => { const s = faiParts(b.dataset.faiDecide); formModal({
+    title: `FAI for ${s.partNumber} rev ${s.revision} from ${s.supplierCode}`, detail: 'Decide whether first article inspection applies. The reason is kept as the basis.', confirmLabel: 'Decide', reasonRequired: true,
+    fields: [{ name: 'state', label: 'First article inspection', type: 'select', options: [['Required', 'Required'], ['NotRequired', 'Not required'], ['NotApplicable', 'Not applicable']] }],
+  }, (v, reason) => command('/api/quality/fai-determinations', { ...s, state: v.state }, reason), reload); }));
+  $$('[data-fai-record]', page).forEach(b => b.addEventListener('click', () => { const s = faiParts(b.dataset.faiRecord); formModal({
+    title: `Record FAI: ${s.partNumber} rev ${s.revision} from ${s.supplierCode}`, detail: 'Backed by a released (signed) FAI report in document control. A failed characteristic means the FAI has not passed.', confirmLabel: 'Record FAI', reasonRequired: true,
+    fields: [{ name: 'passed', label: 'Outcome', type: 'check', text: 'FAI passed', value: true },
+      { name: 'results', label: 'Results', type: 'textarea', required: true, hint: 'One per line: characteristic | requirement | measured | pass or fail.' },
+      { name: 'documentNumber', label: 'FAI report document', code: true, required: true }, { name: 'documentRevision', label: 'Report revision', code: true, required: true }],
+  }, (v, reason) => command('/api/quality/fai', { ...s, passed: !!v.passed, results: faiResults(v.results), documentNumber: v.documentNumber, documentRevision: v.documentRevision }, reason), reload); }));
 }
