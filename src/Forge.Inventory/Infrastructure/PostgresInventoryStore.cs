@@ -545,6 +545,16 @@ public static class InventoryRegistration
         services.AddForgeStore<IOutsideProcessLookup>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IOutsideProcessStore>(uow => new PostgresInventoryStore(uow));
         services.AddSingleton<InventoryService>();
+        services.AddForgeStore<IReturnAcceptanceInventoryStore>(uow => new PostgresReturnAcceptanceStore(uow));
+        services.AddForgeStore<IReturnAcceptanceInventoryLookup>(uow => new PostgresReturnAcceptanceStore(uow));
+        services.AddForgeStore<IReturnAcceptanceInventoryLock>(uow => new PostgresReturnAcceptanceStore(uow));
+        services.AddSingleton<ReturnAcceptanceService>();
+        services.AddSingleton<IReturnAcceptanceBridge>(sp => sp.GetRequiredService<ReturnAcceptanceService>());
+        services.AddForgeStore<IProductReleaseInventoryStore>(uow => new PostgresProductReleaseStore(uow));
+        services.AddForgeStore<IProductReleaseInventoryLookup>(uow => new PostgresProductReleaseStore(uow));
+        services.AddForgeStore<Forge.Quality.Contracts.IProductReleaseConsumptionLookup>(uow => new PostgresProductReleaseStore(uow));
+        services.AddForgeStore<ITraceInventoryLookup>(uow => new PostgresInventoryStore(uow));
+        services.AddSingleton<ProductReleaseService>();
         services.AddSingleton<IInventoryRecoveryReadiness, InventoryRecoveryReadiness>();
         return services;
     }

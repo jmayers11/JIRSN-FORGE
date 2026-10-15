@@ -17,7 +17,9 @@ public sealed record CreatePurchaseOrder(string Supplier, IReadOnlyList<NewPurch
 
 public sealed record AddPurchaseLine(long PoNumber, string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null);
 
-public sealed record ApprovePurchaseOrder(long PoNumber);
+public sealed record ApprovePurchaseOrder(long PoNumber,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? QualityProcessCode=null,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? QualityWorkCenterCode=null);
 
 /// <summary>The supplier moved its date. MRP and material readiness pick the new date up on their next run.</summary>
 public sealed record ChangePromisedDate(long PoNumber, int LineNumber, DateOnly PromisedDate);
@@ -44,6 +46,7 @@ public sealed record SupplierDateChanged(long PoNumber, int LineNumber, string P
 
 public interface IProcurementStore
 {
+    Task LockPurchaseOrderAsync(long poNumber,CancellationToken ct);
     Task<long> InsertOrderAsync(SupplierInfo supplier, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task<bool> InsertSupplierAsync(SupplierInfo supplier, CancellationToken ct);
@@ -396,6 +399,7 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
         var spec = new CommandSpec(SourceContext, commandType, permission, resource, reasonRequired);
         return await pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
         {
+            await uow.Store<IProcurementStore>().LockPurchaseOrderAsync(poNumber,ct);
             var po = await uow.Store<IProcurementLookup>().FindPurchaseOrderAsync(poNumber, ct)
                 ?? throw new CommandRejectedException("purchase_order_not_found", $"Purchase order {id} does not exist.");
             if (!(await ResourcesForPurchaseOrderAsync(uow, po, ct)).SequenceEqual(recordedResources))

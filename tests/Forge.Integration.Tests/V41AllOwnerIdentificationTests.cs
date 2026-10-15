@@ -91,7 +91,7 @@ public sealed class V41AllOwnerIdentificationTests(PostgresFixture postgres)
         using(var metadata=await plant.Engineer.GetAsync("/api/identification/config"))
         {
             Assert.Equal(HttpStatusCode.OK,metadata.StatusCode);using var configuration=JsonDocument.Parse(await metadata.Content.ReadAsStringAsync());
-            Assert.Equal(new[]{"person","order","operation","traveler","material","batch","roll","serial","wip","remnant","machine","workcenter","tool","gauge","location","container","package","inspection","shipment","output","label","alias","instruction"},
+            Assert.Equal(new[]{"person","order","operation","traveler","material","batch","roll","serial","wip","remnant","machine","workcenter","tool","gauge","location","container","package","inspection","shipment","output","label","alias","instruction","product-release"},
                 configuration.RootElement.GetProperty("supportedKinds").EnumerateArray().Select(value=>value.GetString()));
         }
         foreach(var identity in identities)

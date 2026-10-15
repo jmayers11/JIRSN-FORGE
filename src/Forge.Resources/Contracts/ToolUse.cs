@@ -12,9 +12,13 @@ public static class ToolUse
     /// records the use in the same transaction. Throws <c>tool_not_valid</c> with the reasons when it is not.
     /// </summary>
     public static async Task<ToolValidity> RecordAsync(IKernelUnitOfWork uow, string rawCode, string? machine, string? activity, string reference, DateTimeOffset now, string actor, CancellationToken ct)
+        => (await RecordEvidenceAsync(uow, rawCode, machine, activity, reference, now, actor, ct)).Validity;
+
+    public static async Task<(ToolValidity Validity, long ToolUseEventId)> RecordEvidenceAsync(IKernelUnitOfWork uow, string rawCode, string? machine, string? activity, string reference, DateTimeOffset now, string actor, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(uow);
         var code = BusinessCode.Require(rawCode, "Tool");
+        await uow.Store<IToolStore>().LockToolAsync(code, ct);
         var lookup = uow.Store<IToolLookup>();
         var tool = await lookup.FindToolAsync(code, ct) ?? throw new CommandRejectedException("tool_not_found", $"Tool {code} does not exist.");
         var type = (await lookup.ListToolTypesAsync(ct)).First(t => t.Code == tool.TypeCode);
@@ -26,7 +30,7 @@ public static class ToolUse
 
         var store = uow.Store<IToolStore>();
         await store.UpdateToolAsync(tool with { UsageCount = tool.UsageCount + 1, UsesSinceService = tool.UsesSinceService + 1, ChangedAt = now, ChangedBy = actor }, ct);
-        await store.InsertToolEventAsync(new ToolEvent(0, code, ToolEventKind.Used, now, actor, Uses: 1, Reference: reference), ct);
-        return validity;
+        var eventId = await store.InsertToolEventAsync(new ToolEvent(0, code, ToolEventKind.Used, now, actor, Uses: 1, Reference: reference), ct);
+        return (validity, eventId);
     }
 }

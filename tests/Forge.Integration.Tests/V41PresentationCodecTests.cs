@@ -11,7 +11,8 @@ public sealed class V41PresentationCodecTests
     [InlineData("wip:1:10","wip")][InlineData("remnant:P:L","remnant")][InlineData("machine:M-1","machine")]
     [InlineData("workcenter:WC-1","workcenter")][InlineData("tool:T-1","tool")][InlineData("gauge:G-1","gauge")]
     [InlineData("location:WH-1","location")][InlineData("container:C-1","container")][InlineData("package:C-1","package")]
-    [InlineData("inspection:1","inspection")][InlineData("shipment:1","shipment")]
+    [InlineData("inspection:1","inspection")][InlineData("inspection:acceptance:1","inspection")]
+    [InlineData("product-release:1","product-release")][InlineData("shipment:1","shipment")]
     public void Original_nineteen_categories_have_typed_canonical_owner_keys(string suffix,string kind)
     {var code="forge:v1:N:"+suffix;var parsed=CanonicalIdentification.Parse(code,"N");Assert.Equal((code,"N",kind),(parsed.Code,parsed.Namespace,parsed.Kind));}
     [Fact]

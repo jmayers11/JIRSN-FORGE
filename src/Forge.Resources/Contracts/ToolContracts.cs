@@ -288,6 +288,7 @@ public interface IToolLookup
 
 public interface IToolStore
 {
+    Task LockToolAsync(string code, CancellationToken ct);
     Task<bool> InsertToolTypeAsync(ToolTypeInfo type, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task<bool> InsertToolAsync(ToolInfo tool, DateTimeOffset at, string actor, CancellationToken ct);

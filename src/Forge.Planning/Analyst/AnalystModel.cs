@@ -46,6 +46,15 @@ public enum AnalystIntent
 
     /// <summary>"What documentation applies to order 48172?" (V2.3).</summary>
     OrderDocumentation,
+
+    /// <summary>Open findings in authorized QMS audit records (V4).</summary>
+    OpenAuditFindings,
+
+    /// <summary>Overdue actions in authorized QMS corrective-action records (V4).</summary>
+    OverdueCorrectiveActions,
+
+    /// <summary>Completed authorized quality-objective cohorts below their approved target (V4).</summary>
+    QualityObjectivesBelowTarget,
 }
 
 public enum AnalystConfidence

@@ -116,8 +116,8 @@ public sealed record CapaInfo(
     long CapaId,
     long? NcrId,
     string Title,
-    string RootCause,
-    string Action,
+    string? RootCause,
+    string? Action,
     DateOnly DueDate,
     CapaStatus Status,
     string OpenedBy,
@@ -125,7 +125,8 @@ public sealed record CapaInfo(
     string? ImplementedBy,
     string? ImplementationNote,
     string? VerifiedBy,
-    DateTimeOffset? VerifiedAt);
+    DateTimeOffset? VerifiedAt,
+    bool Governed = false);
 
 /// <summary>A gauge as Quality shows it. Since V3.8 a gauge is a tool of the Gauge kind (Resources).</summary>
 public sealed record GaugeInfo(string Code, string Description, DateOnly CalibrationDue, string? Certificate, bool Active)

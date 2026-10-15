@@ -13,7 +13,7 @@ public sealed partial record CanonicalIdentification(string Code, string Namespa
     public static IReadOnlyList<string> SupportedKinds { get; } = Array.AsReadOnly(new[] {
         "person", "order", "operation", "traveler", "material", "batch", "roll", "serial", "wip", "remnant",
         "machine", "workcenter", "tool", "gauge", "location", "container", "package", "inspection", "shipment",
-        "output", "label", "alias", "instruction" });
+        "output", "label", "alias", "instruction", "product-release" });
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
     public string? PartNumber { get; init; }
@@ -24,6 +24,7 @@ public sealed partial record CanonicalIdentification(string Code, string Namespa
     public long? RecordNumber { get; init; }
     public int? LineNumber { get; init; }
     public string? Revision { get; init; }
+    public string? InspectionNamespace { get; init; }
 
     public static bool IsValidNamespace(string? value) => value is not null && NamespacePattern().IsMatch(value);
 
@@ -91,6 +92,14 @@ public sealed partial record CanonicalIdentification(string Code, string Namespa
                 result = new(code, components[2], components[3], null, null) { Id = id };
                 break;
             case "inspection":
+                var acceptanceInspection = components.Length == 6 && components[4] == "acceptance";
+                var inspectionIndex = acceptanceInspection ? 5 : 4;
+                if ((!acceptanceInspection && components.Length != 5) || !PositiveDigits(components[inspectionIndex])
+                    || !long.TryParse(components[inspectionIndex], NumberStyles.None, CultureInfo.InvariantCulture, out var inspectionNumber)) throw Invalid();
+                result = new(code, components[2], components[3], null, null)
+                    { RecordNumber = inspectionNumber, InspectionNamespace = acceptanceInspection ? "acceptance" : "legacy" };
+                break;
+            case "product-release":
             case "shipment":
             case "output":
                 if ((components[3] == "output" ? components.Length != 6 : components.Length != 5)

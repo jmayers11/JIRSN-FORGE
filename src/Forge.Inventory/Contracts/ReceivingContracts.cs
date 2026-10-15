@@ -111,6 +111,7 @@ public sealed record ReceiptInspectionState(InventoryTransaction Receipt, string
 
 public interface IReceivingLookup
 {
+    Task<CustomerReturnInfo?> FindCustomerReturnAsync(long rmaId, CancellationToken ct);
     Task<InventoryTransaction?> FindTransactionAsync(long transactionId, CancellationToken ct);
 
     Task<IReadOnlyList<ReceivingInspection>> ListReceivingInspectionsAsync(long? receiptTransactionId, CancellationToken ct);
@@ -127,6 +128,7 @@ public interface IReceivingLookup
 
 public interface IReceivingStore
 {
+    Task LockCustomerReturnAsync(long rmaId, CancellationToken ct);
     Task<long> InsertReceivingInspectionAsync(ReceivingInspection inspection, CancellationToken ct);
 
     Task<long> InsertRejectionAsync(SupplierRejection rejection, CancellationToken ct);

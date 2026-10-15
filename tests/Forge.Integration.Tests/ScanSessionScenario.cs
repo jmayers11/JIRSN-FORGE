@@ -28,7 +28,7 @@ internal static class ScanSessionScenario
     public const string WorkstationSetting = "Forge:Authentication:DevelopmentWorkstationId";
     public const string AdapterEnabledSetting = "Forge:Identification:ScannerAdapters:0:Enabled";
     public static readonly string[] BusinessTables = ["execution.production_order", "execution.order_operation", "execution.order_material", "execution.labor", "execution.training_session", "execution.production_report"];
-    public static readonly string[] EvidenceTables = ["kernel.identification_scan_session", "kernel.identification_scan_channel", "kernel.identification_scan_acceptance", "kernel.audit_log", "kernel.outbox", "kernel.event_log", "kernel.idempotency"];
+    public static readonly string[] EvidenceTables = ["kernel.identification_scan_session", "kernel.identification_scan_channel", "kernel.identification_scan_acceptance", "kernel.identification_scan_attempt", "kernel.audit_log", "kernel.outbox", "kernel.event_log", "kernel.idempotency"];
 
     internal sealed class Clock(DateTimeOffset at) : TimeProvider
     {
@@ -52,7 +52,8 @@ internal static class ScanSessionScenario
     public static string InstructionCode(string revision) => $"forge:v1:{Namespace}:instruction:{Instruction}:{revision}";
 
     public static async Task<Flow> CreateAsync(PostgresFixture postgres, bool instruction = false,
-        bool trustedWorkstation = true, bool currentAuthenticatedOperator = false, bool providerClaims = true, bool requireOperationScan = true)
+        bool trustedWorkstation = true, bool currentAuthenticatedOperator = false, bool providerClaims = true, bool requireOperationScan = true,
+        bool attemptRetentionEnabled = false, int attemptRetentionDays = 30, int attemptMaxPerSession = 100)
     {
         var clock = new Clock(DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
         var app = new ForgeApp(await postgres.CreateDatabaseAsync(), services => services.AddSingleton<TimeProvider>(clock), builder =>
@@ -64,6 +65,9 @@ internal static class ScanSessionScenario
             builder.UseSetting("Forge:Identification:ScannerAdapters:0:InputMode", "ConfiguredAdapter");
             builder.UseSetting("Forge:Identification:ScannerAdapters:0:Symbologies:0", "QR");
             builder.UseSetting(AdapterEnabledSetting, "true");
+            builder.UseSetting("Forge:Identification:ScanAttemptRetention:Enabled", attemptRetentionEnabled.ToString(CultureInfo.InvariantCulture));
+            builder.UseSetting("Forge:Identification:ScanAttemptRetention:RetentionDays", attemptRetentionDays.ToString(CultureInfo.InvariantCulture));
+            builder.UseSetting("Forge:Identification:ScanAttemptRetention:MaxPerSession", attemptMaxPerSession.ToString(CultureInfo.InvariantCulture));
             if (providerClaims)
             {
                 builder.UseSetting(ProviderSessionSetting, "development-session-declared-by-server");

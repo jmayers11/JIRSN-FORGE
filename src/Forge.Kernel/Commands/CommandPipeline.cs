@@ -61,16 +61,20 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
         CommandRejectedException? rejection = null;
         AuthorizationDecision? rejectedAuthority = null;
         CommandResult? result = null;
+        ICommandTransactionParticipant? transactionParticipant = null;
+        CommandAuthority? currentAuthority = null;
 
         await using (var uow = await unitOfWork.BeginAsync(ct))
         {
             var now = time.GetUtcNow();
             var sourceAuthorityResolved = false;
+            transactionParticipant = participant ?? participants?.Create();
             try
             {
                 var current = authority is not null ? await authority(uow, now)
                     : sources is not null ? await sources.ResolveAsync(uow, spec, context, now, ct)
                     : new CommandAuthority(spec.Resource);
+                currentAuthority = current;
                 sourceAuthorityResolved = true;
                 spec = spec with { Resource = current.Resource };
                 foreach (var resource in new[] { current.Resource }.Concat(current.AdditionalResources ?? []))
@@ -84,7 +88,6 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
                 }
                 if (spec.ReasonRequired && string.IsNullOrWhiteSpace(context.Reason))
                     throw new CommandRejectedException("reason_required", "A reason is required for this change.");
-                var transactionParticipant = participant ?? participants?.Create();
                 var transactionEvidence = transactionParticipant is null ? null
                     : await transactionParticipant.ValidateAsync(uow, spec, command!, context, current, now, ct);
                 // Preserve the established fingerprint bytes for ordinary commands.
@@ -164,13 +167,15 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
 
         if (rejectedAuthority is not null)
         {
-            await RecordFailureAsync(spec, context, AuditOutcomes.Denied, string.Join(" ", rejectedAuthority.Reasons), rejectedAuthority, ct);
+            await RecordFailureAsync(spec, context, AuditOutcomes.Denied, string.Join(" ", rejectedAuthority.Reasons), rejectedAuthority, ct,
+                transactionParticipant, command!, currentAuthority ?? new CommandAuthority(spec.Resource), "authorization_denied");
             throw new ForgeAuthorizationException(rejectedAuthority);
         }
 
         if (rejection is not null)
         {
-            await RecordFailureAsync(spec, context, AuditOutcomes.Rejected, $"{rejection.Code}: {rejection.Message}", null, ct);
+            await RecordFailureAsync(spec, context, AuditOutcomes.Rejected, $"{rejection.Code}: {rejection.Message}", null, ct,
+                transactionParticipant, command!, currentAuthority ?? new CommandAuthority(spec.Resource), rejection.Code);
             throw rejection;
         }
 
@@ -192,14 +197,17 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
          || (principal.DelegatedPermissions?.Any(grant => grant.Permission == permission
              && grant.StartsAt <= time.GetUtcNow() && time.GetUtcNow() < grant.ExpiresAt) ?? false));
 
-    private async Task RecordFailureAsync(CommandSpec spec, CommandContext context, string outcome, string detail, AuthorizationDecision? denial, CancellationToken ct)
+    private async Task RecordFailureAsync(CommandSpec spec, CommandContext context, string outcome, string detail,
+        AuthorizationDecision? denial, CancellationToken ct, ICommandTransactionParticipant? transactionParticipant = null,
+        object? attemptedCommand = null, CommandAuthority? authority = null, string? validationCode = null)
     {
         var now = time.GetUtcNow();
         await using var uow = await unitOfWork.BeginAsync(ct);
+        var auditId = ForgeIds.New(time);
         await uow.Audit.AppendAsync(
             new AuditEntry
             {
-                AuditId = ForgeIds.New(time),
+                AuditId = auditId,
                 RecordedAt = now,
                 Actor = context.Actor,
                 Action = spec.CommandType,
@@ -215,6 +223,10 @@ public sealed class CommandPipeline(IKernelUnitOfWorkFactory unitOfWork, IForgeA
                 OwningResource = spec.Resource,
             },
             ct);
+
+        if (transactionParticipant is not null && attemptedCommand is not null && authority is not null && validationCode is not null)
+            await transactionParticipant.RecordRejectedAsync(uow, spec, attemptedCommand, context, authority, outcome,
+                validationCode, auditId, now, ct);
 
         if (denial is not null)
         {

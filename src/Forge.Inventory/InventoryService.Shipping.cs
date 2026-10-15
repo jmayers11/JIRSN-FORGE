@@ -85,6 +85,8 @@ public sealed partial class InventoryService
             }
 
             await CheckShippableAsync(uow, shipment, now, ct);
+            foreach (var line in shipment.Lines)
+                await productRelease.RequireReleasedScopeAsync(uow, context.Principal, line.PartNumber, line.LotNumber, line.LocationCode, line.Quantity, now, ct);
             return (shipment with { Status = ShipmentStatus.Packed, PackedBy = context.Actor, PackedAt = now }, "packed; a different person must ship it", []);
         }, ct);
     }
@@ -101,6 +103,8 @@ public sealed partial class InventoryService
             }
 
             await CheckShipmentReleaseAsync(uow, shipment, context.Actor, now, ct);
+            foreach (var line in shipment.Lines)
+                await productRelease.RequireReleasedScopeAsync(uow, context.Principal, line.PartNumber, line.LotNumber, line.LocationCode, line.Quantity, now, ct);
             var transactions = new List<long>();
             foreach (var line in shipment.Lines)
             {
@@ -207,6 +211,11 @@ public sealed partial class InventoryService
         var spec = new CommandSpec(SourceContext, commandType, permission, ResourceRef.Of(ShipmentEntity, id), reasonRequired);
         return pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
         {
+            var preliminary = await uow.Store<IInventoryLookup>().FindShipmentAsync(shipmentId, ct)
+                ?? throw new CommandRejectedException("shipment_not_found", $"Shipment {id} does not exist.");
+            if (preliminary.ContainerCode is { } lockedContainer)
+                await uow.Store<IProductReleaseInventoryStore>().LockContainerAsync(lockedContainer, ct);
+            await uow.Store<IProductReleaseInventoryStore>().LockShipmentAsync(shipmentId, ct);
             var shipment = await uow.Store<IInventoryLookup>().FindShipmentAsync(shipmentId, ct)
                 ?? throw new CommandRejectedException("shipment_not_found", $"Shipment {id} does not exist.");
             var (next, message, events) = await change(uow, shipment, now);
@@ -217,6 +226,18 @@ public sealed partial class InventoryService
                 CommandResult.Ok(id, $"Shipment {id} {message}."),
                 all,
                 new AuditChange(ShipmentEntity, id, CanonicalJson.Serialize(shipment), CanonicalJson.Serialize(next)));
-        }, ct);
+        }, ct, async (uow, now) =>
+        {
+            var actual = await sourceAuthority.ResolveAsync(uow, spec, context, now, ct);
+            var shipment = await uow.Store<IInventoryLookup>().FindShipmentAsync(shipmentId, ct)
+                ?? throw new CommandRejectedException("shipment_not_found", $"Shipment {id} does not exist.");
+            if (command is not CancelShipment)
+                foreach (var line in shipment.Lines)
+                    if (shipment.Status == ShipmentStatus.Shipped)
+                        await productRelease.RecheckReleasedScopeAsync(uow, context.Principal, line.PartNumber, line.LotNumber, line.LocationCode, now, ct);
+                    else
+                        await productRelease.RequireReleasedScopeAsync(uow, context.Principal, line.PartNumber, line.LotNumber, line.LocationCode, line.Quantity, now, ct);
+            return actual;
+        });
     }
 }

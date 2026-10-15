@@ -16,6 +16,11 @@ public sealed record ScanAccepted(Guid AcceptanceId, string CommandType, string?
     string Actor, DateTimeOffset RecordedAt, int SessionVersion, string PolicyFingerprint,
     IReadOnlyList<ScanSelection> Selections, string EvidenceFingerprint);
 public sealed record ScanAcceptedRecord(Guid SessionId, ScanAccepted Entry);
+/// <summary>Minimized rejected-attempt telemetry; scan payloads and authentication secrets are never retained.</summary>
+public sealed record ScanAttempt(Guid AttemptId, Guid SessionId, int SessionVersion, string CommandType,
+    string Outcome, string ValidationCode, DateTimeOffset RecordedAt, Guid CorrelationId, Guid AuditId,
+    Guid OperatorPersonId, string AuthenticatedActor, string? AssuranceSummary, string? WorkstationBindingHash,
+    string? EntityType, string? EntityId);
 public sealed record ScanSessionView(Guid Id, int Version, ScanSessionState State, Guid PrincipalPersonId,
     Guid OperatorPersonId, string ChannelHash, string AuthenticationBindingHash, string OperationCode, long OrderNumber, int Sequence,
     string FacilityCode, string WorkCenterCode, Guid? ProgramId, DataMarking Markings,
@@ -23,7 +28,8 @@ public sealed record ScanSessionView(Guid Id, int Version, ScanSessionState Stat
     IReadOnlyList<ScanSelection> Selections, IReadOnlyList<QmsRequiredScanKind> RequiredKinds,
     bool ManualAllowed, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, QmsAdoptedPolicy Policy,
     IReadOnlyList<ScanReadSource> Sources, string? InvalidatedBy = null, string? InvalidationReason = null,
-    DateTimeOffset? InvalidatedAt = null, IReadOnlyList<ScanAccepted>? Accepted = null, string? CreationRequestFingerprint = null);
+    DateTimeOffset? InvalidatedAt = null, IReadOnlyList<ScanAccepted>? Accepted = null, string? CreationRequestFingerprint = null,
+    IReadOnlyList<ScanAttempt>? Attempts = null);
 public sealed record ScanRequirements(bool Adopted, bool Required, bool ManualAllowed,
     IReadOnlyList<QmsRequiredScanKind> RequiredKinds, QmsAdoptedPolicy? Policy, int? ExpiresInSeconds);
 public sealed record CreateScanSession(string? OperationCode, long? OrderNumber, int? Sequence, Secret? Badge,
@@ -53,4 +59,6 @@ public interface IScanSessionStore
     Task AppendAcceptedAsync(Guid session, ScanAccepted accepted, CancellationToken ct);
     Task<IReadOnlyList<ScanAccepted>> AcceptedAsync(Guid session, CancellationToken ct);
     Task<ScanAcceptedRecord?> FindAcceptedAsync(Guid acceptanceId, CancellationToken ct);
+    Task AppendAttemptAsync(ScanAttempt attempt, ScanAttemptRetentionPolicy retention, CancellationToken ct);
+    Task<IReadOnlyList<ScanAttempt>> AttemptsAsync(Guid session, CancellationToken ct);
 }

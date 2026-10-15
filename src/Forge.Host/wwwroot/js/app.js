@@ -16,6 +16,10 @@ import { mrpPage } from './pages/mrp.js';
 import { procurementPage } from './pages/procurement.js';
 import { qualityPage } from './pages/quality.js';
 import { qmsPage } from './pages/qms.js';
+import { qmsAuditPage } from './pages/qms-audit.js';
+import { qmsReviewPage } from './pages/qms-review.js';
+import { qmsMetricsPage } from './pages/qms-metrics.js';
+import { commercialQualityPage } from './pages/commercial-quality.js';
 import { shippingPage } from './pages/shipping.js';
 import { programsPage } from './pages/programs.js';
 import { projectsPage } from './pages/projects.js';
@@ -51,6 +55,10 @@ const NAV = [
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
   { route: 'qms', label: 'Quality Management', icon: 'quality', page: qmsPage },
+  { route: 'qms-audit', label: 'Audits & CAPA', icon: 'quality', page: qmsAuditPage },
+  { route: 'qms-review', label: 'QMS Reviews', icon: 'quality', page: qmsReviewPage },
+  { route: 'qms-metrics', label: 'Quality Metrics', icon: 'analytics', page: qmsMetricsPage },
+  { route: 'commercial-quality', label: 'Customer & Provider Quality', icon: 'quality', page: commercialQualityPage },
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
   { route: 'shipping', label: 'Shipping', icon: 'suppliers', page: shippingPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
@@ -64,7 +72,7 @@ const ROLE_TITLES = {
   TrainingCoordinator: 'Training Coordinator', EngineeringApprover: 'Engineering Approver', MaintenanceTechnician: 'Maintenance Technician',
   Auditor: 'Auditor', MaterialHandler: 'Material Handler', InventoryController: 'Inventory Controller', Buyer: 'Buyer',
   PurchasingManager: 'Purchasing Manager', ShopFloorTerminal: 'Shop Floor Terminal', Inspector: 'Inspector',
-  QualityEngineer: 'Quality Engineer', QualityManager: 'Quality Manager', Shipper: 'Shipper',
+  QualityEngineer: 'Quality Engineer', QualityManager: 'Quality Manager', CustomerCommunicationsApprover: 'Customer Communications Approver', Shipper: 'Shipper',
   QmsAuthor: 'QMS Author', QmsReviewer: 'QMS Reviewer', QmsApprover: 'QMS Approver',
   QmsPolicyConsumer: 'QMS Policy Consumer', LabelAuthor: 'Label Author', LabelApprover: 'Label Approver',
   LabelPrinter: 'Label Printer', IdentificationAdministrator: 'Identification Administrator', ScanOperator: 'Scan Operator',

@@ -351,7 +351,7 @@ public sealed partial class InventoryService
     {
         if (!string.Equals(scanned?.Trim(), expected, StringComparison.OrdinalIgnoreCase))
         {
-            throw new CommandRejectedException("scan_mismatch", $"Scanned {what} '{scanned?.Trim()}' is not {expected}.");
+            throw new CommandRejectedException("scan_mismatch", $"The scanned {what} does not match the material task.");
         }
     }
 }

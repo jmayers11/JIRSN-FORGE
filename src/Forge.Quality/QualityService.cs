@@ -90,7 +90,7 @@ public interface IQualityStore
 /// nonconformance; accepting nonconforming material "use as is" needs a second person, and so does
 /// verifying a corrective action. Open nonconformances and uninspected operations hold the order.
 /// </summary>
-public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFactory unitOfWork)
+public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFactory unitOfWork, IAcceptanceSourceAccess acceptanceSources, IForgeAuthorizer authorizer, ICapaLegacyGovernanceGuard? capaGovernance = null)
 {
     public const string SourceContext = "Quality";
     private const string GaugeType = "GAUGE";
@@ -130,6 +130,7 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
                 throw new CommandRejectedException("invalid_calibration", "Calibration date cannot be in the future and the next due date must come after it.");
             }
 
+            await uow.Store<IToolStore>().LockToolAsync(code, ct);
             var lookup = uow.Store<IToolLookup>();
             var gauge = GaugeInfo.From(await lookup.ListToolsAsync(ct), await lookup.ListToolTypesAsync(ct)).FirstOrDefault(g => g.Code == code)
                 ?? throw new CommandRejectedException("gauge_not_found", $"Gauge {code} does not exist.");
@@ -416,6 +417,7 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
         var spec = new CommandSpec(SourceContext, nameof(OpenCapa), Permissions.QualityDisposition, resource);
         return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
+            await QualityAuthorityAsync(uow, context.Principal, Permissions.QualityDisposition, "Capa", null, c.NcrId, await ResourcesForCapaSourceAsync(uow, c.NcrId, null, ct), ct);
             if (await ResourceForCapaSourceAsync(uow, c.NcrId, null, ct) != resource)
                 throw new CommandRejectedException("capa_context_changed", "The corrective action's source context changed. Review it and retry.");
 
@@ -424,7 +426,7 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
             var capaId = await uow.Store<IQualityStore>().InsertCapaAsync(capa, ct);
             var id = capaId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             return Outcome(context, "Capa", id, "Opened", $"Corrective action {id} opened, due {c.DueDate:yyyy-MM-dd}.", null, capa with { CapaId = capaId }, resource);
-        }, ct);
+        }, ct, async (uow, _) => await QualityAuthorityAsync(uow, context.Principal, Permissions.QualityDisposition, "Capa", null, c.NcrId, await ResourcesForCapaSourceAsync(uow, c.NcrId, null, ct), ct));
     }
 
     public Task<CommandResult> ImplementCapaAsync(ImplementCapa c, CommandContext context, CancellationToken ct)
@@ -459,20 +461,27 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
         {
             var ncr = await uow.Store<IQualityLookup>().FindNcrAsync(ncrId, ct)
                 ?? throw new CommandRejectedException("ncr_not_found", $"NCR {id} does not exist.");
+            await QualityAuthorityAsync(uow, context.Principal, permission, "Ncr", ncrId, ncrId, await ResourcesForNcrAsync(uow, ncr, ct), ct);
             if (await ResourceForNcrAsync(uow, ncr, ct) != resource)
                 throw new CommandRejectedException("ncr_context_changed", "The NCR's operational context changed. Review its current source records and retry.");
             var (next, message) = change(ncr);
             await uow.Store<IQualityStore>().UpdateNcrAsync(next, now, context.Actor, ct);
             return new CommandOutcome(
                 CommandResult.Ok(id, $"NCR {id}: {message}."),
-                [pipeline.Event(new NcrChanged(ncrId, ncr.PartNumber, ncr.OrderNumber, next.Status.ToString()), context, SourceContext, "Ncr", id, resource.Program)],
-                new AuditChange("Ncr", id, CanonicalJson.Serialize(ncr), CanonicalJson.Serialize(next), resource.Program));
-        }, ct);
+                [pipeline.Event(new NcrChanged(ncrId, ncr.PartNumber, ncr.OrderNumber, next.Status.ToString()), context, SourceContext, "Ncr", id, resource.Program, resource.Markings)],
+                new AuditChange("Ncr", id, CanonicalJson.Serialize(ncr), CanonicalJson.Serialize(next), resource.Program, resource.Markings));
+        }, ct, async (uow, _) =>
+        {
+            var ncr = await uow.Store<IQualityLookup>().FindNcrAsync(ncrId, ct) ?? throw new CommandRejectedException("ncr_not_found", $"NCR {id} does not exist.");
+            return await QualityAuthorityAsync(uow, context.Principal, permission, "Ncr", ncrId, ncrId, await ResourcesForNcrAsync(uow, ncr, ct), ct);
+        });
     }
 
     /// <summary>The NCR's recorded order and operation supply its current authorization context.</summary>
     public static async Task<ResourceRef> ResourceForNcrAsync(IKernelUnitOfWork uow, NcrInfo ncr, CancellationToken ct)
     {
+        var bound = await uow.Store<IAcceptanceLookup>().FindInspectionForNcrAsync(ncr.NcrId, ct);
+        if (bound is not null) return AcceptanceSubjectResources.Of(bound.Subject, "Ncr", ncr.NcrId);
         var order = ncr.OrderNumber is { } number ? await uow.Store<IExecutionLookup>().FindOrderAsync(number, ct) : null;
         var workCenter = ncr.Sequence is { } sequence ? order?.Operations.FirstOrDefault(operation => operation.Sequence == sequence)?.WorkCenterCode : null;
         string? facility = null;
@@ -489,9 +498,51 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
             ContractId: order?.ContractId?.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    /// <summary>All captured product-owner scopes of a child NCR; current owner/source access is checked separately.</summary>
+    public static async Task<IReadOnlyList<ResourceRef>> ResourcesForNcrAsync(IKernelUnitOfWork uow, NcrInfo ncr, CancellationToken ct)
+    {
+        var bound = await uow.Store<IAcceptanceLookup>().FindInspectionForNcrAsync(ncr.NcrId, ct);
+        return bound is null ? [await ResourceForNcrAsync(uow, ncr, ct)] : AcceptanceSubjectResources.All(bound.Subject, "Ncr", ncr.NcrId);
+    }
+
     /// <summary>A linked corrective action retains its NCR's current operational access context.</summary>
-    public static Task<ResourceRef> ResourceForCapaAsync(IKernelUnitOfWork uow, CapaInfo capa, CancellationToken ct) =>
-        ResourceForCapaSourceAsync(uow, capa.NcrId, capa.CapaId.ToString(System.Globalization.CultureInfo.InvariantCulture), ct);
+    public static async Task<ResourceRef> ResourceForCapaAsync(IKernelUnitOfWork uow, CapaInfo capa, CancellationToken ct)
+    {
+        var original = await ResourceForCapaSourceAsync(uow, capa.NcrId, capa.CapaId.ToString(System.Globalization.CultureInfo.InvariantCulture), ct);
+        if (!capa.Governed) return original;
+        var governed = await uow.Store<IAuditCapaLookup>().FindCapaAsync(capa.CapaId, ct)
+            ?? throw new CommandRejectedException("capa_governance_unavailable", "The governed source is unavailable.");
+        var resource = Forge.Quality.Audit.QmsAuditService.Resource(governed);
+        return resource with { Markings = resource.Markings | original.Markings |
+            governed.Sources.SelectMany(s => s.Sources).Aggregate(DataMarking.None, (marks, source) => marks | source.Resource.Markings) };
+    }
+
+    public static Task<IReadOnlyList<ResourceRef>> ResourcesForCapaAsync(IKernelUnitOfWork uow, CapaInfo capa, CancellationToken ct) =>
+        ResourcesForCapaSourceAsync(uow, capa.NcrId, capa.CapaId.ToString(System.Globalization.CultureInfo.InvariantCulture), ct);
+
+    private static async Task<IReadOnlyList<ResourceRef>> ResourcesForCapaSourceAsync(IKernelUnitOfWork uow, long? ncrId, string? id, CancellationToken ct)
+    {
+        if (ncrId is not { } number) return [ResourceRef.Of("Capa", id)];
+        var ncr = await uow.Store<IQualityLookup>().FindNcrAsync(number, ct) ?? throw new CommandRejectedException("ncr_not_found", "The corrective action's source NCR does not exist.");
+        return (await ResourcesForNcrAsync(uow, ncr, ct)).Select(resource => resource with { Type = "Capa", Id = id }).ToArray();
+    }
+
+    private async Task<CommandAuthority> QualityAuthorityAsync(IKernelUnitOfWork uow, ForgePrincipal principal, string permission, string type, long? id, long? ncrId, IReadOnlyList<ResourceRef> fallback, CancellationToken ct)
+    {
+        principal = await uow.People.LoadPrincipalAsync(principal.PersonId, ct) ?? principal with { IsActive = false };
+        IReadOnlyList<ResourceRef> resources = fallback;
+        if (ncrId is { } source)
+        {
+            await acceptanceSources.RequireNcrSourceReadAsync(uow, principal, source, ct);
+            resources = await acceptanceSources.ResourcesForNcrAsync(uow, source, type, id, ct) ?? fallback;
+        }
+        foreach (var resource in resources)
+        {
+            var decision = authorizer.Authorize(principal, permission, resource);
+            if (!decision.IsPermitted) throw new ForgeAuthorizationException(decision, resource);
+        }
+        return new(resources[0], ncrId?.ToString(System.Globalization.CultureInfo.InvariantCulture), resources.Skip(1).ToArray());
+    }
 
     private static async Task<ResourceRef> ResourceForCapaSourceAsync(IKernelUnitOfWork uow, long? ncrId, string? id, CancellationToken ct)
     {
@@ -516,12 +567,23 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
             var store = uow.Store<IQualityStore>();
             var capa = await store.FindCapaAsync(capaId, ct)
                 ?? throw new CommandRejectedException("capa_not_found", $"Corrective action {id} does not exist.");
+            if (capaGovernance is not null) await capaGovernance.AssertLegacyAsync(uow, context, capaId, ct);
+            else if (capa.Governed) throw new CommandRejectedException("capa_governance_unavailable", "The governed command guard is unavailable.");
+            await QualityAuthorityAsync(uow, context.Principal, permission, "Capa", capaId, capa.NcrId, await ResourcesForCapaAsync(uow, capa, ct), ct);
             if (await ResourceForCapaAsync(uow, capa, ct) != resource)
                 throw new CommandRejectedException("capa_context_changed", "The corrective action's source context changed. Review it and retry.");
             var next = change(capa);
             await store.UpdateCapaAsync(next, now, ct);
             return Outcome(context, "Capa", id, next.Status.ToString(), $"Corrective action {id}: {next.Status.ToString().ToLowerInvariant()}.", capa, next, resource);
-        }, ct);
+        }, ct, async (uow, _) =>
+        {
+            if (capaGovernance is not null) await capaGovernance.AssertLegacyAsync(uow, context, capaId, ct);
+            var capa = await uow.Store<IQualityStore>().FindCapaAsync(capaId, ct) ?? throw new CommandRejectedException("capa_not_found", $"Corrective action {id} does not exist.");
+            if (capa.Governed) throw new CommandRejectedException("capa_governed", "Use the governed investigation and effectiveness workflow.");
+            var currentResource = await ResourceForCapaAsync(uow, capa, ct);
+            if (currentResource != resource) throw new CommandRejectedException("capa_context_changed", "Review the current source context and retry.");
+            return await QualityAuthorityAsync(uow, context.Principal, permission, "Capa", capaId, capa.NcrId, await ResourcesForCapaAsync(uow, capa, ct), ct);
+        });
     }
 
     private CommandOutcome Outcome(CommandContext context, string kind, string id, string change, string message, object? before, object? after, ResourceRef? resource = null) => new(

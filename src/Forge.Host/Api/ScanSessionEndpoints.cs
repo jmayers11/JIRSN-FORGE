@@ -52,7 +52,7 @@ internal static class ScanSessionEndpoints
                 session.OrderNumber, session.Sequence, machineCode = session.SelectedMachineCode,
                 session.Selections, session.RequiredKinds, session.ManualAllowed, session.ExpiresAt,
                 policy = new { code = session.Policy.PolicyCode, revision = session.Policy.PolicyRevision,
-                    adoptionId = session.Policy.AdoptionCode, fingerprint = session.Policy.Fingerprint }, session.Accepted,
+                    adoptionId = session.Policy.AdoptionCode, fingerprint = session.Policy.Fingerprint }, session.Accepted, session.Attempts,
             });
         });
         api.MapPost("/scan-sessions", (HttpContext http, CreateScanSessionRequest body, ScanSessionService service, CancellationToken ct) =>

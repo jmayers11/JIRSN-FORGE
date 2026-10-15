@@ -219,7 +219,7 @@ public interface IInventoryStore
 /// why and what it relates to. Stock never goes below zero. Adjustments and count variances need a
 /// second person; so does releasing stock from hold or inspection.
 /// </summary>
-public sealed partial class InventoryService(CommandPipeline pipeline)
+public sealed partial class InventoryService(CommandPipeline pipeline, ProductReleaseService productRelease, ICommandSourceResolver sourceAuthority, IReturnAcceptanceBridge? returnAcceptance = null)
 {
     public const string SourceContext = "Inventory";
     private const string StockEntity = "Stock";
@@ -372,7 +372,8 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                 throw new CommandRejectedException("dates_need_lot", $"{item.PartNumber} is not lot-tracked; manufacture and expiry dates belong to a lot.");
             }
 
-            var status = c.Inspect ? StockStatus.Inspection : StockStatus.Released;
+            var governedRelease = await productRelease.OutputPolicyAsync(uow, context.Principal, item.PartNumber, revision, location.Code, null, c.PoNumber, now, ct);
+            var status = c.Inspect || governedRelease is not null ? StockStatus.Inspection : StockStatus.Released;
             var txn = new NewTransaction(InventoryTransactionKind.Receipt, item.PartNumber, quantity, null, null, location.Code, status, lot, PoNumber: c.PoNumber, PoLine: line, Reason: context.Reason, PartRevision: revision,
                 ProjectCode: project?.Code, ProjectLine: project?.Line);
             return (txn, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber}{(revision is null ? string.Empty : " rev " + revision)} into {location.Code} ({status})" + (c.PoNumber is null ? "." : $" against PO {c.PoNumber} line {line}" + (project is { } alloc ? $", for project {alloc.Code} line {alloc.Line}." : ".")),
@@ -586,8 +587,10 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
     public Task<CommandResult> ReleaseAsync(ReleaseStock c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        return PostAsync(nameof(ReleaseStock), c.PartNumber, c, context, Permissions.InventoryApprove, true, async (uow, item, _) =>
+        return PostAsync(nameof(ReleaseStock), c.PartNumber, c, context, Permissions.InventoryApprove, true, async (uow, item, now) =>
         {
+            if (await productRelease.IsGovernedStockAsync(uow, context.Principal, item.PartNumber, c.LotNumber, c.LocationCode, now, ct))
+                throw new CommandRejectedException("independent_product_release_required", "Consume an exact independent Quality release decision.");
             if (c.FromStatus == StockStatus.Released)
             {
                 throw new CommandRejectedException("already_available", "Release stock from Hold or Inspection.");
@@ -663,19 +666,17 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
 
                 // Quality (spec §45): finished goods go into stock only after every inspection point has
                 // passed, and never while a nonconformance on the order is undecided.
-                var quality = await uow.Store<IQualityLookup>().GetOrderQualityAsync(order.OrderNumber, order.PartNumber, ct);
-                var uninspected = quality.PlannedSequences.Where(s => !quality.PassedSequences.Contains(s)).ToList();
-                if (uninspected.Count > 0)
-                {
-                    throw new CommandRejectedException("inspection_required", $"Order {order.OrderNumber} has not passed inspection after operation {string.Join(", ", uninspected)}.");
-                }
-
-                if (quality.OpenNcrs.Count > 0)
-                {
-                    throw new CommandRejectedException("ncr_open", $"Order {order.OrderNumber} has NCR {string.Join(", ", quality.OpenNcrs.Select(n => n.NcrId))} waiting for a disposition.");
-                }
-
                 var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
+                var governedRelease = await productRelease.OutputPolicyAsync(uow, context.Principal, item.PartNumber, order.Revision, location.Code, order.OrderNumber, null, now, ct);
+                if (governedRelease is null)
+                {
+                    var quality = await uow.Store<IQualityLookup>().GetOrderQualityAsync(order.OrderNumber, order.PartNumber, ct);
+                    var uninspected = quality.PlannedSequences.Where(s => !quality.PassedSequences.Contains(s)).ToList();
+                    if (uninspected.Count > 0)
+                        throw new CommandRejectedException("inspection_required", $"Order {order.OrderNumber} has not passed inspection after operation {string.Join(", ", uninspected)}.");
+                    if (quality.OpenNcrs.Count > 0)
+                        throw new CommandRejectedException("ncr_open", $"Order {order.OrderNumber} has NCR {string.Join(", ", quality.OpenNcrs.Select(n => n.NcrId))} waiting for a disposition.");
+                }
                 if (item.Serialized)
                 {
                     return await ReceiveSerialsAsync(uow, store, item, order, quantity, location.Code, c.Serials, context, now, ct);
@@ -695,15 +696,23 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
                     await ReceiptDatesAsync(uow, item, lot, DateOnly.FromDateTime(now.UtcDateTime), null, now, ct); // made today (V3.6)
                 }
 
-                var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, quantity, null, null, location.Code, StockStatus.Released, lot, OrderNumber: order.OrderNumber, Reason: context.Reason, PartRevision: order.Revision);
+                var outputStatus = governedRelease is null ? StockStatus.Released : StockStatus.Inspection;
+                var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, quantity, null, null, location.Code, outputStatus, lot, OrderNumber: order.OrderNumber, Reason: context.Reason, PartRevision: order.Revision);
                 var txnId = await store.InsertTransactionAsync(txn, now, context.Actor, ct);
                 var id = txnId.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 return new CommandOutcome(
                     CommandResult.Ok(id, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber} rev {order.Revision} from order {order.OrderNumber} into {location.Code}" + (lot is null ? "." : $", lot {lot}.")),
-                    [pipeline.Event(new InventoryReceived(txnId, item.PartNumber, quantity, location.Code, nameof(StockStatus.Released), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber)],
+                    [pipeline.Event(new InventoryReceived(txnId, item.PartNumber, quantity, location.Code, outputStatus.ToString(), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber)],
                     new AuditChange("InventoryTransaction", id, null, CanonicalJson.Serialize(txn)));
             },
-            ct);
+            ct, async (uow, now) =>
+            {
+                var spec = new CommandSpec(SourceContext, nameof(ReceiveFromProduction), Permissions.InventoryTransact, ResourceRef.Of("ProductionOrder", c.OrderNumber.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                var actual = await sourceAuthority.ResolveAsync(uow, spec, context, now, ct);
+                var order = await uow.Store<IExecutionLookup>().FindOrderAsync(c.OrderNumber, ct) ?? throw new CommandRejectedException("order_not_found", "The actual production order is unavailable.");
+                await productRelease.OutputPolicyAsync(uow, context.Principal, order.PartNumber, order.Revision, c.LocationCode, order.OrderNumber, null, now, ct);
+                return actual;
+            });
     }
 
     public Task<CommandResult> RequestAdjustmentAsync(RequestAdjustment c, CommandContext context, CancellationToken ct)
@@ -882,6 +891,8 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
             var store = uow.Store<IInventoryStore>();
             await store.LockPartAsync(part, ct);
             var (txn, message, makeEvent) = await build(uow, item, now);
+            if (txn.FromStatus == StockStatus.Released && txn.Kind != InventoryTransactionKind.QualityHold)
+                await productRelease.RequireReleasedScopeAsync(uow, context.Principal, txn.PartNumber, txn.LotNumber, txn.FromLocation!, txn.Quantity, now, ct);
             var txnId = await store.InsertTransactionAsync(txn, now, context.Actor, ct);
             if (recorded is not null)
             {
@@ -890,7 +901,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline)
 
             var id = txnId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             return new CommandOutcome(CommandResult.Ok(id, message), [makeEvent(txnId)], new AuditChange("InventoryTransaction", id, null, CanonicalJson.Serialize(txn)));
-        }, ct);
+        }, ct, (uow, now) => InventoryAcceptanceAuthorityAsync(uow, spec, command, context, now, ct));
     }
 
     private static async Task<ItemInfo> ItemAsync(IKernelUnitOfWork uow, string part, CancellationToken ct) =>

@@ -42,15 +42,17 @@ public sealed partial class InventoryService
 
         var ids = new List<long>();
         var events = new List<Kernel.Events.EventEnvelope>();
+        var governedRelease = await productRelease.OutputPolicyAsync(uow, context.Principal, item.PartNumber, order.Revision, location, order.OrderNumber, null, now, ct);
+        var outputStatus = governedRelease is null ? StockStatus.Released : StockStatus.Inspection;
         foreach (var serial in serials)
         {
             await RequireNewSerialAsync(uow, item.PartNumber, serial, ct);
             await LotAsync(uow, item.PartNumber, serial, null, order.Revision, IdentityKind.Serial, now, context.Actor, ct);
-            var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, 1, null, null, location, StockStatus.Released, serial, OrderNumber: order.OrderNumber,
+            var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, 1, null, null, location, outputStatus, serial, OrderNumber: order.OrderNumber,
                 Reason: context.Reason, PartRevision: order.Revision);
             var id = await store.InsertTransactionAsync(txn, now, context.Actor, ct);
             ids.Add(id);
-            events.Add(pipeline.Event(new InventoryReceived(id, item.PartNumber, 1, location, nameof(StockStatus.Released), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber));
+            events.Add(pipeline.Event(new InventoryReceived(id, item.PartNumber, 1, location, outputStatus.ToString(), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber));
         }
 
         var key = ids[0].ToString(CultureInfo.InvariantCulture);

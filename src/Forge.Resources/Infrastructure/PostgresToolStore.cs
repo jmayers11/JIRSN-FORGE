@@ -8,6 +8,12 @@ namespace Forge.Resources.Infrastructure;
 /// <summary>Tool types, tools and their history (V3.8).</summary>
 internal sealed partial class PostgresToolStore(PostgresUnitOfWork uow) : IToolLookup, IToolStore
 {
+    public async Task LockToolAsync(string code, CancellationToken ct)
+    {
+        await using var command = uow.Command("SELECT code FROM resources.tool WHERE code=$1 FOR UPDATE", code);
+        await command.ExecuteScalarAsync(ct);
+    }
+
     private const string ToolSql =
         """
         SELECT code, type_code, description, serial, location, custody, custodian, condition, eligible_machines, eligible_activities, usage_count, uses_since_service,

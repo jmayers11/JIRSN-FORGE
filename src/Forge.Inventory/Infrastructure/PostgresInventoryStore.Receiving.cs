@@ -9,6 +9,11 @@ namespace Forge.Inventory.Infrastructure;
 /// <summary>Receiving inspections, supplier rejections, returns to vendor and customer returns (V3.11).</summary>
 internal sealed partial class PostgresInventoryStore : IReceivingLookup, IReceivingStore
 {
+    public async Task LockCustomerReturnAsync(long rmaId, CancellationToken ct)
+    {
+        await using var command=uow.Command("SELECT rma_id FROM inventory.customer_return WHERE rma_id=$1 FOR UPDATE",rmaId);
+        await command.ExecuteScalarAsync(ct);
+    }
     private static readonly JsonSerializerOptions ResultJson = new(JsonSerializerDefaults.Web);
 
     private const string InspectionSql =
@@ -54,6 +59,9 @@ internal sealed partial class PostgresInventoryStore : IReceivingLookup, IReceiv
 
     public Task<IReadOnlyList<CustomerReturnInfo>> ListCustomerReturnsAsync(long? shipmentId, CancellationToken ct) =>
         ReadAsync(ReturnSql + " WHERE $1::bigint IS NULL OR shipment_id = $1 ORDER BY rma_id", ReadReturn, ct, Long(shipmentId));
+
+    public async Task<CustomerReturnInfo?> FindCustomerReturnAsync(long rmaId, CancellationToken ct) =>
+        (await ReadAsync(ReturnSql + " WHERE rma_id=$1", ReadReturn, ct, rmaId)).SingleOrDefault();
 
     public async Task<long> InsertReceivingInspectionAsync(ReceivingInspection inspection, CancellationToken ct)
     {

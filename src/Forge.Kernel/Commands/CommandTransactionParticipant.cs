@@ -23,6 +23,10 @@ public interface ICommandTransactionParticipant
 
     Task RecordAcceptedAsync(IKernelUnitOfWork uow, CommandSpec spec, CommandContext context,
         CommandOutcome outcome, Guid? auditId, CommandTransactionEvidence evidence, DateTimeOffset now, CancellationToken ct);
+
+    Task RecordRejectedAsync(IKernelUnitOfWork uow, CommandSpec spec, object command, CommandContext context,
+        CommandAuthority authority, string outcome, string validationCode, Guid auditId, DateTimeOffset now,
+        CancellationToken ct) => Task.CompletedTask;
 }
 
 /// <summary>Resolves optional owner integration after the command service and pipeline have been constructed.</summary>

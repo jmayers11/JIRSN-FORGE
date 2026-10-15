@@ -59,6 +59,9 @@ public sealed partial class IdentificationResolver
         var current = await uow.People.LoadPrincipalAsync(principal.PersonId, ct);
         if (current is null) throw new ForgeAuthorizationException(new(false, ["The current manufacturing person is inactive or unavailable."]), source.Resources[0]);
         PermitSource(current, source.ReadPermission, source.Resources);
+        if (Forge.Host.WorkInbox.OwnedSourceFamilies.Contains(source.SourceType)
+            && !await Forge.Host.WorkInbox.OwnedSourceFamilies.CanReadAsync(uow, sources, current, source.SourceType, source.SourceId, ct))
+            throw new ForgeAuthorizationException(new(false, ["The actual captured and current owner sources are inaccessible."]), source.Resources[0]);
         return source;
     }
 
@@ -153,6 +156,25 @@ public sealed partial class IdentificationResolver
             return Subject(new(parsed.Code, parsed.Namespace, parsed.Kind, null, null, null, null, "Active",
                 SubjectKey: person.Id.ToString(), DisplayName: person.DisplayName), parsed.Code, "Person", person.Id.ToString(),
                 Permissions.IdentificationRead, [new("Person", person.Id.ToString())]);
+        }
+        if (parsed.Kind == "inspection" && parsed.InspectionNamespace == "acceptance")
+        {
+            var inspection = await uow.Store<IAcceptanceLookup>().FindInspectionAsync(parsed.RecordNumber!.Value, ct) ?? throw MissingSubject();
+            var owner = await sources.ResolveAsync(uow, "AcceptanceInspection", Number(inspection.InspectionId), ct) ?? throw MissingSubject();
+            return Subject(new(parsed.Code, parsed.Namespace, parsed.Kind, null, null, inspection.Subject.Key.PartNumber,
+                inspection.Subject.Revision, inspection.Passed ? "Pass" : "Fail", LotNumber: inspection.Subject.Key.LotNumber,
+                LocationCode: inspection.Subject.Key.LocationCode, IdentityKind: "AcceptanceInspection", RecordNumber: inspection.InspectionId,
+                SourceFingerprint: CanonicalJson.Fingerprint(inspection)), parsed.Code, "AcceptanceInspection", Number(inspection.InspectionId), Permissions.QualityRead, owner.Resources);
+        }
+        if (parsed.Kind == "product-release")
+        {
+            var decision = await uow.Store<IAcceptanceLookup>().FindDecisionAsync(parsed.RecordNumber!.Value, ct) ?? throw MissingSubject();
+            var withdrawal = await uow.Store<IAcceptanceLookup>().FindWithdrawalAsync(decision.DecisionId, ct);
+            var owner = await sources.ResolveAsync(uow, "ProductReleaseDecision", Number(decision.DecisionId), ct) ?? throw MissingSubject();
+            return Subject(new(parsed.Code, parsed.Namespace, parsed.Kind, null, null, decision.Subject.PartNumber, decision.Revision,
+                withdrawal is null ? "Approved" : "Withdrawn", LotNumber: decision.Subject.LotNumber, LocationCode: decision.Subject.LocationCode,
+                IdentityKind: "ProductReleaseDecision", RecordNumber: decision.DecisionId, SourceFingerprint: CanonicalJson.Fingerprint(new { decision, withdrawal })),
+                parsed.Code, "ProductReleaseDecision", Number(decision.DecisionId), Permissions.QualityRead, owner.Resources);
         }
         if (parsed.Kind == "inspection")
         {

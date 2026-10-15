@@ -135,7 +135,11 @@ public static class Permissions
     public const string QualityInspect = "quality.inspect";
     public const string QualityDisposition = "quality.disposition";
     public const string QualityApprove = "quality.approve";
+    public const string QualityCommunicationsApprove = "quality.communications.approve";
     public const string QualityRead = "quality.read";
+    public const string AuditManage = "quality.audit.manage";
+    public const string AuditConduct = "quality.audit.conduct";
+    public const string AuditApprove = "quality.audit.approve";
     /// <summary>Decide the exact product quantity/identity scope released by Quality, separately from physical shipment.</summary>
     public const string QualityProductRelease = "quality.product.release";
 
@@ -218,8 +222,12 @@ public static class Roles
 
     /// <summary>Approves use-as-is dispositions and verifies corrective actions owned by someone else.</summary>
     public const string QualityManager = "QualityManager";
+    public const string CustomerCommunicationsApprover = "CustomerCommunicationsApprover";
 
     public const string QmsAuthor = "QmsAuthor";
+    public const string AuditPlanner = "AuditPlanner";
+    public const string InternalAuditor = "InternalAuditor";
+    public const string AuditApprover = "AuditApprover";
     public const string QmsReviewer = "QmsReviewer";
     public const string QmsApprover = "QmsApprover";
     public const string QmsPolicyConsumer = "QmsPolicyConsumer";
@@ -258,6 +266,9 @@ public static class Roles
         [SecurityAdministrator] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.AccessManage, Permissions.PeopleRead, Permissions.AuditRead, Permissions.BadgesManage, Permissions.ProgramsDirectory],
         [Auditor] = [Permissions.HoldsRead, Permissions.AuditRead, Permissions.PeopleRead, Permissions.ProjectsRead],
         [QmsAuthor] = [Permissions.QmsRead, Permissions.QmsManage, Permissions.EngineeringRead],
+        [AuditPlanner] = [Permissions.AuditManage, Permissions.QualityRead, Permissions.QmsRead, Permissions.EngineeringRead, Permissions.CompetencyRead],
+        [InternalAuditor] = [Permissions.AuditConduct, Permissions.QualityRead, Permissions.QmsRead, Permissions.EngineeringRead, Permissions.CompetencyRead],
+        [AuditApprover] = [Permissions.AuditApprove, Permissions.QualityRead, Permissions.QmsRead, Permissions.EngineeringRead, Permissions.CompetencyRead],
         [QmsReviewer] = [Permissions.QmsRead, Permissions.QmsReview, Permissions.EngineeringRead],
         [QmsApprover] = [Permissions.QmsRead, Permissions.QmsApprove, Permissions.QmsPublish, Permissions.EngineeringRead],
         [QmsPolicyConsumer] = [Permissions.QmsRead, Permissions.EngineeringRead],
@@ -283,6 +294,7 @@ public static class Roles
         [Inspector] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.QualityInspect, Permissions.QualityRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.ResourcesRead, Permissions.ShopFloorRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach],
         [QualityEngineer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ToolsManage, Permissions.ToolsCalibrate, Permissions.ToolsHandle, Permissions.RootCauseConfirm, Permissions.QualityPlan, Permissions.QualityDisposition, Permissions.QualityInspect, Permissions.QualityRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.ResourcesRead, Permissions.ShopFloorRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsManage, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.RequisitionRaise, Permissions.DemandManage],
         [QualityManager] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.QualityApprove, Permissions.QualityRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.ResourcesRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.ChangesReview],
+        [CustomerCommunicationsApprover] = [Permissions.QualityCommunicationsApprove, Permissions.QualityRead, Permissions.OrdersRead, Permissions.PurchasingRead, Permissions.EngineeringRead, Permissions.InventoryRead],
         [Shipper] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ShippingRelease, Permissions.InventoryRead, Permissions.MaterialPlanRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse],
         [PurchasingManager] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.PurchasingApprove, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.EngineeringRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.RequisitionRaise, Permissions.ProjectsRead],
         [DocumentController] = [Permissions.DocumentsManage, Permissions.DocumentsApprove, Permissions.DocumentsRelease, Permissions.DocumentsAttach, Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.PurchasingRead, Permissions.QualityRead, Permissions.MaintenanceRead, Permissions.ProgramsRead, Permissions.ResourcesRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.ChangesManage, Permissions.ChangesReview, Permissions.EngineeringRelease],

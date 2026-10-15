@@ -132,15 +132,21 @@ internal sealed class PostgresProgramsStore(PostgresUnitOfWork uow) : IProgramsS
     public async Task<ProgramInfo?> FindProgramAsync(Guid programId, CancellationToken ct) =>
         (await ReadAsync(ProgramSql + " WHERE program_id = $1", ReadProgram, ct, programId)).SingleOrDefault();
 
-    public async Task<IReadOnlyList<ContractInfo>> ListContractsAsync(Guid? programId, CancellationToken ct)
+    public Task<IReadOnlyList<ContractInfo>> ListContractsAsync(Guid? programId, CancellationToken ct) =>
+        ReadContractsAsync(programId, null, ct);
+
+    public async Task<ContractInfo?> FindContractAsync(long contractId, CancellationToken ct) =>
+        (await ReadContractsAsync(null, contractId, ct)).SingleOrDefault();
+
+    private async Task<IReadOnlyList<ContractInfo>> ReadContractsAsync(Guid? programId, long? contractId, CancellationToken ct)
     {
         var programArg = new NpgsqlParameter { Value = (object?)programId ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Uuid };
         var heads = await ReadAsync(
-            "SELECT contract_id, program_id, number, customer, title, period_start, period_end, ceiling, status FROM programs.contract WHERE ($1::uuid IS NULL OR program_id = $1) ORDER BY number",
+            "SELECT contract_id, program_id, number, customer, title, period_start, period_end, ceiling, status FROM programs.contract WHERE ($1::uuid IS NULL OR program_id = $1) AND ($2::bigint IS NULL OR contract_id=$2) ORDER BY number",
             r => new ContractInfo(r.GetInt64(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetFieldValue<DateOnly>(5), r.GetFieldValue<DateOnly>(6),
                 NDec(r, 7), Enum.Parse<ContractStatus>(r.GetString(8)), [], [], [], []),
             ct,
-            programArg);
+            programArg, new NpgsqlParameter { Value = (object?)contractId ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Bigint });
         if (heads.Count == 0)
         {
             return heads;

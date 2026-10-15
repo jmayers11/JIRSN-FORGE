@@ -33,7 +33,10 @@ public sealed record CreditReturnToVendor(long RtvId);
 /// <summary>Material a customer sent back against a shipment; received onto hold. The reason is the customer's.</summary>
 public sealed record ReceiveCustomerReturn(long ShipmentId, string PartNumber, string? LotNumber, decimal Quantity, string LocationCode);
 
-public sealed record DispositionCustomerReturn(long RmaId, CustomerReturnDisposition Disposition);
+public sealed record DispositionCustomerReturn(long RmaId, CustomerReturnDisposition Disposition,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] long? DecisionId=null,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? ExpectedDecisionVersion=null,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] decimal? Quantity=null);
 
 public sealed record ReceivingRecorded(string Record, long Id, string Change) : IDomainEvent
 {
@@ -113,6 +116,7 @@ public sealed partial class InventoryService
 
             if (c.Accepted > 0)
             {
+                await RequireLegacyReleaseUnadoptedAsync(uow, context, receipt.PartNumber, receipt.LotNumber, location, now, ct);
                 await store.InsertTransactionAsync(new NewTransaction(InventoryTransactionKind.QualityRelease, receipt.PartNumber, c.Accepted, location, StockStatus.Inspection, location, StockStatus.Released,
                     receipt.LotNumber, PoNumber: receipt.PoNumber, Reason: $"Receiving inspection of receipt {key}"), now, context.Actor, ct);
             }
@@ -141,7 +145,7 @@ public sealed partial class InventoryService
                 CommandResult.Ok(Key(id), message),
                 [pipeline.Event(new ReceivingRecorded("ReceivingInspection", id, "Inspected"), context, SourceContext, ReceivingEntity, Key(id))],
                 new AuditChange("ReceivingInspection", Key(id), null, CanonicalJson.Serialize(inspection)));
-        }, ct);
+        }, ct, (uow, now) => ReceivingAcceptanceAuthorityAsync(uow, spec, c, context, now, ct));
     }
 
     public Task<CommandResult> DispositionRejectionAsync(DispositionRejection c, CommandContext context, CancellationToken ct)
@@ -217,6 +221,7 @@ public sealed partial class InventoryService
 
             var store = uow.Store<IInventoryStore>();
             await RequireStockAsync(uow, rejection.PartNumber, rejection.LocationCode, rejection.LotNumber, StockStatus.Hold, rejection.Quantity, ct);
+            await RequireLegacyReleaseUnadoptedAsync(uow, context, rejection.PartNumber, rejection.LotNumber, rejection.LocationCode, now, ct);
             await store.InsertTransactionAsync(new NewTransaction(InventoryTransactionKind.QualityRelease, rejection.PartNumber, rejection.Quantity, rejection.LocationCode, StockStatus.Hold,
                 rejection.LocationCode, StockStatus.Released, rejection.LotNumber, PoNumber: rejection.PoNumber, Reason: $"Use as is (rejection {key}): {context.Reason}", ApprovedBy: context.Actor), now, rejection.DispositionedBy!, ct);
             var approved = rejection with { ApprovedBy = context.Actor, ApprovedAt = now };
@@ -225,7 +230,7 @@ public sealed partial class InventoryService
                 CommandResult.Ok(key, $"Rejection {key}: use as is approved; {rejection.Quantity} {rejection.PartNumber} released."),
                 [pipeline.Event(new ReceivingRecorded("SupplierRejection", c.RejectionId, "UseAsIsApproved"), context, SourceContext, "SupplierRejection", key)],
                 new AuditChange("SupplierRejection", key, CanonicalJson.Serialize(rejection), CanonicalJson.Serialize(approved)));
-        }, ct);
+        }, ct, (uow, now) => ReceivingAcceptanceAuthorityAsync(uow, spec, c, context, now, ct));
     }
 
     public Task<CommandResult> ShipReturnToVendorAsync(ShipReturnToVendor c, CommandContext context, CancellationToken ct) =>
@@ -272,8 +277,9 @@ public sealed partial class InventoryService
             }
 
             var store = uow.Store<IInventoryStore>();
-            var status = c.Inspect ? StockStatus.Inspection : StockStatus.Released;
             var rejection = (await uow.Store<IReceivingLookup>().ListRejectionsAsync(false, ct)).Single(r => r.RejectionId == rtv.RejectionId);
+            var governed = await productRelease.OutputPolicyAsync(uow, context.Principal, item.PartNumber, revision, location.Code, null, rejection.PoNumber, now, ct);
+            var status = c.Inspect || governed is not null ? StockStatus.Inspection : StockStatus.Released;
             var txn = await store.InsertTransactionAsync(new NewTransaction(InventoryTransactionKind.Receipt, rtv.PartNumber, quantity, null, null, location.Code, status, lot,
                 PoNumber: rejection.PoNumber, Reason: $"Replacement for return to vendor {rtv.RtvId}", PartRevision: revision), now, context.Actor, ct);
             if (lot is not null && rtv.LotNumber is { } returned)
@@ -340,10 +346,30 @@ public sealed partial class InventoryService
         var spec = new CommandSpec(SourceContext, nameof(DispositionCustomerReturn), Permissions.QualityDisposition, ResourceRef.Of("CustomerReturn", key), ReasonRequired: true);
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
-            var rma = (await uow.Store<IReceivingLookup>().ListCustomerReturnsAsync(null, ct)).FirstOrDefault(r => r.RmaId == c.RmaId)
+            var rma = await uow.Store<IReceivingLookup>().FindCustomerReturnAsync(c.RmaId, ct)
                 ?? throw new CommandRejectedException("return_not_found", $"Return {key} does not exist.");
+            await uow.Store<IReceivingStore>().LockCustomerReturnAsync(c.RmaId, ct);
             await uow.Store<IInventoryStore>().LockPartAsync(rma.PartNumber, ct);
-            rma = (await uow.Store<IReceivingLookup>().ListCustomerReturnsAsync(null, ct)).Single(r => r.RmaId == c.RmaId);
+            rma = await uow.Store<IReceivingLookup>().FindCustomerReturnAsync(c.RmaId, ct)
+                ?? throw new CommandRejectedException("return_not_found", "The actual return is unavailable.");
+            var current = returnAcceptance is null ? null : await returnAcceptance.AuthorityAsync(uow, context.Principal, c.RmaId, c.DecisionId, c.ExpectedDecisionVersion, now, ct);
+            if (c.Disposition != CustomerReturnDisposition.Restock && returnAcceptance is not null
+                && await uow.Store<IReturnAcceptanceInventoryLookup>().PreparedForRmaAsync(c.RmaId, ct) > 0)
+                throw new CommandRejectedException("return_cohort_disposition_required", "Prepared return cohorts cannot be consumed or completed by the legacy whole-return disposition.");
+            if (c.Disposition == CustomerReturnDisposition.Restock && current is not null)
+            {
+                if(c.DecisionId is not{} decision || c.ExpectedDecisionVersion is not{} version)
+                    throw new CommandRejectedException("return_release_required", "Use the exact independently approved release for this returned cohort.");
+                var applied = await returnAcceptance!.ConsumeReturnReleaseAsync(uow, context, c.RmaId, decision, version, c.Quantity ?? rma.Quantity, now, ct);
+                var next = applied.ReturnComplete ? rma with { Disposition=CustomerReturnDisposition.Restock, DispositionedBy=context.Actor, DispositionedAt=now, DispositionTransactionId=applied.TransactionId } : rma;
+                if(applied.ReturnComplete)await uow.Store<IReceivingStore>().UpdateCustomerReturnAsync(next,ct);
+                return new CommandOutcome(CommandResult.Ok(key, $"Return {key}: independently restocked {applied.Quantity}; cumulative {applied.CumulativeRmaRestockedQuantity} of {applied.RmaRecordedQuantity}."),
+                    [pipeline.Event(new ReceivingRecorded("CustomerReturn", c.RmaId, applied.ReturnComplete ? "Restocked" : "PartiallyRestocked"), context, SourceContext, "CustomerReturn", key)],
+                    new AuditChange("CustomerReturn", key, CanonicalJson.Serialize(rma), CanonicalJson.Serialize(new { returnRecord=next, applied, current.Sources, current.Resources }),
+                        current.Resources.Select(r=>r.Program).FirstOrDefault(p=>p is not null), current.Resources.Aggregate(DataMarking.None,(m,r)=>m|r.Markings)));
+            }
+            if(c.DecisionId is not null || c.ExpectedDecisionVersion is not null || c.Quantity is not null)
+                throw new CommandRejectedException("return_release_unexpected", "Typed cohort release inputs require a governed returned cohort.");
             if (rma.Disposition is not null)
             {
                 throw new CommandRejectedException("already_dispositioned", $"Return {key} is already dispositioned ({rma.Disposition}).");
@@ -351,6 +377,8 @@ public sealed partial class InventoryService
 
             var store = uow.Store<IInventoryStore>();
             long? txn = null;
+            if (c.Disposition == CustomerReturnDisposition.Restock)
+                await RequireLegacyReleaseUnadoptedAsync(uow, context, rma.PartNumber, rma.LotNumber, rma.LocationCode, now, ct);
             if (c.Disposition != CustomerReturnDisposition.Rework)
             {
                 await RequireStockAsync(uow, rma.PartNumber, rma.LocationCode, rma.LotNumber, StockStatus.Hold, rma.Quantity, ct);
@@ -367,7 +395,7 @@ public sealed partial class InventoryService
                 CommandResult.Ok(key, $"Return {key}: {c.Disposition.ToString().ToLowerInvariant()}" + (c.Disposition == CustomerReturnDisposition.Rework ? "; it stays on hold until reworked and released." : ".")),
                 [pipeline.Event(new ReceivingRecorded("CustomerReturn", c.RmaId, c.Disposition.ToString()), context, SourceContext, "CustomerReturn", key)],
                 new AuditChange("CustomerReturn", key, CanonicalJson.Serialize(rma), CanonicalJson.Serialize(decided)));
-        }, ct);
+        }, ct, (uow, now) => ReturnDispositionAuthorityAsync(uow, spec, c, context, now, ct));
     }
 
     private Task<CommandResult> RtvAsync<TCommand>(
@@ -394,7 +422,7 @@ public sealed partial class InventoryService
                 CommandResult.Ok(key, message),
                 [pipeline.Event(new ReceivingRecorded("ReturnToVendor", rtvId, changed.Status.ToString()), context, SourceContext, "ReturnToVendor", key)],
                 new AuditChange("ReturnToVendor", key, CanonicalJson.Serialize(rtv), CanonicalJson.Serialize(changed)));
-        }, ct);
+        }, ct, (uow, now) => ReceivingAcceptanceAuthorityAsync(uow, spec, command, context, now, ct));
     }
 
     private static string Key(long id) => id.ToString(CultureInfo.InvariantCulture);

@@ -7,6 +7,11 @@ namespace Forge.Procurement.Infrastructure;
 
 internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcurementStore, IProcurementLookup, ITechnicalPackageLookup, IRequisitionLookup
 {
+    public async Task LockPurchaseOrderAsync(long poNumber,CancellationToken ct)
+    {
+        await using var command=uow.Command("SELECT po_number FROM procurement.purchase_order WHERE po_number=$1 FOR UPDATE",poNumber);
+        await command.ExecuteScalarAsync(ct);
+    }
     private const string OrderSql = "SELECT po_number, supplier, status, created_by, created_at, approved_by, approved_at, supplier_code FROM procurement.purchase_order";
     private const string LineSql = "SELECT po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status, requisition_id, source_kind, source_key, source_label FROM procurement.purchase_order_line";
 

@@ -77,13 +77,15 @@ public sealed partial class ScanSessionService(CommandPipeline pipeline, IKernel
         pipeline.ExecuteAsync(new("Identification", nameof(StageScan), StagePermission, ResourceRef.Of("ScanSession", id)),
             command, context, async (uow, now) =>
         {
-            var (session, policy, facts) = await authority.RequireActiveAsync(uow, context, id, command.ExpectedVersion, now, ct);
+            var (session, policy, facts) = await authority.RequireActiveAsync(uow, context, id, command.ExpectedVersion, now, ct,
+                allowPendingMaterial: true);
             scanners.Require(command.InputMode, command.AdapterId, command.Symbology, ScanSessionRules.ManualAllowed(policy));
             var source = await identification.ResolveAuthorityPresentationAsync(uow, context.Principal, command.Code, ct);
             var kind = ScanSessionRules.StageKind(source.PresentedKind ?? source.Display.Kind);
             ScanSessionAuthority.RequireMatchingSource(kind, source, facts);
             if (kind == "ControlledInstruction") await ScanSessionAuthority.RequireInstructionForOperationAsync(uow, source, facts, ct);
-            if (kind == "Material") await ScanSessionAuthority.RequireMaterialForOperationAsync(uow, source, facts, session.SelectedMachineCode, ct);
+            if (kind == "Material") await ScanSessionAuthority.RequireMaterialForOperationAsync(uow, source, facts,
+                session.SelectedMachineCode, ct, allowPendingMovement: true);
             var selection = new ScanSelection(kind, command.Code, source.CanonicalSubjectCode,
                 command.InputMode, command.AdapterId, command.Symbology, now, ScanSessionRules.SourceFingerprint(source),
                 (source.ReadSources ?? source.Resources.Select(resource => new PresentationReadSource(source.ReadPermission, resource)).ToArray())
@@ -99,7 +101,7 @@ public sealed partial class ScanSessionService(CommandPipeline pipeline, IKernel
         {
             var session = await FindAsync(uow, id, ct);
             var source = await authority.SessionAuthorityAsync(uow, context.Principal, id, ct);
-            _ = await authority.RequireActiveAsync(uow, context, id, session.Version, now, ct);
+            _ = await authority.RequireActiveAsync(uow, context, id, session.Version, now, ct, allowPendingMaterial: true);
             return source;
         });
 
@@ -138,7 +140,8 @@ public sealed partial class ScanSessionService(CommandPipeline pipeline, IKernel
         var accepted = new List<ScanAccepted>();
         foreach (var entry in await uow.Store<IScanSessionStore>().AcceptedAsync(id, ct))
             if (await authority.CanReadAsync(uow, principal, session with { Selections = entry.Selections, Accepted = [entry] }, ct)) accepted.Add(entry);
-        return session with { State = state, Accepted = accepted };
+        var attempts = await uow.Store<IScanSessionStore>().AttemptsAsync(id, ct);
+        return session with { State = state, Accepted = accepted, Attempts = attempts };
     }
 
     public async Task<ScanAcceptedRecord?> ReadAcceptedAsync(ForgePrincipal principal, Guid id, CancellationToken ct)

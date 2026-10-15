@@ -113,6 +113,7 @@ public sealed record SupplierChangeRequest(string Name, string? Notes, string? R
 public sealed record SupplierStatusRequest(SupplierStatus Status, string? Reason);
 
 public sealed record SourceRequest(string SupplierCode, string? Note, string? Reason);
+public sealed record QualifiedPurchaseApprovalRequest(string? Reason, string? QualityProcessCode=null, string? QualityWorkCenterCode=null);
 
 /// <summary>Phase 6 endpoints: inventory, purchase orders, demand, item planning and MRP.</summary>
 public static class MaterialsEndpoints
@@ -469,8 +470,8 @@ public static class MaterialsEndpoints
             Command(http, b.Reason, c => s.CreateAsync(new CreatePurchaseOrder(b.Supplier, (b.Lines ?? []).Select(l => new NewPurchaseLine(l.PartNumber, l.Quantity, l.PromisedDate, l.RequisitionId)).ToList()), c, ct)));
         api.MapPost("/purchase-orders/{po:long}/lines", (HttpContext http, long po, PurchaseLineAddRequest b, PurchasingService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AddLineAsync(new AddPurchaseLine(po, b.PartNumber, b.Quantity, b.PromisedDate, b.RequisitionId), c, ct)));
-        api.MapPost("/purchase-orders/{po:long}/approve", (HttpContext http, long po, ReasonRequest b, PurchasingService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.ApproveAsync(new ApprovePurchaseOrder(po), c, ct)))
+        api.MapPost("/purchase-orders/{po:long}/approve", (HttpContext http, long po, QualifiedPurchaseApprovalRequest b, PurchasingService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ApproveAsync(new ApprovePurchaseOrder(po, b.QualityProcessCode, b.QualityWorkCenterCode), c, ct)))
             .WithMetadata(new StepUpRequiredAttribute());
         api.MapPost("/purchase-orders/{po:long}/lines/{line:int}/date", (HttpContext http, long po, int line, PromisedDateRequest b, PurchasingService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ChangePromisedDateAsync(new ChangePromisedDate(po, line, b.PromisedDate), c, ct)));

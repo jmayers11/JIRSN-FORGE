@@ -285,6 +285,7 @@ public sealed class ToolService(CommandPipeline pipeline)
         var spec = new CommandSpec(SourceContext, commandType, permission, ResourceRef.Of(Entity, code), reasonRequired);
         return pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
         {
+            await uow.Store<IToolStore>().LockToolAsync(code, ct);
             var lookup = uow.Store<IToolLookup>();
             var tool = await lookup.FindToolAsync(code, ct) ?? throw new CommandRejectedException("tool_not_found", $"Tool {code} does not exist.");
             var type = (await lookup.ListToolTypesAsync(ct)).First(t => t.Code == tool.TypeCode);

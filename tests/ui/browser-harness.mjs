@@ -18,6 +18,50 @@ class Events {
   }
 }
 
+function splitSelectorGroups(selector) {
+  const groups = [];
+  let value = '', bracketDepth = 0, quote = null;
+  for (const char of selector) {
+    if (quote) {
+      value += char;
+      if (char === quote) quote = null;
+    } else if ((char === '"' || char === "'") && bracketDepth > 0) {
+      quote = char; value += char;
+    } else if (char === '[') {
+      bracketDepth++; value += char;
+    } else if (char === ']') {
+      bracketDepth--; value += char;
+    } else if (char === ',' && bracketDepth === 0) {
+      if (value.trim()) groups.push(value.trim());
+      value = '';
+    } else value += char;
+  }
+  if (value.trim()) groups.push(value.trim());
+  return groups;
+}
+
+function splitSelectorChain(selector) {
+  const chain = [];
+  let value = '', bracketDepth = 0, quote = null;
+  for (const char of selector) {
+    if (quote) {
+      value += char;
+      if (char === quote) quote = null;
+    } else if ((char === '"' || char === "'") && bracketDepth > 0) {
+      quote = char; value += char;
+    } else if (char === '[') {
+      bracketDepth++; value += char;
+    } else if (char === ']') {
+      bracketDepth--; value += char;
+    } else if (/\s/.test(char) && bracketDepth === 0) {
+      if (value) chain.push(value);
+      value = '';
+    } else value += char;
+  }
+  if (value) chain.push(value);
+  return chain;
+}
+
 class Element extends Events {
   constructor(tag, doc) {
     super(); this.tagName = tag.toLowerCase(); this.ownerDocument = doc;
@@ -73,10 +117,21 @@ class Element extends Events {
     return this.parentElement?.closest(selectors) ?? null;
   }
   querySelectorAll(selectors) {
-    const parts = selectors.split(',').map(s => s.trim()), found = [];
+    const parts = splitSelectorGroups(selectors), found = [];
+    const matches = (element, selector) => {
+      const chain = splitSelectorChain(selector);
+      if (!element.matches(chain.at(-1))) return false;
+      let ancestor = element.parentElement;
+      for (let index = chain.length - 2; index >= 0; index--) {
+        while (ancestor && !ancestor.matches(chain[index])) ancestor = ancestor.parentElement;
+        if (!ancestor) return false;
+        ancestor = ancestor.parentElement;
+      }
+      return true;
+    };
     const visit = element => {
       for (const child of element.children) {
-        if (parts.some(s => child.matches(s))) found.push(child);
+        if (parts.some(s => matches(child, s))) found.push(child);
         visit(child);
       }
     };

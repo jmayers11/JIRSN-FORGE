@@ -1,5 +1,7 @@
 using Forge.Execution;
 using Forge.Execution.Contracts;
+using Forge.Inventory;
+using Forge.Inventory.Contracts;
 using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Identity;
@@ -12,7 +14,7 @@ namespace Forge.Host.Identification;
 
 /// <summary>The Kernel invokes this before replay and records accepted provenance in its existing transaction.</summary>
 public sealed class ScanCommandParticipant(ScanSessionAuthority sessionAuthority, IQmsPolicyReader policies,
-    QmsOptions options, TimeProvider time) : ICommandTransactionParticipant
+    QmsOptions options, ScanAttemptRetentionOptions attemptRetention, TimeProvider time) : ICommandTransactionParticipant
 {
     public async Task<CommandTransactionEvidence?> ValidateAsync(IKernelUnitOfWork uow, CommandSpec spec, object command,
         CommandContext context, CommandAuthority authority, DateTimeOffset now, CancellationToken ct)
@@ -40,7 +42,8 @@ public sealed class ScanCommandParticipant(ScanSessionAuthority sessionAuthority
             {
                 var current = await uow.Store<IScanSessionStore>().FindAsync(stageId, ct)
                     ?? throw new CommandRejectedException("scan_session_unavailable", "The session is unavailable.");
-                _ = await sessionAuthority.RequireActiveAsync(uow, context, stageId, current.Version, now, ct);
+                _ = await sessionAuthority.RequireActiveAsync(uow, context, stageId, current.Version, now, ct,
+                    allowPendingMaterial: true);
             }
             else if (command is InvalidateScanSession && Guid.TryParse(authority.Resource.Id, out var invalidateId))
             {
@@ -51,6 +54,11 @@ public sealed class ScanCommandParticipant(ScanSessionAuthority sessionAuthority
                     throw new CommandRejectedException("scan_authenticated_session_changed", "The authenticated provider session changed.");
             }
             return null;
+        }
+        if (command is PickMaterial or DeliverMaterial)
+        {
+            if (context.ScanSession is null) return null;
+            return await ValidateMaterialMovementAsync(uow, command, context, now, ct);
         }
         if (command is not (StartOperation or ReportProduction))
         {
@@ -120,6 +128,108 @@ public sealed class ScanCommandParticipant(ScanSessionAuthority sessionAuthority
         await uow.Store<IScanSessionStore>().AppendAcceptedAsync(binding.Session.Id, accepted, ct);
     }
 
+    public async Task RecordRejectedAsync(IKernelUnitOfWork uow, CommandSpec spec, object command, CommandContext context,
+        CommandAuthority authority, string outcome, string validationCode, Guid auditId, DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var retention = attemptRetention.Current();
+        if (retention is null || outcome is not (AuditOutcomes.Rejected or AuditOutcomes.Denied)) return;
+        Guid? sessionId = context.ScanSession?.Id;
+        int? requestedVersion = context.ScanSession?.Version;
+        if (sessionId is null && spec.SourceContext == "Identification" && command is StageScan stage
+            && Guid.TryParse(authority.Resource.Id, out var stagedSession))
+        {
+            sessionId = stagedSession;
+            requestedVersion = stage.ExpectedVersion;
+        }
+        if (sessionId is not { } id || !AttemptCommand(spec, context)) return;
+
+        var store = uow.Store<IScanSessionStore>();
+        var session = await store.FindAsync(id, ct);
+        if (session is null || session.PrincipalPersonId != context.Principal.PersonId.Value) return;
+        var safeCode = SafeValidationCode(validationCode);
+        var workstation = context.Authentication?.WorkstationId;
+        var attempt = new ScanAttempt(ForgeIds.New(time), id, requestedVersion ?? session.Version, spec.CommandType,
+            outcome, safeCode, now, context.CorrelationId, auditId, session.OperatorPersonId, context.Actor,
+            SafeSummary(context.Authentication?.Assurance, 40), string.IsNullOrWhiteSpace(workstation)
+                ? null : CanonicalJson.Fingerprint(new { workstation }), spec.Resource.Type, spec.Resource.Id);
+        await store.AppendAttemptAsync(attempt, retention, ct);
+    }
+
+    private async Task<CommandTransactionEvidence> ValidateMaterialMovementAsync(IKernelUnitOfWork uow, object command,
+        CommandContext context, DateTimeOffset now, CancellationToken ct)
+    {
+        var reference = context.ScanSession!;
+        var taskId = command switch
+        {
+            PickMaterial pick => pick.TaskId,
+            DeliverMaterial deliver => deliver.TaskId,
+            _ => throw new InvalidOperationException("The material-movement discriminator changed.")
+        };
+        var task = await uow.Store<IInventoryLookup>().FindMaterialTaskAsync(taskId, ct)
+            ?? throw new CommandRejectedException("material_task_unavailable", "The actual material task is unavailable.");
+        var session = await uow.Store<IScanSessionStore>().FindAsync(reference.Id, ct)
+            ?? throw new CommandRejectedException("scan_session_unavailable", "The current scan session is unavailable.");
+        if (task.Kind is not (MaterialTaskKind.Stage or MaterialTaskKind.Kit)
+            || task.OrderNumber != session.OrderNumber || task.OrderNumber is null || task.LotNumber is null
+            || task.FromLocation is null
+            || command is PickMaterial && task.Status is not (MaterialTaskStatus.Allocated or MaterialTaskStatus.Picked)
+            || command is DeliverMaterial && task.Status is not (MaterialTaskStatus.Picked or MaterialTaskStatus.Delivered))
+            throw new CommandRejectedException("scan_material_task_mismatch", "The session must match an active, exact-lot task for its actual order and operation.");
+
+        var (active, currentPolicy, currentFacts) = await sessionAuthority.RequireActiveAsync(uow, context,
+            reference.Id, reference.Version, now, ct, materialTaskId: taskId);
+        var worker = active.OperatorPersonId;
+        ScanSessionRules.RequireAuthentication(currentPolicy, context.Principal, worker, context.Authentication, now);
+        if (active.OrderNumber != task.OrderNumber || active.OrderNumber != currentFacts.Order.OrderNumber
+            || active.Sequence != currentFacts.Operation.Sequence)
+            throw new CommandRejectedException("scan_command_context_mismatch", "The material task differs from its current authenticated operation session or approved policy.");
+        ScanSessionRules.RequireSelections(active, currentPolicy);
+        await ScanSessionAuthority.RequireAllInstructionsAsync(uow, active, currentPolicy, currentFacts, ct);
+
+        var material = active.Selections.SingleOrDefault(selection => selection.Kind == "Material");
+        var location = active.Selections.SingleOrDefault(selection => selection.Kind == "Location");
+        if (material is null || location is null)
+            throw new CommandRejectedException("scan_material_location_required", "Stage the exact material lot and the task's current source or destination location.");
+        var materialIdentity = ParseSelection(material, "material");
+        if (materialIdentity.PartNumber != task.PartNumber || materialIdentity.LotNumber != task.LotNumber)
+            throw new CommandRejectedException("scan_material_task_mismatch", "The staged material identity differs from the actual task part and lot.");
+        var locationIdentity = ParseSelection(location, "location");
+        var expectedLocation = command switch
+        {
+            PickMaterial => task.FromLocation,
+            DeliverMaterial => task.ToLocation,
+            _ => throw new InvalidOperationException("The material-movement discriminator changed.")
+        };
+        var scannedLocation = command switch
+        {
+            PickMaterial pick => pick.ScannedLocation,
+            DeliverMaterial deliver => deliver.ScannedLocation,
+            _ => throw new InvalidOperationException("The material-movement discriminator changed.")
+        };
+        if (locationIdentity.LocationCode != expectedLocation || scannedLocation != expectedLocation)
+            throw new CommandRejectedException("scan_material_location_mismatch", "The staged and submitted location must equal the actual task source or destination.");
+        if (command is PickMaterial selectedPick && (selectedPick.ScannedLot != task.LotNumber
+            || selectedPick.ScannedMaterial is { } typed && (typed.PartNumber != task.PartNumber || typed.LotNumber != task.LotNumber)))
+            throw new CommandRejectedException("scan_material_identity_mismatch", "The pick command must preserve the task's exact scanned lot identity.");
+
+        var binding = new ScanTransactionBinding(active, currentPolicy, worker, currentFacts.Fingerprint);
+        return new("IdentificationScanSession", CanonicalJson.Fingerprint(new { active.Id, active.Version,
+            PolicyFingerprint = currentPolicy.Fingerprint, Operator = worker, OperationFingerprint = currentFacts.Fingerprint,
+            Task = new { task.TaskId, task.OrderNumber, task.PartNumber, task.LotNumber, task.FromLocation, task.ToLocation },
+            Selections = active.Selections }), binding);
+    }
+
+    private static CanonicalIdentification ParseSelection(ScanSelection selection, string expectedKind)
+    {
+        var parts = selection.SubjectCode.Split(':');
+        if (parts.Length < 3) throw new CommandRejectedException("scan_selection_changed", "The staged canonical source is unavailable.");
+        var parsed = CanonicalIdentification.Parse(selection.SubjectCode, parts[2]);
+        if (parsed.Kind != expectedKind)
+            throw new CommandRejectedException("scan_selection_changed", "The staged canonical source has the wrong identity kind.");
+        return parsed;
+    }
+
     private static Guid Operator(string? identity)
     {
         var value = identity?.Split(';')[0];
@@ -130,4 +240,16 @@ public sealed class ScanCommandParticipant(ScanSessionAuthority sessionAuthority
     private static string? ResolveRequestedMachine(OrderOperationInfo operation, string? requested) =>
         string.IsNullOrWhiteSpace(requested) ? operation.EligibleMachines.Count == 1 ? operation.EligibleMachines[0] : null
             : BusinessCode.Require(requested, "Machine");
+
+    private static bool AttemptCommand(CommandSpec spec, CommandContext context) =>
+        spec.SourceContext == "Identification" && spec.CommandType == nameof(StageScan)
+        || context.ScanSession is not null && (spec.CommandType is nameof(StartOperation) or nameof(ReportProduction)
+            or nameof(PickMaterial) or nameof(DeliverMaterial));
+
+    private static string SafeValidationCode(string value) => value.Length is > 0 and <= 100
+        && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-' or '.')
+        ? value : "validation_failed";
+
+    private static string? SafeSummary(string? value, int maximum) =>
+        string.IsNullOrWhiteSpace(value) || value.Length > maximum || value.Any(char.IsControl) ? null : value;
 }

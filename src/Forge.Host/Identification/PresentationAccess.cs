@@ -39,6 +39,9 @@ public sealed class PresentationAccess(IdentificationResolver subjects, IForgeAu
         foreach (var source in recorded)
         {
             Permit(principal, source.Permission, source.Resource);
+            if (Forge.Host.WorkInbox.OwnedSourceFamilies.Contains(source.Resource.Type)
+                && (source.Resource.Id is not { } ownedId || !await Forge.Host.WorkInbox.OwnedSourceFamilies.CanReadAsync(uow, sources, principal, source.Resource.Type, ownedId, ct)))
+                throw Missing();
             if (source.Resource.Type is "Lot" or "Person" or "TransformationOutput") continue; // CapturedSubjectAsync point-resolves these owner facts separately.
             if (source.Resource.Id is not { } id) throw Missing();
             var current = await sources.ResolveAsync(uow, source.Resource.Type, id, ct) ?? throw Missing();

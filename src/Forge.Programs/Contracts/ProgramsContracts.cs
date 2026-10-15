@@ -66,6 +66,7 @@ public sealed record DeliveryReference(DeliveryInfo Delivery, Guid ProgramId, st
 /// <summary>What other contexts may ask Programs. Callers filter by the reader's program access.</summary>
 public interface IProgramsLookup
 {
+    Task<ContractInfo?> FindContractAsync(long contractId, CancellationToken ct);
     Task<IReadOnlyList<ProgramInfo>> ListProgramsAsync(CancellationToken ct);
 
     Task<ProgramInfo?> FindProgramAsync(Guid programId, CancellationToken ct);

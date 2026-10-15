@@ -58,7 +58,9 @@ public static class QualityEndpoints
                 await using var uow = await Snapshot(http);
                 var visible = new List<CapaInfo>();
                 foreach (var capa in await uow.Store<IQualityLookup>().ListCapasAsync(includeVerified ?? false, ct))
-                    if (authorizer.Authorize(principal, Permissions.QualityRead, await QualityService.ResourceForCapaAsync(uow, capa, ct)).IsPermitted) visible.Add(capa);
+                    if ((await QualityService.ResourcesForCapaAsync(uow, capa, ct)).All(resource => authorizer.Authorize(principal, Permissions.QualityRead, resource).IsPermitted)
+                        && (capa.NcrId is not { } source || await http.RequestServices.GetRequiredService<IAcceptanceSourceAccess>().CanReadNcrSourceAsync(uow, principal, source, ct))
+                        && (!capa.Governed || await http.RequestServices.GetRequiredService<ICapaLegacyGovernanceGuard>().CanReadAsync(uow, principal, capa.CapaId, ct))) visible.Add(capa);
                 return Results.Ok(visible);
             });
         api.MapGet("/ncrs", async (HttpContext http, bool? includeClosed, CancellationToken ct) =>
@@ -70,7 +72,8 @@ public static class QualityEndpoints
                 await using var uow = await Snapshot(http);
                 var visible = new List<NcrInfo>();
                 foreach (var ncr in await uow.Store<IQualityLookup>().ListNcrsAsync(includeClosed ?? false, ct))
-                    if (authorizer.Authorize(principal, Permissions.QualityRead, await QualityService.ResourceForNcrAsync(uow, ncr, ct)).IsPermitted) visible.Add(ncr);
+                    if ((await QualityService.ResourcesForNcrAsync(uow, ncr, ct)).All(resource => authorizer.Authorize(principal, Permissions.QualityRead, resource).IsPermitted)
+                        && await http.RequestServices.GetRequiredService<IAcceptanceSourceAccess>().CanReadNcrSourceAsync(uow, principal, ncr.NcrId, ct)) visible.Add(ncr);
                 return Results.Ok(visible);
             });
         api.MapGet("/inspections", (HttpContext http, long? order, int? take, CancellationToken _) =>
@@ -141,7 +144,8 @@ public static class QualityEndpoints
                 var quality = uow.Store<IQualityLookup>();
                 var state = await quality.GetOrderQualityAsync(number, order.PartNumber, ct);
                 foreach (var ncr in state.OpenNcrs)
-                    if (!authorizer.Authorize(principal, Permissions.QualityRead, await QualityService.ResourceForNcrAsync(uow, ncr, ct)).IsPermitted)
+                    if ((await QualityService.ResourcesForNcrAsync(uow, ncr, ct)).Any(resource => !authorizer.Authorize(principal, Permissions.QualityRead, resource).IsPermitted)
+                        || !await http.RequestServices.GetRequiredService<IAcceptanceSourceAccess>().CanReadNcrSourceAsync(uow, principal, ncr.NcrId, ct))
                         throw new CommandRejectedException("order_not_found", $"Order {number} does not exist.");
                 return Results.Ok(new OrderQualityView(state,
                     InspectionPlans.For(await quality.ListPlansAsync(order.PartNumber, ct), order.PartNumber, order.Revision),

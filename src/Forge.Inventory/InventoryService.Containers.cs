@@ -47,6 +47,7 @@ public sealed partial class InventoryService
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var lookup = uow.Store<IInventoryLookup>();
+            await uow.Store<IProductReleaseInventoryStore>().LockContainerAsync(code, ct);
             var container = await lookup.FindContainerAsync(code, ct)
                 ?? throw new CommandRejectedException("container_not_found", $"Container {code} does not exist.");
             if (container.Status != ContainerStatus.Open)
@@ -59,6 +60,7 @@ public sealed partial class InventoryService
             var quantity = RequireQuantity(item, c.Quantity);
             var store = uow.Store<IInventoryStore>();
             await store.LockPartAsync(item.PartNumber, ct);
+            await productRelease.RequireReleasedScopeAsync(uow, context.Principal, item.PartNumber, lot, location.Code, quantity, now, ct);
             var balance = await store.BalanceAsync(item.PartNumber, location.Code, lot, c.Status, ct);
             var packed = await store.PackedQuantityAsync(item.PartNumber, location.Code, lot, c.Status, ct);
             if (packed + quantity > balance)
@@ -69,7 +71,20 @@ public sealed partial class InventoryService
             return new CommandOutcome(CommandResult.Ok(code, $"Packed {quantity} {item.UnitOfMeasure} {item.PartNumber}{(lot is null ? string.Empty : $" lot {lot}")} into {container.Kind.ToString().ToLowerInvariant()} {code}."),
                 [pipeline.Event(new ContainerChanged(code, "ContentAdded"), context, SourceContext, "Container", code)],
                 new AuditChange("Container", code, CanonicalJson.Serialize(container), CanonicalJson.Serialize(changed)));
-        }, ct);
+        }, ct, async (uow, now) =>
+        {
+            var actual = await sourceAuthority.ResolveAsync(uow, spec, context, now, ct);
+            var container = await uow.Store<IInventoryLookup>().FindContainerAsync(code, ct)
+                ?? throw new CommandRejectedException("container_not_found", $"Container {code} does not exist.");
+            var part = BusinessCode.Require(c.PartNumber, "Part");
+            var location = BusinessCode.Require(c.LocationCode, "Location");
+            var lot = string.IsNullOrWhiteSpace(c.LotNumber) ? null : c.LotNumber.Trim().ToUpperInvariant();
+            if (container.Contents.Any(line => line.PartNumber == part && line.LotNumber == lot && line.LocationCode == location && line.Quantity == c.Quantity && line.Status == c.Status))
+                await productRelease.RecheckReleasedScopeAsync(uow, context.Principal, part, lot, location, now, ct);
+            else
+                await productRelease.RequireReleasedScopeAsync(uow, context.Principal, part, lot, location, c.Quantity, now, ct);
+            return actual;
+        });
     }
 
     public Task<CommandResult> SealContainerAsync(SealContainer c, CommandContext context, CancellationToken ct)
@@ -80,17 +95,31 @@ public sealed partial class InventoryService
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var lookup = uow.Store<IInventoryLookup>();
+            await uow.Store<IProductReleaseInventoryStore>().LockContainerAsync(code, ct);
             var container = await lookup.FindContainerAsync(code, ct)
                 ?? throw new CommandRejectedException("container_not_found", $"Container {code} does not exist.");
             if (container.Status != ContainerStatus.Open)
                 throw new CommandRejectedException("container_sealed", $"Container {code} is already sealed.");
             if (container.Contents.Count == 0)
                 throw new CommandRejectedException("container_empty", "An empty container cannot be sealed as a shipment unit.");
+            foreach (var line in container.Contents)
+                await productRelease.RequireReleasedScopeAsync(uow, context.Principal, line.PartNumber, line.LotNumber, line.LocationCode, line.Quantity, now, ct);
             await uow.Store<IInventoryStore>().SealContainerAsync(code, now, ct);
             var sealedContainer = container with { Status = ContainerStatus.Sealed };
             return new CommandOutcome(CommandResult.Ok(code, $"Container {code} sealed with {container.Contents.Count} identified content line(s)."),
                 [pipeline.Event(new ContainerChanged(code, "Sealed"), context, SourceContext, "Container", code)],
                 new AuditChange("Container", code, CanonicalJson.Serialize(container), CanonicalJson.Serialize(sealedContainer)));
-        }, ct);
+        }, ct, async (uow, now) =>
+        {
+            var actual = await sourceAuthority.ResolveAsync(uow, spec, context, now, ct);
+            var container = await uow.Store<IInventoryLookup>().FindContainerAsync(code, ct)
+                ?? throw new CommandRejectedException("container_not_found", $"Container {code} does not exist.");
+            foreach (var line in container.Contents)
+                if (container.Status == ContainerStatus.Shipped)
+                    await productRelease.RecheckReleasedScopeAsync(uow, context.Principal, line.PartNumber, line.LotNumber, line.LocationCode, now, ct);
+                else
+                    await productRelease.RequireReleasedScopeAsync(uow, context.Principal, line.PartNumber, line.LotNumber, line.LocationCode, line.Quantity, now, ct);
+            return actual;
+        });
     }
 }

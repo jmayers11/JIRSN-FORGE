@@ -18,7 +18,8 @@ public sealed record RtvReplacementRequest(decimal Quantity, string? LotNumber, 
 
 public sealed record CustomerReturnRequest(long ShipmentId, string PartNumber, string? LotNumber, decimal Quantity, string LocationCode, string? Reason);
 
-public sealed record CustomerReturnDispositionRequest(CustomerReturnDisposition Disposition, string? Reason);
+public sealed record CustomerReturnDispositionRequest(CustomerReturnDisposition Disposition, string? Reason, long? DecisionId=null, int? ExpectedDecisionVersion=null, decimal? Quantity=null);
+public sealed record CustomerReturnPreparationRequest(decimal Quantity, string? LocationCode, string? Reason);
 
 public sealed record FaiDeterminationRequest(string PartNumber, string Revision, string SupplierCode, DeterminationState State, string? Reason);
 
@@ -72,7 +73,9 @@ internal static class ReceivingEndpoints
         api.MapPost("/customer-returns", (HttpContext http, CustomerReturnRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReceiveCustomerReturnAsync(new ReceiveCustomerReturn(b.ShipmentId, b.PartNumber, b.LotNumber, b.Quantity, b.LocationCode), c, ct)));
         api.MapPost("/customer-returns/{id:long}/disposition", (HttpContext http, long id, CustomerReturnDispositionRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.DispositionCustomerReturnAsync(new DispositionCustomerReturn(id, b.Disposition), c, ct)));
+            Command(http, b.Reason, c => s.DispositionCustomerReturnAsync(new DispositionCustomerReturn(id, b.Disposition, b.DecisionId, b.ExpectedDecisionVersion, b.Quantity), c, ct)));
+        api.MapPost("/customer-returns/{id:long}/prepare-inspection", (HttpContext http, long id, CustomerReturnPreparationRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.PrepareReturnInspectionAsync(new(id, b.Quantity, b.LocationCode), c, ct)));
 
         var quality = app.MapGroup("/api/quality").RequireAuthorization();
         quality.MapGet("/determinations", (HttpContext http, string? subject, CancellationToken _) =>

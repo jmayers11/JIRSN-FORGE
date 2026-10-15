@@ -97,7 +97,8 @@ public sealed class ScanSessionAuthority(IdentificationResolver identification, 
     }
 
     public async Task<(ScanSessionView Session, QmsAdoptedPolicy Policy, ScanOperationFacts Facts)> RequireActiveAsync(
-        IKernelUnitOfWork uow, CommandContext context, Guid id, int version, DateTimeOffset now, CancellationToken ct)
+        IKernelUnitOfWork uow, CommandContext context, Guid id, int version, DateTimeOffset now, CancellationToken ct,
+        long? materialTaskId = null, bool allowPendingMaterial = false)
     {
         var principal = await uow.People.LoadPrincipalAsync(context.Principal.PersonId, ct) is { IsActive: true } current ? current : throw Unavailable();
         var session = await FindAsync(uow, id, ct);
@@ -127,7 +128,8 @@ public sealed class ScanSessionAuthority(IdentificationResolver identification, 
                 throw new CommandRejectedException("scan_selection_changed", "An exact selected source changed. Open a new session.");
             RequireMatchingSource(selection.Kind, source, facts);
             if (selection.Kind == "ControlledInstruction") await RequireInstructionForOperationAsync(uow, source, facts, ct);
-            if (selection.Kind == "Material") await RequireMaterialForOperationAsync(uow, source, facts, machine, ct);
+            if (selection.Kind == "Material") await RequireMaterialForOperationAsync(uow, source, facts, machine, ct,
+                allowPendingMovement: allowPendingMaterial || materialTaskId is not null, materialTaskId);
         }
         if (session.OperationFingerprint != facts.Fingerprint)
             throw new CommandRejectedException("scan_context_changed", "The actual operation or its required controlled configuration changed. Open a new session.");
@@ -251,7 +253,8 @@ public sealed class ScanSessionAuthority(IdentificationResolver identification, 
     }
 
     public static async Task RequireMaterialForOperationAsync(IKernelUnitOfWork uow, IdentificationSubject source,
-        ScanOperationFacts facts, string? machine, CancellationToken ct)
+        ScanOperationFacts facts, string? machine, CancellationToken ct, bool allowPendingMovement = false,
+        long? materialTaskId = null)
     {
         var part = source.Display.PartNumber; var lot = source.Display.LotNumber;
         if (part is null || lot is null) throw new CommandRejectedException("scan_material_mismatch", "Stage an exact recorded input material identity.");
@@ -261,7 +264,8 @@ public sealed class ScanSessionAuthority(IdentificationResolver identification, 
             if (code is null || await lookup.FindLocationAsync(code, ct) is not { Active: true, PointOfUse: true } location) return false;
             return location.WorkCenterCode == facts.Operation.WorkCenterCode && (location.MachineCode is null || location.MachineCode == machine);
         }
-        foreach (var task in (await lookup.ListMaterialTasksAsync(false, facts.Order.OrderNumber, ct))
+        var tasks = await lookup.ListMaterialTasksAsync(false, facts.Order.OrderNumber, ct);
+        foreach (var task in tasks
             .Where(task => task.PartNumber == part && task.LotNumber == lot && task.Status == MaterialTaskStatus.Delivered
                 && task.TransactionId is not null && (task.PickedQuantity ?? task.Quantity) > 0))
         {
@@ -270,6 +274,13 @@ public sealed class ScanSessionAuthority(IdentificationResolver identification, 
             if (delivered is { Kind: InventoryTransactionKind.Transfer } && delivered.PartNumber == part && delivered.LotNumber == lot
                 && delivered.ToLocation == task.ToLocation && delivered.Quantity > 0) return;
         }
+        if (allowPendingMovement)
+            foreach (var task in tasks.Where(task => (materialTaskId is null || task.TaskId == materialTaskId.Value)
+                && task.OrderNumber == facts.Order.OrderNumber && task.Kind is MaterialTaskKind.Stage or MaterialTaskKind.Kit
+                && task.PartNumber == part && task.LotNumber == lot && task.FromLocation is not null
+                && (task.Status is MaterialTaskStatus.Allocated or MaterialTaskStatus.Picked)
+                && (task.PickedQuantity ?? task.Quantity) > 0))
+                if (await AtOperationAsync(task.ToLocation)) return;
         var lines = await uow.Store<IAsBuiltRecord>().ListAsync(facts.Order.OrderNumber, part, lot, ct);
         var atOperation = new List<AsBuiltLine>();
         foreach (var line in lines)

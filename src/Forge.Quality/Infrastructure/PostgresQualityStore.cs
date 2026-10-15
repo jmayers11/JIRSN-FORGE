@@ -17,7 +17,7 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
         """;
 
     private const string CapaSql =
-        "SELECT capa_id, ncr_id, title, root_cause, action, due_date, status, opened_by, opened_at, implemented_by, implementation_note, verified_by, verified_at FROM quality.capa";
+        "SELECT capa_id, ncr_id, title, root_cause, action, due_date, status, opened_by, opened_at, implemented_by, implementation_note, verified_by, verified_at, EXISTS(SELECT 1 FROM quality.capa_governance g WHERE g.capa_id=quality.capa.capa_id) FROM quality.capa";
 
     private const string AllRevisions = "*";
 
@@ -110,7 +110,7 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
         ArgumentNullException.ThrowIfNull(capa);
         await using var cmd = uow.Command(
             "INSERT INTO quality.capa (ncr_id, title, root_cause, action, due_date, status, opened_by, opened_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING capa_id",
-            Long(capa.NcrId), capa.Title, capa.RootCause, capa.Action, capa.DueDate, capa.Status.ToString(), capa.OpenedBy, capa.OpenedAt);
+            Long(capa.NcrId), capa.Title, Text(capa.RootCause), Text(capa.Action), capa.DueDate, capa.Status.ToString(), capa.OpenedBy, capa.OpenedAt);
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -266,8 +266,8 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
         r.GetInt64(0),
         r.IsDBNull(1) ? null : r.GetInt64(1),
         r.GetString(2),
-        r.GetString(3),
-        r.GetString(4),
+        r.IsDBNull(3) ? null : r.GetString(3),
+        r.IsDBNull(4) ? null : r.GetString(4),
         r.GetFieldValue<DateOnly>(5),
         Enum.Parse<CapaStatus>(r.GetString(6)),
         r.GetString(7),
@@ -275,7 +275,8 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
         r.IsDBNull(9) ? null : r.GetString(9),
         r.IsDBNull(10) ? null : r.GetString(10),
         r.IsDBNull(11) ? null : r.GetString(11),
-        r.IsDBNull(12) ? null : r.GetFieldValue<DateTimeOffset>(12));
+        r.IsDBNull(12) ? null : r.GetFieldValue<DateTimeOffset>(12),
+        r.GetBoolean(13));
 
     private static decimal Normal(decimal value) => value / 1.000000000000000000000000000000000m;
 
@@ -310,10 +311,25 @@ public static class QualityRegistration
     public static IServiceCollection AddForgeQuality(this IServiceCollection services)
     {
         services.AddForgeMigrations(typeof(QualityRegistration).Assembly, "quality");
+        services.AddForgeCommercialQuality();
         services.AddForgeStore<IQualityStore>(uow => new PostgresQualityStore(uow));
         services.AddForgeStore<IQualityLookup>(uow => new PostgresQualityStore(uow));
         services.AddForgeStore<IWorkHoldLookup>(uow => new PostgresQualityStore(uow));
         services.AddSingleton<QualityService>();
+        services.AddForgeStore<Forge.Quality.Contracts.IReturnAcceptanceLookup>(uow => new PostgresReturnCohortStore(uow));
+        services.AddForgeStore<Forge.Quality.Contracts.IReturnCohortWriter>(uow => new PostgresReturnCohortStore(uow));
+        services.AddSingleton<Forge.Quality.Acceptance.ReturnCohortReadService>();
+        services.AddForgeStore<IQualityInvestigationLookup>(uow => new PostgresInvestigationStore(uow));
+        services.AddForgeStore<IQualityInvestigationStore>(uow => new PostgresInvestigationStore(uow));
+        services.AddForgeStore<IQualityInvestigationSourceLock>(uow => new PostgresInvestigationStore(uow));
+        services.AddSingleton<Forge.Quality.Investigations.InvestigationService>();
+        services.AddSingleton<Forge.Quality.Investigations.InvestigationReadService>();
+        services.AddForgeStore<Forge.Quality.Contracts.IAcceptanceLookup>(uow => new PostgresAcceptanceStore(uow));
+        services.AddForgeStore<Forge.Quality.Contracts.IAcceptanceStore>(uow => new PostgresAcceptanceStore(uow));
+        services.AddSingleton<Forge.Quality.Acceptance.AcceptanceCriteriaService>();
+        services.AddSingleton<Forge.Quality.Acceptance.ProductAcceptanceService>();
+        services.AddSingleton<Forge.Quality.Contracts.IProductReleaseDecisionValidator>(sp => sp.GetRequiredService<Forge.Quality.Acceptance.ProductAcceptanceService>());
+        services.AddSingleton<Forge.Quality.Contracts.IAcceptanceSourceAccess>(sp => sp.GetRequiredService<Forge.Quality.Acceptance.ProductAcceptanceService>());
         services.AddForgeStore<IReworkLookup>(uow => new PostgresReworkStore(uow));
         services.AddForgeStore<IReworkStore>(uow => new PostgresReworkStore(uow));
         services.AddSingleton<ReworkService>();

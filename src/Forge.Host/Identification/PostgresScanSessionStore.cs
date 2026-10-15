@@ -40,7 +40,7 @@ public sealed class PostgresScanSessionStore(PostgresUnitOfWork uow) : IScanSess
 
     public async Task SaveAsync(ScanSessionView session, int? expectedVersion, CancellationToken ct)
     {
-        var payload = new Npgsql.NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Jsonb, Value = JsonSerializer.Serialize(session with { Accepted = null }, Json) };
+        var payload = new Npgsql.NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Jsonb, Value = JsonSerializer.Serialize(session with { Accepted = null, Attempts = null }, Json) };
         await using var command = expectedVersion is null
             ? uow.Command("""
                 INSERT INTO kernel.identification_scan_session(session_id,channel_hash,version,state,principal_person_id,operator_person_id,
@@ -82,5 +82,57 @@ public sealed class PostgresScanSessionStore(PostgresUnitOfWork uow) : IScanSess
         await using var command = uow.Command("SELECT session_id,payload::text FROM kernel.identification_scan_acceptance WHERE acceptance_id=$1", acceptanceId);
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct) ? new(reader.GetGuid(0), JsonSerializer.Deserialize<ScanAccepted>(reader.GetString(1), Json)!) : null;
+    }
+
+    public async Task AppendAttemptAsync(ScanAttempt attempt, ScanAttemptRetentionPolicy retention, CancellationToken ct)
+    {
+        await using (var sessionLock = uow.Command("SELECT pg_advisory_xact_lock(hashtextextended($1, 42))", attempt.SessionId.ToString("D")))
+            await sessionLock.ExecuteNonQueryAsync(ct);
+
+        await using (var insert = uow.Command("""
+            INSERT INTO kernel.identification_scan_attempt(attempt_id,session_id,session_version,command_type,outcome,
+                validation_code,recorded_at,correlation_id,audit_id,operator_person_id,authenticated_actor,
+                assurance_summary,workstation_binding_hash,entity_type,entity_id)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            """, attempt.AttemptId, attempt.SessionId, attempt.SessionVersion, attempt.CommandType, attempt.Outcome,
+            attempt.ValidationCode, attempt.RecordedAt, attempt.CorrelationId, attempt.AuditId, attempt.OperatorPersonId,
+            attempt.AuthenticatedActor, attempt.AssuranceSummary, attempt.WorkstationBindingHash, attempt.EntityType, attempt.EntityId))
+            await insert.ExecuteNonQueryAsync(ct);
+
+        await using (var expire = uow.Command("""
+            DELETE FROM kernel.identification_scan_attempt
+            WHERE session_id=$1 AND recorded_at < $2::timestamptz - make_interval(days => $3)
+            """, attempt.SessionId, attempt.RecordedAt, retention.RetentionDays))
+            await expire.ExecuteNonQueryAsync(ct);
+
+        await using var cap = uow.Command("""
+            DELETE FROM kernel.identification_scan_attempt
+            WHERE session_id=$1 AND attempt_id IN (
+                SELECT attempt_id FROM (
+                    SELECT attempt_id, row_number() OVER (ORDER BY attempt_sequence DESC) AS position
+                    FROM kernel.identification_scan_attempt WHERE session_id=$1
+                ) ranked WHERE position > $2
+            )
+            """, attempt.SessionId, retention.MaxPerSession);
+        await cap.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<ScanAttempt>> AttemptsAsync(Guid session, CancellationToken ct)
+    {
+        await using var command = uow.Command("""
+            SELECT attempt_id,session_id,session_version,command_type,outcome,validation_code,recorded_at,
+                correlation_id,audit_id,operator_person_id,authenticated_actor,assurance_summary,
+                workstation_binding_hash,entity_type,entity_id
+            FROM kernel.identification_scan_attempt WHERE session_id=$1 ORDER BY attempt_sequence
+            """, session);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var rows = new List<ScanAttempt>();
+        while (await reader.ReadAsync(ct)) rows.Add(new(
+            reader.GetGuid(0), reader.GetGuid(1), reader.GetInt32(2), reader.GetString(3), reader.GetString(4),
+            reader.GetString(5), reader.GetFieldValue<DateTimeOffset>(6), reader.GetGuid(7), reader.GetGuid(8),
+            reader.GetGuid(9), reader.GetString(10), reader.IsDBNull(11) ? null : reader.GetString(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12), reader.IsDBNull(13) ? null : reader.GetString(13),
+            reader.IsDBNull(14) ? null : reader.GetString(14)));
+        return rows;
     }
 }

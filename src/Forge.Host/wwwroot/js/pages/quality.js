@@ -120,12 +120,13 @@ export async function qualityPage(page, ctx) {
       const late = c.status === 'Open' && c.dueDate < today();
       return `<div class="card-row">
         <div class="grow"><div><b>CA ${c.capaId}</b> · ${esc(c.title)} <span class="pill ${CAPA_TONE[c.status]}">${esc(c.status)}</span>${c.ncrId ? ` <span class="faint">from NCR ${c.ncrId}</span>` : ''}</div>
-          <div><span class="faint">Root cause:</span> ${esc(c.rootCause)} · <span class="faint">Action:</span> ${esc(c.action)}</div>
+          <div><span class="faint">Root cause:</span> ${esc(c.rootCause ?? 'Unknown — actual investigation pending')} · <span class="faint">Action:</span> ${esc(c.action ?? 'No approved corrective action plan')}</div>
           <div class="faint ${late ? 'c-bad' : ''}">Due ${esc(fmtDate(c.dueDate))}${late ? ' · overdue' : ''} · opened by ${esc(who(c.openedBy))}${c.implementedBy ? ` · implemented by ${esc(who(c.implementedBy))}: ${esc(c.implementationNote ?? '')}` : ''}${c.verifiedBy ? ` · verified by ${esc(who(c.verifiedBy))} ${esc(fmtDateTime(c.verifiedAt))}` : ''}</div></div>
         <div class="nowrap">
-          ${c.status === 'Open' && disposition ? `<button class="btn small" data-implement="${c.capaId}">Mark implemented</button>` : ''}
-          ${c.status === 'Implemented' && manager && !mine(c.implementedBy) ? `<button class="btn primary small" data-verify="${c.capaId}">Verify effective</button>` : ''}
-          ${c.status === 'Implemented' && mine(c.implementedBy) ? '<span class="faint">You implemented it — someone else verifies</span>' : ''}
+          ${c.governed ? `<a class="btn small" href="#/qms-audit?tab=capas&capaId=${c.capaId}">Open governed investigation</a>` : ''}
+          ${!c.governed && c.status === 'Open' && disposition ? `<button class="btn small" data-implement="${c.capaId}">Mark implemented</button>` : ''}
+          ${!c.governed && c.status === 'Implemented' && manager && !mine(c.implementedBy) ? `<button class="btn primary small" data-verify="${c.capaId}">Verify effective</button>` : ''}
+          ${!c.governed && c.status === 'Implemented' && mine(c.implementedBy) ? '<span class="faint">You implemented it — someone else verifies</span>' : ''}
         </div></div>`;
     }).join('');
   }

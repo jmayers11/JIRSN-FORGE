@@ -18,7 +18,7 @@ public interface IOwnedSourceResolver
 
 public static class OwnedSourceFamilies
 {
-    public static bool Contains(string type) => type is "QmsPolicyAdoption" or "QmsPolicyAdoptionRevision"
+    public static bool Contains(string type) => AcceptanceNcrSourceAccess.Contains(type) || AcceptanceSourceAccess.Contains(type) || type is "QmsPolicyAdoption" or "QmsPolicyAdoptionRevision"
         or "LabelTemplate" or "LabelIssuance" or "LabelCopy" or "LabelPrintAttempt" or "IdentificationAlias"
         or "ScanSession" or "ScanAcceptance";
 
@@ -50,6 +50,10 @@ public sealed class OwnedSourceAccess(IServiceProvider services)
         if (!principal.IsActive) return false;
         try
         {
+            if (AcceptanceNcrSourceAccess.Contains(type))
+                return await services.GetRequiredService<AcceptanceNcrSourceAccess>().CanReadAsync(uow, principal, type, id, ct);
+            if (AcceptanceSourceAccess.Contains(type))
+                return await services.GetRequiredService<AcceptanceSourceAccess>().CanReadAsync(uow, principal, type, id, ct);
             if (type is "QmsPolicyAdoption" or "QmsPolicyAdoptionRevision")
             {
                 var key = OwnedSourceFamilies.AdoptionKey(type, id);
@@ -79,6 +83,10 @@ public sealed class OwnedSourceAccess(IServiceProvider services)
         if (!OwnedSourceFamilies.Contains(type)) return null;
         try
         {
+            if (AcceptanceNcrSourceAccess.Contains(type))
+                return await services.GetRequiredService<AcceptanceNcrSourceAccess>().ResolveAsync(uow, type, id, ct);
+            if (AcceptanceSourceAccess.Contains(type))
+                return await services.GetRequiredService<AcceptanceSourceAccess>().ResolveAsync(uow, type, id, ct);
             if (type is "QmsPolicyAdoption" or "QmsPolicyAdoptionRevision")
             {
                 var key = OwnedSourceFamilies.AdoptionKey(type, id);
