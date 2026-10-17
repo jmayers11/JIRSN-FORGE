@@ -46,3 +46,74 @@ One test-side fix was needed: analyzer CA1822 on `SimApi.SendAndLoseResponse`, w
 - These are the first three scenarios on the reference plant, not the 300-order, 70-operator factory. The factory generator, the 30/60/90-day horizons and the remaining disruptive events (machine failure, absenteeism, rush orders, material shortage and the others) are Phase B.
 - Production NCR (MRB) dispositions and customer concessions are not covered yet. S10 covers supplier dispositions only.
 - Runtime: about 13 minutes for the 10 tests, mostly host start-up and database restore per run.
+
+## Follow-up, same day: negative controls, spec sources, reproducibility
+
+**Run:** 2026-10-17 14:33–14:56, `simulate.cmd` → **PASS** (16/16 tests in 10 minutes). The log is in `.forge-logs/simulate-pass-20261017-controls.log`, and the summary page is `.forge-logs/simulation/summary.md`, also copied to `.forge-logs/simulation-summary-20261017.md`.
+
+### Negative controls: proof that a green run means something
+
+Each control runs a scenario with one deliberate break. The test passes only if the checks aimed at that break fail.
+
+| Control | What is broken | Caught by |
+|---|---|---|
+| `HoldWrongLot` (S09) | The hold is placed on the other lot | 9 failures: the held lot ships, the free lot is refused, on-hand quantities are wrong |
+| `OracleOffByOne` (S10) | The expected-result calculation counts one extra unit as released | 11 inventory failures, at every later stock check |
+| `SelfApproveUseAsIs` (S10) | The deciding engineer approves their own use-as-is | 4 failures: approval refused, stock stays on hold |
+| `RetryWithFreshKey` (S15) | A lost receipt is retried with a new key | 2 failures: two receipts in the ledger, double quantity |
+
+All four were caught.
+
+### Every check names its source
+
+Each check is tagged with its basis and the rule it tests. Both appear in every `results.md` and in the summary.
+
+| Basis | Checks | Rules |
+|---|---|---|
+| Spec (ADR 0034, ADR 0035) | 198 | 13 |
+| Invariant (amendment: conservation, no negative stock, audit, reproducibility) | 159 | 4 |
+| Plan (setup and seeded arithmetic) | 57 | 3 |
+| Inferred | 45 | 5 |
+| Code only | 37 | 3 |
+
+### Rules for the owner to rule on
+
+Forge already behaves this way and every check passed, but none of these rules is written in an ADR or the README:
+
+1. **Idempotency contract (code only).** The README says only that every command needs an `Idempotency-Key`. Three rules live in a code comment on `IIdempotencyStore`:
+   - a retry with the same key and body returns the original result and applies nothing again;
+   - a key reused for a different request is refused with 409;
+   - both apply to every command.
+
+   Suggest writing these into an ADR.
+2. **Concurrent retries (inferred).** Simultaneous requests with one key take effect once. Each caller gets either the result or an in-progress 409. In practice all five callers got 200.
+3. **One disposition per rejection (inferred).** A dispositioned supplier rejection refuses a second, different disposition (422).
+4. **One rejection per inspection (inferred).** An inspection with a rejected quantity records exactly one supplier rejection.
+5. **RTV quantity (inferred).** A return to vendor carries exactly the rejected quantity.
+6. **"Open" rejections (inferred).** These are the ones undecided or awaiting use-as-is approval.
+
+### Reproducibility for every scenario
+
+S09, S10 and S15 each ran twice with seed 42 on fresh databases. Each pair produced identical event logs and identical state hashes.
+
+All nine state hashes also equal those from the first Phase A run about two hours earlier.
+
+### Housekeeping
+
+- Event logs now write `+20m` instead of the escaped form `\u002B20m`.
+- `simulate.cmd` clears old results before a run, so the summary covers that run only.
+
+### Full gate with the simulation filter
+
+`verify.cmd`, 2026-10-17 14:57–16:38: **PASS**.
+
+| Suite | Result |
+|---|---|
+| Kernel | 44/44 |
+| Planning | 303/303 |
+| Architecture | 32/32 |
+| PostgreSQL integration | 347/347 |
+| UI | 213/213 |
+| **Total** | **939 checks** |
+
+The build was clean and includes the simulation project. Under `Category!=Simulation`, the simulation project ran no tests, as intended. The log is `.forge-logs/verify-pass-20261017-sim-filter.log`.

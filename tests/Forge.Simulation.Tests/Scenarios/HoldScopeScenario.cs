@@ -32,10 +32,10 @@ internal static class HoldScopeScenario
         return log;
     }
 
-    public static async Task<(SimReport Report, EventLog Log, string Hash)> RunAsync(PostgresFixture postgres, int seed)
+    public static async Task<(SimReport Report, EventLog Log, string Hash)> RunAsync(PostgresFixture postgres, int seed, Mutation mutation = Mutation.None)
     {
         var log = Plan(seed);
-        var report = new SimReport(Name, seed);
+        var report = new SimReport(mutation == Mutation.None ? Name : Name + RunSummary.CanaryMarker + mutation, seed);
         await using var f = await SimFactory.BuildAsync(postgres, "s09-" + seed.ToString(CultureInfo.InvariantCulture));
         var (api, stores, qe, shipper) = (f.Api, f.StoresUser, f.Api.As("qe"), f.Api.As("ship"));
         var parts = new[] { SimFactory.LotPart };
@@ -57,6 +57,7 @@ internal static class HoldScopeScenario
             {
                 case "Receive":
                 {
+                    report.Rule(Basis.Plan, "Setup: lot-tracked receipt into released stock");
                     var r = await api.Send(stores, "/api/inventory/receipts", new { partNumber = SimFactory.LotPart, quantity = e.Number("quantity"), locationCode = SimFactory.Stores, lotNumber = lot, revision = "A", reason = "Simulated delivery" });
                     report.Expect($"{step}: received", "200", r.Label);
                     expected[lot] += e.Number("quantity");
@@ -65,7 +66,9 @@ internal static class HoldScopeScenario
 
                 case "PlaceHold":
                 {
-                    var r = await api.Send(qe, "/api/holds", new { kind = "Quality", targetType = "Lot", targetPart = SimFactory.LotPart, targetId = lot, source = "Simulation", reason = e.Text("reason") });
+                    report.Rule(Basis.Spec, "ADR 0034 §2, §4: a hold can target a lot (with its part); placing is open to the roles that raise holds");
+                    var target = mutation == Mutation.HoldWrongLot ? FreeLot : lot;
+                    var r = await api.Send(qe, "/api/holds", new { kind = "Quality", targetType = "Lot", targetPart = SimFactory.LotPart, targetId = target, source = "Simulation", reason = e.Text("reason") });
                     report.Expect($"{step}: quality engineer places the hold", "200", r.Label);
                     if (r.Succeeded)
                     {
@@ -78,6 +81,7 @@ internal static class HoldScopeScenario
 
                 case "ReleaseHold" when hold is { } id:
                 {
+                    report.Rule(Basis.Spec, "ADR 0034 §4: a Quality hold is released with quality.disposition");
                     var denied = await api.Send(stores, $"/api/holds/{id}/release", new { reason = "I need the material" });
                     report.Expect($"{step}: a material handler cannot release a quality hold", "403", ((int)denied.Status).ToString(CultureInfo.InvariantCulture), "Authorization");
                     var r = await api.Send(qe, $"/api/holds/{id}/release", new { reason = "Recall cleared with supplier evidence" });
@@ -91,6 +95,7 @@ internal static class HoldScopeScenario
                     var quantity = e.Number("quantity");
                     var blocked = lot == HeldLot && held;
                     var outcome = await ShipAsync(api, stores, shipper, lot, quantity);
+                    report.Rule(Basis.Spec, "ADR 0034 §3, §5: Quality blocks shipping; the gate refuses with on_hold only when the hold's target is among the records shipped");
                     if (blocked)
                     {
                         report.Expect($"{step}: refused because the lot is on quality hold", "422 on_hold", outcome, "Scope");
@@ -105,10 +110,12 @@ internal static class HoldScopeScenario
                 }
 
                 default:
+                    report.Rule(Basis.Plan, "Every planned event must be applied");
                     report.Expect($"{step}: event applied", "applied", "skipped: no hold to release", "Outcome");
                     break;
             }
 
+            report.Rule(Basis.Plan, "On hand per lot = received − shipped, from the seeded plan");
             foreach (var (l, q) in expected)
             {
                 report.Expect($"{step}: on hand {l}", q, await OnHand(l));
@@ -119,6 +126,11 @@ internal static class HoldScopeScenario
 
         await Invariants.AuditChain(report, "End", f.Plant.Admin);
         var hash = await Invariants.StateHash(stores, parts);
+        if (mutation != Mutation.None)
+        {
+            report.Note("Negative control: " + mutation + ". This run is expected to fail.");
+        }
+
         report.Note("The refusal may come at shipment creation, packing or shipping; the scenario records the first refusal and requires that the held lot never leaves.");
         return (report, log, hash);
     }

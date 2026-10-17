@@ -17,6 +17,8 @@ dotnet restore "%PROJECT%" >> "%LOG%" 2>&1 || goto fail
 echo === build ===>> "%LOG%"
 dotnet build "%PROJECT%" --no-restore -c Release -nologo -clp:NoSummary >> "%LOG%" 2>&1 || goto fail
 echo === simulate ===>> "%LOG%"
+rem Results from earlier runs are cleared so the summary reflects this run only.
+if exist .forge-logs\simulation rmdir /s /q .forge-logs\simulation
 set "FORGE_TEST_RESTORE_BASELINE=1"
 dotnet test "%PROJECT%" --no-build -c Release -nologo --filter "Category=Simulation" --logger "console;verbosity=normal" >> "%LOG%" 2>&1 || goto fail
 echo PASS> .forge-logs\simulate.status

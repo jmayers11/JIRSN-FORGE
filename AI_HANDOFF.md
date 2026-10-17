@@ -1,6 +1,19 @@
 # AI_HANDOFF.md
 ## V5 simulation Phase A: Claude, 2026-10-17 (current)
 
+**Follow-up, same afternoon.**
+- Negative controls: 4 deliberately broken runs, all caught.
+- Every check is tagged with its basis and spec source.
+- The reproducibility test now covers all three scenarios.
+- One summary page per run: `.forge-logs/simulation/summary.md`.
+- `simulate.cmd` **PASS**, 16/16 tests.
+- Full `verify.cmd` with the simulation filter: **PASS**, 939 checks.
+
+**Owner rulings needed** (listed in `docs/v5/V5-simulation-phaseA-results.md`):
+- the idempotency contract, which exists only in a code comment;
+- five inferred rules about concurrent retries and supplier rejections.
+
+
 **`simulate.cmd` PASS: 10/10 tests, 351 expectations, 0 failed.** Test code only, as the owner approved. No production code or schema changed.
 
 - New project `tests/Forge.Simulation.Tests`, added to `Forge.slnx`, with tests tagged `Category=Simulation`. It contains:
@@ -15,7 +28,6 @@
   - the remaining disruptive events;
   - production NCR and MRB dispositions;
   - workforce impact.
-- `verify.cmd` has not been rerun since the filter was added. The build of the whole solution, including the new project, was clean inside `simulate.cmd`.
 
 ## Full verification of V5-S1, plus fixes: Claude, 2026-10-16/17 (current)
 

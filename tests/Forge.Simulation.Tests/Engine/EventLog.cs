@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace Forge.Simulation.Tests.Engine;
@@ -18,7 +19,7 @@ public sealed record SimEvent(int Index, TimeSpan At, string Type, IReadOnlyDict
 /// </summary>
 public sealed class EventLog
 {
-    private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
+    private static readonly JsonSerializerOptions Json = new() { WriteIndented = false, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     private readonly List<SimEvent> events = [];
 
     public EventLog(string scenario, int seed)

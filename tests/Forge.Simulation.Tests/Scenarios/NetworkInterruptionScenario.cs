@@ -15,6 +15,9 @@ internal static class NetworkInterruptionScenario
 {
     public const string Name = "S15-network-interruption";
 
+    /// <summary>The README only says every command needs an Idempotency-Key; the replay and conflict rules are in a code comment.</summary>
+    private const string IdempotencyContract = "IIdempotencyStore contract (Forge.Kernel/Access/Abstractions.cs)";
+
     public static EventLog Plan(int seed)
     {
         var log = new EventLog(Name, seed);
@@ -26,10 +29,10 @@ internal static class NetworkInterruptionScenario
         return log;
     }
 
-    public static async Task<(SimReport Report, EventLog Log, string Hash)> RunAsync(PostgresFixture postgres, int seed)
+    public static async Task<(SimReport Report, EventLog Log, string Hash)> RunAsync(PostgresFixture postgres, int seed, Mutation mutation = Mutation.None)
     {
         var log = Plan(seed);
-        var report = new SimReport(Name, seed);
+        var report = new SimReport(mutation == Mutation.None ? Name : Name + RunSummary.CanaryMarker + mutation, seed);
         await using var f = await SimFactory.BuildAsync(postgres, "s15-" + seed.ToString(CultureInfo.InvariantCulture));
         var (api, stores, qe) = (f.Api, f.StoresUser, f.Api.As("qe"));
         var parts = new[] { SimFactory.LotPart };
@@ -55,13 +58,14 @@ internal static class NetworkInterruptionScenario
             {
                 case "LostReceipt":
                 {
+                    report.Rule(Basis.CodeOnly, IdempotencyContract + ": a retry with the same key and body returns the stored result and applies nothing again");
                     var key = api.NextKey();
                     var body = Receipt(lot, e.Number("quantity"));
                     await SimApi.SendAndLoseResponse(stores, "/api/inventory/receipts", body, key);
                     var ids = new HashSet<string?>(StringComparer.Ordinal);
                     for (var i = 0; i < (int)e.Number("retries"); i++)
                     {
-                        var retry = await api.Send(stores, "/api/inventory/receipts", body, key);
+                        var retry = await api.Send(stores, "/api/inventory/receipts", body, mutation == Mutation.RetryWithFreshKey ? api.NextKey() : key);
                         report.Expect($"{step}: retry {i + 1} returns the original result", "200", retry.Label, "Idempotency");
                         ids.Add(retry.EntityId);
                     }
@@ -74,6 +78,7 @@ internal static class NetworkInterruptionScenario
 
                 case "ConcurrentReceipt":
                 {
+                    report.Rule(Basis.Inferred, "Simultaneous requests with one key apply once; each caller gets the result or an in-progress 409, never a second effect");
                     var key = api.NextKey();
                     var body = Receipt(lot, e.Number("quantity"));
                     var terminals = (int)e.Number("terminals");
@@ -93,6 +98,7 @@ internal static class NetworkInterruptionScenario
 
                 case "KeyReuse":
                 {
+                    report.Rule(Basis.CodeOnly, IdempotencyContract + ": a key used for a different request is refused (409) and changes nothing");
                     var key = api.NextKey();
                     var first = await api.Send(stores, "/api/inventory/receipts", Receipt(lot, e.Number("quantity")), key);
                     report.Expect($"{step}: first use of the key", "200", first.Label, "Idempotency");
@@ -105,6 +111,7 @@ internal static class NetworkInterruptionScenario
 
                 case "LostHold":
                 {
+                    report.Rule(Basis.CodeOnly, IdempotencyContract + ": applies to every command, including holds");
                     var before = (await SimApi.Get(qe, "/api/holds")).EnumerateArray().Count();
                     var key = api.NextKey();
                     var body = new { kind = "Quality", targetType = "Lot", targetPart = SimFactory.LotPart, targetId = lot, source = "Simulation", reason = "Simulated hold with a lost response" };
@@ -125,6 +132,11 @@ internal static class NetworkInterruptionScenario
         }
 
         await Invariants.AuditChain(report, "End", f.Plant.Admin);
+        if (mutation != Mutation.None)
+        {
+            report.Note("Negative control: " + mutation + ". This run is expected to fail.");
+        }
+
         var hash = await Invariants.StateHash(stores, parts);
         return (report, log, hash);
     }

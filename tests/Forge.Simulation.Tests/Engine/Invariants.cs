@@ -77,9 +77,9 @@ public static class Invariants
             .Where(k => ledger.GetValueOrDefault(k) != reported.GetValueOrDefault(k))
             .Select(k => $"{k}: ledger {Q(ledger.GetValueOrDefault(k))} vs reported {Q(reported.GetValueOrDefault(k))}")
             .ToList();
-        report.Expect($"{step}: balances equal the recomputed ledger", "no differences", mismatches.Count == 0 ? "no differences" : string.Join("; ", mismatches), "Invariant");
+        report.ExpectInvariant($"{step}: balances equal the recomputed ledger", "no differences", mismatches.Count == 0 ? "no differences" : string.Join("; ", mismatches), "Amendment: inventory conservation");
         var negative = reported.Where(kv => kv.Value < 0m).Select(kv => $"{kv.Key} = {Q(kv.Value)}").ToList();
-        report.Expect($"{step}: no negative stock", "none", negative.Count == 0 ? "none" : string.Join("; ", negative), "Invariant");
+        report.ExpectInvariant($"{step}: no negative stock", "none", negative.Count == 0 ? "none" : string.Join("; ", negative), "Amendment: no negative inventory");
     }
 
     /// <summary>The tamper-evident audit chain is intact.</summary>
@@ -87,7 +87,7 @@ public static class Invariants
     {
         var verify = await SimApi.Get(auditor, "/api/kernel/audit/verify");
         var intact = verify.TryGetProperty("intact", out var i) && i.GetBoolean();
-        report.Expect($"{step}: audit chain intact", "intact", intact ? "intact" : verify.GetRawText(), "Invariant");
+        report.ExpectInvariant($"{step}: audit chain intact", "intact", intact ? "intact" : verify.GetRawText(), "Amendment: audit completeness (tamper-evident chain)");
     }
 
     /// <summary>

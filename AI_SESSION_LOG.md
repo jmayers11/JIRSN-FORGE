@@ -811,3 +811,23 @@ Forge was then restarted on port 5080 with `.forge-logs/run-forge-release.cmd`.
 **Files.**
 - New: `tests/Forge.Simulation.Tests/**`, `simulate.cmd` and `docs/v5/V5-simulation-phaseA-results.md`.
 - Changed: `Forge.slnx`, `verify.cmd`, `AI_HANDOFF.md` and this log.
+
+## Claude: simulation controls, spec sources and full gate (2026-10-17)
+
+**Agent:** Claude (Claude Opus 5.5), in a cloud session linked to this PC.
+
+**Done.**
+- Added negative controls (`Mutation`: HoldWrongLot, OracleOffByOne, SelfApproveUseAsIs, RetryWithFreshKey). All 4 were caught.
+- Tagged each expectation with its basis and source (Spec, Invariant, Plan, Inferred, Code only). Results tables and `RunSummary` now list the rules that need an owner ruling.
+- Reproducibility now runs for S09, S10 and S15. JSON escaping fixed. `simulate.cmd` clears old results before a run.
+- `simulate.cmd`: **PASS**, 16/16 tests, log `.forge-logs/simulate-pass-20261017-controls.log`.
+- `verify.cmd`: **PASS**, 939 checks, log `.forge-logs/verify-pass-20261017-sim-filter.log`.
+
+**Not done.**
+- Owner rulings on 1 code-only rule and 5 inferred rules.
+- Phase B.
+- Forge restart: computer access expired and needs re-approval.
+
+**Files.**
+- New: `Engine/Mutation.cs`, `Engine/RunSummary.cs`.
+- Changed: the simulation engine and scenarios, `simulate.cmd`, `docs/v5/V5-simulation-phaseA-results.md`, `AI_HANDOFF.md` and this log.
