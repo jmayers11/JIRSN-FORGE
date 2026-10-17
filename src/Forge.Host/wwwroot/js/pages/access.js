@@ -46,17 +46,22 @@ export function peopleRows(people, programs, can) {
 
 export async function accessPage(page, ctx) {
   const can = canAction(ctx.me, 'kernel.access.manage');
-  let people = { data: [] }, programs = [], disposed = false;
+  let people = { data: [] }, policy = { data: null }, programs = [], selectedPolicyRole = '', disposed = false;
 
   async function load() {
-    const [p, prog] = await Promise.all([tryGet(`${API}/people`), tryGet('/api/programs/')]);
-    people = p; programs = (prog.data ?? []).map(x => ({ programId: x.programId, name: x.name ?? x.code ?? x.programId }));
+    const [p, prog, accessPolicy] = await Promise.all([tryGet(`${API}/people`), tryGet('/api/programs/'), can ? tryGet(`${API}/access-policy`) : Promise.resolve({ data: null })]);
+    people = p; policy = accessPolicy; programs = (prog.data ?? []).map(x => ({ programId: x.programId, name: x.name ?? x.code ?? x.programId }));
   }
   const reload = async () => { await load(); if (!disposed) render(); };
   const person = id => (people.data ?? []).find(p => p.personId === id);
-  const roles = () => [...new Set([...ROLE_NAMES, ...(people.data ?? []).flatMap(p => p.roles)])].sort((a, b) => roleTitle(a).localeCompare(roleTitle(b)));
+  const policyRoles = () => Array.isArray(policy.data?.roles) ? policy.data.roles : [];
+  const roles = () => [...new Set([...ROLE_NAMES, ...policyRoles().map(r => r.role), ...(people.data ?? []).flatMap(p => p.roles)])].sort((a, b) => roleTitle(a).localeCompare(roleTitle(b)));
 
   function render() {
+    const knownPolicyRoles = policyRoles();
+    if (!knownPolicyRoles.some(r => r.role === selectedPolicyRole)) selectedPolicyRole = knownPolicyRoles[0]?.role ?? '';
+    const selectedRole = knownPolicyRoles.find(r => r.role === selectedPolicyRole);
+    const selectedPermissions = selectedRole?.permissions ?? [];
     page.innerHTML = `
       <div class="page-head"><div><h1>Access control</h1><div class="sub">Who can do what. Roles carry permissions; scopes narrow a permission to a program, facility, work center, contract, customer or shift.</div></div>
         <div class="spacer"></div>${can ? '<button class="btn" id="register">Register person</button>' : ''}</div>
@@ -68,13 +73,17 @@ export async function accessPage(page, ctx) {
       </section>
       ${can ? `<section class="panel"><header><h2>Role policy</h2></header>
         <div class="muted">Roles and their permissions are part of the audited configuration. Removing access management from every role is refused.</div>
+        ${policy.error ? errorBlock(policy.error, 'access policy') : `<div class="field"><label for="policy-role">Current role</label><select class="input" id="policy-role">${knownPolicyRoles.map(r => `<option value="${esc(r.role)}" ${r.role === selectedPolicyRole ? 'selected' : ''}>${esc(r.displayName)} (${esc(r.role)})</option>`).join('')}</select></div>
+          ${!selectedRole ? emptyBlock('No active roles', 'No active role policy is available.') : selectedPermissions.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Permission</th><th>Scope</th></tr></thead><tbody>${selectedPermissions.map(p => `<tr><td class="mono">${esc(p.permission)}</td><td>${(p.scopes ?? []).length ? p.scopes.map(s => `<span class="chip">${esc(s.scopeType)}: ${esc(s.scopeId)}</span>`).join(' ') : '<span class="muted">All resources</span>'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="muted">This role has no permission grants.</div>'}`}
         <div class="actions"><button class="btn" id="create-role">Create role</button><button class="btn" id="add-permission">Add permission to role</button><button class="btn ghost" id="remove-permission">Remove permission from role</button>
           <button class="btn" id="add-scope">Scope a role permission</button><button class="btn ghost" id="remove-scope">Remove a scope</button></div></section>
       <section class="panel"><header><h2>Separation of duties</h2></header>
-        <table class="table"><tbody>${SEPARATION_POLICIES.map(([id, text]) => `<tr><td class="mono">${esc(id)}</td><td>${esc(text)}</td>
-          <td class="row-actions"><button class="btn small" data-policy="${esc(id)}" data-enabled="true">Turn on</button><button class="btn small ghost" data-policy="${esc(id)}" data-enabled="false">Turn off</button></td></tr>`).join('')}</tbody></table></section>
+        ${policy.error ? errorBlock(policy.error, 'separation policy') : `<table class="table"><tbody>${SEPARATION_POLICIES.map(([id, text]) => { const current = policy.data?.separationPolicies?.find(item => item.policy === id); return `<tr><td class="mono">${esc(id)}</td><td>${esc(text)}</td>
+          <td>${current ? `<span class="pill ${current.enabled ? 'ok' : 'none'}">${current.enabled ? 'Enabled' : 'Disabled'}</span>` : '<span class="muted">State unavailable</span>'}</td>
+          <td class="row-actions">${current ? `<button class="btn small ${current.enabled ? 'ghost' : ''}" data-policy="${esc(id)}" data-enabled="${!current.enabled}">Turn ${current.enabled ? 'off' : 'on'}</button>` : ''}</td></tr>`; }).join('')}</tbody></table>`}</section>
       <section class="panel"><header><h2>Approval thresholds</h2></header>
         <div class="muted">Caps the amount a permission can approve, in one currency. Leave the amount blank to remove a cap.</div>
+        ${policy.error ? errorBlock(policy.error, 'approval thresholds') : (policy.data?.approvalThresholds ?? []).length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Permission</th><th>Limit</th></tr></thead><tbody>${policy.data.approvalThresholds.map(t => `<tr><td class="mono">${esc(t.permission)}</td><td>${esc(t.maximumAmount)} ${esc(t.currency)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="muted">No approval thresholds are currently configured.</div>'}
         <div class="actions"><button class="btn" id="threshold">Set approval threshold</button></div></section>` : ''}`;
     $('#register', page)?.addEventListener('click', register);
     $$('[data-grant-role]', page).forEach(b => b.addEventListener('click', () => grantRole(person(b.dataset.grantRole))));
@@ -88,6 +97,7 @@ export async function accessPage(page, ctx) {
     $('#remove-scope', page)?.addEventListener('click', () => roleScope(true));
     $$('[data-policy]', page).forEach(b => b.addEventListener('click', () => separation(b.dataset.policy, b.dataset.enabled === 'true')));
     $('#threshold', page)?.addEventListener('click', threshold);
+    $('#policy-role', page)?.addEventListener('change', e => { selectedPolicyRole = e.target.value; render(); });
   }
 
   const roleField = { name: 'role', label: 'Role', required: true, list: null, hint: 'A catalog role, or a role you created.' };

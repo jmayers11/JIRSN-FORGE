@@ -118,6 +118,26 @@ public sealed class ProductAcceptanceService(CommandPipeline pipeline,IKernelUni
   else await RequireHistoricInspectionReadAsync(uow,principal,((AcceptanceInspection)record).InspectionId,ct);
   return(T)record;
  }
+ public Task<IReadOnlyList<AcceptanceInspection>> ListReadableInspectionsAsync(ForgePrincipal principal,int take,CancellationToken ct)=>
+  ListReadableAsync<AcceptanceInspection>(principal,Math.Clamp(take,1,100),false,ct);
+ public Task<IReadOnlyList<ProductReleaseDecision>> ListReadableReleasesAsync(ForgePrincipal principal,int take,CancellationToken ct)=>
+  ListReadableAsync<ProductReleaseDecision>(principal,Math.Clamp(take,1,100),true,ct);
+ private async Task<IReadOnlyList<T>> ListReadableAsync<T>(ForgePrincipal principal,int take,bool releases,CancellationToken ct) where T:class
+ {
+  await using var uow=await factory.BeginSnapshotAsync(ct);var lookup=uow.Store<IAcceptanceLookup>();
+  if(releases)
+  {
+   var records=await lookup.ListDecisionsAsync(take,ct);var visible=new List<ProductReleaseDecision>(records.Count);
+   foreach(var record in records)if(await CanReadAsync(uow,principal,record.DecisionId,true,ct))visible.Add(record);
+   return (IReadOnlyList<T>)(object)visible;
+  }
+  else
+  {
+   var records=await lookup.ListInspectionsAsync(take,ct);var visible=new List<AcceptanceInspection>(records.Count);
+   foreach(var record in records)if(await CanReadAsync(uow,principal,record.InspectionId,false,ct))visible.Add(record);
+   return (IReadOnlyList<T>)(object)visible;
+  }
+ }
  public async Task ValidateCurrentDecisionAsync(IKernelUnitOfWork uow,ForgePrincipal principal,ProductReleaseDecision decision,InspectionSubject subject,QmsAdoptedPolicy policy,DateTimeOffset now,CancellationToken ct)
  {
   if(decision.Subject!=subject.Key||decision.Revision!=subject.Revision||decision.PolicyFingerprint!=policy.Fingerprint||await uow.Store<IAcceptanceLookup>().FindWithdrawalAsync(decision.DecisionId,ct) is not null)throw new CommandRejectedException("release_not_current","The exact independent product release is unavailable under current governed controls.");

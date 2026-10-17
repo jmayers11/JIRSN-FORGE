@@ -59,6 +59,23 @@ test('access page is read-only without access management', async t => {
   assert.match(page.innerHTML, /but not change it/); assert.doesNotMatch(page.innerHTML, /data-grant|id="register"|Role policy/);
 });
 
+test('access page displays current role scopes, separation settings and approval thresholds', async t => {
+  const accessPolicy = {
+    roles: [{ role: 'QualityEngineer', displayName: 'Quality Engineer', permissions: [
+      { permission: 'quality.read', scopes: [{ scopeType: 'program', scopeId: 'program-7' }] },
+      { permission: 'quality.inspect', scopes: [] },
+    ] }],
+    separationPolicies: [{ policy: 'access.self_role_change', enabled: true }, { policy: 'access.self_program_change', enabled: false }],
+    approvalThresholds: [{ permission: 'purchasing.approve', maximumAmount: 5000, currency: 'USD' }],
+  };
+  const { page } = wire(t, path => path.endsWith('/kernel/access-policy') ? response(accessPolicy) : null);
+  const controller = await accessPage(page, { me: { personId: ana.personId, permissions: ['kernel.access.manage'] } }); t.after(controller.dispose);
+  assert.match(page.innerHTML, /Quality Engineer/); assert.match(page.innerHTML, /program: program-7/); assert.match(page.innerHTML, /All resources/);
+  assert.match(page.innerHTML, /5000 USD/);
+  assert.match(page.innerHTML, /data-policy="access\.self_role_change" data-enabled="false">Turn off/);
+  assert.doesNotMatch(page.innerHTML, /data-policy="access\.self_role_change" data-enabled="true"/);
+});
+
 test('safety rule slots round-trip and the next lifecycle action is offered', () => {
   const slots = parseSlots('Crane operator | 1 | CRANE, RIGGING | no\nSpotter | 2 | SPOT | yes');
   assert.deepEqual(slots[1], { name: 'Spotter', count: 2, satisfiedBy: ['SPOT'], traineeMayFill: true });

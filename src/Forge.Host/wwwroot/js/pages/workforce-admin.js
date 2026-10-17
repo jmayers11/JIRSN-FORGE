@@ -1,4 +1,4 @@
-import { tryGet, command } from '../api.js';
+import { tryGet, command, readPost } from '../api.js';
 import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock } from '../ui.js';
 import { formModal, canAction } from '../forms.js';
 
@@ -44,9 +44,10 @@ export async function appendWorkforceAdmin(page, me) {
   const [people, typesResult, plant] = await Promise.all([tryGet('/api/kernel/directory'), tryGet('/api/competency/qualification-types'), tryGet('/api/resources/')]);
   let types = typesResult;
   const codes = key => (plant.data?.[key] ?? []).map(x => x.code);
-  let selected = null, quals = null;
+  let selected = null, quals = null, previewResult = null, previewError = null, previewBusy = false, previewSequence = 0;
 
   async function select(personId) {
+    previewSequence++; previewResult = null; previewError = null; previewBusy = false;
     selected = (people.data ?? []).find(p => p.personId === personId) ?? null;
     quals = selected ? await tryGet(`/api/competency/people/${selected.personId}`) : null;
     render();
@@ -60,6 +61,18 @@ export async function appendWorkforceAdmin(page, me) {
       <div class="toolbar"><label for="wf-person">Person</label><select class="select" id="wf-person"><option value="">— choose —</option>
         ${list.map(p => `<option value="${p.personId}" ${selected?.personId === p.personId ? 'selected' : ''}>${esc(p.displayName)}</option>`).join('')}</select></div>
       ${selected ? `<div class="actions">${actions.map(([a, text]) => `<button class="btn small" data-wf="${a}">${esc(text)}</button>`).join('')}</div>
+        ${canAction(me, 'readiness.read') ? `<section class="panel" aria-label="Assignment impact preview">
+          <h3>Assignment impact preview</h3><p class="muted">Compare active work before and after a proposed assignment. This preview never changes the assignment.</p>
+          <div class="form-grid">
+            <label class="field"><span>Safety area</span><select class="input" data-preview-field="safetyAreaCode"><option value="">— none —</option>${codes('safetyAreas').map(code => `<option value="${esc(code)}">${esc(code)}</option>`).join('')}</select></label>
+            <label class="field"><span>Work center</span><select class="input" data-preview-field="workCenterCode"><option value="">— none —</option>${codes('workCenters').map(code => `<option value="${esc(code)}">${esc(code)}</option>`).join('')}</select></label>
+            <label class="field"><span>Machine</span><select class="input" data-preview-field="machineCode"><option value="">— none —</option>${codes('machines').map(code => `<option value="${esc(code)}">${esc(code)}</option>`).join('')}</select></label>
+            <label class="field"><span>Activity</span><select class="input" data-preview-field="activityCode"><option value="">— choose —</option>${codes('activityTypes').map(code => `<option value="${esc(code)}">${esc(code)}</option>`).join('')}</select></label>
+            <label class="field"><span><input type="checkbox" data-preview-field="asTrainee"> Proposed as trainee</span></label>
+          </div>
+          <button class="btn small" data-reallocation-preview ${previewBusy ? 'disabled' : ''}>${previewBusy ? 'Evaluating…' : 'Preview impact'}</button>
+          ${previewError ? errorBlock(previewError, 'assignment impact preview') : previewResult ? previewHtml(previewResult) : ''}
+        </section>` : ''}
         <h3>Qualifications</h3>${quals?.error ? errorBlock(quals.error, 'qualifications') : !(quals?.data ?? []).length ? '<div class="muted">No qualifications recorded.</div>' : `
         <table class="table"><thead><tr><th>Qualification</th><th>Status</th><th>Certified</th><th>Expires</th><th></th></tr></thead><tbody>
         ${quals.data.map(q => `<tr><td>${esc(typeName(q.code))}</td><td><span class="pill ${STATUS_TONE[q.status] ?? 'none'}">${esc(q.status.replace(/([a-z])([A-Z])/g, '$1 $2'))}</span></td>
@@ -70,6 +83,7 @@ export async function appendWorkforceAdmin(page, me) {
         </tbody></table>`}` : '<div class="muted">Choose a person to manage their work, presence, badge and qualifications.</div>'}`}`;
     $('#wf-person', section)?.addEventListener('change', e => select(e.target.value));
     $('#prerequisite', section)?.addEventListener('click', prerequisite);
+    $('[data-reallocation-preview]', section)?.addEventListener('click', previewAssignment);
     $$('[data-wf]', section).forEach(b => b.addEventListener('click', () => run(b.dataset.wf)));
     $$('[data-qual]', section).forEach(b => b.addEventListener('click', () => b.dataset.qual === 'certify' ? certify(b.dataset.code) : qualification(b.dataset.qual, b.dataset.code)));
   }
@@ -79,6 +93,37 @@ export async function appendWorkforceAdmin(page, me) {
   const base = () => `/api/workforce/workers/${selected.personId}`;
   const after = () => select(selected.personId);
   const simple = (title, detail, path, body = {}) => formModal({ title, detail, fields: [], confirmLabel: title, reasonRequired: true }, (_, reason) => command(path, body, reason), after);
+
+  function previewHtml(run) {
+    const result = run.output, impacts = result.impacts ?? [];
+    const workName = work => [work.safetyAreaCode, work.workCenterCode, work.machineCode, work.activityCode].filter(Boolean).join(' · ') || 'Unspecified work';
+    return `<div class="notice info" data-preview-result>Preview only: no assignment was changed. ${esc(result.personName)} has ${impacts.length} projected active-work impact${impacts.length === 1 ? '' : 's'}.</div>
+      ${impacts.length ? `<table class="table"><thead><tr><th>Impact</th><th>Work</th><th>Constraint</th><th>Effect</th></tr></thead><tbody>${impacts.map(i => `<tr><td>${esc(i.kind)}</td><td>${esc(workName(i.work))}</td><td>${esc(i.constraint ?? '—')}</td><td>${esc(i.detail)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">No active work changes in this preview.</div>'}
+      ${(result.options ?? []).length ? `<h4>Possible responses</h4><ul>${result.options.map(o => `<li>${esc(o.description)}${o.consequences?.length ? ` — ${esc(o.consequences.join('; '))}` : ''}</li>`).join('')}</ul>` : ''}`;
+  }
+
+  async function previewAssignment() {
+    if (!selected || previewBusy) return;
+    const value = name => $('[data-preview-field="' + name + '"]', section);
+    let body;
+    try {
+      const activityCode = value('activityCode').value;
+      if (!activityCode) throw new Error('Choose an activity for the preview.');
+      body = assignmentBody({ safetyAreaCode: value('safetyAreaCode').value, workCenterCode: value('workCenterCode').value,
+        machineCode: value('machineCode').value, activityCode, asTrainee: value('asTrainee').checked });
+    } catch (error) { previewError = error; render(); return; }
+    const personId = selected.personId, sequence = ++previewSequence;
+    previewBusy = true; previewError = null; previewResult = null; render();
+    try {
+      const result = await readPost(`/api/readiness/reallocation-preview/${personId}`, body);
+      if (sequence !== previewSequence || selected?.personId !== personId) return;
+      previewResult = result; previewBusy = false;
+    } catch (error) {
+      if (sequence !== previewSequence || selected?.personId !== personId) return;
+      previewError = error; previewBusy = false;
+    }
+    render();
+  }
 
   function run(action) {
     const name = selected.displayName;

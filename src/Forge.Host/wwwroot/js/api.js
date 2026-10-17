@@ -66,6 +66,11 @@ export async function get(path) {
   return handle(await fetch(path, { headers: headers(false) }));
 }
 
+/** A body-bearing read-only preview endpoint. It carries the caller's identity without command semantics. */
+export async function readPost(path, body) {
+  return handle(await fetch(path, { method: 'POST', headers: headers(true), body: JSON.stringify(body) }));
+}
+
 /** Sends a command. `reason` is recorded in the audit trail with the change. */
 export async function command(path, body = {}, reason, options = {}) {
   const payload = reason ? { ...body, reason } : body;

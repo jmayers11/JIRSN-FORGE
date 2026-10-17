@@ -242,6 +242,11 @@ public sealed class GenealogyGraph
                         break;
                     case TransformationRole.Byproduct when line.LotNumber is { } lot:
                         g.Add(order, Instance(line.PartNumber, lot), GenealogyRelation.Byproduct, line.Quantity, x.RecordedAt);
+                        foreach (var parent in line.Parents ?? [])
+                        {
+                            g.Add(Instance(parent.PartNumber, parent.LotNumber), Instance(line.PartNumber, lot), GenealogyRelation.Byproduct, parent.Quantity, x.RecordedAt,
+                                $"parent material attributed on order {x.OrderNumber.ToString(CultureInfo.InvariantCulture)}");
+                        }
                         break;
                     default:
                         break;

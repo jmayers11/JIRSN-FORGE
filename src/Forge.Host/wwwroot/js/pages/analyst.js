@@ -100,6 +100,7 @@ export async function analystPage(page, ctx) {
   const initialQuestion = (ctx.query.get('q') ?? '').trim().slice(0, 500);
   let narrate = false;
   let initialAsked = false;
+  let directBrief = null, briefError = null, briefing = false;
 
   function render() {
     page.innerHTML = `
@@ -113,11 +114,12 @@ export async function analystPage(page, ctx) {
           <div class="chips">${s.suggestions.map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
           <div class="toolbar">
             <select class="input" id="brief-shift" style="max-width:220px"><option value="">Current shift</option>${shifts.map(x => `<option value="${esc(x.code)}">${esc(x.name)}</option>`).join('')}</select>
-            <button class="btn" id="brief">Brief me</button>
+            <button class="btn" id="brief" ${briefing ? 'disabled' : ''}>${briefing ? 'Preparing brief…' : 'Brief me'}</button>
             ${s.narration ? `<label class="opt"><input type="checkbox" id="narrate" ${narrate ? 'checked' : ''}> Add an AI summary (${esc(s.provider)})</label>` : ''}
           </div>
         </div>
       </section>
+      ${briefing ? '<section class="panel" aria-live="polite">Preparing the authorized operations brief…</section>' : briefError ? `<section class="panel">${errorBlock(briefError, 'the operations brief')}</section>` : directBrief ? `<section class="panel"><header><h2>Operations brief</h2></header>${briefHtml(directBrief)}</section>` : ''}
       <div id="conversation">${history.map((h, n) => answerHtml(h, n)).reverse().join('')}</div>`;
 
     $('#ask', page).addEventListener('submit', e => { e.preventDefault(); ask($('#q', page).value); });
@@ -143,8 +145,14 @@ export async function analystPage(page, ctx) {
   }
 
   async function brief(shift) {
-    const name = shifts.find(x => x.code === shift)?.name;
-    await ask(name ? `Brief me — ${name}` : 'Brief me');
+    briefing = true; directBrief = null; briefError = null; render();
+    const query = shift ? `?shift=${encodeURIComponent(shift)}` : '';
+    const result = await tryGet(`/api/analyst/brief${query}`);
+    if (!page.isConnected) return;
+    briefing = false;
+    if (result.error) briefError = result.error;
+    else directBrief = result.data;
+    render();
   }
 
   render();

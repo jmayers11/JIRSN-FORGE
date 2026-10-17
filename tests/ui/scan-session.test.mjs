@@ -111,6 +111,20 @@ test('server-reported accepted provenance is displayed as recorded evidence rath
   assert.equal(h.calls.some(call => call.path.startsWith('/api/shopfloor/')), false);
 });
 
+test('accepted-command lookup retrieves its individually authorized durable record', async t => {
+  const acceptanceId = '0d1cabde-8e19-4fce-8c10-7dc3a6d031a2';
+  const accepted = { ...initial(), accepted: [{ acceptanceId, commandType: 'ReportProduction', entityType: 'Operation', entityId: '17/10', correlationId: 'correlation-accepted', auditId: 'audit-accepted', eventIds: ['event-accepted'], operatorPersonId, actor: `person:${operatorPersonId}`, recordedAt: '2026-10-16T10:00:00Z', policyFingerprint: 'policy-fingerprint', selections: [{ kind: 'Material', subjectCode: materialCode, sourceFingerprint: 'source-fingerprint' }] }] };
+  const record = { sessionId: 'session-1', entry: accepted.accepted[0] };
+  const h = await harness(t, { route: path => path === '/api/identification/scan-sessions/session-1' ? response(accepted) : path === `/api/identification/scan-acceptances/${acceptanceId}` ? response(record) : null });
+  await h.start();
+  fire(h.element.querySelector('[data-acceptance-lookup="0"]'), 'click'); await flush();
+  assert.ok(h.calls.some(call => call.path === `/api/identification/scan-acceptances/${acceptanceId}`));
+  const resultHost = h.element.querySelector('[data-acceptance-result="0"]');
+  assert.match(resultHost.innerHTML, /Accepted record · session session-1/);
+  assert.match(resultHost.innerHTML, /event-accepted/);
+  assert.match(resultHost.innerHTML, /forge:v1:configured-plant:material:PART-A:LOT-7/);
+});
+
 test('a pending stage cannot supply a business-command snapshot before the current server version is read', async t => {
   const pending = deferred(); let staged = false;
   const h = await harness(t, { route: (path, body) => path.endsWith('/stages') && body ? (staged = true, pending.promise) : path === '/api/identification/scan-sessions/session-1' && staged ? response({ ...initial(), version: 4, selections: [{ kind: 'Material', code: materialCode, subjectCode: materialCode, inputMode: 'Manual' }] }) : null });

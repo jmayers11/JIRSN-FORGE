@@ -57,6 +57,20 @@ test('criteria list offers only the next lifecycle step for each revision', asyn
   assert.doesNotMatch(page.innerHTML, /data-crit-next="ACC-BRKT\/2"/, 'a new revision waits while revision 3 is open');
 });
 
+test('history shows readable inspection and release lists and opens their record lookups', async t => {
+  const inspection = { inspectionId: 41, version: 1, passed: true, quantity: 100, sampleQuantity: 2, criteriaCode: 'ACC-BRKT', criteriaRevision: 2, inspector: 'person:x', at: '2026-10-15T10:00:00Z', evidence: 'Sheet 7', results: [], subject: { key: { partNumber: 'BRKT', lotNumber: 'L9', locationCode: 'FG-1' }, revision: 'B' } };
+  const release = { decisionId: 52, version: 1, inspectionIds: [41], subject: { partNumber: 'BRKT', lotNumber: 'L9', locationCode: 'FG-1' }, quantity: 100, approvedBy: 'person:y', approvedAt: '2026-10-15T11:00:00Z', basis: 'Independent approval' };
+  const { page, calls } = await open(t, path => path.endsWith('/inspections?take=30') ? response([inspection]) : path.endsWith('/product-releases?take=30') ? response([release]) : null);
+  assert.ok(page.querySelector('[data-tab="history"]'));
+  fire(page.querySelector('[data-tab="history"]'), 'click'); await flush();
+  assert.match(page.innerHTML, /Recent inspections/); assert.match(page.innerHTML, /BRKT lot L9 at FG-1/); assert.match(page.innerHTML, /Recent product releases/); assert.match(page.innerHTML, /52/);
+  fire(page.querySelector('[data-inspection-id="41"]'), 'click'); await flush();
+  assert.ok(calls.some(call => call.path.endsWith('/inspections/41')));
+  fire(page.querySelector('[data-tab="history"]'), 'click'); await flush();
+  fire(page.querySelector('[data-release-id="52"]'), 'click'); await flush();
+  assert.ok(calls.some(call => call.path.endsWith('/product-releases/52')));
+});
+
 test('inspection is recorded against the exact subject and effective criteria version, then looked up', async t => {
   const inspection = { inspectionId: 41, version: 1, passed: true, quantity: 100, sampleQuantity: 2, criteriaCode: 'ACC-BRKT', criteriaRevision: 2, inspector: 'person:x', at: '2026-10-15T10:00:00Z', evidence: 'Sheet 7', results: [],
     subject: { key: { partNumber: 'BRKT', lotNumber: 'L9', locationCode: 'FG-1' }, revision: 'B' } };

@@ -1,6 +1,6 @@
 import { tryGet } from '../api.js';
 import { icon } from '../icons.js';
-import { esc, $$, fmtNumber, fmtDateTime, errorBlock, emptyBlock } from '../ui.js';
+import { esc, $, $$, fmtNumber, fmtDateTime, errorBlock, emptyBlock } from '../ui.js';
 import { isDownAt } from '../model.js';
 import { appendStoppages, appendReasonCodes } from '../actuals.js';
 import { appendTools, appendToolRequirements } from '../tools.js';
@@ -52,13 +52,14 @@ export async function workCentersPage(page, ctx) {
     return `
     <section class="panel"><header><h2>${esc(x.wc.name)} — executable capacity, next 7 days</h2></header>
       ${capacity.error ? errorBlock(capacity.error, 'capacity') : !capRows.length ? emptyBlock('No machine capacity', 'This work center has no machines with activities set up.') : `
-      <table class="table"><thead><tr><th>Machine</th><th>Activity</th><th>Working hours</th><th>Executable hours</th><th>Lost to</th></tr></thead><tbody>
-      ${capRows.map(c => {
+      <table class="table"><thead><tr><th>Machine</th><th>Activity</th><th>Working hours</th><th>Executable hours</th><th>Lost to</th><th>Readiness now</th></tr></thead><tbody>
+      ${capRows.map((c, index) => {
         const lost = {};
         for (const i of c.intervals.filter(i => !i.executable)) lost[i.limiting] = (lost[i.limiting] ?? 0) + (new Date(i.end) - new Date(i.start)) / 36e5;
         return `<tr><td>${esc(c.machineCode)}</td><td>${esc(c.activityCode)}</td><td>${fmtNumber(c.workingHours)}</td>
           <td class="${Number(c.executableHours) < Number(c.workingHours) ? 'c-warn' : 'c-ok'}">${fmtNumber(c.executableHours)}</td>
-          <td>${Object.entries(lost).map(([k, h]) => `${esc(k)} ${fmtNumber(h)} h`).join(', ') || '—'}</td></tr>`;
+          <td>${Object.entries(lost).map(([k, h]) => `${esc(k)} ${fmtNumber(h)} h`).join(', ') || '—'}</td>
+          <td><button class="btn small" data-readiness-check="${index}" data-machine-code="${esc(c.machineCode)}" data-activity-code="${esc(c.activityCode)}">Evaluate now</button><div data-readiness-result="${index}" class="small"></div></td></tr>`;
       }).join('')}
       </tbody></table>
       <div class="faint" style="margin-top:6px">${esc(capacity.data.output.confidence)}</div>`}
@@ -69,6 +70,22 @@ export async function workCentersPage(page, ctx) {
   }
 
   $$('[data-wc]', page).forEach(row => row.addEventListener('click', () => { location.hash = `#/work-centers/${encodeURIComponent(row.dataset.wc)}`; }));
+  $$('[data-readiness-check]', page).forEach(button => button.addEventListener('click', async () => {
+    const machine = button.dataset.machineCode, activity = button.dataset.activityCode;
+    if (!machine || !activity || button.disabled) return;
+    button.disabled = true;
+    const result = await tryGet(`/api/readiness/machines/${encodeURIComponent(machine)}?activity=${encodeURIComponent(activity)}`);
+    const target = $(`[data-readiness-result="${button.dataset.readinessCheck}"]`, page);
+    if (target) {
+      if (result.error) target.innerHTML = errorBlock(result.error, 'machine readiness');
+      else {
+        const output = result.data.output;
+        target.innerHTML = `<div class="${output.executable ? 'c-ok' : 'c-warn'}">${output.executable ? 'Executable on evaluated dimensions' : `Blocked: ${esc(output.primaryConstraint ?? 'review required')}`}</div>
+          <details><summary>Readiness evidence</summary><ul>${output.dimensions.map(d => `<li><b>${esc(d.name)} · ${esc(d.outcome)}</b>: ${esc(d.detail)}</li>`).join('')}${output.notEvaluated.length ? `<li>Not evaluated: ${esc(output.notEvaluated.join(', '))}</li>` : ''}</ul></details>`;
+      }
+    }
+    button.disabled = false;
+  }));
 
   // V3.5: stoppages on the selected work center's machines (or all machines), and the plant's reason codes.
   const chosen = selected ? rows.find(x => x.wc.code === selected) : null;

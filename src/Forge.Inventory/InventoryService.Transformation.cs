@@ -14,7 +14,8 @@ namespace Forge.Inventory;
 /// <param name="LotNumber">The issued lot (consumed, scrap, loss, remaining) or the new instance (remnant, byproduct).</param>
 /// <param name="SourceLot">For a remnant: the issued lot it was cut from.</param>
 /// <param name="LocationCode">For a remnant or byproduct: where it goes into stock.</param>
-public sealed record TransformationEntry(TransformationRole Role, string PartNumber, string? LotNumber, decimal Quantity, string? SourceLot = null, string? LocationCode = null);
+/// <param name="Parents">For a byproduct: the issued lot quantities explicitly attributed to this output.</param>
+public sealed record TransformationEntry(TransformationRole Role, string PartNumber, string? LotNumber, decimal Quantity, string? SourceLot = null, string? LocationCode = null, IReadOnlyList<TransformationParent>? Parents = null);
 
 /// <summary>What became of material issued to a production order (V3.3).</summary>
 public sealed record RecordTransformation(long OrderNumber, int? OperationSequence, IReadOnlyList<TransformationEntry> Entries);
@@ -101,6 +102,7 @@ public sealed partial class InventoryService
                 {
                     case TransformationRole.Consumed or TransformationRole.Scrap or TransformationRole.Loss or TransformationRole.Remaining:
                     {
+                        RejectParents(entry);
                         var lot = item.LotTracked || item.Serialized ? RequireLot(item, entry.LotNumber) : null;
                         if (!issued.TryGetValue((item.PartNumber, lot), out var row) || row.NetIssued <= 0)
                         {
@@ -114,6 +116,7 @@ public sealed partial class InventoryService
 
                     case TransformationRole.Remnant:
                     {
+                        RejectParents(entry);
                         RequireDivisible(item);
                         var source = RequireLot(item, entry.SourceLot ?? throw new CommandRejectedException("source_required", "A remnant names the issued lot it was cut from."));
                         if (!issued.TryGetValue((item.PartNumber, source), out var row) || row.NetIssued <= 0)
@@ -144,12 +147,60 @@ public sealed partial class InventoryService
 
                     case TransformationRole.Byproduct:
                     {
+                        var parents = entry.Parents ?? [];
+                        if (parents.Count > MaxEntries)
+                        {
+                            throw new CommandRejectedException("invalid_parents", $"Give no more than {MaxEntries} parent lots per byproduct.");
+                        }
+
                         if (item.PartNumber == order.PartNumber)
                         {
                             throw new CommandRejectedException("use_production_receipt", $"{item.PartNumber} is what order {order.OrderNumber} makes; receive it from production.");
                         }
 
-                        var lot = item.LotTracked || item.Serialized ? await NewInstanceAsync(uow, item, entry.LotNumber, lines, ct) : RequireLot(item, entry.LotNumber);
+                        var trackedOutput = item.LotTracked || item.Serialized;
+                        if (trackedOutput && parents.Count == 0)
+                        {
+                            throw new CommandRejectedException("source_required", "A lot-tracked or serialized byproduct names the issued parent lot or lots it came from.");
+                        }
+
+                        var lot = trackedOutput ? await NewInstanceAsync(uow, item, entry.LotNumber, lines, ct) : RequireLot(item, entry.LotNumber);
+                        if (!trackedOutput && parents.Count > 0)
+                        {
+                            throw new CommandRejectedException("parents_not_allowed", "A byproduct needs its own tracked instance before parent lots can be recorded.");
+                        }
+
+                        var parentRecords = new List<TransformationParent>();
+                        var seenParents = new HashSet<(string Part, string Lot)>();
+                        foreach (var parent in parents)
+                        {
+                            ArgumentNullException.ThrowIfNull(parent);
+                            var parentItem = await ItemAsync(uow, BusinessCode.Require(parent.PartNumber, "Parent part"), ct);
+                            if (!(parentItem.LotTracked || parentItem.Serialized))
+                            {
+                                throw new CommandRejectedException("lot_required", $"Parent part {parentItem.PartNumber} must have a tracked inventory instance.");
+                            }
+
+                            var parentLot = RequireLot(parentItem, parent.LotNumber)!;
+                            if (!seenParents.Add((parentItem.PartNumber, parentLot)))
+                            {
+                                throw new CommandRejectedException("invalid_parents", $"List parent {parentItem.PartNumber} lot {parentLot} once per byproduct.");
+                            }
+
+                            if (!issued.TryGetValue((parentItem.PartNumber, parentLot), out var parentIssue) || parentIssue.NetIssued <= 0)
+                            {
+                                throw new CommandRejectedException("not_issued", $"No {parentItem.PartNumber} lot {parentLot} is issued to order {order.OrderNumber}.");
+                            }
+
+                            var parentLotInfo = (await lookup.ListLotsAsync(parentItem.PartNumber, ct)).FirstOrDefault(l => l.LotNumber == parentLot);
+                            if (parentLotInfo is null)
+                            {
+                                throw new CommandRejectedException("lot_not_found", $"{parentItem.PartNumber} lot {parentLot} does not exist.");
+                            }
+
+                            parentRecords.Add(new TransformationParent(parentItem.PartNumber, parentLot, RequireQuantity(parentItem, parent.Quantity)));
+                        }
+
                         var quantity = RequireQuantity(item, entry.Quantity);
                         var location = await CompanyLocationAsync(uow, entry.LocationCode ?? throw new CommandRejectedException("location_required", "Say where the byproduct goes."), ct);
                         await store.LockPartAsync(item.PartNumber, ct);
@@ -161,7 +212,7 @@ public sealed partial class InventoryService
                         var id = await store.InsertTransactionAsync(
                             new NewTransaction(InventoryTransactionKind.Byproduct, item.PartNumber, quantity, null, null, location.Code, StockStatus.Released, lot, OrderNumber: order.OrderNumber, Reason: context.Reason),
                             now, context.Actor, ct);
-                        lines.Add(new TransformationLine(number, entry.Role, item.PartNumber, lot, quantity, null, null, location.Code, id));
+                        lines.Add(new TransformationLine(number, entry.Role, item.PartNumber, lot, quantity, null, null, location.Code, id, parentRecords));
                         events.Add(pipeline.Event(new InventoryReceived(id, item.PartNumber, quantity, location.Code, nameof(StockStatus.Released), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber));
                         break;
                     }
@@ -170,6 +221,8 @@ public sealed partial class InventoryService
                         throw new CommandRejectedException("invalid_role", $"Unknown role {entry.Role}.");
                 }
             }
+
+            ValidateParentAttribution(before, lines);
 
             if (lines.GroupBy(l => (l.Role, l.PartNumber, l.LotNumber)).Any(g => g.Key.Role == TransformationRole.Remaining && g.Count() > 1))
             {
@@ -195,6 +248,30 @@ public sealed partial class InventoryService
                 events,
                 new AuditChange("Transformation", transformationId.ToString(CultureInfo.InvariantCulture), null, CanonicalJson.Serialize(record with { TransformationId = transformationId })));
         }, ct);
+    }
+
+    private static void RejectParents(TransformationEntry entry)
+    {
+        if (entry.Parents is { Count: > 0 })
+        {
+            throw new CommandRejectedException("parents_not_allowed", "Explicit parent lots are only recorded for byproduct lines.");
+        }
+    }
+
+    private static void ValidateParentAttribution(IReadOnlyList<TransformationInfo> before, IReadOnlyList<TransformationLine> current)
+    {
+        var consumed = before.SelectMany(t => t.Lines).Concat(current)
+            .Where(l => l.Role == TransformationRole.Consumed && l.LotNumber is not null)
+            .GroupBy(l => (l.PartNumber, Lot: l.LotNumber!))
+            .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantity));
+        var attributed = before.SelectMany(t => t.Lines).Concat(current)
+            .SelectMany(l => l.Parents ?? [])
+            .GroupBy(p => (p.PartNumber, p.LotNumber))
+            .FirstOrDefault(g => g.Sum(p => p.Quantity) > consumed.GetValueOrDefault(g.Key));
+        if (attributed is not null)
+        {
+            throw new CommandRejectedException("parent_quantity_exceeded", $"Byproduct parent attribution for {attributed.Key.PartNumber} lot {attributed.Key.LotNumber} exceeds the quantity recorded as consumed.");
+        }
     }
 
     public Task<CommandResult> SetYieldToleranceAsync(SetYieldTolerance c, CommandContext context, CancellationToken ct)

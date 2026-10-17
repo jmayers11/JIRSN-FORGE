@@ -26,7 +26,7 @@ public sealed class V41LabelLifecycleTests(PostgresFixture postgres)
     {using var response=await client.PostAsJsonAsync("/api/identification/resolve",new{code});Assert.Equal(HttpStatusCode.NotFound,response.StatusCode);var text=await response.Content.ReadAsStringAsync();Assert.Contains("identification_not_found",text,StringComparison.Ordinal);Assert.DoesNotContain(code,text,StringComparison.Ordinal);}
     private static async Task<string[]> Rows(ForgeApp app,bool presentation=false,bool full=false)
     {
-        string[] source=["inventory.lot","inventory.balance","inventory.transaction","inventory.instance_link","inventory.transformation","inventory.transformation_line","execution.production_order","execution.order_operation","execution.order_material"];
+        string[] source=["inventory.lot","inventory.balance","inventory.transaction","inventory.instance_link","inventory.transformation","inventory.transformation_line","inventory.transformation_line_parent","execution.production_order","execution.order_operation","execution.order_material"];
         string[] labels=["kernel.identification_presentation","kernel.identification_presentation_version","engineering.document_file"];
         string[] delivery=["kernel.audit_log","kernel.event_log","kernel.outbox","kernel.idempotency"];
         var tables=full?source.Concat(labels).Concat(delivery):presentation?labels:source;
@@ -36,7 +36,7 @@ public sealed class V41LabelLifecycleTests(PostgresFixture postgres)
         return result.ToArray();
     }
 
-    private static async Task<(SlittingPlant.Plant Plant,long Order,Guid Program)> Setup(ForgeApp app,bool independent=true)
+    private static async Task<(SlittingPlant.Plant Plant,long Order,Guid Program)> Setup(ForgeApp app,bool independent=true,bool multipleActiveCopies=false,bool programScopedPolicy=true)
     {
         var(plant,planner)=await SlittingPlant.BuildEngineeredAsync(app);
         string[] permissions=[Permissions.IdentificationRead,Permissions.IdentificationLabelsManage,Permissions.IdentificationLabelsApprove,
@@ -52,14 +52,14 @@ public sealed class V41LabelLifecycleTests(PostgresFixture postgres)
             await plant.Ok(plant.Admin,$"/api/kernel/people/{person}/programs",new{programId=program,reason="Actual source membership"});
         var order=long.Parse((await plant.Ok(plant.Engineer,"/api/orders/",new{partNumber="ROLL-100",quantity=4m,dueDate=DateTime.UtcNow.AddDays(15).ToString("yyyy-MM-dd",CultureInfo.InvariantCulture),priority=3,programId=program})).GetProperty("entityId").GetString()!,CultureInfo.InvariantCulture);
         await plant.Ok(planner,$"/api/orders/{order}/release",new{reason="Real released primitive source"});
-        var life=new QmsLabelLifecycleRules(QmsActiveCopyMode.SingleActive,1,true,true,true,true,independent,
-            QmsLabelConfirmation.OperatorObservedPrintingAndAttachment,["order","traveler","operation","wip"],[new("ORDER-LABEL",1)],
+        var life=new QmsLabelLifecycleRules(multipleActiveCopies?QmsActiveCopyMode.MultipleActive:QmsActiveCopyMode.SingleActive,multipleActiveCopies?3:1,true,true,true,true,independent,
+            QmsLabelConfirmation.OperatorObservedPrintingAndAttachment,["order","traveler","operation","wip","material"],[new("ORDER-LABEL",1)],
             [QmsLabelSymbology.Code128,QmsLabelSymbology.QR,QmsLabelSymbology.DataMatrix],true,true,true);
         await QmsPolicyScenario.AdoptAsync(plant,"LABEL-POLICY","LABEL-ADOPTION","LABEL.PROCEDURE",
             new(QmsPolicyKind.LabelCopy,"One active logical label copy, explicit independent approval and observed attachment",plant.People["eng"],"Recorded local briefing","On source change",true,
-                new(LabelCopy:new(true,1,true,life))),QmsPolicyPurpose.LabelCopy,new(),program);
+                new(LabelCopy:new(true,1,true,life))),QmsPolicyPurpose.LabelCopy,new(),programScopedPolicy?program:null);
         await plant.Ok(plant.Engineer,"/api/identification/templates",new{code="ORDER-LABEL",facilityCode="PLANT1",width=1200,height=320,
-            allowedKinds=new[]{"order","traveler","operation","wip"},allowedSymbologies=new[]{"Code128","QR","DataMatrix"},documents=new[]{new{documentNumber="LABEL.PROCEDURE",revision="A"}},reason="Exact governed controlled layout"});
+            allowedKinds=new[]{"order","traveler","operation","wip","material"},allowedSymbologies=new[]{"Code128","QR","DataMatrix"},documents=new[]{new{documentNumber="LABEL.PROCEDURE",revision="A"}},reason="Exact governed controlled layout"});
         await Reject(plant,plant.Engineer,"/api/identification/templates/ORDER-LABEL/revisions/1/approve",new{expectedVersion=1,reason="Self approval prohibited"},"separation_of_duties");
         await plant.Ok(plant.Approver,"/api/identification/templates/ORDER-LABEL/revisions/1/approve",new{expectedVersion=1,reason="Independent exact template approval"});
         return(plant,order,program);
@@ -69,6 +69,85 @@ public sealed class V41LabelLifecycleTests(PostgresFixture postgres)
     {
         var issuance=await Get(client,$"/api/identification/labels/issuances/{issue}");var copies=issuance.GetProperty("copies").EnumerateArray().ToArray();Assert.Single(copies);
         return(copies[0].GetProperty("labelId").GetGuid(),copies[0].GetProperty("code").GetString()!);
+    }
+
+    private static async Task<JsonElement> Resolve(HttpClient client,string code)
+    {
+        using var response=await client.PostAsJsonAsync("/api/identification/resolve",new{code});
+        var text=await response.Content.ReadAsStringAsync();Assert.True(response.IsSuccessStatusCode,text);
+        using var json=JsonDocument.Parse(text);return json.RootElement.Clone();
+    }
+
+    [Fact]
+    public async Task Reprinting_a_child_label_keeps_the_same_lot_and_holding_one_child_leaves_its_sibling_released()
+    {
+        await using var app=new ForgeApp(await postgres.CreateDatabaseAsync(),configureBuilder:b=>{b.UseSetting(CanonicalIdentification.NamespaceConfigurationKey,Namespace);b.UseSetting(QmsService.ConfigurationKey,"EXAMPLE-ORG");});
+        var(plant,_,program)=await Setup(app,multipleActiveCopies:true,programScopedPolicy:false);var stores=plant.As("stores");var printer=plant.As("label-printer");
+        await plant.Ok(plant.Admin,$"/api/kernel/people/{plant.People["stores"]}/programs",new{programId=program,reason="Authorize the actual Inventory source owner for this order"});
+        foreach(var(part,makeBuy) in new[]{("V5-SOURCE","Buy"),("V5-CHILD","Buy"),("V5-MAKE","Make")})
+        {
+            await plant.Ok(plant.Engineer,"/api/engineering/items",new{partNumber=part,description=part,unitOfMeasure="M",makeBuy,leadTimeDays=2,lotTracked=part!="V5-MAKE"});
+            await plant.Ok(plant.Engineer,$"/api/engineering/items/{part}/revisions",new{revision="A"});
+        }
+        await plant.Ok(plant.Engineer,"/api/engineering/items/V5-MAKE/revisions/A/bom",new{lineNumber=1,componentPartNumber="V5-SOURCE",quantityPer=1m,scrapPercent=0m});
+        await plant.Ok(plant.Engineer,"/api/engineering/items/V5-MAKE/revisions/A/routing",new{sequence=10,description="Make child lots",workCenterCode="SLIT-WC",activityCode="RUN_SLITTER",eligibleMachines=new[]{"SLITTER-A"},setupMinutes=0m,runMinutesPerUnit=0.1m,crewSize=1});
+        foreach(var part in new[]{"V5-SOURCE","V5-CHILD","V5-MAKE"})
+        {
+            await plant.Ok(plant.Approver,$"/api/engineering/items/{part}/revisions/A/release",new{reason="Release label acceptance fixture"});
+        }
+        var order=long.Parse((await plant.Ok(plant.Engineer,"/api/orders/",new{partNumber="V5-MAKE",quantity=4m,dueDate=DateTime.UtcNow.AddDays(15).ToString("yyyy-MM-dd",CultureInfo.InvariantCulture),priority=3,programId=program})).GetProperty("entityId").GetString()!,CultureInfo.InvariantCulture);
+        await plant.Ok(stores,"/api/inventory/receipts",new{partNumber="V5-SOURCE",quantity=4m,locationCode="STORES",lotNumber="V5-SOURCE-1",supplierLot="V5-HEAT-1",revision="A",identityKind="Roll",reason="Record tracked source for label fixture"});
+        await plant.Ok(plant.As("planner"),$"/api/orders/{order}/release",new{reason="Release tracked child label fixture"});
+        await plant.Ok(stores,"/api/inventory/issues",new{orderNumber=order,partNumber="V5-SOURCE",quantity=4m,locationCode="STORES",lotNumber="V5-SOURCE-1"});
+        var transformation=long.Parse((await plant.Ok(stores,"/api/inventory/transformations",new{orderNumber=order,entries=new object[]{
+            new{role="Consumed",partNumber="V5-SOURCE",lotNumber="V5-SOURCE-1",quantity=4m},
+            new{role="Byproduct",partNumber="V5-CHILD",lotNumber="V5-CHILD-A",quantity=2m,locationCode="STORES",parents=new[]{new{partNumber="V5-SOURCE",lotNumber="V5-SOURCE-1",quantity=2m}}},
+            new{role="Byproduct",partNumber="V5-CHILD",lotNumber="V5-CHILD-B",quantity=2m,locationCode="STORES",parents=new[]{new{partNumber="V5-SOURCE",lotNumber="V5-SOURCE-1",quantity=2m}}}},reason="Record two distinct physical byproduct children"})).GetProperty("entityId").GetString()!,CultureInfo.InvariantCulture);
+        var reconciliationView=await Get(stores,$"/api/inventory/orders/{order}/reconciliation");
+        var reconciliation=reconciliationView.GetProperty("rows").EnumerateArray().Single();
+        Assert.Equal(("V5-SOURCE","V5-SOURCE-1","Balanced",4m),(reconciliation.GetProperty("partNumber").GetString(),reconciliation.GetProperty("lotNumber").GetString(),reconciliation.GetProperty("status").GetString(),reconciliation.GetProperty("accounted").GetDecimal()));
+        var storedTransformation=Assert.Single(reconciliationView.GetProperty("transformations").EnumerateArray());
+        Assert.Equal(transformation,storedTransformation.GetProperty("transformationId").GetInt64());
+        var storedChild=Assert.Single(storedTransformation.GetProperty("lines").EnumerateArray(),line=>line.GetProperty("lotNumber").GetString()=="V5-CHILD-A");
+        var storedParent=Assert.Single(storedChild.GetProperty("parents").EnumerateArray());
+        Assert.Equal(("V5-SOURCE","V5-SOURCE-1",2m),(storedParent.GetProperty("partNumber").GetString(),storedParent.GetProperty("lotNumber").GetString(),storedParent.GetProperty("quantity").GetDecimal()));
+        var singleParentTrace=await Get(plant.As("planner"),"/api/genealogy/trace?part=V5-CHILD&lot=V5-CHILD-A&direction=Back");
+        Assert.Contains(singleParentTrace.GetProperty("edges").EnumerateArray(),edge=>edge.GetProperty("from").GetString()=="lot:V5-SOURCE/V5-SOURCE-1"&&edge.GetProperty("to").GetString()=="lot:V5-CHILD/V5-CHILD-A"&&edge.GetProperty("quantity").GetDecimal()==2m);
+        var physical=await Rows(app);var beforeStock=(await Get(stores,"/api/inventory/stock?part=V5-CHILD")).EnumerateArray().ToArray();
+        Assert.Equal(2,beforeStock.Length);
+        Assert.All(beforeStock,row=>Assert.Equal(("Released",2m),(row.GetProperty("status").GetString(),row.GetProperty("quantity").GetDecimal())));
+        var childCode=$"forge:v1:{Namespace}:material:{CanonicalIdentification.EncodeKey("V5-CHILD")}:{CanonicalIdentification.EncodeKey("V5-CHILD-A")}";
+        const string issuePath="/api/identification/labels";
+        var issue=Id(await plant.Ok(printer,issuePath,new{subjectCode=childCode,templateCode="ORDER-LABEL",templateVersion=1,symbology="QR",copies=1,facilityCode="PLANT1",reason="Unique child label"}));
+        var original=await Copy(plant,printer,issue);
+        await plant.Ok(plant.Approver,$"/api/identification/labels/{original.Id}/approve",new{expectedVersion=1,reason="Independent child label approval"});
+        var originalAttempt=Id(await plant.Ok(printer,$"/api/identification/labels/{original.Id}/print-attempts",new{expectedVersion=2,reason="Print child label"}));
+        using(var originalArtifact=await printer.GetAsync($"/api/identification/print-attempts/{originalAttempt}/artifact"))
+        {Assert.Equal(HttpStatusCode.OK,originalArtifact.StatusCode);Assert.Equal(original.Code,LabelRenderingTests.Decode(await originalArtifact.Content.ReadAsByteArrayAsync(),BarcodeFormat.QR_CODE).Text);}
+        await plant.Ok(printer,$"/api/identification/print-attempts/{originalAttempt}/outcome",new{expectedVersion=1,outcome="Confirmed",observation="Observed one correctly printed child label",observedPrinted=true,observedAttached=false,reason="Record observed print"});
+        await plant.Ok(printer,$"/api/identification/print-attempts/{originalAttempt}/outcome",new{expectedVersion=2,outcome="Confirmed",observation="Attached to the recorded child container",observedPrinted=true,observedAttached=true,reason="Record observed attachment"});
+        var reprint=Id(await plant.Ok(printer,$"/api/identification/labels/{original.Id}/reprint",new{expectedVersion=2,reason="Replace damaged child label with same physical identity"}));
+        var reprinted=await Copy(plant,printer,reprint);
+        await plant.Ok(plant.Approver,$"/api/identification/labels/{reprinted.Id}/approve",new{expectedVersion=1,reason="Independent reprint approval"});
+        var reprintAttempt=Id(await plant.Ok(printer,$"/api/identification/labels/{reprinted.Id}/print-attempts",new{expectedVersion=2,reason="Print governed reprint"}));
+        using(var reprintArtifact=await printer.GetAsync($"/api/identification/print-attempts/{reprintAttempt}/artifact"))
+        {Assert.Equal(HttpStatusCode.OK,reprintArtifact.StatusCode);Assert.Equal(reprinted.Code,LabelRenderingTests.Decode(await reprintArtifact.Content.ReadAsByteArrayAsync(),BarcodeFormat.QR_CODE).Text);}
+        await plant.Ok(printer,$"/api/identification/print-attempts/{reprintAttempt}/outcome",new{expectedVersion=1,outcome="Confirmed",observation="Observed one correctly reprinted child label",observedPrinted=true,observedAttached=false,reason="Record observed reprint"});
+        await plant.Ok(printer,$"/api/identification/print-attempts/{reprintAttempt}/outcome",new{expectedVersion=2,outcome="Confirmed",observation="Attached to the same recorded child container",observedPrinted=true,observedAttached=true,reason="Record reprint attachment"});
+        Assert.NotEqual(original.Code,reprinted.Code);
+        foreach(var code in new[]{original.Code,reprinted.Code})
+        {
+            var scan=await Resolve(printer,code);
+            Assert.Equal(("V5-CHILD","V5-CHILD-A","Lot"),(scan.GetProperty("partNumber").GetString(),scan.GetProperty("lotNumber").GetString(),scan.GetProperty("identityKind").GetString()));
+        }
+        Assert.Equal(physical,await Rows(app));
+        var afterLabelStock=(await Get(stores,"/api/inventory/stock?part=V5-CHILD")).EnumerateArray().ToArray();
+        Assert.Equal(2,afterLabelStock.Length);
+        Assert.All(afterLabelStock,row=>Assert.Equal(("Released",2m),(row.GetProperty("status").GetString(),row.GetProperty("quantity").GetDecimal())));
+        await plant.Ok(stores,"/api/inventory/holds",new{partNumber="V5-CHILD",quantity=2m,locationCode="STORES",lotNumber="V5-CHILD-A",reason="Contain only the affected child"});
+        var afterHold=(await Get(stores,"/api/inventory/stock?part=V5-CHILD")).EnumerateArray().ToArray();
+        Assert.Contains(afterHold,row=>row.GetProperty("lotNumber").GetString()=="V5-CHILD-A"&&row.GetProperty("status").GetString()=="Hold"&&row.GetProperty("quantity").GetDecimal()==2m);
+        Assert.Contains(afterHold,row=>row.GetProperty("lotNumber").GetString()=="V5-CHILD-B"&&row.GetProperty("status").GetString()=="Released"&&row.GetProperty("quantity").GetDecimal()==2m);
     }
 
     [Fact]

@@ -75,6 +75,9 @@ public static class KernelEndpoints
         api.MapGet("/people", (HttpContext http, KernelReadStore reads, CancellationToken ct) =>
             Read(http, Permissions.PeopleRead, async _ => await reads.ListPeopleAsync(ct)));
 
+        api.MapGet("/access-policy", (HttpContext http, KernelReadStore reads, CancellationToken ct) =>
+            Read(http, Permissions.AccessManage, async _ => await reads.ReadAccessPolicyAsync(ct)));
+
         api.MapPost("/people", (HttpContext http, RegisterPersonRequest body, AccessService access, CancellationToken ct) =>
             Command(http, body.Reason, context =>
             {

@@ -97,9 +97,11 @@ public interface IAcceptanceLookup
     Task<IReadOnlyList<AcceptanceCriteriaRevision>> ListCriteriaAsync(CancellationToken ct);
     Task<AcceptanceCriteriaRevision?> FindCriteriaAsync(string code,int revision,CancellationToken ct);
     Task<AcceptanceInspection?> FindInspectionAsync(long inspectionId,CancellationToken ct);
+    Task<IReadOnlyList<AcceptanceInspection>> ListInspectionsAsync(int take,CancellationToken ct);
     Task<AcceptanceInspection?> FindInspectionForNcrAsync(long ncrId,CancellationToken ct);
     Task<IReadOnlyList<AcceptanceInspection>> InspectionsForAsync(AcceptanceSubjectKey subject,CancellationToken ct);
     Task<ProductReleaseDecision?> FindDecisionAsync(long decisionId,CancellationToken ct);
+    Task<IReadOnlyList<ProductReleaseDecision>> ListDecisionsAsync(int take,CancellationToken ct);
     Task<IReadOnlyList<ProductReleaseDecision>> DecisionsForAsync(AcceptanceSubjectKey subject,CancellationToken ct);
     Task<ProductReleaseWithdrawal?> FindWithdrawalAsync(long decisionId,CancellationToken ct);
     Task<bool> HasOpenNcrAsync(AcceptanceSubjectKey subject,CancellationToken ct);

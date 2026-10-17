@@ -174,10 +174,10 @@ export async function qmsPage(page, ctx) {
 
   async function load() {
     const token = ++generation; closeDialogs();
-    const [status, records, directory] = await Promise.all([tryGet('/api/quality/qms/status'), tryGet(kind === 'Adoption' ? '/api/quality/qms/adoptions' : `/api/quality/qms/records?kind=${kind}`), tryGet('/api/kernel/directory')]);
+    const [status, records, directory, resources] = await Promise.all([tryGet('/api/quality/qms/status'), tryGet(kind === 'Adoption' ? '/api/quality/qms/adoptions' : `/api/quality/qms/records?kind=${kind}`), tryGet('/api/kernel/directory'), tryGet('/api/resources/')]);
     if (!current(token)) return;
     if (kind === 'Adoption' && records.data) records.data = records.data.map(record => ({ ...record, kind: 'Adoption' }));
-    data = { status, records, directory }; render();
+    data = { status, records, directory, resources }; render();
   }
 
   function dialog(title, detail, html, confirmLabel, send) {
@@ -367,7 +367,8 @@ export async function qmsPage(page, ctx) {
       ${data.status.error ? errorBlock(data.status.error, 'QMS organization configuration') : data.status.data?.configured ? `<div class="notice">Configured organization: <b>${esc(data.status.data.organizationCode)}</b>. Record scope and source permissions are checked separately.</div>` : '<div class="notice warn">QMS organization is not configured. Configure the deployment’s actual organization before creating governed records.</div>'}
       <section class="panel"><header><div class="seg">${KINDS.map(value => `<button data-qms-kind="${value}" class="${kind === value ? 'on' : ''}">${esc(value)}s</button>`).join('')}</div></header>
       ${data.records.error ? errorBlock(data.records.error, 'QMS records') : records.length ? `<table class="table"><thead><tr><th>Record</th><th>Scope</th><th>Latest revision</th><th>State</th><th></th></tr></thead><tbody>${records.map(item => { const latest = item.revisions.at(-1); return `<tr><td><b>${esc(item.code)}</b> · ${esc(item.kind)}</td><td>${esc(item.facilityCode)}${item.programId ? ` · ${esc(item.programId)}` : ''} · ${esc(item.markings)}</td><td>${latest?.revision ?? '—'}</td><td>${esc(latest?.state ?? 'Unknown')}${latest?.requiresLicensedVerification ? ' · RequiresLicensedVerification' : ''}</td><td><button class="btn small" data-qms-open="${esc(item.code)}">Open record</button></td></tr>`; }).join('')}</tbody></table>` : emptyBlock('No visible records', 'Create the organization’s actual definitions or select another kind. Source access can limit which records you see.')}</section>
-      ${record && revision ? `<div class="toolbar"><label for="qms-revision">Recorded revision</label><select class="select" id="qms-revision">${record.revisions.map(item => `<option value="${item.revision}" ${item.revision === revision.revision ? 'selected' : ''}>${item.revision} — ${esc(item.state)}</option>`).join('')}</select></div>${revisionHtml(record, revision)}` : ''}`;
+      ${record && revision ? `<div class="toolbar"><label for="qms-revision">Recorded revision</label><select class="select" id="qms-revision">${record.revisions.map(item => `<option value="${item.revision}" ${item.revision === revision.revision ? 'selected' : ''}>${item.revision} — ${esc(item.state)}</option>`).join('')}</select></div>${revisionHtml(record, revision)}` : ''}
+      ${kind === 'Adoption' ? policyCurrentSection() : ''}`;
     $('[data-qms-refresh]', page).addEventListener('click', load);
     $('[data-qms-create]', page)?.addEventListener('click', () => edit());
     $$('[data-qms-kind]', page).forEach(button => button.addEventListener('click', () => { kind = button.dataset.qmsKind; selectedCode = null; selectedRevision = null; void load(); }));
@@ -375,6 +376,47 @@ export async function qmsPage(page, ctx) {
     $('#qms-revision', page)?.addEventListener('change', event => { generation++; closeDialogs(); selectedRevision = Number(event.target.value); render(); });
     $$('[data-qms-action]', page).forEach(button => button.addEventListener('click', () => button.dataset.qmsAction === 'edit' ? edit(record, revision) : button.dataset.qmsAction === 'new-revision' ? edit(record, revision, true) : transition(record, revision, button.dataset.qmsAction)));
     $$('[data-qms-source]', page).forEach(button => button.addEventListener('click', () => openSource(revision.sources[Number(button.dataset.qmsSource)])));
+    $('[data-policy-current-check]', page)?.addEventListener('click', checkCurrentPolicy);
+  }
+
+  function policyCurrentSection() {
+    const sites = data.resources.data?.sites ?? [];
+    return `<section class="panel"><header><h2>Current adopted policy preview</h2></header>
+      <p class="muted">This governance lookup shows the effective policy for the context you enter. It is a preview only and grants no permission or business authorization. Operational actions must resolve actual context through their owning source.</p>
+      ${data.resources.error ? errorBlock(data.resources.error, 'facility list') : ''}
+      <div class="form-grid">
+        <label class="field"><span>Facility</span><select class="input" data-policy-current="facilityCode"><option value="">— choose —</option>${sites.map(site => `<option value="${esc(site.code)}">${esc(site.name)} (${esc(site.code)})</option>`).join('')}</select></label>
+        <label class="field"><span>Purpose</span><select class="input" data-policy-current="purpose">${['Execution', 'ProductRelease', 'LabelCopy', 'AttemptRetention'].map(value => `<option value="${value}">${esc(labels(value))}</option>`).join('')}</select></label>
+        <label class="field"><span>Program ID (optional)</span><input class="input" data-policy-current="programId"></label>
+        <label class="field"><span>Work center (optional)</span><input class="input" data-policy-current="workCenterCode"></label>
+        <label class="field"><span>Activity (optional)</span><input class="input" data-policy-current="activityCode"></label>
+        <label class="field"><span>Machine (optional)</span><input class="input" data-policy-current="machineCode"></label>
+        <label class="field"><span>Operation sequence (optional)</span><input class="input" type="number" min="1" data-policy-current="operationSequence"></label>
+        <label class="field"><span>Part (optional)</span><input class="input" data-policy-current="partNumber"></label>
+        <label class="field"><span>Part revision (optional)</span><input class="input" data-policy-current="partRevision"></label>
+      </div>
+      <button class="btn" data-policy-current-check>Check policy</button><div data-policy-current-result aria-live="polite"></div></section>`;
+  }
+
+  async function checkCurrentPolicy() {
+    const facilityCode = $('[data-policy-current="facilityCode"]', page).value;
+    const target = $('[data-policy-current-result]', page);
+    if (!facilityCode) { target.innerHTML = '<div class="notice warn">Choose the actual facility to check policy scope.</div>'; return; }
+    const purpose = $('[data-policy-current="purpose"]', page).value;
+    const query = new URLSearchParams();
+    for (const name of ['facilityCode', 'programId', 'workCenterCode', 'activityCode', 'machineCode', 'operationSequence', 'partNumber', 'partRevision']) {
+      const value = $(`[data-policy-current="${name}"]`, page)?.value?.trim();
+      if (value) query.set(name, value);
+    }
+    const token = generation;
+    target.innerHTML = '<div class="muted">Checking current scope…</div>';
+    const result = await tryGet(`/api/quality/qms/policy-current/${encodeURIComponent(purpose)}?${query}`);
+    if (!current(token) || !target.isConnected) return;
+    if (result.error) { target.innerHTML = errorBlock(result.error, 'current policy'); return; }
+    const policy = result.data, selector = Object.entries(policy.selector ?? {}).filter(([, value]) => value != null).map(([name, value]) => `${esc(labels(name))}: ${esc(value)}`).join(' · ') || 'No selector restrictions';
+    target.innerHTML = `<div class="notice">Preview only · effective adoption ${esc(policy.adoptionCode)} revision ${policy.adoptionRevision} · policy ${esc(policy.policyCode)} revision ${policy.policyRevision}.</div>
+      <dl class="kv"><dt>Organization / facility</dt><dd>${esc(policy.organizationCode)} / ${esc(policy.facilityCode)}</dd><dt>Effective</dt><dd>${esc(fmtDateTime(policy.effectiveFrom))} – ${esc(fmtDateTime(policy.effectiveTo)) || 'open'}</dd><dt>Selector</dt><dd>${selector}</dd>
+      ${policy.process ? `<dt>Process</dt><dd>${esc(policy.process.code)} revision ${policy.process.revision}</dd>` : ''}${policy.riskClassCode ? `<dt>Declared risk</dt><dd>${esc(policy.riskClassCode)} · ${esc(policy.riskBasis)}</dd>` : ''}</dl>`;
   }
 
   await load();

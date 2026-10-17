@@ -30,6 +30,13 @@ internal sealed partial class PostgresInventoryStore
                 """,
                 id, l.LineNumber, l.Role.ToString(), l.PartNumber, Text(l.LotNumber), Text(l.SourcePart), Text(l.SourceLot), l.Quantity, Text(l.LocationCode), Long(l.TransactionId));
             await line.ExecuteNonQueryAsync(ct);
+            foreach (var parent in l.Parents ?? [])
+            {
+                await using var parentCommand = uow.Command(
+                    "INSERT INTO inventory.transformation_line_parent (transformation_id, line_number, part_number, lot_number, quantity) VALUES ($1, $2, $3, $4, $5)",
+                    id, l.LineNumber, parent.PartNumber, parent.LotNumber, parent.Quantity);
+                await parentCommand.ExecuteNonQueryAsync(ct);
+            }
         }
 
         return id;
@@ -54,7 +61,9 @@ internal sealed partial class PostgresInventoryStore
               AND ($2::text IS NULL OR EXISTS (
                     SELECT 1 FROM inventory.transformation_line l
                     WHERE l.transformation_id = t.transformation_id
-                      AND ((l.part_number = $2 AND ($3::text IS NULL OR l.lot_number = $3)) OR (l.source_part = $2 AND ($3::text IS NULL OR l.source_lot = $3)))))
+                      AND ((l.part_number = $2 AND ($3::text IS NULL OR l.lot_number = $3))
+                        OR (l.source_part = $2 AND ($3::text IS NULL OR l.source_lot = $3))
+                        OR EXISTS (SELECT 1 FROM inventory.transformation_line_parent p WHERE p.transformation_id = l.transformation_id AND p.line_number = l.line_number AND p.part_number = $2 AND ($3::text IS NULL OR p.lot_number = $3)))))
             ORDER BY t.transformation_id
             """,
             r => (Id: r.GetInt64(0), Order: r.GetInt64(1), Sequence: r.IsDBNull(2) ? (int?)null : r.GetInt32(2), Reason: NullableText(r, 3), At: r.GetFieldValue<DateTimeOffset>(4), Actor: r.GetString(5)),
@@ -74,7 +83,13 @@ internal sealed partial class PostgresInventoryStore
                 NullableText(r, 6), NullableText(r, 7), NullableText(r, 8), r.IsDBNull(9) ? null : r.GetInt64(9))),
             ct,
             headers.Select(h => h.Id).ToArray())).ToLookup(x => x.Id, x => x.Line);
-        return headers.Select(h => new TransformationInfo(h.Id, h.Order, h.Sequence, h.Reason, h.At, h.Actor, lines[h.Id].ToList())).ToList();
+        var parents = (await ReadAsync(
+            "SELECT transformation_id, line_number, part_number, lot_number, quantity FROM inventory.transformation_line_parent WHERE transformation_id = ANY($1) ORDER BY transformation_id, line_number, part_number, lot_number",
+            r => (Id: r.GetInt64(0), LineNumber: r.GetInt32(1), Parent: new TransformationParent(r.GetString(2), r.GetString(3), Dec(r, 4))),
+            ct,
+            headers.Select(h => h.Id).ToArray())).ToLookup(x => (x.Id, x.LineNumber), x => x.Parent);
+        return headers.Select(h => new TransformationInfo(h.Id, h.Order, h.Sequence, h.Reason, h.At, h.Actor,
+            lines[h.Id].Select(line => line with { Parents = parents[(h.Id, line.LineNumber)].ToList() }).ToList())).ToList();
     }
 
     public Task<IReadOnlyList<YieldTolerance>> ListYieldTolerancesAsync(CancellationToken ct) =>

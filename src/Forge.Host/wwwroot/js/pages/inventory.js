@@ -503,13 +503,30 @@ export async function inventoryPage(page, ctx) {
       ${buttons.length ? `<div class="toolbar">${buttons.map(([k, l]) => `<button class="btn ${k === 'receive' ? 'primary' : ''}" data-act="${k}">${esc(l)}</button>`).join('')}</div>` : '<div class="notice">You can look at stock. Material handlers move it; inventory controllers approve changes.</div>'}
       ${kpis()}
       <section class="panel">
-        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`], ['receiving', `Receiving${receivingCount(data.receiving) ? ` (${receivingCount(data.receiving)})` : ''}`], ['outside', 'Outside processing'], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${tab === 'outside' ? outsideProcessingTab(data.outside, me) : tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : stockTab()}
+        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['selection', 'Lot selection'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`], ['receiving', `Receiving${receivingCount(data.receiving) ? ` (${receivingCount(data.receiving)})` : ''}`], ['outside', 'Outside processing'], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        ${tab === 'outside' ? outsideProcessingTab(data.outside, me) : tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : tab === 'selection' ? selectionTab() : stockTab()}
       </section>`;
     $('#trace-q', page)?.addEventListener('click', () => { const q = $('#serial-q', page).value.trim(); if (q) traceDrawer({ lot: q.toUpperCase() }); });
     $('#serial-find', page)?.addEventListener('submit', ev => { ev.preventDefault(); const q = $('#serial-q', page).value.trim(); if (q) serialDrawer(q.toUpperCase()); });
 
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
+    $('#lot-selection-form', page)?.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const part = $('#lot-selection-part', page).value, order = $('#lot-selection-order', page).value;
+      const resultHost = $('#lot-selection-result', page), generation = pageGeneration;
+      if (!part) { resultHost.innerHTML = '<div class="notice warn">Choose a part.</div>'; return; }
+      resultHost.innerHTML = '<div class="muted">Checking eligible lots and the FIFO/FEFO order…</div>';
+      const query = new URLSearchParams({ part }); if (order) query.set('order', order);
+      const response = await tryGet(`/api/inventory/selection?${query}`);
+      if (generation !== pageGeneration || !resultHost.isConnected) return;
+      if (response.error) { resultHost.innerHTML = errorBlock(response.error, 'lot selection'); return; }
+      const selection = response.data;
+      const ruleName = selection.rule === 'Fefo' ? 'First expired, first out' : 'First in, first out';
+      resultHost.innerHTML = `<div class="notice">${esc(selection.partNumber)} · ${esc(ruleName)}${selection.requiredRevision ? ` · order requires revision ${esc(selection.requiredRevision)}` : ''}. This ranks candidates; it does not reserve or issue stock.</div>
+        ${selection.candidates.length ? `<table class="table"><thead><tr><th>Rank</th><th>Lot</th><th>Location</th><th class="num">Quantity</th><th>Revision</th><th>Received</th><th>Expires</th><th>Eligibility</th></tr></thead><tbody>
+        ${selection.candidates.map(c => `<tr><td>${c.rank || '—'}</td><td>${esc(c.lotNumber)}</td><td>${esc(c.locationCode)}</td><td class="num">${qty(c.quantity)}</td><td>${esc(c.partRevision ?? 'Not recorded')}</td><td>${esc(fmtDateTime(c.received))}</td><td>${esc(c.expires ?? '—')}</td><td>${c.excludedBecause ? `<span class="pill warn">Excluded</span> ${esc(c.excludedBecause)}` : '<span class="pill ok">Eligible candidate</span>'}</td></tr>`).join('')}
+        </tbody></table>` : emptyBlock('No lot candidates', 'No on-hand lot positions matched this part.')}`;
+    });
     $$('[data-act]', page).forEach(b => b.addEventListener('click', () => {
       if (!(data.locations.data ?? []).length && b.dataset.act !== 'location') { toast('Add a location first (inventory controller).', true); return; }
       actions[b.dataset.act]({});
@@ -559,6 +576,15 @@ export async function inventoryPage(page, ctx) {
         reason => command(`/api/inventory/locations/${encodeURIComponent(b.dataset.retire)}/retire`, {}, reason));
       if (done) { toast(done.message); await reload(); }
     }));
+  }
+
+  function selectionTab() {
+    return `<section class="stack"><p class="muted">Forge applies hard eligibility rules before FIFO or FEFO ranking. With an order selected, its component revision is also required. A candidate is not reserved or issued by this lookup.</p>
+      <form id="lot-selection-form" class="form-grid">
+        <label class="field"><span>Part</span><select id="lot-selection-part" class="input"><option value="">— choose —</option>${parts().map(([code, label]) => `<option value="${esc(code)}">${esc(label)}</option>`).join('')}</select></label>
+        <label class="field"><span>Order (optional)</span><select id="lot-selection-order" class="input"><option value="">No order revision filter</option>${released().map(([number, label]) => `<option value="${number}">${esc(label)}</option>`).join('')}</select></label>
+        <div><button class="btn primary" type="submit">Find candidates</button></div>
+      </form><div id="lot-selection-result" aria-live="polite"></div></section>`;
   }
 
   async function decide(id, verb) {

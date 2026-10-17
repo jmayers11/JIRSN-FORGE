@@ -218,8 +218,12 @@ public enum TransformationRole
     Byproduct,
 }
 
+/// <summary>An issued inventory instance and the quantity attributed to a byproduct.</summary>
+public sealed record TransformationParent(string PartNumber, string LotNumber, decimal Quantity);
+
 /// <param name="SourcePart">For a remnant, the issued part (the same part); for a byproduct, null.</param>
 /// <param name="SourceLot">For a remnant, the issued lot it was cut from.</param>
+/// <param name="Parents">Explicit issued lots attributed to a byproduct; these do not change material reconciliation.</param>
 public sealed record TransformationLine(
     int LineNumber,
     TransformationRole Role,
@@ -229,7 +233,8 @@ public sealed record TransformationLine(
     string? SourcePart = null,
     string? SourceLot = null,
     string? LocationCode = null,
-    long? TransactionId = null);
+    long? TransactionId = null,
+    IReadOnlyList<TransformationParent>? Parents = null);
 
 /// <summary>What became of material issued to a production order, as recorded at one moment (V3.3). Never changed.</summary>
 public sealed record TransformationInfo(long TransformationId, long OrderNumber, int? OperationSequence, string? Reason, DateTimeOffset RecordedAt, string Actor, IReadOnlyList<TransformationLine> Lines);

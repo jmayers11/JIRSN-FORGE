@@ -117,6 +117,23 @@ export async function traceDrawer({ part, lot, order, shipment }) {
 const STATUS_PILL = { Balanced: 'ok', WithinTolerance: 'ok', Unexplained: 'bad', NotRecorded: 'none' };
 const STATUS_TEXT = { Balanced: 'Balanced', WithinTolerance: 'Within tolerance', Unexplained: 'Unexplained', NotRecorded: 'Not recorded' };
 
+/**
+ * V5-S1: the issued lots a byproduct came from. Each value is the quantity of that issued lot attributed to the
+ * byproduct; blank means none. Only lot-tracked or serialized rows (with a lot number) can be parents.
+ */
+export function byproductParents(issued, values) {
+  const parents = [];
+  issued.forEach((r, i) => {
+    const raw = values[i];
+    if (raw == null || raw === '') return;
+    const quantity = Number(raw);
+    if (!r.lotNumber) throw new Error(`${r.partNumber} has no lot, so it cannot be named as a byproduct source.`);
+    if (!(quantity > 0)) throw new Error(`Enter a positive quantity of ${r.partNumber} lot ${r.lotNumber} for the byproduct, or leave it blank.`);
+    parents.push({ partNumber: r.partNumber, lotNumber: r.lotNumber, quantity });
+  });
+  return parents;
+}
+
 /** The material accounting panel on an order page (V3.3): issued = consumed + returned + scrap + loss + remnant + remaining. */
 export async function appendOrderReconciliation(page, orderNumber, canRecord) {
   const res = await tryGet(`/api/inventory/orders/${orderNumber}/reconciliation`);
@@ -138,8 +155,9 @@ export async function appendOrderReconciliation(page, orderNumber, canRecord) {
     const issued = v.rows.filter(r => r.issued - r.returned > 0);
     const input = (i, role) => `<input class="input num" type="number" step="any" min="0" data-row="${i}" data-role="${role}" style="width:90px">`;
     const extraHtml = `
-      <table class="table"><thead><tr><th>Issued</th><th>Consumed</th><th>Scrap</th><th>Loss</th><th>Still at the work center</th></tr></thead><tbody>
-      ${issued.map((r, i) => `<tr><td class="mono">${esc(r.partNumber)} ${esc(r.lotNumber ?? '')} <span class="faint">${qty(r.unexplained)} open</span></td><td>${input(i, 'Consumed')}</td><td>${input(i, 'Scrap')}</td><td>${input(i, 'Loss')}</td><td>${input(i, 'Remaining')}</td></tr>`).join('')}
+      <table class="table"><thead><tr><th>Issued</th><th>Consumed</th><th>Scrap</th><th>Loss</th><th>Still at the work center</th><th>Byproduct came from</th></tr></thead><tbody>
+      ${issued.map((r, i) => `<tr><td class="mono">${esc(r.partNumber)} ${esc(r.lotNumber ?? '')} <span class="faint">${qty(r.unexplained)} open</span></td><td>${input(i, 'Consumed')}</td><td>${input(i, 'Scrap')}</td><td>${input(i, 'Loss')}</td><td>${input(i, 'Remaining')}</td>
+        <td>${r.lotNumber ? `<input class="input num" type="number" step="any" min="0" data-parent="${i}" aria-label="Quantity of ${esc(r.partNumber)} lot ${esc(r.lotNumber)} the byproduct came from" style="width:90px">` : '<span class="faint">no lot</span>'}</td></tr>`).join('')}
       </tbody></table>
       <div class="form-grid">
         <label>Remnant: cut from lot <input class="input mono" data-x="remnantSource" placeholder="${esc(issued.find(r => r.lotNumber)?.lotNumber ?? '')}"></label>
@@ -150,7 +168,8 @@ export async function appendOrderReconciliation(page, orderNumber, canRecord) {
         <label>Byproduct number <input class="input mono" data-x="byLot"></label>
         <label>Byproduct quantity <input class="input" type="number" step="any" min="0" data-x="byQty"></label>
         <label>Byproduct into location <input class="input mono" data-x="byLocation"></label>
-      </div>`;
+      </div>
+      <div class="faint">A lot-tracked or serialized byproduct names the issued lot or lots it came from in the "Byproduct came from" column. Across byproducts, a lot's amounts cannot exceed what was recorded as consumed from it.</div>`;
     const done = await confirmWithReason({ title: `What became of the material on order ${orderNumber}`, detail: 'Leave a box empty for nothing. Scrap or loss needs a reason.', confirmLabel: 'Record', reasonRequired: false, extraHtml },
       (reason, m) => {
         const entries = [];
@@ -164,7 +183,11 @@ export async function appendOrderReconciliation(page, orderNumber, canRecord) {
           const source = issued.find(r => r.lotNumber === x('remnantSource').toUpperCase()) ?? issued.find(r => r.lotNumber);
           entries.push({ role: 'Remnant', partNumber: source?.partNumber ?? '', lotNumber: x('remnantLot'), quantity: Number(x('remnantQty')), sourceLot: x('remnantSource') || source?.lotNumber, locationCode: x('remnantLocation') });
         }
-        if (x('byQty')) entries.push({ role: 'Byproduct', partNumber: x('byPart'), lotNumber: x('byLot') || null, quantity: Number(x('byQty')), locationCode: x('byLocation') });
+        if (x('byQty')) {
+          const values = issued.map((_, i) => $(`[data-parent="${i}"]`, m)?.value.trim() ?? '');
+          const parents = byproductParents(issued, values);
+          entries.push({ role: 'Byproduct', partNumber: x('byPart'), lotNumber: x('byLot') || null, quantity: Number(x('byQty')), locationCode: x('byLocation'), ...(parents.length ? { parents } : {}) });
+        }
         return command('/api/inventory/transformations', { orderNumber, entries }, reason);
       });
     if (done) {

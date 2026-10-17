@@ -36,7 +36,7 @@ public sealed class KernelRoundTripTests(PostgresFixture postgres)
         _ = app.Services; // starting the host applies every migration
         var again = await app.Services.GetRequiredService<MigrationRunner>().MigrateAsync(CancellationToken.None);
         Assert.Empty(again);
-        Assert.Equal(108, await Count(cs, "SELECT count(*) FROM public.forge_schema_migrations"));
+        Assert.Equal(109, await Count(cs, "SELECT count(*) FROM public.forge_schema_migrations"));
     }
 
     [Fact]
@@ -253,11 +253,17 @@ public sealed class KernelRoundTripTests(PostgresFixture postgres)
         var me = await Json(await admin.GetAsync("/api/kernel/me"));
         var adminId = me.GetProperty("personId").GetGuid();
 
+        var accessPolicy = await Json(await admin.GetAsync("/api/kernel/access-policy"));
+        var securityRole = Assert.Single(accessPolicy.GetProperty("roles").EnumerateArray(), role => role.GetProperty("role").GetString() == Roles.SecurityAdministrator);
+        Assert.Contains(securityRole.GetProperty("permissions").EnumerateArray(), permission => permission.GetProperty("permission").GetString() == Permissions.AccessManage);
+        Assert.Contains(accessPolicy.GetProperty("separationPolicies").EnumerateArray(), policy => policy.GetProperty("policy").GetString() == "access.self_role_change" && policy.GetProperty("enabled").GetBoolean());
+
         // No role: denied with reasons.
         var sarah = app.As("sarah");
         var denied = await sarah.GetAsync("/api/kernel/people");
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         Assert.Contains("kernel.people.read", await denied.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.Forbidden, (await sarah.GetAsync("/api/kernel/access-policy")).StatusCode);
 
         var deniedCommand = await sarah.CommandAsync($"/api/kernel/people/{adminId}/roles", new { role = "Auditor", reason = "x" }, "k");
         Assert.Equal(HttpStatusCode.Forbidden, deniedCommand.StatusCode);

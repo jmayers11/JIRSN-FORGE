@@ -17,6 +17,8 @@ async function harness(t, kind, records = []) {
     if (path.startsWith('/api/quality/qms/records?') || path === '/api/quality/qms/adoptions') return Promise.resolve(response(records));
     if (path === '/api/quality/qms/adoptions/CUT-EXECUTION') return Promise.resolve(response(adoption));
     if (path === '/api/kernel/directory') return Promise.resolve(response([{ personId: authorId, displayName: 'Policy owner' }]));
+    if (path === '/api/resources/') return Promise.resolve(response({ sites: [{ code: 'PLANT', name: 'Plant One' }] }));
+    if (path.startsWith('/api/quality/qms/policy-current/')) return Promise.resolve(response({ adoptionCode: 'CUT-EXECUTION', adoptionRevision: 2, policyCode: 'EXECUTION-POLICY', policyRevision: 3, organizationCode: 'ACTUAL-ORG', facilityCode: 'PLANT', effectiveFrom: '2026-10-15T00:00:00Z', effectiveTo: null, selector: { workCenterCode: 'CUT', activityCode: 'SLIT' }, process: null, riskClassCode: 'HIGH', riskBasis: 'Approved risk review' }));
     return Promise.resolve(response({ message: 'Recorded.' }));
   };
   const controller = await qmsPage(page, { me: { personId: reviewerId, permissions }, query: new URLSearchParams({ kind }) }); t.after(controller.dispose);
@@ -54,6 +56,19 @@ test('incomplete process/risk declarations cannot be submitted as an adoption', 
   assert.match(modal.querySelector('[data-qms-error]').textContent, /both its code and exact revision/); assert.equal(h.calls.filter(call => call.body).length, 0);
   fill(modal, { processRevision: 4, riskClassCode: 'HIGH' }); fire(modal.querySelector('[data-qms-confirm]'), 'click'); await flush();
   assert.match(modal.querySelector('[data-qms-error]').textContent, /human basis/); assert.equal(h.calls.filter(call => call.body).length, 0);
+});
+
+test('current policy lookup labels itself as a governance preview and sends the selected actual scope', async t => {
+  const h = await harness(t, 'Adoption');
+  h.page.querySelector('[data-policy-current="facilityCode"]').value = 'PLANT';
+  h.page.querySelector('[data-policy-current="workCenterCode"]').value = 'CUT';
+  h.page.querySelector('[data-policy-current="activityCode"]').value = 'SLIT';
+  fire(h.page.querySelector('[data-policy-current-check]'), 'click'); await flush();
+  const call = h.calls.find(item => item.path.startsWith('/api/quality/qms/policy-current/'));
+  assert.ok(call); assert.ok(call.path.startsWith('/api/quality/qms/policy-current/Execution?')); assert.match(call.path, /facilityCode=PLANT/); assert.match(call.path, /workCenterCode=CUT/);
+  const result = h.page.querySelector('[data-policy-current-result]');
+  assert.match(result.innerHTML, /Preview only · effective adoption CUT-EXECUTION/);
+  assert.match(result.innerHTML, /Approved risk review/);
 });
 
 test('execution presentation captures explicit assurance/session policy and exact operation/process scan rules', async t => {

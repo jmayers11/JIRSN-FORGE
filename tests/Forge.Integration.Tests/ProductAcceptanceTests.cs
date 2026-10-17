@@ -127,6 +127,7 @@ public sealed class ProductAcceptanceTests(PostgresFixture postgres)
   var goodInspection=Id(await plant.Ok(inspector,Api+"/inspections",Inspect(accepted,920,920)));
   var badInspection=Id(await plant.Ok(inspector,Api+"/inspections",Inspect(rejected,80,80,false)));
   var failed=await Json(await inspector.GetAsync(Api+"/inspections/"+badInspection));Assert.False(failed.GetProperty("passed").GetBoolean());Assert.True(failed.GetProperty("holdTransactionId").GetInt64()>0);Assert.True(failed.GetProperty("ncrId").GetInt64()>0);
+  var recentInspections=await Json(await inspector.GetAsync(Api+"/inspections?take=30"));Assert.Contains(recentInspections.EnumerateArray(),record=>record.GetProperty("inspectionId").GetInt64()==goodInspection);Assert.Contains(recentInspections.EnumerateArray(),record=>record.GetProperty("inspectionId").GetInt64()==badInspection);
   Assert.Contains(failed.GetProperty("subject").GetProperty("originOrderNumbers").EnumerateArray(),r=>r.GetInt64()==order);
   await Rejected(plant,stores,"/api/inventory/releases",new{partNumber="ACCEPT-PRODUCT",lotNumber="ACCEPTED-920",locationCode="STORES",quantity=920,status="Inspection",reason="Legacy inventory approval cannot stand in for independent product release"},"independent_product_release_required");
   await plant.Ok(plant.Admin,$"/api/kernel/people/{plant.People["acceptance-inspector"]}/roles",new{role="ExampleProductRelease",reason="Even holding release authority cannot permit self-release of inspected output"});
@@ -134,6 +135,7 @@ public sealed class ProductAcceptanceTests(PostgresFixture postgres)
   var releaseBody=Release(accepted,goodInspection,920);
   var releaseRace=await Task.WhenAll(signer.CommandAsync(Api+"/product-releases",releaseBody,"release-race-a"),signer.CommandAsync(Api+"/product-releases",releaseBody,"release-race-b"));
   var approved=Assert.Single(releaseRace,r=>r.IsSuccessStatusCode);Assert.Single(releaseRace,r=>r.StatusCode==HttpStatusCode.UnprocessableEntity);var decision=Id(await Json(approved));
+  var recentReleases=await Json(await signer.GetAsync(Api+"/product-releases?take=30"));Assert.Contains(recentReleases.EnumerateArray(),record=>record.GetProperty("decisionId").GetInt64()==decision);
   var consumeBody=new{expectedVersion=1,quantity=920,reason="Consume exact independently approved quantity in existing ledger"};var consumePath=$"/api/inventory/product-releases/{decision}/consume";
   var consumeRace=await Task.WhenAll(stores.CommandAsync(consumePath,consumeBody,"consume-race-a"),stores.CommandAsync(consumePath,consumeBody,"consume-race-b"));
   var consumed=Assert.Single(consumeRace,r=>r.IsSuccessStatusCode);Assert.Single(consumeRace,r=>r.StatusCode==HttpStatusCode.UnprocessableEntity);var consumedResult=await Json(consumed);var consumedKey=ReferenceEquals(consumed,consumeRace[0])?"consume-race-a":"consume-race-b";

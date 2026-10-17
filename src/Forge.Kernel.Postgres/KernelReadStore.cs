@@ -7,6 +7,12 @@ using Npgsql;
 namespace Forge.Kernel.Postgres;
 
 public sealed record PersonView(Guid PersonId, string IdpSubject, string DisplayName, bool IsActive, string Markings, IReadOnlyList<string> Roles, IReadOnlyList<Guid> Programs);
+public sealed record RolePermissionScopeView(string ScopeType, string ScopeId);
+public sealed record RolePermissionView(string Permission, IReadOnlyList<RolePermissionScopeView> Scopes);
+public sealed record RolePolicyView(string Role, string DisplayName, IReadOnlyList<RolePermissionView> Permissions);
+public sealed record SeparationPolicyView(string Policy, bool Enabled);
+public sealed record ApprovalThresholdPolicyView(string Permission, decimal MaximumAmount, string Currency);
+public sealed record AccessPolicyView(IReadOnlyList<RolePolicyView> Roles, IReadOnlyList<SeparationPolicyView> SeparationPolicies, IReadOnlyList<ApprovalThresholdPolicyView> ApprovalThresholds);
 
 public sealed record AuditChainStatus(bool Intact, long EntriesChecked, long? FirstBrokenSequence);
 
@@ -49,6 +55,45 @@ public sealed class KernelReadStore(NpgsqlDataSource dataSource, IKernelUnitOfWo
         }
 
         return people;
+    }
+
+    public async Task<AccessPolicyView> ReadAccessPolicyAsync(CancellationToken ct)
+    {
+        var roleNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        var permissions = new Dictionary<string, Dictionary<string, List<RolePermissionScopeView>>>(StringComparer.Ordinal);
+        await using (var cmd = dataSource.CreateCommand(
+            "SELECT rd.role_name, rd.display_name, rp.permission, rps.scope_type, rps.scope_id FROM kernel.role_definition rd LEFT JOIN kernel.role_permission rp ON rp.role_name = rd.role_name LEFT JOIN kernel.role_permission_scope rps ON rps.role_name = rp.role_name AND rps.permission = rp.permission WHERE rd.is_active ORDER BY rd.role_name, rp.permission, rps.scope_type, rps.scope_id"))
+        await using (var reader = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+            {
+                var role = reader.GetString(0);
+                roleNames[role] = reader.GetString(1);
+                if (reader.IsDBNull(2)) continue;
+                if (!permissions.TryGetValue(role, out var byPermission)) permissions[role] = byPermission = new(StringComparer.Ordinal);
+                var permission = reader.GetString(2);
+                if (!byPermission.TryGetValue(permission, out var scopes)) byPermission[permission] = scopes = [];
+                if (!reader.IsDBNull(3)) scopes.Add(new RolePermissionScopeView(reader.GetString(3), reader.GetString(4)));
+            }
+        }
+
+        var roles = roleNames.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry =>
+            new RolePolicyView(entry.Key, entry.Value,
+                permissions.GetValueOrDefault(entry.Key)?.OrderBy(permission => permission.Key, StringComparer.Ordinal)
+                    .Select(permission => new RolePermissionView(permission.Key, permission.Value.AsReadOnly())).ToArray() ?? []))
+            .ToArray();
+
+        var separation = new List<SeparationPolicyView>();
+        await using (var cmd = dataSource.CreateCommand("SELECT policy_id, enabled FROM kernel.separation_policy ORDER BY policy_id"))
+        await using (var reader = await cmd.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) separation.Add(new(reader.GetString(0), reader.GetBoolean(1)));
+
+        var thresholds = new List<ApprovalThresholdPolicyView>();
+        await using (var cmd = dataSource.CreateCommand("SELECT permission, maximum_amount, currency FROM kernel.approval_threshold_policy ORDER BY permission"))
+        await using (var reader = await cmd.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) thresholds.Add(new(reader.GetString(0), reader.GetDecimal(1), reader.GetString(2)));
+
+        return new(roles, separation, thresholds);
     }
 
     /// <summary>Audit entries, newest first. Entries tied to a program are returned only for the given programs.</summary>

@@ -1,5 +1,8 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
+using Forge.Host.Identification;
+using Microsoft.AspNetCore.Hosting;
 
 namespace Forge.Integration.Tests;
 
@@ -12,6 +15,8 @@ namespace Forge.Integration.Tests;
 [Collection(PostgresCollection.Name)]
 public sealed class V32Tests(PostgresFixture postgres)
 {
+    private const string IdentificationNamespace = "V5.GENEALOGY";
+
     private static async Task<JsonElement> Get(HttpClient client, string url)
     {
         var response = await client.GetAsync(new Uri(url, UriKind.Relative));
@@ -55,7 +60,7 @@ public sealed class V32Tests(PostgresFixture postgres)
     [Fact]
     public async Task A_split_creates_new_instances_that_add_up_and_identity_survives_moves()
     {
-        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync(), configureBuilder: builder => builder.UseSetting(CanonicalIdentification.NamespaceConfigurationKey, IdentificationNamespace));
         var (plant, stores, mo) = await SetUpAsync(app);
         await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "FOIL-1", quantity = 1000m, locationCode = "WH1", lotNumber = "R-100", supplierLot = "MILL-7", revision = "A", identityKind = "Roll", reason = "Opening balance" });
         await Rejected(plant, stores, "/api/inventory/receipts", new { partNumber = "FOIL-1", quantity = 1m, locationCode = "WH1", lotNumber = "R-101", identityKind = "Serial", reason = "x" }, "invalid_identity_kind");
@@ -83,6 +88,15 @@ public sealed class V32Tests(PostgresFixture postgres)
         Assert.Equal(("Roll", "A", "MILL-7"), (a.GetProperty("identityKind").GetString(), a.GetProperty("partRevision").GetString(), a.GetProperty("supplierLot").GetString()));
         var ledger = (await Get(mo, "/api/inventory/transactions?part=FOIL-1")).EnumerateArray().Where(t => t.GetProperty("kind").GetString() == "Split").ToList();
         Assert.Equal(4, ledger.Count); // one out of the source, one into each result
+        foreach (var child in new[] { "R-100-A", "R-100-B", "R-100-C" })
+        {
+            var code = $"forge:v1:{IdentificationNamespace}:roll:{CanonicalIdentification.EncodeKey("FOIL-1")}:{CanonicalIdentification.EncodeKey(child)}";
+            using var response = await mo.PostAsJsonAsync("/api/identification/resolve", new { code });
+            var responseText = await response.Content.ReadAsStringAsync();
+            Assert.True(response.IsSuccessStatusCode, $"Canonical child scan {child}: {responseText}");
+            using var scan = JsonDocument.Parse(responseText);
+            Assert.Equal(("FOIL-1", child, "Roll"), (scan.RootElement.GetProperty("partNumber").GetString(), scan.RootElement.GetProperty("lotNumber").GetString(), scan.RootElement.GetProperty("identityKind").GetString()));
+        }
 
         // Lineage both ways; the second split's result goes back to the first roll.
         await plant.Ok(mo, "/api/inventory/splits", new { partNumber = "FOIL-1", lotNumber = "R-100-A", locationCode = "SL-B-SIDE", status = "Released", results = new[] { new { lotNumber = "R-100-A1", quantity = 450m } }, reason = "Half for job 2" });

@@ -96,29 +96,33 @@ export function resultsSheet(characteristics, sample, gauges = []) {
     <div class="table-wrap"><table class="table"><thead><tr><th>Characteristic</th><th>Unit</th><th>Result</th><th>Gauge</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
 }
 
-const subjectText = s => s ? `${s.partNumber} lot ${s.lotNumber} at ${s.locationCode}${s.returnCohortId ? ` (return cohort ${s.returnCohortId})` : ''}` : '—';
+const subjectText = s => { const key = s?.key ?? s; return key ? `${key.partNumber} lot ${key.lotNumber} at ${key.locationCode}${key.returnCohortId ? ` (return cohort ${key.returnCohortId})` : ''}` : '—'; };
 
 export async function acceptancePage(page, ctx) {
   const me = ctx.me;
-  const can = { plan: canAction(me, 'quality.plan'), approve: canAction(me, 'quality.approve'), inspect: canAction(me, 'quality.inspect'), release: canAction(me, 'quality.product.release'), consume: canAction(me, 'inventory.transact') };
+  const can = { read: canAction(me, 'quality.read'), plan: canAction(me, 'quality.plan'), approve: canAction(me, 'quality.approve'), inspect: canAction(me, 'quality.inspect'), release: canAction(me, 'quality.product.release'), consume: canAction(me, 'inventory.transact') };
   let tab = ctx.query.get('tab') ?? 'criteria';
-  let criteria = { data: [] }, gauges = [], sheet = null, found = null, disposed = false;
+  let criteria = { data: [] }, inspections = { data: [] }, releases = { data: [] }, gauges = [], sheet = null, found = null, disposed = false;
 
   async function load() {
-    const [c, tools] = await Promise.all([tryGet(`${API}/criteria`), tryGet('/api/resources/tools')]);
-    criteria = c; gauges = (tools.data ?? []).map(t => t.tool?.code ?? t.code).filter(Boolean);
+    const [c, tools, i, r] = await Promise.all([
+      tryGet(`${API}/criteria`), tryGet('/api/resources/tools'),
+      can.read ? tryGet(`${API}/inspections?take=30`) : Promise.resolve({ data: [] }),
+      can.read ? tryGet(`${API}/product-releases?take=30`) : Promise.resolve({ data: [] }),
+    ]);
+    criteria = c; inspections = i; releases = r; gauges = (tools.data ?? []).map(t => t.tool?.code ?? t.code).filter(Boolean);
   }
   const reload = async () => { await load(); if (!disposed) render(); };
   const effective = () => (criteria.data ?? []).filter(r => r.state === 'Effective');
 
   function render() {
-    const tabs = [['criteria', 'Acceptance criteria'], ['inspect', 'Inspect'], ['release', 'Release'], ['lookup', 'Look up']];
+    const tabs = [['criteria', 'Acceptance criteria'], ['inspect', 'Inspect'], ['release', 'Release'], ['lookup', 'Look up'], ...(can.read ? [['history', 'History']] : [])];
     page.innerHTML = `
       <div class="page-head"><div><h1>Product acceptance</h1><div class="sub">Inspect an exact part, lot and location against its effective criteria, then release an exact quantity. Withdrawal and consumption keep the decision's history.</div></div>
         <div class="spacer"></div>${can.plan ? '<button class="btn" id="new-criteria">New acceptance criteria</button>' : ''}</div>
       <section class="panel"><header><div class="seg">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${{ criteria: criteriaTab, inspect: inspectTab, release: releaseTab, lookup: lookupTab }[tab]()}</section>`;
-    $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
+        ${{ criteria: criteriaTab, inspect: inspectTab, release: releaseTab, lookup: lookupTab, history: historyTab }[tab]?.() ?? criteriaTab()}</section>`;
+    $$('[data-tab]', page).forEach(b => b.addEventListener('click', async () => { tab = b.dataset.tab; if (tab === 'history') await load(); render(); }));
     $('#new-criteria', page)?.addEventListener('click', () => defineCriteria(null));
     $$('[data-crit-edit]', page).forEach(b => b.addEventListener('click', () => editCriteria(rev(b.dataset.critEdit))));
     $$('[data-crit-next]', page).forEach(b => b.addEventListener('click', () => defineCriteria(rev(b.dataset.critNext))));
@@ -130,6 +134,8 @@ export async function acceptancePage(page, ctx) {
     $('#withdraw', page)?.addEventListener('click', withdraw);
     $('#consume', page)?.addEventListener('click', consume);
     $('#release-this', page)?.addEventListener('click', () => { tab = 'release'; render(); });
+    $$('[data-inspection-id]', page).forEach(b => b.addEventListener('click', () => lookup('inspection', b.dataset.inspectionId)));
+    $$('[data-release-id]', page).forEach(b => b.addEventListener('click', () => lookup('release', b.dataset.releaseId)));
   }
 
   const rev = key => (criteria.data ?? []).find(r => `${r.code}/${r.revision}` === key);
@@ -152,6 +158,19 @@ export async function acceptancePage(page, ctx) {
           ${act(r, 'effective', 'Make effective', r.state === 'Approved' && can.approve)}${act(r, 'withdraw', 'Withdraw', ['Draft', 'Submitted', 'Approved'].includes(r.state) && can.approve)}
           ${(r.state === 'Effective' || r.state === 'Withdrawn') && r.revision === latest.get(r.code) && can.plan ? `<button class="btn small ghost" data-crit-next="${key}">New revision</button>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div>`;
+  }
+
+  function historyTab() {
+    const inspectionList = inspections.data ?? [], releaseList = releases.data ?? [];
+    return `<div class="notice">Only records you can read under their current source, marking and adopted-policy controls are listed. Select a record to review its full history.</div>
+      <section class="panel"><header><h2>Recent inspections</h2></header>
+        ${inspections.error ? errorBlock(inspections.error, 'acceptance inspections') : !inspectionList.length ? emptyBlock('No readable inspections', 'Inspections appear here after they are recorded.') : `<div class="table-wrap"><table class="table"><thead><tr><th>Inspection</th><th>Subject</th><th>Result</th><th>Quantity</th><th>Inspector</th><th>Recorded</th><th></th></tr></thead><tbody>
+          ${inspectionList.map(i => `<tr><td class="mono">${esc(i.inspectionId)}</td><td>${esc(subjectText(i.subject))}</td><td>${pill(i.passed ? 'Passed' : 'Failed', i.passed ? 'ok' : 'bad')}</td><td class="num">${qty(i.quantity)}</td><td>${esc(who(i.inspector))}</td><td>${esc(fmtDateTime(i.at))}</td><td><button class="btn small ghost" data-inspection-id="${esc(i.inspectionId)}">Open</button></td></tr>`).join('')}</tbody></table></div>`}
+      </section>
+      <section class="panel"><header><h2>Recent product releases</h2></header>
+        ${releases.error ? errorBlock(releases.error, 'product releases') : !releaseList.length ? emptyBlock('No readable releases', 'Independent product release decisions appear here after approval.') : `<div class="table-wrap"><table class="table"><thead><tr><th>Decision</th><th>Subject</th><th>Quantity</th><th>Approved by</th><th>Approved</th><th></th></tr></thead><tbody>
+          ${releaseList.map(d => `<tr><td class="mono">${esc(d.decisionId)}</td><td>${esc(subjectText(d.subject))}</td><td class="num">${qty(d.quantity)}</td><td>${esc(who(d.approvedBy))}</td><td>${esc(fmtDateTime(d.approvedAt))}</td><td><button class="btn small ghost" data-release-id="${esc(d.decisionId)}">Open</button></td></tr>`).join('')}</tbody></table></div>`}
+      </section>`;
   }
 
   function inspectTab() {

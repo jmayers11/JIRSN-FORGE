@@ -655,3 +655,142 @@ Nothing was committed, pushed or deployed.
 - New tests: `tests/ui/{investigations,acceptance,admin-pages,screen-actions}.test.mjs`.
 - Also changed: `verify.cmd`, `tools/make-nav-icons.py`, the handoff and this log.
 - Added `.forge-logs/ui-check.cmd`, which is gitignored.
+
+## Continuation: Claude UI handoff — 2026-10-16
+
+**Agent:** Codex
+
+### Objective
+
+Continue the actionable items in Claude's latest V4 UI handoff, keeping source authorization intact and updating the handoff for the next developer.
+
+### Changes
+
+- Added bounded recent-inspection and product-release list reads. Each candidate is individually checked with the same current source, data marking, adopted-policy and historic-evidence access rules as a direct record read. The Product Acceptance History tab shows only authorized results and opens the existing detailed lookups.
+- Rendered site closures in Plant Setup. The existing resources read already returned them, so this was a presentation fix rather than a duplicate server endpoint.
+- Added `/api/kernel/access-policy`, protected by `kernel.access.manage`, to read active role grants and scopes, separation-policy states and configured approval thresholds. Access Control now displays current state instead of offering both separation switches regardless of state.
+- Grouped navigation under Plan, Make, Quality and Admin.
+- Confirmed that Inventory's released quantity is already sourced from the inventory ledger, and Shipping already uses released stock and compares it with demand. No derived duplicate release quantity was added.
+- Updated this handoff and session log. No commit or deployment was made.
+
+### Verification
+
+- Release build of `Forge.Host`: passed with zero warnings and zero errors.
+- PostgreSQL integration scenario `Real_thousand_unit_output_has_exact_920_release_and_80_segregated_hold_with_no_double_decision_consume_or_shipment`: passed, including assertions for both new list endpoints.
+- PostgreSQL integration scenario `Denials_and_rule_violations_are_explained_and_audited`: passed, including active role/separation-policy response and denial without access-management authority.
+- All UI files under `tests/ui/*.test.mjs`: 205 passed, zero failed, skipped, cancelled or todo. Output is retained in `.forge-logs/ui-followup-pass.log`.
+- `verify.cmd` did not reach build/test because NuGet restore could not access `api.nuget.org` and restore warnings are errors. An offline restore with audit disabled also failed because two test dependencies were not cached (`Microsoft.Extensions.TimeProvider.Testing`, `NetArchTest.Rules`). `.forge-logs/verify.status` correctly remains `FAIL` for that restore attempt. The focused integration tests were run with `forge.local.cmd` loaded in-process; its contents were not printed or copied.
+
+### Remaining
+
+- Rerun full `verify.cmd` when NuGet restore is available.
+- Lower-priority UI integrations remain for goal-risk, Analyst brief, per-machine readiness, reallocation preview, inventory selection, scan-acceptance lookup and current QMS-policy lookup. Signature verification already has an evidence-attachment action.
+- The local preview on port 5080 is the immutable 2026-10-15 publish and was not refreshed.
+- Licensed normative review, organization approval, real connector/device exercises and production validation remain external. Forge does not claim ISO certification or conformity from this local work.
+
+## V5 master intake — queued pending V4 gate (historical state, 2026-10-16)
+
+The owner supplied `C:\Users\wrest\Downloads\JIRSN_Forge_V5_Consolidated_Development_Master.md` and said V5 is for after V4 is completed. I reviewed its scope and copied the exact source into `docs/v5/JIRSN_Forge_V5_Consolidated_Development_Master.md` so the next developer can work from the project checkout.
+
+The document covers evidence-based ERP/MRP market gaps, predictive supply intelligence, explainable inventory allocation and approved alternates, unique child labels with permanent parent genealogy, role-based readiness, MRB containment, adoption/integration, optional nonprofit feasibility, and required audit/demo/handoff outputs. Its embedded “start now” instruction is subordinate to the owner's sequencing request: V5 remains queued until the V4 software backlog and full verification gate recorded in `AI_HANDOFF.md` are complete. After that, begin with V5 repository/evidence analysis and a bounded-slice proposal; production code, schema or workflow work still needs the specific V5 owner approval required by the master.
+
+No V5 code or research was started. No V4 status was changed by this document intake; the current V4 changes remain uncommitted, the lower-priority UI reads remain open, and the full suite still needs a successful rerun when package restore is available.
+
+## V4 acceptance and V5 Phase 0/1 — 2026-10-16
+
+**Agent:** Codex
+
+### V4 completion
+
+- The owner had asked to begin V5 after V4. The current full `verify.cmd` completed successfully, so V4's local software gate is now complete.
+- `.forge-logs/verify.status`: `PASS`. `.forge-logs/verify.log`: .NET SDK 10.0.401, successful restore, Release solution build with 0 warnings/0 errors, Planning 303, Kernel 44, Architecture 32, PostgreSQL Integration 346 and UI hardening 212 across 24 files. Total: 937 passing checks, no failures.
+- The seven lower-priority UI reads from Claude's handoff are now connected: goal risk, Analyst brief, per-machine readiness, workforce reallocation preview, eligible inventory selection, scan-acceptance lookup and current QMS policy. Earlier in this continuation the acceptance/release history reads, site closures display, access-policy read and nav grouping were also completed.
+- Updated `docs/v4/completion-checklist.md` to distinguish the current 937-check gate from the historical 759-check run. External normative review, organization approval, real connector and device exercises, accessibility study and production recovery validation remain outside local software verification.
+
+### V5 Phase 0/1 evidence
+
+- Updated `AI_HANDOFF.md`; added `docs/v5/phase0-1-audit.md` and `docs/v5/V5_SESSION_HANDOFF.md`. Preserved the owner’s master exactly; source and project copy SHA-256 match `96E0A43DB167D4D2EDD7AC2FCC92AA30E272CFFBA7CDF3A2A6B0668044A1C4F2`.
+- Repository audit confirms V3/V4 already own inventory identity, MRP/scheduling, approved alternates, readiness, NCR/MRB, genealogy, QMS and labels. Market documentation shows broad competitor support for finite scheduling, component tracking and parent/child lots. Practitioner pain evidence is limited and mixed, so no market-wide “competitors lack core manufacturing” claim is supported.
+- Highest risk: transformation byproducts are linked to the production order but currently persist null exact source part/lot, whereas remnant creation requires a source lot. Composite `(part_number, lot_number)` is current inventory identity; barcode/label identity uniqueness remains a test question, not an assumed defect. See `InventoryService.Transformation.cs`, migrations `0009_material_identity.sql` and `0010_transformation.sql`, `V33Tests.cs`, and label lifecycle integration coverage.
+- No production source, schema or workflow changes were made for V5. Working tree remains uncommitted, branch `main`, HEAD `38db86a953f4d73dad3590183341bcf35e14dedf`. `git diff --check` returned 0 with Git LF-to-CRLF notices.
+
+### Next decision
+
+The V5 master §§12–14 requires owner approval for one bounded production slice. Proposed V5-S1 is an Inventory-owned integration proof for split children, remnants, single-/multi-parent byproducts, child scan/label identity, reprint without duplicate stock, hold isolation and quantity conservation. If the tests confirm the byproduct parent edge is missing, authorize only the smallest owning Inventory correction plus migration/rollback notes and relevant tests. Do not begin allocation optimization, forecasting, new MRB work or external connectors in that slice. Await the owner's explicit approval before implementation.
+
+## V5-S1 child identity and genealogy — 2026-10-16
+
+**Agent:** Codex
+
+**Authorization.** The owner replied “Approved please start” to the bounded V5-S1 proposal. The authorized work was the Inventory-owned split/remnant/byproduct child identity and genealogy proof, with the smallest Inventory correction if the parent-edge gap was confirmed, migration/rollback notes and focused/full acceptance checks. Allocation optimization, forecasting, new MRB work and external connectors stayed excluded.
+
+**Implementation.** A test-first byproduct trace confirmed the gap: tracked byproducts had an order association but no explicit physical input parent. Added `TransformationParent` to transformation contracts, explicit parent validation to `InventoryService.Transformation.cs`, append-only persistence/loading in `PostgresInventoryStore.Transformation.cs`, additive migration `0020_transformation_line_parents.sql`, parent identity filtering, and parent-to-child edges in the existing Planning genealogy graph. Tracked/serialized byproducts now require real issued parent lots and positive parent quantities; attribution across outputs cannot exceed the recorded consumed quantity for that parent lot. These metadata do not alter stock reconciliation. Existing historical byproducts were not backfilled because their physical sources are unknown.
+
+**Acceptance evidence.**
+
+- `V32Tests` resolves three split child lots through exact canonical roll scan codes.
+- `V33Tests` records a multi-parent byproduct, checks parent quantities and the retained order-to-output edge, rejects missing/unissued/over-attributed parents, and reconciles both source lots.
+- `V41LabelLifecycleTests.Reprinting_a_child_label_keeps_the_same_lot_and_holding_one_child_leaves_its_sibling_released` proves one-parent child trace and persisted data, resolves both original/reprint QR artifacts to the same composite child identity, compares inventory ledger state before/after reprint, and proves a hold on one child leaves the sibling released.
+- Combined focus: `dotnet test tests/Forge.Integration.Tests/Forge.Integration.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~V32Tests|FullyQualifiedName~V33Tests|FullyQualifiedName~V41LabelLifecycleTests"` passed 7/7.
+- `node --test` over all `tests/ui/*.test.mjs` passed 212/212.
+- `git diff --check` passed (exit 0); Git emitted only existing LF-to-CRLF notices for the mixed working tree.
+
+**Full gate.** `verify.cmd` stopped at restore before build/test because `api.nuget.org` was blocked (`NU1900`/`NU1301`). A solution restore with `--ignore-failed-sources -p:NuGetAudit=false` also failed because `Microsoft.Extensions.TimeProvider.Testing` and `NetArchTest.Rules` are unavailable in the local package cache. `.forge-logs/verify.status` is `FAIL` for this incomplete full-gate attempt. The prior V4 937-check result is pre-V5 evidence, not a V5 full-suite pass.
+
+**Handoff and migration.** Added `docs/v5/V5-S1-implementation-notes.md` with additive migration and rollback guidance; updated `docs/v5/V5_SESSION_HANDOFF.md`, the Phase 0/1 audit decision, `AI_HANDOFF.md` and this log. Re-run `verify.cmd` when NuGet restore is available. The working tree is uncommitted on `main` at `38db86a953f4d73dad3590183341bcf35e14dedf`. No commit, push, deployment or external communication was made. `forge.local.cmd` was only invoked in-process and its contents were not printed or copied.
+
+## Claude: V5-S1 verification, gap fixes and running Forge (2026-10-16/17)
+
+**Agent:** Claude (Claude Opus 5.5), in a cloud session linked to this PC.
+
+**Objective.** The owner asked Claude to review Codex's V5 checkpoint, run any missing gaps, and get Forge up and running.
+
+**Findings.**
+- Codex's full-gate "NuGet unreachable" result came from its own sandbox blocking sockets. From the desktop, restore worked at once.
+- No log survives for the 937-check V4 pass; `verify.log` had been overwritten.
+- The V5-S1 order-page byproduct dialog could not supply the newly required parent lots.
+- V5-S1 did not update the migration-count assertions (108 to 109).
+
+**Work completed.**
+- Ran the full `verify.cmd` from the desktop:
+  - build clean;
+  - Kernel 44, Planning 303 and Architecture 32 all passed;
+  - integration 345/347, the two failures being the stale migration counts.
+- Fixed the counts in `KernelRoundTripTests` and `V328Tests`.
+- Reran them with a Release rebuild: 11/11 passed. All UI tests: 213/213 across 25 files.
+- Added parent-lot entry to the byproduct dialog (`genealogy.js` `byproductParents`), with a new UI test.
+- Started Forge on port 5080 from the tested Release build through `.forge-logs/run-forge-release.cmd`. That run applied migration 0020 to the local database, and a smoke check passed.
+
+**Not done.**
+- A single uninterrupted `verify.cmd` on the final tree.
+- Diagnosing why `run-forge.cmd` (`dotnet run`) stalls after restore.
+- Committing. Nothing has been committed since `38db86a`.
+
+**Files.**
+- Changed: `src/Forge.Host/wwwroot/js/genealogy.js`, `tests/Forge.Integration.Tests/KernelRoundTripTests.cs`, `tests/Forge.Integration.Tests/V328Tests.cs`, `AI_HANDOFF.md` and this log.
+- New: `tests/ui/byproduct-parents.test.mjs`.
+- Ignored logs and launchers in `.forge-logs/`: `rerun-fixed.*`, `run-forge-release.cmd`, `forge-5080.log` and the verify log copies.
+
+## Claude: clean full gate and simulation amendment intake (2026-10-17)
+
+**Agent:** Claude (Claude Opus 5.5), in a cloud session linked to this PC.
+
+**Full gate.** Stopped Forge, ran `verify.cmd` from the desktop and got **PASS**:
+- 939 checks in total: Kernel 44, Planning 303, Architecture 32, integration 347 and UI 213;
+- a clean Release build;
+- the log is in `.forge-logs/verify-pass-20261017-final.log`.
+
+Forge was then restarted on port 5080 with `.forge-logs/run-forge-release.cmd`.
+
+**Simulation amendment.** The owner supplied the "Full-System Digital Factory Simulation Amendment", saved verbatim in `docs/v5/`.
+- Repository discovery and the proposed test architecture are written up in `docs/v5/V5-simulation-discovery-and-architecture.md`. It covers:
+  - the module and API inventory;
+  - the existing fixtures to reuse (`ForgeApp`, `PostgresFixture`, `OriginalReferenceFactory`, the planning engines and scenario service);
+  - integration coverage by area;
+  - the coverage matrix;
+  - limits (62-day scenario horizon, no cost model, overtime not modeled, no device drivers);
+  - phases A–D.
+- The owner approved Phase A (test code only), 300 orders and 70 operators, a separate `simulate.cmd`, and quantities and time for economics.
+
+**Files.** Changed: `AI_HANDOFF.md` and this log. New: the two `docs/v5` files.
+

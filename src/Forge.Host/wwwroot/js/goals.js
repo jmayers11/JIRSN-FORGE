@@ -16,7 +16,7 @@ export async function appendGoals(page, me) {
   page.appendChild(section);
   const manage = canAction(me, 'planning.goals.manage');
   const load = async () => {
-    const [res, orders, demand] = await Promise.all([tryGet('/api/planning/goals'), tryGet('/api/orders/'), tryGet('/api/planning/demand')]);
+    const [res, orders, demand, goalRisk] = await Promise.all([tryGet('/api/planning/goals'), tryGet('/api/orders/'), tryGet('/api/planning/demand'), tryGet('/api/planning/goal-risk')]);
     const goals = res.data ?? [];
     const byId = new Map(goals.map(v => [v.goal.goalId, v]));
     const depth = v => { let d = 0, p = v.goal.parentGoalId; while (p && byId.has(p) && d < 8) { d++; p = byId.get(p).goal.parentGoalId; } return d; };
@@ -34,6 +34,13 @@ export async function appendGoals(page, me) {
         <td class="num">${qty(g.done)} / ${qty(g.target)}<div class="faint">${qty(g.attainment * 100, 1)}%</div></td><td class="num">${qty(g.remainingMinutes, 0)}</td>
         <td><span class="pill ${TONE[g.state] ?? 'none'}">${esc(LABEL[g.state] ?? g.state)}</span>${g.behindPlan && g.state !== 'BehindPlan' ? ' <span class="pill info">behind plan</span>' : ''}<div class="faint">${esc(g.evidence.join(' '))}</div></td>
         <td class="nowrap">${manage ? `<button class="btn small ghost" data-goal-sub="${g.goalId}">+ Below</button> <button class="btn small ghost" data-goal-change="${g.goalId}">Change</button> <button class="btn small ghost" data-goal-close="${g.goalId}">Close</button>` : ''}</td></tr>`; }).join('')}
+      </tbody></table>`}
+      <h3 style="margin-top:22px">Released-order goal risk</h3>
+      ${goalRisk.error ? errorBlock(goalRisk.error, 'released-order goal risk') : !goalRisk.data?.length ? emptyBlock('No released orders', 'Goal risk is assessed for released orders against the approved schedule and due date.') : `
+      <table class="table"><thead><tr><th>Order</th><th>Part</th><th>Due</th><th>Projected completion</th><th>State</th><th>Behind plan</th><th>Evidence</th></tr></thead><tbody>
+      ${goalRisk.data.map(line => `<tr><td><a href="#/orders/${line.orderNumber}">#${line.orderNumber}</a></td><td>${esc(line.partNumber)}</td><td>${esc(fmtDate(line.dueDate))}</td>
+        <td>${line.projectedCompletion ? esc(fmtDateTime(line.projectedCompletion)) : 'No projection'}</td><td><span class="pill ${line.state === 'Late' || line.state === 'Unschedulable' ? 'bad' : line.atRisk ? 'warn' : 'ok'}">${esc(line.state)}</span></td>
+        <td>${line.behindPlan ? 'Yes' : 'No'}</td><td class="muted">${esc((line.evidence ?? []).join(' '))}</td></tr>`).join('')}
       </tbody></table>`}
       <div class="faint" style="margin-top:6px">Behind plan compares done work with the approved schedule. At risk and late compare a fresh finite-capacity reforecast of the remaining work with the goal's own required-by date.</div>`;
     const orderOptions = (orders.data ?? []).filter(o => o.status !== 'Cancelled').map(o => [o.orderNumber, `#${o.orderNumber} — ${o.partNumber} × ${qty(o.quantity)} (${o.status})`]);

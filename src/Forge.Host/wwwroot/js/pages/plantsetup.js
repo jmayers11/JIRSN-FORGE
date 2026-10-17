@@ -59,8 +59,13 @@ export async function plantSetupPage(page, ctx) {
               <div class="row-actions">${btn('edit-activity', 'Edit', { code: a.code })}${retireBtn('ActivityType', a)}</div></div>`).join('') || '<span class="muted">None yet.</span>'}
           </section>
           <section class="panel"><header><h2>Shifts</h2></header>
-            ${sites.map(s => `<div class="plant-sub"><b>${esc(s.name)}</b> ${btn('add-shift', '+ Shift', { site: s.code })} ${btn('add-closure', '+ Closure', { site: s.code }, 'ghost')}</div>
-              ${r.shifts.filter(x => x.siteCode === s.code).map(x => `<div class="plant-row"><div><b>${esc(x.code)}</b><div class="faint">${esc(shiftText(x))}</div></div></div>`).join('') || '<div class="muted">No shifts yet: work centers without a shift have no working time.</div>'}`).join('') || '<span class="muted">Add a site first.</span>'}
+            ${sites.map(s => {
+              const closures = (r.closures ?? []).filter(c => c.siteCode === s.code).sort((a, b) => a.date.localeCompare(b.date));
+              return `<div class="plant-sub"><b>${esc(s.name)}</b> ${btn('add-shift', '+ Shift', { site: s.code })} ${btn('add-closure', '+ Closure', { site: s.code }, 'ghost')}</div>
+                ${r.shifts.filter(x => x.siteCode === s.code).map(x => `<div class="plant-row"><div><b>${esc(x.code)}</b><div class="faint">${esc(shiftText(x))}</div></div></div>`).join('') || '<div class="muted">No shifts yet: work centers without a shift have no working time.</div>'}
+                <div class="faint" style="margin:8px 0 4px">Site closures</div>
+                ${closures.length ? closures.map(c => `<div class="plant-row"><div><b>${esc(c.date)}</b>${c.note ? `<div class="faint">${esc(c.note)}</div>` : '<div class="faint">No note recorded</div>'}</div><span class="pill warn">Closed</span></div>`).join('') : '<div class="muted">No closures recorded.</div>'}`;
+            }).join('') || '<span class="muted">Add a site first.</span>'}
           </section>
         </div>
       </div>`;

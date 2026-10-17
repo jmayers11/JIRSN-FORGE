@@ -79,12 +79,14 @@ public sealed class V33Tests(PostgresFixture postgres)
         await plant.Ok(bob, "/api/procurement/suppliers", new { code = "MILLCO", name = "Mill Company" });
         var po = Id(await plant.Ok(bob, "/api/procurement/purchase-orders", new { supplier = "MILLCO", lines = new[] { new { partNumber = "FOIL-9", quantity = 1000m, promisedDate = Day(5) } } }));
         await plant.Ok(pat, $"/api/procurement/purchase-orders/{po}/approve", new { reason = "Stock" });
-        await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "FOIL-9", quantity = 1000m, locationCode = "STORES", lotNumber = "M-1", supplierLot = "HEAT-77", poNumber = po, poLine = 1, revision = "A", identityKind = "Roll" });
+        await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "FOIL-9", quantity = 990m, locationCode = "STORES", lotNumber = "M-1", supplierLot = "HEAT-77", poNumber = po, poLine = 1, revision = "A", identityKind = "Roll" });
+        await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "FOIL-9", quantity = 10m, locationCode = "STORES", lotNumber = "M-2", supplierLot = "HEAT-77", poNumber = po, poLine = 1, revision = "A", identityKind = "Roll" });
 
         // Order 1 slits the master roll.
         var first = Id(await plant.Ok(e, "/api/orders/", new { partNumber = "STRIP-9", quantity = 1000m, dueDate = Day(10), priority = 3 }));
         await plant.Ok(planner, $"/api/orders/{first}/release", new { reason = "Customer order" });
-        await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = first, partNumber = "FOIL-9", quantity = 1000m, locationCode = "STORES", lotNumber = "M-1" });
+        await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = first, partNumber = "FOIL-9", quantity = 990m, locationCode = "STORES", lotNumber = "M-1" });
+        await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = first, partNumber = "FOIL-9", quantity = 10m, locationCode = "STORES", lotNumber = "M-2" });
         Assert.Equal("NotRecorded", (await Row(mo, first, "M-1")).GetProperty("status").GetString());
 
         const string url = "/api/inventory/transformations";
@@ -94,14 +96,27 @@ public sealed class V33Tests(PostgresFixture postgres)
         await Rejected(plant, mo, url, Record(first, null, new { role = "Consumed", partNumber = "FOIL-9", lotNumber = "M-1", quantity = 1001m }), "over_accounted");
         await Rejected(plant, mo, url, Record(first, null, new { role = "Remnant", partNumber = "FOIL-9", lotNumber = "M-1", quantity = 1m, sourceLot = "M-1", locationCode = "STORES" }), "lot_exists");
         await Rejected(plant, mo, url, Record(first, null, new { role = "Byproduct", partNumber = "STRIP-9", lotNumber = "X-1", quantity = 1m, locationCode = "STORES" }), "use_production_receipt");
+        await Rejected(plant, mo, url, Record(first, null, new { role = "Byproduct", partNumber = "TRIM-9", lotNumber = "T-MISSING", quantity = 1m, locationCode = "STORES" }), "source_required");
+        await Rejected(plant, mo, url, Record(first, null, new { role = "Byproduct", partNumber = "TRIM-9", lotNumber = "T-UNISSUED", quantity = 1m, locationCode = "STORES", parents = new[] { new { partNumber = "FOIL-9", lotNumber = "M-9", quantity = 1m } } }), "not_issued");
+        await Rejected(plant, mo, url, Record(first, null,
+            new { role = "Consumed", partNumber = "FOIL-9", lotNumber = "M-1", quantity = 1m },
+            new { role = "Byproduct", partNumber = "TRIM-9", lotNumber = "T-OVER", quantity = 1m, locationCode = "STORES", parents = new[] { new { partNumber = "FOIL-9", lotNumber = "M-1", quantity = 2m } } }), "parent_quantity_exceeded");
 
-        // Consumed 830, a 150 remnant back to stores, 30 of trim as a byproduct (made, not issued); 20 nobody has explained yet.
+        // M-1 contributes 820 consumed and a 150 remnant; M-2 contributes 10 consumed. The byproduct has two exact parents.
+        // M-1 has 20 unexplained after this record, which is later recorded as loss.
         await plant.Ok(mo, url, Record(first, null,
-            new { role = "Consumed", partNumber = "FOIL-9", lotNumber = "M-1", quantity = 830m },
+            new { role = "Consumed", partNumber = "FOIL-9", lotNumber = "M-1", quantity = 820m },
+            new { role = "Consumed", partNumber = "FOIL-9", lotNumber = "M-2", quantity = 10m },
             new { role = "Remnant", partNumber = "FOIL-9", lotNumber = "M-1-R", quantity = 150m, sourceLot = "M-1", locationCode = "STORES" },
-            new { role = "Byproduct", partNumber = "TRIM-9", lotNumber = "T-1", quantity = 30m, locationCode = "STORES" }));
+            new { role = "Byproduct", partNumber = "TRIM-9", lotNumber = "T-1", quantity = 30m, locationCode = "STORES",
+                parents = new[] { new { partNumber = "FOIL-9", lotNumber = "M-1", quantity = 20m }, new { partNumber = "FOIL-9", lotNumber = "M-2", quantity = 10m } } }));
         var m1 = await Row(mo, first, "M-1");
         Assert.Equal(("Unexplained", 20m), (m1.GetProperty("status").GetString(), m1.GetProperty("unexplained").GetDecimal()));
+        Assert.Equal(("Balanced", 0m), ((await Row(mo, first, "M-2")).GetProperty("status").GetString(), (await Row(mo, first, "M-2")).GetProperty("unexplained").GetDecimal()));
+        var byproductTrace = await Get(planner, "/api/genealogy/trace?part=TRIM-9&lot=T-1&direction=Back");
+        Edge(byproductTrace, $"order:{first}", "lot:TRIM-9/T-1", "Byproduct", 30m);
+        Edge(byproductTrace, "lot:FOIL-9/M-1", "lot:TRIM-9/T-1", "Byproduct", 20m);
+        Edge(byproductTrace, "lot:FOIL-9/M-2", "lot:TRIM-9/T-1", "Byproduct", 10m);
         var flagged = await Get(planner, "/api/reports/material-reconciliation?status=Unexplained");
         Assert.Equal("M-1", Assert.Single(flagged.GetProperty("rows").EnumerateArray()).GetProperty("cells")[2].GetString());
 
@@ -111,7 +126,7 @@ public sealed class V33Tests(PostgresFixture postgres)
         await plant.Ok(stores, "/api/inventory/locations", new { code = "RACK-R", siteCode = "PLANT1", name = "Remnant rack", kind = "Stores" });
         await plant.Ok(mo, "/api/inventory/transfers", new { partNumber = "FOIL-9", quantity = 150m, fromLocation = "STORES", toLocation = "RACK-R", lotNumber = "M-1-R", status = "Released", reason = "To the remnant rack" });
 
-        // A tolerance of 1.5% would not cover 20 of 1000; the loss is recorded instead (with a reason), and it balances.
+        // A tolerance of 1.5% would not cover 20 of 990; the loss is recorded instead (with a reason), and it balances.
         await plant.Ok(stores, "/api/inventory/yield-tolerance/FOIL-9", new { percent = 1.5m, reason = "Edge trim varies" });
         Assert.Equal("Unexplained", (await Row(mo, first, "M-1")).GetProperty("status").GetString());
         await plant.Ok(mo, url, Record(first, "Edge trim to the chopper", new { role = "Loss", partNumber = "FOIL-9", lotNumber = "M-1", quantity = 20m }));
@@ -196,7 +211,11 @@ public sealed class V33Tests(PostgresFixture postgres)
         Assert.Contains("Mill Company", receipt.GetProperty("label").GetString(), StringComparison.Ordinal);
         Assert.Contains("HEAT-77", receipt.GetProperty("label").GetString(), StringComparison.Ordinal);
         Assert.Contains($"PO {po}/1", receipt.GetProperty("label").GetString(), StringComparison.Ordinal);
-        Edge(shipmentBack, receipt.GetProperty("id").GetString()!, "lot:FOIL-9/M-1", "Received", 1000m);
+        Edge(shipmentBack, receipt.GetProperty("id").GetString()!, "lot:FOIL-9/M-1", "Received", 990m);
+        var secondLotBack = await Get(planner, "/api/genealogy/trace?part=FOIL-9&lot=M-2&direction=Back");
+        var secondReceipt = Assert.Single(secondLotBack.GetProperty("nodes").EnumerateArray(), n =>
+            n.GetProperty("kind").GetString() == "Receipt" && n.GetProperty("partNumber").GetString() == "FOIL-9" && n.GetProperty("lotNumber").GetString() == "M-2");
+        Edge(secondLotBack, secondReceipt.GetProperty("id").GetString()!, "lot:FOIL-9/M-2", "Received", 10m);
         foreach (var trace in new[] { forward, shipmentBack })
         {
             Edge(trace, "lot:FOIL-9/M-1", "lot:FOIL-9/M-1-R", "Remnant", 150m);
@@ -210,6 +229,8 @@ public sealed class V33Tests(PostgresFixture postgres)
             Assert.DoesNotContain(trace.GetProperty("edges").EnumerateArray(), x => x.GetProperty("relation").GetString() == "Transfer");
             Assert.False(trace.GetProperty("truncated").GetBoolean());
         }
+        Edge(forward, $"order:{first}", "lot:TRIM-9/T-1", "Byproduct", 30m);
+        Edge(forward, "lot:FOIL-9/M-1", "lot:TRIM-9/T-1", "Byproduct", 20m);
         var missing = await planner.GetAsync(new Uri("/api/genealogy/trace?lot=NOPE-1", UriKind.Relative));
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
 

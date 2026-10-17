@@ -125,6 +125,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .sidebar .brand { padding: 10px 14px 8px; border-bottom: 1px solid var(--line); }
 .nav { list-style: none; margin: 8px 0; padding: 0 8px; flex: 1; overflow-y: auto; position: relative; z-index: 1; }
+.nav-section { margin: 13px 10px 4px; color: #9ba9b5; font-size: 10px; font-weight: 700; letter-spacing: .12em; line-height: 1.5; text-transform: uppercase; }
+.nav-section:first-child { margin-top: 4px; }
 .nav a {
   display: flex; align-items: center; gap: 12px;
   padding: 9px 12px; margin: 1px 0; border-radius: 4px;

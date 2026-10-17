@@ -75,6 +75,12 @@ const NAV = [
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: analystPage },
   { route: 'access', label: 'Access Control', icon: 'access', page: accessPage },
 ];
+const NAV_GROUPS = [
+  ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
+  ['Make', ['orders', 'work-centers', 'shop-floor', 'plant-setup', 'workforce', 'safety-rules', 'shift-continuity', 'inventory', 'procurement', 'maintenance', 'shipping']],
+  ['Quality', ['quality', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
+  ['Admin', ['my-work', 'notifications', 'integrity', 'reports', 'analyst', 'access']],
+];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
 
 export { roleTitle };
@@ -131,11 +137,22 @@ function renderShell() {
   const me = session.me;
   const initials = me.displayName.split(/\s+/).map(p => p[0]).join('').slice(0, 2).toUpperCase();
   const navItem = n => `<li><a href="#/${n.route}" data-route="${n.route}">${img(n.icon)}<span>${esc(n.label)}</span>${n.badge ?? ''}</a></li>`;
+  const groupedNav = (() => {
+    const byRoute = new Map(NAV.map(item => [item.route, item]));
+    const assigned = new Set();
+    const groups = NAV_GROUPS.map(([label, routes]) => {
+      const entries = routes.map(route => byRoute.get(route)).filter(Boolean);
+      entries.forEach(item => assigned.add(item.route));
+      return entries.length ? `<li class="nav-section">${esc(label)}</li>${entries.map(navItem).join('')}` : '';
+    }).join('');
+    const remaining = NAV.filter(item => !assigned.has(item.route));
+    return groups + (remaining.length ? `<li class="nav-section">More</li>${remaining.map(navItem).join('')}` : '');
+  })();
   $('#app').innerHTML = `
     <div class="shell" id="shell">
       <nav class="sidebar" aria-label="Main">
         ${brand()}
-        <ul class="nav">${NAV.map(navItem).join('')}</ul>
+        <ul class="nav">${groupedNav}</ul>
         <ul class="nav nav-bottom">${navItem(SETTINGS)}</ul>
       </nav>
       <div class="main">
