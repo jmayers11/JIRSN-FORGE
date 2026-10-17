@@ -1,4 +1,22 @@
 # AI_HANDOFF.md
+## V5 simulation Phase A: Claude, 2026-10-17 (current)
+
+**`simulate.cmd` PASS: 10/10 tests, 351 expectations, 0 failed.** Test code only, as the owner approved. No production code or schema changed.
+
+- New project `tests/Forge.Simulation.Tests`, added to `Forge.slnx`, with tests tagged `Category=Simulation`. It contains:
+  - the engine: clock, seeded event log, API driver, invariants, report and factory;
+  - S09 quality hold scope, S10 supplier MRB dispositions and S15 network interruption, each run with seeds 7, 42 and 1009;
+  - a reproducibility test.
+- `verify.cmd` now runs `dotnet test` with `--filter "Category!=Simulation"`. The new `simulate.cmd` runs only the simulation, logging to `.forge-logs/simulate.log` with per-scenario results in `.forge-logs/simulation/`.
+- Results and limits are in `docs/v5/V5-simulation-phaseA-results.md`. No Forge defects were found.
+- **Next, Phase B (still test code):**
+  - the 300-order, 70-operator factory generator;
+  - 30/60/90-day horizons;
+  - the remaining disruptive events;
+  - production NCR and MRB dispositions;
+  - workforce impact.
+- `verify.cmd` has not been rerun since the filter was added. The build of the whole solution, including the new project, was clean inside `simulate.cmd`.
+
 ## Full verification of V5-S1, plus fixes: Claude, 2026-10-16/17 (current)
 
 This section is authoritative over the V5-S1 checkpoint below wherever they differ.

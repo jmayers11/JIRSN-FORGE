@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    V5 full-system simulation (Phase A). Test code only: it drives the real Forge host and real services
+    through the HTTP API against disposable PostgreSQL databases. It never touches the live forge database.
+    Runs from simulate.cmd; verify.cmd excludes Category=Simulation.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);CA1707;CA2007;CA2234;CA1861;CA1001;CA5394;CA1031;CA2000;CA1002;CA1819;CA1305;CA1307;CA1310;CA1851</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Forge.Host\Forge.Host.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Reuse the integration fixtures exactly: the real host, disposable databases and the reference plant. -->
+    <Compile Include="..\Forge.Integration.Tests\ForgeApp.cs" Link="Shared\ForgeApp.cs" />
+    <Compile Include="..\Forge.Integration.Tests\PostgresFixture.cs" Link="Shared\PostgresFixture.cs" />
+    <Compile Include="..\Forge.Integration.Tests\SlittingPlant.cs" Link="Shared\SlittingPlant.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

@@ -794,3 +794,20 @@ Forge was then restarted on port 5080 with `.forge-logs/run-forge-release.cmd`.
 
 **Files.** Changed: `AI_HANDOFF.md` and this log. New: the two `docs/v5` files.
 
+## Claude: V5 simulation Phase A (2026-10-17)
+
+**Agent:** Claude (Claude Opus 5.5), in a cloud session linked to this PC.
+
+**Done.**
+- Wrote `tests/Forge.Simulation.Tests` (engine, plus scenarios S09, S10 and S15, plus reproducibility).
+- Every expected outcome comes from the seeded plan and the specification. Checked the routes and records against `ReceivingEndpoints.cs`, `QualityEndpoints.cs` and ADR 0035 before running.
+- Added the project to `Forge.slnx`, added the `Category!=Simulation` filter to `verify.cmd`, and created `simulate.cmd`.
+- The first build failed on CA1822 (`SimApi.SendAndLoseResponse`), which is now static. The second build was clean: 0 warnings, 0 errors.
+- `simulate.cmd`: **PASS**, 10/10 tests and 351 expectations. See `docs/v5/V5-simulation-phaseA-results.md`.
+- Forge was stopped for the run, because it shares the Release DLLs.
+
+**Not done.** Phase B. A full `verify.cmd` rerun with the new filter.
+
+**Files.**
+- New: `tests/Forge.Simulation.Tests/**`, `simulate.cmd` and `docs/v5/V5-simulation-phaseA-results.md`.
+- Changed: `Forge.slnx`, `verify.cmd`, `AI_HANDOFF.md` and this log.

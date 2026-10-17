@@ -22,5 +22,6 @@
     <Project Path="tests/Forge.Planning.Tests/Forge.Planning.Tests.csproj" />
     <Project Path="tests/Forge.Architecture.Tests/Forge.Architecture.Tests.csproj" />
     <Project Path="tests/Forge.Integration.Tests/Forge.Integration.Tests.csproj" />
+    <Project Path="tests/Forge.Simulation.Tests/Forge.Simulation.Tests.csproj" />
   </Folder>
 </Solution>
