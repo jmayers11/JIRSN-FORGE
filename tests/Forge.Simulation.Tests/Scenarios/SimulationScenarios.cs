@@ -15,7 +15,7 @@ public sealed class SimulationScenarios(PostgresFixture postgres)
 {
     public static TheoryData<int> Seeds => [7, 42, 1009];
 
-    public static TheoryData<string> ScenarioNames => [HoldScopeScenario.Name, MrbDispositionScenario.Name, NetworkInterruptionScenario.Name];
+    public static TheoryData<string> ScenarioNames => [HoldScopeScenario.Name, MrbDispositionScenario.Name, SplitDispositionScenario.Name, NetworkInterruptionScenario.Name];
 
     /// <summary>Each break, the scenario it applies to, and the check categories that must catch it.</summary>
     public static TheoryData<Mutation, string, string> NegativeControls => new()
@@ -24,6 +24,7 @@ public sealed class SimulationScenarios(PostgresFixture postgres)
         { Mutation.OracleOffByOne, MrbDispositionScenario.Name, "Inventory" },
         { Mutation.SelfApproveUseAsIs, MrbDispositionScenario.Name, "Outcome" },
         { Mutation.RetryWithFreshKey, NetworkInterruptionScenario.Name, "Idempotency" },
+        { Mutation.ReleaseReducedPart, SplitDispositionScenario.Name, "Inventory" },
     };
 
     [Theory]
@@ -33,6 +34,10 @@ public sealed class SimulationScenarios(PostgresFixture postgres)
     [Theory]
     [MemberData(nameof(Seeds))]
     public async Task S10_supplier_mrb_dispositions_move_exactly_the_rejected_quantity(int seed) => await RunAndAssertAsync(MrbDispositionScenario.Name, seed);
+
+    [Theory]
+    [MemberData(nameof(Seeds))]
+    public async Task S11_split_dispositions_account_for_every_rejected_unit(int seed) => await RunAndAssertAsync(SplitDispositionScenario.Name, seed);
 
     [Theory]
     [MemberData(nameof(Seeds))]
@@ -82,6 +87,7 @@ public sealed class SimulationScenarios(PostgresFixture postgres)
     {
         HoldScopeScenario.Name => HoldScopeScenario.RunAsync(postgres, seed, mutation),
         MrbDispositionScenario.Name => MrbDispositionScenario.RunAsync(postgres, seed, mutation),
+        SplitDispositionScenario.Name => SplitDispositionScenario.RunAsync(postgres, seed, mutation),
         NetworkInterruptionScenario.Name => NetworkInterruptionScenario.RunAsync(postgres, seed, mutation),
         _ => throw new ArgumentOutOfRangeException(nameof(scenario), scenario, "Unknown scenario."),
     };
@@ -90,6 +96,7 @@ public sealed class SimulationScenarios(PostgresFixture postgres)
     {
         HoldScopeScenario.Name => HoldScopeScenario.Plan(seed),
         MrbDispositionScenario.Name => MrbDispositionScenario.Plan(seed),
+        SplitDispositionScenario.Name => SplitDispositionScenario.Plan(seed),
         NetworkInterruptionScenario.Name => NetworkInterruptionScenario.Plan(seed),
         _ => throw new ArgumentOutOfRangeException(nameof(scenario), scenario, "Unknown scenario."),
     };

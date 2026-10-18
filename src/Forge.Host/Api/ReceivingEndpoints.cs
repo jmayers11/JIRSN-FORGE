@@ -10,9 +10,11 @@ namespace Forge.Host.Api;
 
 public sealed record ReceivingInspectionRequest(decimal Accepted, decimal Rejected, string? Defect, ReceivingCharacteristicResult[]? Results, string? Reason);
 
-public sealed record RejectionDispositionRequest(SupplierDisposition Disposition, string? Reason);
+public sealed record RejectionDispositionRequest(SupplierDisposition Disposition, string? Reason, decimal? Quantity = null);
 
 public sealed record RtvShipRequest(string? Carrier, string? Reason);
+
+public sealed record RtvReduceRequest(decimal Quantity, string? Reason);
 
 public sealed record RtvReplacementRequest(decimal Quantity, string? LotNumber, string LocationCode, bool? Inspect, string? Reason);
 
@@ -54,7 +56,7 @@ internal static class ReceivingEndpoints
         api.MapGet("/rejections", (HttpContext http, bool? open, CancellationToken _) =>
             ReadStore<IReceivingLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListRejectionsAsync(open ?? false, ct)));
         api.MapPost("/rejections/{id:long}/disposition", (HttpContext http, long id, RejectionDispositionRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.DispositionRejectionAsync(new DispositionRejection(id, b.Disposition), c, ct)));
+            Command(http, b.Reason, c => s.DispositionRejectionAsync(new DispositionRejection(id, b.Disposition, b.Quantity), c, ct)));
         api.MapPost("/rejections/{id:long}/approve", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ApproveUseAsIsAsync(new ApproveUseAsIs(id), c, ct)))
             .WithMetadata(new StepUpRequiredAttribute());
@@ -63,6 +65,8 @@ internal static class ReceivingEndpoints
             ReadStore<IReceivingLookup>(http, Permissions.InventoryRead, async (l, ct) => await l.ListRtvsAsync(open ?? false, ct)));
         api.MapPost("/rtvs/{id:long}/ship", (HttpContext http, long id, RtvShipRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ShipReturnToVendorAsync(new ShipReturnToVendor(id, b.Carrier), c, ct)));
+        api.MapPost("/rtvs/{id:long}/reduce", (HttpContext http, long id, RtvReduceRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReduceReturnToVendorAsync(new ReduceReturnToVendor(id, b.Quantity), c, ct)));
         api.MapPost("/rtvs/{id:long}/replacement", (HttpContext http, long id, RtvReplacementRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReceiveReplacementAsync(new ReceiveReplacement(id, b.Quantity, b.LotNumber, b.LocationCode, b.Inspect ?? true), c, ct)));
         api.MapPost("/rtvs/{id:long}/credit", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>

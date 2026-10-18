@@ -19,4 +19,7 @@ public enum Mutation
 
     /// <summary>S15: a client retries a lost receipt with a fresh key instead of the original one.</summary>
     RetryWithFreshKey,
+
+    /// <summary>S11: the oracle releases the part a return was reduced by, instead of keeping it on hold pending a decision.</summary>
+    ReleaseReducedPart,
 }

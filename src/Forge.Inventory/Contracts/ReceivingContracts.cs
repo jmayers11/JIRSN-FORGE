@@ -63,7 +63,8 @@ public sealed record SupplierRejection(
     string? DispositionedBy = null,
     DateTimeOffset? DispositionedAt = null,
     string? ApprovedBy = null,
-    DateTimeOffset? ApprovedAt = null);
+    DateTimeOffset? ApprovedAt = null,
+    long? SplitFrom = null);
 
 /// <summary>A return to vendor (V3.11): opened from a rejection, shipped back, then replaced (a new instance) or credited.</summary>
 public sealed record RtvInfo(

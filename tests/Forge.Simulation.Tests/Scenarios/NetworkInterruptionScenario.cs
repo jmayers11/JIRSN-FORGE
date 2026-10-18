@@ -15,8 +15,8 @@ internal static class NetworkInterruptionScenario
 {
     public const string Name = "S15-network-interruption";
 
-    /// <summary>The README only says every command needs an Idempotency-Key; the replay and conflict rules are in a code comment.</summary>
-    private const string IdempotencyContract = "IIdempotencyStore contract (Forge.Kernel/Access/Abstractions.cs)";
+    /// <summary>The replay and conflict rules, written down by the owner's ruling (previously only on IIdempotencyStore).</summary>
+    private const string IdempotencyContract = "ADR 0055 §1";
 
     public static EventLog Plan(int seed)
     {
@@ -58,7 +58,7 @@ internal static class NetworkInterruptionScenario
             {
                 case "LostReceipt":
                 {
-                    report.Rule(Basis.CodeOnly, IdempotencyContract + ": a retry with the same key and body returns the stored result and applies nothing again");
+                    report.Rule(Basis.Spec, IdempotencyContract + ": a repeat with the same key and body returns the stored result and applies nothing again");
                     var key = api.NextKey();
                     var body = Receipt(lot, e.Number("quantity"));
                     await SimApi.SendAndLoseResponse(stores, "/api/inventory/receipts", body, key);
@@ -78,7 +78,7 @@ internal static class NetworkInterruptionScenario
 
                 case "ConcurrentReceipt":
                 {
-                    report.Rule(Basis.Inferred, "Simultaneous requests with one key apply once; each caller gets the result or an in-progress 409, never a second effect");
+                    report.Rule(Basis.Spec, "ADR 0055 §2: simultaneous requests with one key take effect once; each caller gets the result or an in-progress conflict, never a second effect");
                     var key = api.NextKey();
                     var body = Receipt(lot, e.Number("quantity"));
                     var terminals = (int)e.Number("terminals");
@@ -98,7 +98,7 @@ internal static class NetworkInterruptionScenario
 
                 case "KeyReuse":
                 {
-                    report.Rule(Basis.CodeOnly, IdempotencyContract + ": a key used for a different request is refused (409) and changes nothing");
+                    report.Rule(Basis.Spec, IdempotencyContract + ": a key reused for a different request is refused with 409 and changes nothing");
                     var key = api.NextKey();
                     var first = await api.Send(stores, "/api/inventory/receipts", Receipt(lot, e.Number("quantity")), key);
                     report.Expect($"{step}: first use of the key", "200", first.Label, "Idempotency");
@@ -111,7 +111,7 @@ internal static class NetworkInterruptionScenario
 
                 case "LostHold":
                 {
-                    report.Rule(Basis.CodeOnly, IdempotencyContract + ": applies to every command, including holds");
+                    report.Rule(Basis.Spec, IdempotencyContract + ": applies to every command, including holds");
                     var before = (await SimApi.Get(qe, "/api/holds")).EnumerateArray().Count();
                     var key = api.NextKey();
                     var body = new { kind = "Quality", targetType = "Lot", targetPart = SimFactory.LotPart, targetId = lot, source = "Simulation", reason = "Simulated hold with a lost response" };

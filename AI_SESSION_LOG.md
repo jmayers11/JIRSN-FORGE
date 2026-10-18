@@ -831,3 +831,28 @@ Forge was then restarted on port 5080 with `.forge-logs/run-forge-release.cmd`.
 **Files.**
 - New: `Engine/Mutation.cs`, `Engine/RunSummary.cs`.
 - Changed: the simulation engine and scenarios, `simulate.cmd`, `docs/v5/V5-simulation-phaseA-results.md`, `AI_HANDOFF.md` and this log.
+
+## Claude: ADR 0055 rulings, split dispositions and adjustable RTV (2026-10-18)
+
+**Agent:** Claude (Claude Opus 5.5), in a cloud session linked to this PC.
+
+**Owner decisions.**
+- Accepted the six rulings: idempotency; concurrent repeats; one disposition per quantity; one rejection per
+  inspection; adjustable return to vendor with the remainder kept on hold; what counts as open.
+- Approved implementing them.
+
+**Done.**
+- ADR 0055 and migration 0021 (`split_from` plus forward-only triggers).
+- Service: `DispositionRejection.Quantity`, `ReduceReturnToVendor`, `SplitRejectionAsync`.
+- New endpoint, receiving UI and README row.
+- Tests: `V5RejectionSplitTests`, UI test, migration counts set to 110.
+- Simulation: S11 and the `ReleaseReducedPart` control; rule sources re-cited.
+
+**Gates.**
+- Focused `.forge-logs/rerun-split.cmd`: PASS, 24/24 integration and 216/216 UI.
+- `simulate.cmd`: PASS, 21/21.
+- `verify.cmd`: PASS, 944.
+
+Committed, then restarted Forge on port 5080.
+
+**Next.** Phase B of the simulation.

@@ -27,6 +27,26 @@ export function faiResults(text) {
   });
 }
 
+/** The disposition body (ADR 0055): blank or the whole quantity decides the rejection; less decides only that part. */
+export function dispositionPayload(values, rejected) {
+  const body = { disposition: values.disposition };
+  const raw = String(values.quantity ?? '').trim();
+  if (raw === '') return body;
+  const quantity = Number(raw);
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Enter a quantity above zero, or leave it blank for the whole rejection.');
+  if (quantity > Number(rejected)) throw new Error(`The rejection is for ${rejected}; a disposition cannot cover more.`);
+  if (quantity !== Number(rejected)) body.quantity = quantity;
+  return body;
+}
+
+/** The reduce body (ADR 0055): an open return to vendor only goes down; the rest stays on hold as a pending rejection. */
+export function rtvReducePayload(values, current) {
+  const quantity = Number(String(values.quantity ?? '').trim());
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Enter the quantity still going back, above zero.');
+  if (quantity >= Number(current)) throw new Error(`This return is for ${current}; it can only be reduced.`);
+  return { quantity };
+}
+
 export async function loadReceiving() {
   const [receipts, rejections, rtvs, returns] = await Promise.all([
     tryGet('/api/inventory/receiving?take=100'), tryGet('/api/inventory/rejections?open=true'), tryGet('/api/inventory/rtvs?open=true'), tryGet('/api/inventory/customer-returns'),
@@ -60,16 +80,16 @@ export function receivingTab(rec, me) {
     <h3>Rejected material</h3>
     ${!(rec.rejections.data ?? []).length ? '<div class="muted">No rejected material waiting for a decision.</div>' : `
     <table class="table"><thead><tr><th>Rejection</th><th>Part</th><th>Supplier</th><th class="num">Qty</th><th>Defect</th><th>Disposition</th><th></th></tr></thead><tbody>
-    ${rec.rejections.data.map(r => `<tr><td>${r.rejectionId}</td><td>${esc(r.partNumber)}${r.lotNumber ? ` <span class="faint">lot ${esc(r.lotNumber)}</span>` : ''}</td><td>${esc(r.supplierCode ?? '—')}</td>
+    ${rec.rejections.data.map(r => `<tr><td>${r.rejectionId}${r.splitFrom ? ` <span class="faint">(split from ${r.splitFrom})</span>` : ''}</td><td>${esc(r.partNumber)}${r.lotNumber ? ` <span class="faint">lot ${esc(r.lotNumber)}</span>` : ''}</td><td>${esc(r.supplierCode ?? '—')}</td>
       <td class="num">${qty(r.quantity)}</td><td>${esc(r.defect)}</td><td>${esc(r.disposition)}${r.disposition === 'UseAsIs' ? ' <span class="faint">(waiting for approval)</span>' : ''}</td>
-      <td>${disposition && r.disposition === 'Pending' ? `<button class="btn small" data-dispose="${r.rejectionId}">Disposition</button>` : ''}${approve && r.disposition === 'UseAsIs' ? `<button class="btn small" data-approve="${r.rejectionId}">Approve use as is</button>` : ''}</td></tr>`).join('')}
+      <td>${disposition && r.disposition === 'Pending' ? `<button class="btn small" data-dispose="${r.rejectionId}" data-qty="${r.quantity}">Disposition</button>` : ''}${approve && r.disposition === 'UseAsIs' ? `<button class="btn small" data-approve="${r.rejectionId}">Approve use as is</button>` : ''}</td></tr>`).join('')}
     </tbody></table>`}
     <h3>Returns to vendor</h3>
     ${!(rec.rtvs.data ?? []).length ? '<div class="muted">No open returns to vendor.</div>' : `
     <table class="table"><thead><tr><th>RTV</th><th>Part</th><th>Supplier</th><th class="num">Qty</th><th>Status</th><th></th></tr></thead><tbody>
     ${rec.rtvs.data.map(r => `<tr><td>${r.rtvId}</td><td>${esc(r.partNumber)}${r.lotNumber ? ` <span class="faint">lot ${esc(r.lotNumber)}</span>` : ''}</td><td>${esc(r.supplierCode ?? '—')}</td><td class="num">${qty(r.quantity)}</td>
       <td>${esc(r.status)}${r.forRework ? ' <span class="faint">(rework)</span>' : ''}</td>
-      <td>${move && r.status === 'Open' ? `<button class="btn small" data-rtv-ship="${r.rtvId}">Ship back</button>` : ''}${move && r.status === 'Shipped' ? `<button class="btn small" data-rtv-replace="${r.rtvId}" data-qty="${r.quantity}">Receive replacement</button>` : ''}${credit && r.status === 'Shipped' ? `<button class="btn small ghost" data-rtv-credit="${r.rtvId}">Record credit</button>` : ''}</td></tr>`).join('')}
+      <td>${move && r.status === 'Open' ? `<button class="btn small" data-rtv-ship="${r.rtvId}">Ship back</button>` : ''}${disposition && r.status === 'Open' ? `<button class="btn small ghost" data-rtv-reduce="${r.rtvId}" data-qty="${r.quantity}">Reduce</button>` : ''}${move && r.status === 'Shipped' ? `<button class="btn small" data-rtv-replace="${r.rtvId}" data-qty="${r.quantity}">Receive replacement</button>` : ''}${credit && r.status === 'Shipped' ? `<button class="btn small ghost" data-rtv-credit="${r.rtvId}">Record credit</button>` : ''}</td></tr>`).join('')}
     </tbody></table>`}
     <h3>Customer returns</h3>
     ${move ? '<div class="toolbar"><button class="btn small" data-rma-add>+ Customer return</button></div>' : ''}
@@ -97,8 +117,15 @@ export function bindReceivingTab(page, locations, reload, me) {
   }, reason), reload)));
   $$('[data-dispose]', page).forEach(b => b.addEventListener('click', () => formModal({
     title: `Disposition rejection ${b.dataset.dispose}`, confirmLabel: 'Decide', reasonRequired: true,
-    fields: [{ name: 'disposition', label: 'Disposition', type: 'select', options: [['ReturnToVendor', 'Return to vendor'], ['ReworkBySupplier', 'Rework by supplier'], ['Scrap', 'Scrap'], ['UseAsIs', 'Use as is (second person approves)']] }],
-  }, (v, reason) => command(`/api/inventory/rejections/${b.dataset.dispose}/disposition`, v, reason), reload)));
+    detail: `${b.dataset.qty} rejected. Decide all of it, or part of it: the rest stays on hold as a new pending rejection that needs its own decision.`,
+    fields: [{ name: 'disposition', label: 'Disposition', type: 'select', options: [['ReturnToVendor', 'Return to vendor'], ['ReworkBySupplier', 'Rework by supplier'], ['Scrap', 'Scrap'], ['UseAsIs', 'Use as is (second person approves)']] },
+      { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', value: b.dataset.qty }],
+  }, (v, reason) => command(`/api/inventory/rejections/${b.dataset.dispose}/disposition`, dispositionPayload(v, b.dataset.qty), reason), reload)));
+  $$('[data-rtv-reduce]', page).forEach(b => b.addEventListener('click', () => formModal({
+    title: `Reduce return to vendor ${b.dataset.rtvReduce}`, confirmLabel: 'Reduce', reasonRequired: true,
+    detail: `${b.dataset.qty} is going back. Enter what is still going back; the rest stays on hold as a pending rejection, for example to use as is with a second person's approval.`,
+    fields: [{ name: 'quantity', label: 'Quantity still going back', type: 'number', min: 0, step: 'any', value: b.dataset.qty }],
+  }, (v, reason) => command(`/api/inventory/rtvs/${b.dataset.rtvReduce}/reduce`, rtvReducePayload(v, b.dataset.qty), reason), reload)));
   $$('[data-approve]', page).forEach(b => b.addEventListener('click', () => formModal({
     title: `Approve use as is for rejection ${b.dataset.approve}`, confirmLabel: 'Approve', reasonRequired: true, fields: [],
   }, (v, reason) => command(`/api/inventory/rejections/${b.dataset.approve}/approve`, {}, reason), reload)));

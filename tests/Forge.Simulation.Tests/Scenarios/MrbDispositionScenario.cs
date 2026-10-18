@@ -98,7 +98,7 @@ internal static class MrbDispositionScenario
 
                     report.Rule(Basis.Spec, Adr + " §3: accepted quantity is released and rejected quantity goes on hold");
                     await CheckStock(step);
-                    report.Rule(Basis.Inferred, Adr + " §3–4: each inspection with a rejected quantity records one supplier rejection awaiting disposition");
+                    report.Rule(Basis.Spec, "ADR 0055 §4: an inspection with a rejected quantity records exactly one supplier rejection");
                     var open = (await SimApi.Get(qe, "/api/inventory/rejections?open=true")).EnumerateArray()
                         .Select(r => r.GetProperty("rejectionId").GetInt64()).Where(id => !seen.Contains(id)).ToList();
                     report.Expect($"{step}: exactly one new open rejection", "1", open.Count.ToString(CultureInfo.InvariantCulture));
@@ -135,7 +135,7 @@ internal static class MrbDispositionScenario
             var decided = await api.Send(qe, $"/api/inventory/rejections/{id}/disposition", new { disposition = route, reason = "Simulated MRB decision: " + route });
             report.Expect($"{step}: quality engineer dispositions", "200", decided.Label);
 
-            report.Rule(Basis.Inferred, "A supplier rejection is dispositioned once; a later different disposition is refused");
+            report.Rule(Basis.Spec, "ADR 0055 §3: each rejection is decided once; a decided rejection refuses a second disposition");
             report.Expect($"{step}: a second disposition is refused", "422",
                 Status(await api.Send(qe, $"/api/inventory/rejections/{id}/disposition", new { disposition = "Scrap", reason = "Changed my mind" })));
 
@@ -164,7 +164,7 @@ internal static class MrbDispositionScenario
                     report.Rule(Basis.Spec, Adr + " §4: rework by the supplier opens an RTV marked for rework");
                     report.Expect($"{step}: RTV marked for rework only when the supplier reworks", route == "ReworkBySupplier" ? "True" : "False",
                         rtv.GetProperty("forRework").GetBoolean() ? "True" : "False");
-                    report.Rule(Basis.Inferred, "An RTV returns exactly the rejected quantity");
+                    report.Rule(Basis.Spec, "ADR 0055 §5: a return to vendor carries the quantity its disposition decided (here the whole rejection)");
                     report.Expect($"{step}: RTV quantity equals the rejected quantity", r, rtv.GetProperty("quantity").GetDecimal());
                     report.Rule(Basis.Spec, Adr + " §5: shipping posts a ReturnToVendor transaction out of hold");
                     var shipped = await api.Send(stores, $"/api/inventory/rtvs/{rtvId}/ship", new { carrier = "Simulated carrier", reason = "Return shipment" });
@@ -202,7 +202,7 @@ internal static class MrbDispositionScenario
             }
         }
 
-        report.Rule(Basis.Inferred, "Open rejections are those undecided or awaiting use-as-is approval; all four are closed");
+        report.Rule(Basis.Spec, "ADR 0055 §6: a rejection is open while pending or awaiting use-as-is approval; all four are closed");
         report.Expect("End: no open rejections", "0",
             (await SimApi.Get(qe, "/api/inventory/rejections?open=true")).EnumerateArray().Count().ToString(CultureInfo.InvariantCulture));
         await Invariants.AuditChain(report, "End", f.Plant.Admin);

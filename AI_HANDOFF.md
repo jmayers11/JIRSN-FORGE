@@ -1,4 +1,30 @@
 # AI_HANDOFF.md
+## ADR 0055 owner rulings implemented: Claude, 2026-10-18 (current)
+
+**Owner-approved production change.** A supplier rejection is decided per quantity, and an open return to vendor can
+be reduced. The details are in `docs/adr/0055-v5-owner-rulings-idempotency-and-rejection-quantities.md`.
+
+- **Disposition by quantity.** `POST /api/inventory/rejections/{id}/disposition` takes an optional `quantity`. Less than
+  the rejected quantity decides that part; the rest becomes a new pending rejection with `splitFrom`, still on hold.
+- **Reducing a return.** `POST /api/inventory/rtvs/{id}/reduce` (quality disposition, reason required, open returns
+  only) only lowers the quantity. The reduced part stays on hold as a new pending rejection.
+- **Migration** `inventory/0021_split_supplier_rejections`. The migration count is now **110**: update tests that
+  assert it. The new triggers refuse raising a rejection's or return's quantity, and changing a return once it is
+  not open.
+- **Receiving screen.** A quantity field on Disposition, a Reduce action on open returns, and "split from" shown on
+  remainders.
+- **Tests.**
+  - New: `V5RejectionSplitTests` (2) and `tests/ui/split-dispositions.test.mjs` (3).
+  - Simulation scenario **S11** plus the negative control `ReleaseReducedPart`.
+  - All six formerly unwritten rules now cite ADR 0055; no check needs a ruling.
+
+**Gates, 2026-10-18.** All three passed, with a 0-warning build:
+- `verify.cmd`: 944 checks;
+- `simulate.cmd`: 21/21 tests, 662 expectations, 5/5 negative controls caught;
+- the focused check.
+
+Forge was restarted afterwards and applied migration 0021 to the local database.
+
 ## V5 simulation Phase A: Claude, 2026-10-17 (current)
 
 **Follow-up, same afternoon.**

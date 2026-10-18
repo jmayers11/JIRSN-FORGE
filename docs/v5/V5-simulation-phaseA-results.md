@@ -117,3 +117,36 @@ All nine state hashes also equal those from the first Phase A run about two hour
 | **Total** | **939 checks** |
 
 The build was clean and includes the simulation project. Under `Category!=Simulation`, the simulation project ran no tests, as intended. The log is `.forge-logs/verify-pass-20261017-sim-filter.log`.
+
+## Owner rulings implemented: ADR 0055, 2026-10-18
+
+The owner ruled on all six open rules. The owner also approved a production change: a supplier rejection is decided
+per quantity, and an open return to vendor can be reduced.
+
+**Production change.**
+- Migration `inventory/0021_split_supplier_rejections`: a `split_from` column, plus triggers so quantities only go down
+  and a return can't change once shipped.
+- `DispositionRejection` takes an optional `quantity`.
+- New command: `POST /api/inventory/rtvs/{id}/reduce`.
+- Receiving screen: a quantity on Disposition, a Reduce action on open returns, and "split from" shown on remainder
+  rejections.
+
+The full design is in `docs/adr/0055-v5-owner-rulings-idempotency-and-rejection-quantities.md`.
+
+**Simulation.**
+- Every former Inferred or Code-only check now cites ADR 0055. The summary lists **0** rules needing a ruling.
+- New scenario **S11 split dispositions**:
+  - part of a rejection returned, the open return then reduced;
+  - one remainder used as is with a second person's approval, the other scrapped;
+  - every rejected unit accounted for in exactly one rejection.
+- New negative control `ReleaseReducedPart`: caught, with 8 failures.
+
+**Runs, 2026-10-18.**
+
+| Gate | Result |
+|---|---|
+| Focused check (`.forge-logs/rerun-split.cmd`) | **PASS**: Release build with 0 warnings; 24/24 targeted integration tests (including 2 new `V5RejectionSplitTests` and the migration counts, now 110); 216/216 UI |
+| `simulate.cmd` | **PASS**: 21/21 tests, 662 expectations, 5/5 negative controls caught. Log `.forge-logs/simulate-pass-20261018-adr0055.log`, summary `.forge-logs/simulation-summary-20261018.md` |
+| `verify.cmd` (01:33–03:10) | **PASS**: 944 checks: Kernel 44, Planning 303, Architecture 32, integration 349 (347 + 2 new), UI 216 (213 + 3 new). Log `.forge-logs/verify-pass-20261018-adr0055.log` |
+
+The state hashes of S09, S10 and S15 are unchanged from 2026-10-17, so the feature changed no existing behavior.

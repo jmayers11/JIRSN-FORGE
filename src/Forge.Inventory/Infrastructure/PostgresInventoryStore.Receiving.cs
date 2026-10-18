@@ -24,7 +24,8 @@ internal sealed partial class PostgresInventoryStore : IReceivingLookup, IReceiv
 
     private const string RejectionSql =
         """
-        SELECT rejection_id, inspection_id, part_number, lot_number, location_code, supplier_code, po_number, quantity, defect, disposition, dispositioned_by, dispositioned_at, approved_by, approved_at
+        SELECT rejection_id, inspection_id, part_number, lot_number, location_code, supplier_code, po_number, quantity, defect, disposition, dispositioned_by, dispositioned_at, approved_by, approved_at,
+               split_from
         FROM inventory.supplier_rejection
         """;
 
@@ -82,10 +83,11 @@ internal sealed partial class PostgresInventoryStore : IReceivingLookup, IReceiv
         ArgumentNullException.ThrowIfNull(rejection);
         await using var cmd = uow.Command(
             """
-            INSERT INTO inventory.supplier_rejection (inspection_id, part_number, lot_number, location_code, supplier_code, po_number, quantity, defect, disposition)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Pending') RETURNING rejection_id
+            INSERT INTO inventory.supplier_rejection (inspection_id, part_number, lot_number, location_code, supplier_code, po_number, quantity, defect, disposition, split_from)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Pending', $9) RETURNING rejection_id
             """,
-            rejection.InspectionId, rejection.PartNumber, Text(rejection.LotNumber), rejection.LocationCode, Text(rejection.SupplierCode), Long(rejection.PoNumber), rejection.Quantity, rejection.Defect);
+            rejection.InspectionId, rejection.PartNumber, Text(rejection.LotNumber), rejection.LocationCode, Text(rejection.SupplierCode), Long(rejection.PoNumber), rejection.Quantity, rejection.Defect,
+            Long(rejection.SplitFrom));
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -93,8 +95,9 @@ internal sealed partial class PostgresInventoryStore : IReceivingLookup, IReceiv
     {
         ArgumentNullException.ThrowIfNull(rejection);
         await using var cmd = uow.Command(
-            "UPDATE inventory.supplier_rejection SET disposition = $2, dispositioned_by = $3, dispositioned_at = $4, approved_by = $5, approved_at = $6 WHERE rejection_id = $1",
-            rejection.RejectionId, rejection.Disposition.ToString(), Text(rejection.DispositionedBy), Time(rejection.DispositionedAt), Text(rejection.ApprovedBy), Time(rejection.ApprovedAt));
+            "UPDATE inventory.supplier_rejection SET disposition = $2, dispositioned_by = $3, dispositioned_at = $4, approved_by = $5, approved_at = $6, quantity = $7 WHERE rejection_id = $1",
+            rejection.RejectionId, rejection.Disposition.ToString(), Text(rejection.DispositionedBy), Time(rejection.DispositionedAt), Text(rejection.ApprovedBy), Time(rejection.ApprovedAt),
+            rejection.Quantity);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -116,11 +119,11 @@ internal sealed partial class PostgresInventoryStore : IReceivingLookup, IReceiv
         await using var cmd = uow.Command(
             """
             UPDATE inventory.rtv SET status = $2, shipped_transaction_id = $3, shipped_by = $4, shipped_at = $5, replacement_lot = $6, replacement_transaction_id = $7,
-                closed_by = $8, closed_at = $9, note = $10
+                closed_by = $8, closed_at = $9, note = $10, quantity = $11
             WHERE rtv_id = $1
             """,
             rtv.RtvId, rtv.Status.ToString(), Long(rtv.ShippedTransactionId), Text(rtv.ShippedBy), Time(rtv.ShippedAt), Text(rtv.ReplacementLot), Long(rtv.ReplacementTransactionId),
-            Text(rtv.ClosedBy), Time(rtv.ClosedAt), Text(rtv.Note));
+            Text(rtv.ClosedBy), Time(rtv.ClosedAt), Text(rtv.Note), rtv.Quantity);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -154,7 +157,8 @@ internal sealed partial class PostgresInventoryStore : IReceivingLookup, IReceiv
     private static SupplierRejection ReadRejection(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetInt64(1), r.GetString(2), NullableText(r, 3), r.GetString(4), NullableText(r, 5), r.IsDBNull(6) ? null : r.GetInt64(6),
         r.GetDecimal(7) / 1.0000000000000000000000000000m, r.GetString(8), Enum.Parse<SupplierDisposition>(r.GetString(9)), NullableText(r, 10),
-        r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11), NullableText(r, 12), r.IsDBNull(13) ? null : r.GetFieldValue<DateTimeOffset>(13));
+        r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11), NullableText(r, 12), r.IsDBNull(13) ? null : r.GetFieldValue<DateTimeOffset>(13),
+        r.IsDBNull(14) ? null : r.GetInt64(14));
 
     private static RtvInfo ReadRtv(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetInt64(1), NullableText(r, 2), r.GetString(3), NullableText(r, 4), r.GetString(5), r.GetDecimal(6) / 1.0000000000000000000000000000m, r.GetBoolean(7),

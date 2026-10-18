@@ -894,7 +894,7 @@ Receipts take an optional `revision`; inspection plans take an optional `revisio
 | --- | --- | --- |
 | GET | `/api/inventory/receiving`, `/rejections[?open=]`, `/rtvs[?open=]`, `/customer-returns[?shipmentId=]` | `inventory.read` |
 | POST | `/api/inventory/receiving/{receipt}/inspections` | `quality.inspect` |
-| POST | `/api/inventory/rejections/{id}/disposition` (reason), `/api/inventory/customer-returns/{id}/disposition` (reason) | `quality.disposition` |
+| POST | `/api/inventory/rejections/{id}/disposition` (reason; optional `quantity` decides only that part, the rest stays a pending rejection), `/api/inventory/rtvs/{id}/reduce` (reason; open returns only, quantity only goes down), `/api/inventory/customer-returns/{id}/disposition` (reason) | `quality.disposition` |
 | POST | `/api/inventory/rejections/{id}/approve` (reason, a different person) | `quality.approve` |
 | POST | `/api/inventory/rtvs/{id}/ship`, `/replacement`, `/api/inventory/customer-returns` (reason) | `inventory.transact` |
 | POST | `/api/inventory/rtvs/{id}/credit` (reason) | `procurement.approve` |

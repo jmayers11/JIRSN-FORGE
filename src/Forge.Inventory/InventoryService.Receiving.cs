@@ -16,13 +16,23 @@ namespace Forge.Inventory;
 /// <summary>Inspect (part of) a receipt into inspection: accept some, reject some, the rest waits.</summary>
 public sealed record InspectReceipt(long ReceiptTransactionId, decimal Accepted, decimal Rejected, string? Defect, IReadOnlyList<ReceivingCharacteristicResult>? Results);
 
-/// <summary>Decide what happens to a rejected quantity. The reason given is why.</summary>
-public sealed record DispositionRejection(long RejectionId, SupplierDisposition Disposition);
+/// <summary>
+/// Decide what happens to a rejected quantity. The reason given is why. A quantity below the rejected quantity decides
+/// only that part; the rest stays on hold as a new pending rejection (ADR 0055). Omitted, it decides the whole rejection.
+/// </summary>
+public sealed record DispositionRejection(long RejectionId, SupplierDisposition Disposition,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] decimal? Quantity = null);
 
 /// <summary>A second person approves using rejected material as is.</summary>
 public sealed record ApproveUseAsIs(long RejectionId);
 
 public sealed record ShipReturnToVendor(long RtvId, string? Carrier);
+
+/// <summary>
+/// Return less than an open return to vendor holds (ADR 0055). The quantity only goes down; the rest stays on hold as a
+/// new pending rejection that needs its own disposition, so nothing leaves quality hold without a decision.
+/// </summary>
+public sealed record ReduceReturnToVendor(long RtvId, decimal Quantity);
 
 /// <summary>Receive replacement material for a return to vendor: a new instance, linked to the one it replaces.</summary>
 public sealed record ReceiveReplacement(long RtvId, decimal Quantity, string? LotNumber, string LocationCode, bool Inspect = true);
@@ -170,30 +180,38 @@ public sealed partial class InventoryService
             }
 
             var store = uow.Store<IInventoryStore>();
-            var decided = rejection with { Disposition = c.Disposition, DispositionedBy = context.Actor, DispositionedAt = now };
+            var (part, remainder) = await SplitRejectionAsync(uow, rejection, c.Quantity, ct);
+            var decided = part with { Disposition = c.Disposition, DispositionedBy = context.Actor, DispositionedAt = now };
             await uow.Store<IReceivingStore>().UpdateRejectionAsync(decided, ct);
             string message;
             switch (c.Disposition)
             {
                 case SupplierDisposition.Scrap:
-                    await RequireStockAsync(uow, rejection.PartNumber, rejection.LocationCode, rejection.LotNumber, StockStatus.Hold, rejection.Quantity, ct);
-                    await store.InsertTransactionAsync(new NewTransaction(InventoryTransactionKind.Scrap, rejection.PartNumber, rejection.Quantity, rejection.LocationCode, StockStatus.Hold, null, null,
-                        rejection.LotNumber, PoNumber: rejection.PoNumber, Reason: $"Rejection {key} scrapped: {context.Reason}"), now, context.Actor, ct);
-                    message = $"Rejection {key}: {rejection.Quantity} {rejection.PartNumber} scrapped.";
+                    await RequireStockAsync(uow, decided.PartNumber, decided.LocationCode, decided.LotNumber, StockStatus.Hold, decided.Quantity, ct);
+                    await store.InsertTransactionAsync(new NewTransaction(InventoryTransactionKind.Scrap, decided.PartNumber, decided.Quantity, decided.LocationCode, StockStatus.Hold, null, null,
+                        decided.LotNumber, PoNumber: decided.PoNumber, Reason: $"Rejection {key} scrapped: {context.Reason}"), now, context.Actor, ct);
+                    message = $"Rejection {key}: {decided.Quantity} {decided.PartNumber} scrapped.";
                     break;
                 case SupplierDisposition.UseAsIs:
-                    message = $"Rejection {key}: use as is, waiting for a second person to approve.";
+                    message = $"Rejection {key}: use as is for {decided.Quantity}, waiting for a second person to approve.";
                     break;
                 default:
-                    var rtvId = await uow.Store<IReceivingStore>().InsertRtvAsync(new RtvInfo(0, rejection.RejectionId, rejection.SupplierCode, rejection.PartNumber, rejection.LotNumber,
-                        rejection.LocationCode, rejection.Quantity, c.Disposition == SupplierDisposition.ReworkBySupplier, RtvStatus.Open), ct);
-                    message = $"Rejection {key}: return to vendor {rtvId} opened{(c.Disposition == SupplierDisposition.ReworkBySupplier ? " for rework by the supplier" : string.Empty)}.";
+                    var rtvId = await uow.Store<IReceivingStore>().InsertRtvAsync(new RtvInfo(0, decided.RejectionId, decided.SupplierCode, decided.PartNumber, decided.LotNumber,
+                        decided.LocationCode, decided.Quantity, c.Disposition == SupplierDisposition.ReworkBySupplier, RtvStatus.Open), ct);
+                    message = $"Rejection {key}: return to vendor {rtvId} opened for {decided.Quantity}{(c.Disposition == SupplierDisposition.ReworkBySupplier ? " for rework by the supplier" : string.Empty)}.";
                     break;
+            }
+
+            List<EventEnvelope> events = [pipeline.Event(new ReceivingRecorded("SupplierRejection", c.RejectionId, c.Disposition.ToString()), context, SourceContext, "SupplierRejection", key)];
+            if (remainder is { } rest)
+            {
+                message += $" {rejection.Quantity - decided.Quantity} stays on hold as pending rejection {Key(rest)}.";
+                events.Add(pipeline.Event(new ReceivingRecorded("SupplierRejection", rest, "SplitFrom" + key), context, SourceContext, "SupplierRejection", Key(rest)));
             }
 
             return new CommandOutcome(
                 CommandResult.Ok(key, message),
-                [pipeline.Event(new ReceivingRecorded("SupplierRejection", c.RejectionId, c.Disposition.ToString()), context, SourceContext, "SupplierRejection", key)],
+                events,
                 new AuditChange("SupplierRejection", key, CanonicalJson.Serialize(rejection), CanonicalJson.Serialize(decided)));
         }, ct);
     }
@@ -247,6 +265,44 @@ public sealed partial class InventoryService
                 now, context.Actor, ct);
             return (rtv with { Status = RtvStatus.Shipped, ShippedTransactionId = txn, ShippedBy = context.Actor, ShippedAt = now }, $"Return to vendor {rtv.RtvId}: {rtv.Quantity} {rtv.PartNumber} shipped back.");
         }, ct);
+
+    public Task<CommandResult> ReduceReturnToVendorAsync(ReduceReturnToVendor c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var key = Key(c.RtvId);
+        var spec = new CommandSpec(SourceContext, nameof(ReduceReturnToVendor), Permissions.QualityDisposition, ResourceRef.Of("ReturnToVendor", key), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var rtv = (await uow.Store<IReceivingLookup>().ListRtvsAsync(false, ct)).FirstOrDefault(r => r.RtvId == c.RtvId)
+                ?? throw new CommandRejectedException("rtv_not_found", $"Return to vendor {key} does not exist.");
+            await uow.Store<IInventoryStore>().LockPartAsync(rtv.PartNumber, ct);
+            rtv = (await uow.Store<IReceivingLookup>().ListRtvsAsync(false, ct)).Single(r => r.RtvId == c.RtvId);
+            if (rtv.Status != RtvStatus.Open)
+            {
+                throw new CommandRejectedException("rtv_not_open", $"Return to vendor {key} is {rtv.Status}; only an open return can be reduced.");
+            }
+
+            var quantity = RequireQuantity(await ItemAsync(uow, rtv.PartNumber, ct), c.Quantity);
+            if (quantity >= rtv.Quantity)
+            {
+                throw new CommandRejectedException("rtv_quantity_not_reduced", $"Return to vendor {key} is for {rtv.Quantity}; it can be reduced, never increased or kept the same.");
+            }
+
+            var rejection = (await uow.Store<IReceivingLookup>().ListRejectionsAsync(false, ct)).Single(r => r.RejectionId == rtv.RejectionId);
+            var (part, remainder) = await SplitRejectionAsync(uow, rejection, quantity, ct);
+            await uow.Store<IReceivingStore>().UpdateRejectionAsync(part, ct);
+            var reduced = rtv with { Quantity = quantity };
+            await uow.Store<IReceivingStore>().UpdateRtvAsync(reduced, ct);
+            var rest = remainder!.Value;
+            return new CommandOutcome(
+                CommandResult.Ok(key, $"Return to vendor {key}: reduced from {rtv.Quantity} to {quantity} {rtv.PartNumber}; {rtv.Quantity - quantity} stays on hold as pending rejection {Key(rest)}."),
+                [
+                    pipeline.Event(new ReceivingRecorded("ReturnToVendor", c.RtvId, "Reduced"), context, SourceContext, "ReturnToVendor", key),
+                    pipeline.Event(new ReceivingRecorded("SupplierRejection", rest, "SplitFrom" + Key(rejection.RejectionId)), context, SourceContext, "SupplierRejection", Key(rest)),
+                ],
+                new AuditChange("ReturnToVendor", key, CanonicalJson.Serialize(rtv), CanonicalJson.Serialize(reduced)));
+        }, ct);
+    }
 
     public Task<CommandResult> ReceiveReplacementAsync(ReceiveReplacement c, CommandContext context, CancellationToken ct) =>
         RtvAsync(nameof(ReceiveReplacement), c?.RtvId ?? 0, c!, context, Permissions.InventoryTransact, false, async (uow, rtv, now) =>
@@ -423,6 +479,38 @@ public sealed partial class InventoryService
                 [pipeline.Event(new ReceivingRecorded("ReturnToVendor", rtvId, changed.Status.ToString()), context, SourceContext, "ReturnToVendor", key)],
                 new AuditChange("ReturnToVendor", key, CanonicalJson.Serialize(rtv), CanonicalJson.Serialize(changed)));
         }, ct, (uow, now) => ReceivingAcceptanceAuthorityAsync(uow, spec, command, context, now, ct));
+    }
+
+    /// <summary>
+    /// ADR 0055: decide part of a rejection. Returns the part to decide (the rejection itself, reduced to the quantity) and
+    /// the new pending rejection holding the rest, or the whole rejection when no smaller quantity is given.
+    /// </summary>
+    private static async Task<(SupplierRejection Part, long? Remainder)> SplitRejectionAsync(IKernelUnitOfWork uow, SupplierRejection rejection, decimal? quantity, CancellationToken ct)
+    {
+        if (quantity is not { } requested)
+        {
+            return (rejection, null);
+        }
+
+        var decided = RequireQuantity(await ItemAsync(uow, rejection.PartNumber, ct), requested);
+        if (decided > rejection.Quantity)
+        {
+            throw new CommandRejectedException("over_rejected_quantity", $"Rejection {Key(rejection.RejectionId)} is for {rejection.Quantity}; a disposition cannot cover {decided}.");
+        }
+
+        if (decided == rejection.Quantity)
+        {
+            return (rejection, null);
+        }
+
+        var remainder = await uow.Store<IReceivingStore>().InsertRejectionAsync(
+            rejection with
+            {
+                RejectionId = 0, Quantity = rejection.Quantity - decided, Disposition = SupplierDisposition.Pending, DispositionedBy = null, DispositionedAt = null,
+                ApprovedBy = null, ApprovedAt = null, SplitFrom = rejection.RejectionId,
+            },
+            ct);
+        return (rejection with { Quantity = decided }, remainder);
     }
 
     private static string Key(long id) => id.ToString(CultureInfo.InvariantCulture);
