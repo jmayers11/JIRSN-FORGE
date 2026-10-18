@@ -34,6 +34,8 @@ internal static class NetworkInterruptionScenario
         var log = Plan(seed);
         var report = new SimReport(mutation == Mutation.None ? Name : Name + RunSummary.CanaryMarker + mutation, seed);
         await using var f = await SimFactory.BuildAsync(postgres, "s15-" + seed.ToString(CultureInfo.InvariantCulture));
+        report.Evidence(f.Api);
+        report.Covers(Coverage.Network, Coverage.Holds);
         var (api, stores, qe) = (f.Api, f.StoresUser, f.Api.As("qe"));
         var parts = new[] { SimFactory.LotPart };
 

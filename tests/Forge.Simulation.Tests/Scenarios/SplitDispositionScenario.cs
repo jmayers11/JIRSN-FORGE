@@ -6,14 +6,14 @@ using Forge.Simulation.Tests.Engine;
 namespace Forge.Simulation.Tests.Scenarios;
 
 /// <summary>
-/// Scenario 11 (split supplier dispositions, ADR 0055): one delivery is inspected with a rejection; part of it goes back
+/// Scenario 10b (split supplier dispositions, ADR 0055): one delivery is inspected with a rejection; part of it goes back
 /// to the vendor, the open return is then reduced after a re-check, and each remainder takes its own disposition (use as
 /// is with a second person's approval, and scrap). Every rejected unit must be in exactly one rejection, quantities only
 /// go down, and nothing leaves quality hold without a decision.
 /// </summary>
 internal static class SplitDispositionScenario
 {
-    public const string Name = "S11-split-dispositions";
+    public const string Name = "S10b-split-dispositions";
     private const string Rulings = "ADR 0055";
 
     public static EventLog Plan(int seed)
@@ -39,6 +39,8 @@ internal static class SplitDispositionScenario
         var log = Plan(seed);
         var report = new SimReport(mutation == Mutation.None ? Name : Name + RunSummary.CanaryMarker + mutation, seed);
         await using var f = await SimFactory.BuildAsync(postgres, "s11-" + seed.ToString(CultureInfo.InvariantCulture));
+        report.Evidence(f.Api);
+        report.Covers(Coverage.Receiving, Coverage.Mrb);
         var (api, stores, insp, qe, qm) = (f.Api, f.StoresUser, f.Api.As("insp"), f.Api.As("qe"), f.Api.As("qm"));
         var parts = new[] { SimFactory.BulkPart };
 

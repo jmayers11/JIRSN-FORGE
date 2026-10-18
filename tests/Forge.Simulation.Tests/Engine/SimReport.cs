@@ -29,6 +29,9 @@ public static class Basis
     public static bool NeedsRuling(string basis) => basis is Inferred or CodeOnly;
 }
 
+/// <summary>One KPI an event moved: the event, the module (first key segment), the key, and its values before and after.</summary>
+public sealed record Impact(string Event, string Module, string Key, decimal Before, decimal After);
+
 /// <summary>One expected-versus-actual comparison. It passes only when the actual text equals the expected text.</summary>
 public sealed record Expectation(int Number, string Name, string Expected, string Actual, string Category, string Basis, string Source)
 {
@@ -43,8 +46,14 @@ public sealed record Expectation(int Number, string Name, string Expected, strin
 public sealed class SimReport(string scenario, int seed)
 {
     internal static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    private static readonly JsonSerializerOptions Line = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     private readonly List<Expectation> expectations = [];
     private readonly List<string> notes = [];
+    private readonly List<string> findings = [];
+    private readonly List<KpiSnapshot> kpis = [];
+    private readonly List<Impact> impacts = [];
+    private readonly SortedSet<string> covers = new(StringComparer.Ordinal);
+    private readonly List<SimApi> evidence = [];
     private string basis = Engine.Basis.Plan;
     private string source = "Seeded plan";
 
@@ -76,12 +85,49 @@ public sealed class SimReport(string scenario, int seed)
 
     public void Note(string text) => notes.Add(text);
 
+    /// <summary>
+    /// Something the run showed about Forge that is not a failed expectation: a gap, a missing command, a limit. Findings
+    /// are listed for the owner in the summary; they are never counted as passing coverage.
+    /// </summary>
+    public void Finding(string text) => findings.Add(text);
+
+    /// <summary>The coverage areas (see <see cref="Coverage"/>) this scenario exercises through the real API.</summary>
+    public void Covers(params string[] areas) => covers.UnionWith(areas);
+
+    /// <summary>Keeps an API driver whose command log is written to calls.jsonl, the evidence for any defect (several drivers append in order).</summary>
+    public void Evidence(SimApi api) => evidence.Add(api);
+
+    public IReadOnlyCollection<string> Covered => covers;
+
+    /// <summary>Keeps a KPI reading for kpis.json.</summary>
+    public KpiSnapshot Kpi(KpiSnapshot snapshot)
+    {
+        kpis.Add(snapshot);
+        return snapshot;
+    }
+
+    /// <summary>Records which KPIs an event moved, by module, for the cross-module impact matrix.</summary>
+    public void ImpactOf(string eventName, KpiSnapshot before, KpiSnapshot after)
+    {
+        foreach (var (k, b, a) in Kpis.Changed(before, after))
+        {
+            impacts.Add(new Impact(eventName, k[..k.IndexOf('.', StringComparison.Ordinal)], k, b, a));
+        }
+    }
+
     /// <summary>Writes the event log, the expectations and the notes, then refreshes the run summary; returns the output folder.</summary>
-    public string Write(EventLog log, string? stateHash = null)
+    public string Write(EventLog log, string? stateHash = null, SimApi? api = null)
     {
         var folder = Path.Combine(OutputRoot(), Scenario, "seed-" + Seed.ToString(CultureInfo.InvariantCulture));
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "events.jsonl"), log.ToJsonLines());
+        File.WriteAllText(Path.Combine(folder, "kpis.json"), JsonSerializer.Serialize(kpis.Select(k => new { k.Label, at = "+" + ((long)k.At.TotalMinutes).ToString(CultureInfo.InvariantCulture) + "m", k.Values }), Json));
+        File.WriteAllText(Path.Combine(folder, "impact.json"), JsonSerializer.Serialize(impacts, Json));
+        IReadOnlyList<SimApi> drivers = api is null ? evidence : [api];
+        if (drivers.Count > 0)
+        {
+            File.WriteAllLines(Path.Combine(folder, "calls.jsonl"), drivers.SelectMany(d => d.Calls).Select(c => JsonSerializer.Serialize(c, Line)));
+        }
         File.WriteAllText(Path.Combine(folder, "results.json"), JsonSerializer.Serialize(new
         {
             scenario = Scenario,
@@ -90,6 +136,9 @@ public sealed class SimReport(string scenario, int seed)
             passed = expectations.Count(e => e.Passed),
             failed = expectations.Count(e => !e.Passed),
             expectations = expectations.Select(e => new { e.Number, e.Category, e.Basis, e.Source, e.Name, e.Expected, e.Actual, e.Passed }),
+            covers,
+            findings,
+            impacts = impacts.GroupBy(i => (i.Event, i.Module)).Select(g => new { g.Key.Event, g.Key.Module, Changed = g.Count() }),
             notes,
         }, Json));
         var md = new StringBuilder();

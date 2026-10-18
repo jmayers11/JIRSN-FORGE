@@ -37,6 +37,8 @@ internal static class HoldScopeScenario
         var log = Plan(seed);
         var report = new SimReport(mutation == Mutation.None ? Name : Name + RunSummary.CanaryMarker + mutation, seed);
         await using var f = await SimFactory.BuildAsync(postgres, "s09-" + seed.ToString(CultureInfo.InvariantCulture));
+        report.Evidence(f.Api);
+        report.Covers(Coverage.Holds, Coverage.Shipping, Coverage.Warehouse);
         var (api, stores, qe, shipper) = (f.Api, f.StoresUser, f.Api.As("qe"), f.Api.As("ship"));
         var parts = new[] { SimFactory.LotPart };
         var expected = new Dictionary<string, decimal>(StringComparer.Ordinal) { [HeldLot] = 0m, [FreeLot] = 0m };

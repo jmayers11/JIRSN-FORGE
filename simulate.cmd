@@ -1,7 +1,8 @@
 @echo off
-rem V5 full-system simulation (Phase A). Builds and runs only tests\Forge.Simulation.Tests against disposable
+rem V5 full-system simulation. Builds and runs only tests\Forge.Simulation.Tests against disposable
 rem PostgreSQL databases. Output goes to .forge-logs\simulate.log; scenario results go to .forge-logs\simulation;
 rem the final line of .forge-logs\simulate.status is PASS or FAIL. It never touches the live forge database.
+rem Optional: set FORGE_SIM_FILTER (for example Phase=B) to run a subset; .forge-logs\simulate-batch.cmd does that.
 setlocal
 cd /d "%~dp0"
 if not exist .forge-logs mkdir .forge-logs
@@ -20,7 +21,10 @@ echo === simulate ===>> "%LOG%"
 rem Results from earlier runs are cleared so the summary reflects this run only.
 if exist .forge-logs\simulation rmdir /s /q .forge-logs\simulation
 set "FORGE_TEST_RESTORE_BASELINE=1"
-dotnet test "%PROJECT%" --no-build -c Release -nologo --filter "Category=Simulation" --logger "console;verbosity=normal" >> "%LOG%" 2>&1 || goto fail
+set "FILTER=Category=Simulation"
+if defined FORGE_SIM_FILTER set "FILTER=Category=Simulation&%FORGE_SIM_FILTER%"
+echo Filter: "%FILTER%">> "%LOG%"
+dotnet test "%PROJECT%" --no-build -c Release -nologo --filter "%FILTER%" --logger "console;verbosity=normal" >> "%LOG%" 2>&1 || goto fail
 echo PASS> .forge-logs\simulate.status
 exit /b 0
 :fail

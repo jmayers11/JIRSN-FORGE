@@ -856,3 +856,30 @@ Forge was then restarted on port 5080 with `.forge-logs/run-forge-release.cmd`.
 Committed, then restarted Forge on port 5080.
 
 **Next.** Phase B of the simulation.
+
+## Claude: V5 simulation Phase B (2026-10-18)
+
+**Agent:** Claude (Claude Opus 5.5), in a cloud session linked to this PC.
+
+**Owner decision.** "Please start phase B" (test code only).
+
+**Done.**
+- Scenarios S01–S08, S11–S14, S16 and S17 (S10b already added with ADR 0055).
+- KPI collector, impact matrix, defect register, scorecard with I and X scenarios.
+- `simulate.cmd` honours `FORGE_SIM_FILTER`.
+- Results in `docs/v5/V5-simulation-phaseB-results.md`.
+
+**Oracle corrections (not Forge defects).** Presence expires after eight hours; a sole person shows as
+`WouldBeUnstaffed`; the work-order list wraps each order; a foreign barcode answers 400; a second shipment of the
+same lot may be refused at creation.
+
+**Defect found.** D1: same-instant PM completion returns 500. Not fixed; it needs approval.
+
+**Gates.**
+- `simulate.cmd`: PASS, 51/51 (`.forge-logs/simulate-pass-20261018-phaseB.log`).
+- `verify.cmd`: PASS, 944 (kernel 44, planning 303, architecture 32, integration 349, UI 216), 0-warning build (`.forge-logs/verify-pass-20261018-phaseB.log`).
+
+Committed, then restarted Forge on port 5080.
+
+**Next.** Owner decisions: fix D1; add the I and X scenarios the gate still lacks, or accept the gap and move to
+Phase C (the full factory and 30/60/90-day runs).

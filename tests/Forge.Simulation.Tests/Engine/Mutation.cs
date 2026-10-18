@@ -22,4 +22,10 @@ public enum Mutation
 
     /// <summary>S11: the oracle releases the part a return was reduced by, instead of keeping it on hold pending a decision.</summary>
     ReleaseReducedPart,
+
+    /// <summary>S01: the callout is recorded for Michael while the oracle expects Sarah (who also holds FIRST-AID) to be away.</summary>
+    CallOutWrongPerson,
+
+    /// <summary>S07: the person who counted approves their own count (refused), while the oracle expects it posted.</summary>
+    SelfApproveCount,
 }

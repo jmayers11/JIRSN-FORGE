@@ -45,13 +45,29 @@ public sealed record Outcome(HttpStatusCode Status, string Body)
     }
 }
 
+/// <summary>One command as sent and answered, kept as evidence for the defect register.</summary>
+public sealed record CallRecord(int Index, string Subject, string Url, string Key, int Status, string Label, string Body);
+
 /// <summary>
 /// Sends commands to the real host exactly as a client would, with an idempotency key per command.
-/// It never asserts: refusals are outcomes the scenario compares with its expectations.
+/// It never asserts: refusals are outcomes the scenario compares with its expectations. Every command and its answer
+/// is logged (calls.jsonl) as evidence.
 /// </summary>
 public sealed class SimApi(ForgeApp app, string keyPrefix)
 {
+    private readonly List<CallRecord> calls = [];
     private int key;
+
+    public IReadOnlyList<CallRecord> Calls
+    {
+        get
+        {
+            lock (calls)
+            {
+                return [.. calls];
+            }
+        }
+    }
 
     public HttpClient As(string subject) => app.As(subject);
 
@@ -59,9 +75,20 @@ public sealed class SimApi(ForgeApp app, string keyPrefix)
 
     public async Task<Outcome> Send(HttpClient client, string url, object body, string? idempotencyKey = null)
     {
-        using var response = await client.CommandAsync(url, body, idempotencyKey ?? NextKey());
-        return new Outcome(response.StatusCode, await response.Content.ReadAsStringAsync());
+        var commandKey = idempotencyKey ?? NextKey();
+        using var response = await client.CommandAsync(url, body, commandKey);
+        var outcome = new Outcome(response.StatusCode, await response.Content.ReadAsStringAsync());
+        lock (calls)
+        {
+            calls.Add(new CallRecord(calls.Count, Subject(client), url, commandKey, (int)outcome.Status, outcome.Label,
+                outcome.Body.Length > 4000 ? outcome.Body[..4000] + "…" : outcome.Body));
+        }
+
+        return outcome;
     }
+
+    private static string Subject(HttpClient client) =>
+        client.DefaultRequestHeaders.Where(h => h.Key.Contains("Subject", StringComparison.OrdinalIgnoreCase)).SelectMany(h => h.Value).FirstOrDefault() ?? "?";
 
     /// <summary>A command whose response never reaches the client (a dropped connection after the server received it).</summary>
     public static async Task SendAndLoseResponse(HttpClient client, string url, object body, string idempotencyKey)

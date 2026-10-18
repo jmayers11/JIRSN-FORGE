@@ -1,4 +1,27 @@
 # AI_HANDOFF.md
+## V5 simulation Phase B: Claude, 2026-10-18 (current)
+
+**Test code only**, as the owner approved. No production code or schema changed.
+
+- **All 17 amendment scenarios run.** New: S01–S08, S11–S14, S16 and S17, plus S10b (split dispositions).
+  S09, S10 and S15 are from Phase A. Phase B scenarios carry `[Trait("Phase","B")]` and run on seeds 42 and 7.
+- **Engine additions.** KPI collector (`Engine/Kpis`), impact matrix, defect register, scorecard with I and X
+  scenarios per area (`Coverage.Subject`), crew oracle (`Engine/Crew`), planning plant
+  (`SimFactory.BuildPlanningAsync`), document helpers (`Engine/Documents`). `SimFactory.BuildAsync` takes host
+  settings (S14 uses the label namespace and QMS organization). `QmsPolicyScenario.cs` is linked from the
+  integration tests.
+- **`simulate.cmd` PASS: 51/51 tests**, 44 scenario runs, 1,680 expectations, 0 failed, 7/7 negative controls.
+  It honours `FORGE_SIM_FILTER` (for example `Phase=B`).
+- **One Forge defect, not fixed (production change needs approval):** D1, completing a PM with a planned downtime
+  window in the same instant it was started returns 500 (the end is start + 1 tick, below PostgreSQL's microsecond
+  resolution, so `CHECK (ends_at > starts_at)` fails). S04 now lets the job take its 90 minutes.
+- **Findings:** no command changes a worker's home work center; overtime is not a concept.
+- **Gate:** the scorecard lists untested areas (CAPA, allocation and alternates, customer concessions). Only 8 of 26
+  areas have both an I and an X scenario, so that half of the Phase B gate is **not met**. The gap list is in
+  `docs/v5/V5-simulation-phaseB-results.md`.
+- **Copying sources from the cloud session:** touch the files after extracting. Extracted files keep their original
+  timestamps, and MSBuild then reused an older test binary once.
+
 ## ADR 0055 owner rulings implemented: Claude, 2026-10-18 (current)
 
 **Owner-approved production change.** A supplier rejection is decided per quantity, and an open return to vendor can

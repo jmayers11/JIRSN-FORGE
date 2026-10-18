@@ -40,6 +40,8 @@ internal static class MrbDispositionScenario
         var log = Plan(seed);
         var report = new SimReport(mutation == Mutation.None ? Name : Name + RunSummary.CanaryMarker + mutation, seed);
         await using var f = await SimFactory.BuildAsync(postgres, "s10-" + seed.ToString(CultureInfo.InvariantCulture));
+        report.Evidence(f.Api);
+        report.Covers(Coverage.Receiving, Coverage.Mrb);
         var (api, stores, insp, qe, qm, pat) = (f.Api, f.StoresUser, f.Api.As("insp"), f.Api.As("qe"), f.Api.As("qm"), f.Api.As("pat"));
         var parts = new[] { SimFactory.BulkPart };
 
