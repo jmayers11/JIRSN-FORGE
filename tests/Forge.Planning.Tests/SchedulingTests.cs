@@ -197,4 +197,71 @@ public class SchedulingTests
         Assert.True(kit.Scheduled);
         Assert.Contains("re-inspection after operation 10", kit.BindingDetail, StringComparison.Ordinal);
     }
+    private static OrderMaterialStatus Waiting(long order, string part, string source, string description, DateOnly due) =>
+        new(order, MaterialState.Expected, due, due < Today, $"Waiting for {part}.",
+            [new MaterialLineStatus(part, 10, 0, 10, 0, 0, due, [new MaterialAllocation(source, description, 10, due)])]);
+
+    private static readonly DateOnly Today = new(2026, 10, 1);
+
+    private ScheduleResult RunWithMaterial(IReadOnlyList<OrderInfo> orders, IReadOnlyList<OrderMaterialStatus> material, IReadOnlyDictionary<string, int>? leadTimes = null) =>
+        engine.Evaluate(Plant().Build(), new ScheduleRequest(Now, Now.AddDays(14), orders, material, LeadTimeDays: leadTimes), Now).Output;
+
+    [Fact]
+    public void A_parent_starts_after_its_sub_assembly_orders_planned_finish_and_components_are_planned_first()
+    {
+        // ADR 0057 §4: the sub-assembly order is due today; that no longer means the parts are in stores.
+        var sub = Order(10001, 5, ["SLITTER-B"], 240) with { PartNumber = "SUB-1" };
+        var parent = Order(10002, 1, ["SLITTER-A"], 60);
+        var result = RunWithMaterial([parent, sub], [Waiting(10002, "SUB-1", "WO10001", "Order 10001 (Released)", Today)]);
+        var subDone = result.Orders.Single(o => o.OrderNumber == 10001).ProjectedCompletion!.Value;
+        var slit = result.Operations.Single(o => o.OrderNumber == 10002 && o.Sequence == 10);
+
+        Assert.True(slit.Start >= subDone);
+        Assert.Equal("Material", slit.BindingConstraint);
+        Assert.Contains("SUB-1 (order 10001), planned to finish", slit.BindingDetail, StringComparison.Ordinal);
+        Assert.Equal(new long[] { 10002, 10001 }, result.Orders.Select(o => o.OrderNumber)); // reported in the documented order
+    }
+
+    [Fact]
+    public void An_overdue_purchase_order_makes_the_order_late_and_estimated_not_unschedulable()
+    {
+        var order = Order(10002, 1, ["SLITTER-A"], 60);
+        var result = RunWithMaterial([order], [Waiting(10002, "COIL-X", "PO5011/1", "PO 5011 line 1 (Acme)", Today.AddDays(-3))], new Dictionary<string, int> { ["COIL-X"] = 4 });
+        var planned = result.Orders.Single();
+        var slit = result.Operations.Single(o => o.Sequence == 10);
+
+        Assert.NotEqual(DeliveryStatus.Unschedulable, planned.Status);
+        Assert.True(slit.Start >= new DateTimeOffset(2026, 10, 5, 4, 0, 0, TimeSpan.Zero)); // Oct 5 at the New York site
+        Assert.Contains("Late, needs a supplier date: COIL-X from PO 5011 line 1 (Acme) was due 2026-09-28", planned.Explanation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_parent_names_the_deepest_cause_and_its_late_sub_assembly_is_shown_late()
+    {
+        var sub = Order(10001, 5, ["SLITTER-B"], 120, due: "2026-10-20") with { PartNumber = "SUB-1" };
+        var parent = Order(10002, 1, ["SLITTER-A"], 60, due: "2026-10-01");
+        var result = RunWithMaterial([parent, sub],
+            [Waiting(10001, "COIL-X", "PO5011/1", "PO 5011 line 1 (Acme)", Today.AddDays(-3)), Waiting(10002, "SUB-1", "WO10001", "Order 10001 (Released)", new DateOnly(2026, 10, 20))],
+            new Dictionary<string, int> { ["COIL-X"] = 4 });
+        var top = result.Orders.Single(o => o.OrderNumber == 10002);
+        var component = result.Orders.Single(o => o.OrderNumber == 10001);
+
+        Assert.Equal(DeliveryStatus.Late, top.Status);
+        Assert.Contains("SUB-1 (order 10001), planned to finish", top.Explanation, StringComparison.Ordinal);
+        Assert.Contains("which is waiting for COIL-X from PO 5011 line 1 (Acme), due 2026-09-28, not received", top.Explanation, StringComparison.Ordinal);
+        Assert.Equal(DeliveryStatus.Late, component.Status);
+        Assert.Contains("Late for order 10002 (ROLL-100)", component.Explanation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_sub_assembly_that_cannot_be_planned_stops_its_parent_with_the_cause()
+    {
+        var sub = Order(10001, 5, ["SLITTER-Z"], 120) with { PartNumber = "SUB-1" };
+        var parent = Order(10002, 1, ["SLITTER-A"], 60);
+        var result = RunWithMaterial([parent, sub], [Waiting(10002, "SUB-1", "WO10001", "Order 10001 (Released)", Today)]);
+        var top = result.Orders.Single(o => o.OrderNumber == 10002);
+
+        Assert.Equal(DeliveryStatus.Unschedulable, top.Status);
+        Assert.Contains("Waiting for SUB-1 (order 10001), which cannot be planned", top.Explanation, StringComparison.Ordinal);
+    }
 }

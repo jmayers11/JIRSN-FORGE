@@ -21,6 +21,10 @@ internal static class MaterialData
 
     public sealed record Supply(string Key, string PartNumber, decimal Quantity, DateOnly DueDate, string Kind, string Description);
 
+    /// <summary>Each part's lead time in days, for planning from an overdue supply (ADR 0057 §4.4).</summary>
+    public static async Task<IReadOnlyDictionary<string, int>> LeadTimesAsync(IKernelUnitOfWork uow, CancellationToken ct) =>
+        (await uow.Store<IEngineeringLookup>().ListItemsAsync(ct)).ToDictionary(i => i.PartNumber, i => i.LeadTimeDays, StringComparer.Ordinal);
+
     /// <summary>Today at the home site (ADR 0057 §1).</summary>
     public static Task<DateOnly> TodayAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct) =>
         uow.SiteDateAsync(time.GetUtcNow(), ct);

@@ -274,7 +274,7 @@ public sealed class GoalService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
 
         var material = (await MaterialPlanningService.RunMaterialAsync(uow, time, ct, viewer)).Output;
         var quality = await ScheduleQuality.LoadAsync(uow, released, ct);
-        var reforecast = EngineRunner.Run(new SchedulingEngine(), snapshot, new ScheduleRequest(snapshot.AsOf, snapshot.AsOf.AddDays(ReforecastDays), released, material, quality), snapshot.AsOf).Output;
+        var reforecast = EngineRunner.Run(new SchedulingEngine(), snapshot, new ScheduleRequest(snapshot.AsOf, snapshot.AsOf.AddDays(ReforecastDays), released, material, quality, await MaterialData.LeadTimesAsync(uow, ct)), snapshot.AsOf).Output;
         var plan = (await uow.Store<IPlanningStore>().LatestAsync(ScheduleStatus.Approved, true, ct))?.Result;
         var actuals = released.SelectMany(o => o.Operations.Select(op => new GoalActualOperation(o.OrderNumber, op.Sequence, op.Status, op.CompletedAt))).ToList();
         var result = new GoalRiskEngine().Evaluate(new GoalRiskSnapshot(plan, actuals, reforecast), new GoalRiskRequest(snapshot.AsOf), snapshot.AsOf).Output;

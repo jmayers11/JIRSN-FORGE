@@ -7,7 +7,10 @@ namespace Forge.Planning.Engines;
 /// <summary>
 /// Orders to schedule over a horizon. When <paramref name="Material"/> is given, an order that has
 /// not started waits for its material: short or overdue material leaves it unscheduled, expected
-/// material holds its first operation until the receipt's date. When <paramref name="Quality"/> is
+/// material holds its first operation until the receipt's date, and a part made by another released order until that
+/// order's planned finish; an overdue purchase order is planned from the earliest date the part could still come
+/// (today plus the part's lead time from <paramref name="LeadTimeDays"/>) and the order is marked as estimated (ADR 0057
+/// §4). When <paramref name="Quality"/> is
 /// given, an inspection that has not happened yet is a planned gap after the inspected operation;
 /// only an undecided nonconformance stops the order (ADR 0057 §2).
 /// </summary>
@@ -16,7 +19,8 @@ public sealed record ScheduleRequest(
     DateTimeOffset To,
     IReadOnlyList<OrderInfo> Orders,
     IReadOnlyList<OrderMaterialStatus>? Material = null,
-    IReadOnlyDictionary<long, OrderQuality>? Quality = null);
+    IReadOnlyDictionary<long, OrderQuality>? Quality = null,
+    IReadOnlyDictionary<string, int>? LeadTimeDays = null);
 
 public sealed record ScheduledSegment(DateTimeOffset Start, DateTimeOffset End, IReadOnlyList<Guid> Operators);
 
@@ -78,7 +82,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
 
     public string Name => "finite-scheduler";
 
-    public string Version => "3";
+    public string Version => "4";
 
     public EngineEvaluation<ScheduleResult> Evaluate(SiteSnapshot snapshot, ScheduleRequest parameters, DateTimeOffset asOf)
     {
@@ -99,14 +103,60 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             .Where(o => o.Status == OrderStatus.Released)
             .OrderBy(o => o.Priority)
             .ThenBy(o => o.DueDate)
-            .ThenBy(o => o.OrderNumber);
+            .ThenBy(o => o.OrderNumber)
+            .ToList();
+        var released = queue.ToDictionary(o => o.OrderNumber);
+        var material = (parameters.Material ?? []).ToDictionary(m => m.OrderNumber);
+        var done = new Dictionary<long, ScheduledOrder>();
+        var visiting = new HashSet<long>();
 
+        // Components first (ADR 0057 §4.1): before an order is planned, the released orders making the parts it waits
+        // for are planned, so it can start from their planned finish. They take their consumer's place in the queue.
         foreach (var order in queue)
         {
+            Plan(order);
+        }
+
+        // A sub-assembly is late when the order waiting for it is late because of it (ADR 0057 §4.5).
+        foreach (var (number, parent) in done.ToList())
+        {
+            foreach (var sub in SubOrders(material.GetValueOrDefault(number)).Where(done.ContainsKey))
+            {
+                var child = done[sub];
+                if (parent.Status is DeliveryStatus.Late or DeliveryStatus.Unschedulable && child.Status is DeliveryStatus.OnTime or DeliveryStatus.AtRisk
+                    && parent.Explanation.Contains($"(order {sub})", StringComparison.Ordinal))
+                {
+                    done[sub] = child with
+                    {
+                        Status = DeliveryStatus.Late,
+                        Explanation = child.Explanation + $" Late for order {number} ({parent.PartNumber}), which waits for it and is projected {(parent.ProjectedCompletion is { } p ? $"to finish {p:u}" : "not to be schedulable")}, due {parent.DueAt:u}.",
+                    };
+                }
+            }
+        }
+
+        orders.AddRange(queue.Select(o => done[o.OrderNumber]));
+
+        void Plan(OrderInfo order)
+        {
+            if (done.ContainsKey(order.OrderNumber) || !visiting.Add(order.OrderNumber))
+            {
+                return; // planned already, or a loop in the supply chain (each order is planned once)
+            }
+
+            foreach (var sub in SubOrders(material.GetValueOrDefault(order.OrderNumber)))
+            {
+                if (released.TryGetValue(sub, out var component))
+                {
+                    Plan(component);
+                }
+            }
+
             DateTimeOffset? predecessorEnd = horizon.Start;
             var predecessorSequence = (int?)null;
             var orderOps = new List<ScheduledOperation>();
-            var (materialStart, materialBlock) = MaterialGate(snapshot, horizon, order, parameters.Material);
+            var gate = MaterialGate(snapshot, horizon, order, material.GetValueOrDefault(order.OrderNumber), done, parameters.LeadTimeDays);
+            var (materialStart, materialBlock) = (gate.Start, gate.Block);
             OrderQuality? quality = null;
             parameters.Quality?.TryGetValue(order.OrderNumber, out quality);
             foreach (var op in order.Operations.Where(o => o.Status != OperationStatus.Complete).OrderBy(o => o.Sequence))
@@ -157,8 +207,16 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             }
 
             operations.AddRange(orderOps);
-            orders.Add(Deliver(snapshot, order, orderOps, finalInspection) with { ProgramId = order.ProgramId });
+            var delivered = Deliver(snapshot, order, orderOps, finalInspection) with { ProgramId = order.ProgramId };
+            if (gate.Estimated is { } estimate)
+            {
+                delivered = delivered with { Explanation = delivered.Explanation + " " + estimate };
+            }
+
+            done[order.OrderNumber] = delivered;
+            visiting.Remove(order.OrderNumber);
         }
+
 
         var late = orders.Where(o => o.Status != DeliveryStatus.OnTime).ToList();
         var root = new EvidenceNode(
@@ -171,31 +229,112 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
         return new EngineEvaluation<ScheduleResult>(new ScheduleResult(horizon.Start, horizon.End, orders, operations), root);
     }
 
+    /// <summary>When an order that has not started may begin, given its material.</summary>
+    /// <param name="Start">When it may start, if later than the start of the horizon.</param>
+    /// <param name="Block">Why it waits (with a start) or cannot be planned (without one); null when nothing holds it.</param>
+    /// <param name="Estimated">Set when the start rests on an estimate, such as an overdue purchase order with no new date.</param>
+    private sealed record Gate(DateTimeOffset? Start, string? Block, string? Estimated = null);
+
+    /// <summary>The released orders that make parts allocated to an order (its sub-assemblies), in allocation order.</summary>
+    private static IEnumerable<long> SubOrders(OrderMaterialStatus? status) =>
+        (status?.Lines ?? []).SelectMany(l => l.Allocations).Select(a => SubOrder(a.Source)).OfType<long>().Distinct();
+
+    private static long? SubOrder(string source) =>
+        source.StartsWith("WO", StringComparison.Ordinal) && long.TryParse(source.AsSpan(2), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : null;
+
     /// <summary>
-    /// When an order that has not started may begin, given its material: (null, null) when there is no
-    /// material status or nothing to wait for; (null, why) when it cannot start; (start, why) when it waits.
+    /// When an order that has not started may begin, given its material (ADR 0057 §4). Stock is there now. A part made by
+    /// a released order comes at that order's planned finish in this schedule; one that cannot be planned stops this
+    /// order too, with the cause. A part made by an order not in the schedule, or bought, comes on its due or promised
+    /// date; an overdue purchase order with no new date is planned from today plus the part's lead time and marked as
+    /// estimated, "late, needing a supplier date". Shortfalls cannot be planned.
     /// </summary>
-    private static (DateTimeOffset? Start, string? Block) MaterialGate(SiteSnapshot snapshot, Span horizon, OrderInfo order, IReadOnlyList<OrderMaterialStatus>? material)
+    private static Gate MaterialGate(SiteSnapshot snapshot, Span horizon, OrderInfo order, OrderMaterialStatus? status,
+        IReadOnlyDictionary<long, ScheduledOrder> planned, IReadOnlyDictionary<string, int>? leadTimes)
     {
-        var status = material?.FirstOrDefault(m => m.OrderNumber == order.OrderNumber);
         if (status is null || status.State == MaterialState.Ready || order.Operations.Any(o => o.Status != OperationStatus.Pending))
         {
-            return (null, null);
+            return new Gate(null, null);
         }
 
-        if (status.State == MaterialState.Shortfall || status.Overdue || status.ReadyOn is null)
+        if (status.State == MaterialState.Shortfall || status.ReadyOn is null)
         {
-            return (null, status.Summary + (status.Overdue ? " Receive it or record the supplier's new date." : string.Empty));
+            return new Gate(null, status.Summary);
         }
 
         var site = WorkCalendar.SiteOfWorkCenter(snapshot, order.Operations.OrderBy(o => o.Sequence).First().WorkCenterCode);
-        var start = WorkCalendar.EndOfDay(snapshot, site, status.ReadyOn.Value.AddDays(-1)).ToUniversalTime();
-        if (start >= horizon.End)
+        var today = WorkCalendar.LocalDate(snapshot, site, horizon.Start);
+        DateTimeOffset OnDay(DateOnly day) => WorkCalendar.EndOfDay(snapshot, site, day.AddDays(-1)).ToUniversalTime();
+        var start = horizon.Start;
+        var reasons = new List<string>();
+        var estimates = new List<string>();
+        foreach (var line in status.Lines)
         {
-            return (null, $"{status.Summary} That is after the end of the planning horizon.");
+            foreach (var allocation in line.Allocations.Where(a => a.DueDate is not null))
+            {
+                var due = allocation.DueDate!.Value;
+                DateTimeOffset arrives;
+                if (SubOrder(allocation.Source) is { } sub && planned.TryGetValue(sub, out var component))
+                {
+                    if (component.ProjectedCompletion is not { } finish)
+                    {
+                        return new Gate(null, $"Waiting for {line.PartNumber} (order {sub}), which cannot be planned: {Cause(component.Explanation)}");
+                    }
+
+                    arrives = finish;
+                    reasons.Add($"{line.PartNumber} (order {sub}), planned to finish {finish:u}" + (Cause(component.Explanation) is { Length: > 0 } why && component.Explanation.Contains("waited for Material", StringComparison.Ordinal) ? $", which {why}" : string.Empty));
+                }
+                else if (due < today)
+                {
+                    var lead = leadTimes?.GetValueOrDefault(line.PartNumber) ?? 0;
+                    var earliest = today.AddDays(Math.Max(0, lead));
+                    arrives = OnDay(earliest);
+                    var what = SubOrder(allocation.Source) is { } other ? $"order {other}" : allocation.Description;
+                    reasons.Add($"{line.PartNumber} from {what}, due {due:yyyy-MM-dd}, not received; estimated {earliest:yyyy-MM-dd}");
+                    estimates.Add($"Late, needs a supplier date: {line.PartNumber} from {what} was due {due:yyyy-MM-dd} and has not been received; planned from {earliest:yyyy-MM-dd} (today plus {lead} day(s) lead time), an estimate.");
+                }
+                else
+                {
+                    arrives = OnDay(due);
+                    reasons.Add($"{line.PartNumber} from {allocation.Description}, due {due:yyyy-MM-dd}");
+                }
+
+                start = WorkCalendar.Max(start, arrives);
+            }
         }
 
-        return start > horizon.Start ? (start, status.Summary) : (null, null);
+        if (reasons.Count == 0)
+        {
+            // A status with no allocation lines carries only its ready date and summary.
+            start = WorkCalendar.Max(start, OnDay(status.ReadyOn.Value < today ? today : status.ReadyOn.Value));
+            return start >= horizon.End ? new Gate(null, $"{status.Summary} That is after the end of the planning horizon.")
+                : start > horizon.Start ? new Gate(start, status.Summary) : new Gate(null, null);
+        }
+
+        var estimated = estimates.Count == 0 ? null : string.Join(" ", estimates);
+        var block = "Waiting for " + string.Join("; ", reasons) + ".";
+        if (start >= horizon.End)
+        {
+            return new Gate(null, $"{block} That is after the end of the planning horizon.", estimated);
+        }
+
+        return start > horizon.Start ? new Gate(start, block, estimated) : new Gate(null, null, estimated);
+    }
+
+    /// <summary>The cause in an order's explanation: what its first waiting operation waited for, in lower case.</summary>
+    private static string Cause(string explanation)
+    {
+        var marker = explanation.IndexOf("waited for Material: ", StringComparison.Ordinal);
+        if (marker >= 0)
+        {
+            var text = explanation[(marker + "waited for Material: ".Length)..];
+            var ends = new[] { text.IndexOf("; operation ", StringComparison.Ordinal), text.IndexOf(". ", StringComparison.Ordinal) }.Where(i => i >= 0).ToList();
+            text = (ends.Count > 0 ? text[..ends.Min()] : text).TrimEnd('.');
+            return text.StartsWith("Waiting for ", StringComparison.Ordinal) ? "is waiting for " + text["Waiting for ".Length..] : text;
+        }
+
+        var cannot = explanation.IndexOf("cannot be scheduled: ", StringComparison.Ordinal);
+        return cannot >= 0 ? explanation[(cannot + "cannot be scheduled: ".Length)..].TrimEnd('.') : explanation.TrimEnd('.');
     }
 
     /// <summary>

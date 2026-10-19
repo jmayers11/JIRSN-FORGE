@@ -141,7 +141,7 @@ public static class WorkCalendar
 
     private static DateTimeZone Zone(SiteSnapshot snapshot, string siteCode)
     {
-        var id = snapshot.Sites.FirstOrDefault(s => s.Code == siteCode)?.TimeZone ?? "America/New_York";
+        var id = snapshot.Sites.FirstOrDefault(s => s.Code == siteCode)?.TimeZone ?? snapshot.HomeTimeZone ?? "America/New_York";
         return DateTimeZoneProviders.Tzdb.GetZoneOrNull(id) ?? DateTimeZoneProviders.Tzdb["America/New_York"];
     }
 }
