@@ -100,8 +100,8 @@ internal static class OperatorCalloutScenario
                     }
 
                     report.Rule(Basis.Spec, Spec + ": Sarah's absent hours leave the projected SLIT-II and FIRST-AID labour");
-                    report.Expect($"{step}: SLIT-II labour hours over 7 days", previous.Get("labor.SLIT-II.hours.7d") - hours, after.Get("labor.SLIT-II.hours.7d"), "Capacity");
-                    report.Expect($"{step}: FIRST-AID labour hours over 7 days", previous.Get("labor.FIRST-AID.hours.7d") - hours, after.Get("labor.FIRST-AID.hours.7d"), "Capacity");
+                    report.ExpectHours($"{step}: SLIT-II labour hours over 7 days", previous.Get("labor.SLIT-II.hours.7d") - hours, after.Get("labor.SLIT-II.hours.7d"), "Capacity");
+                    report.ExpectHours($"{step}: FIRST-AID labour hours over 7 days", previous.Get("labor.FIRST-AID.hours.7d") - hours, after.Get("labor.FIRST-AID.hours.7d"), "Capacity");
                     report.Rule(Basis.Spec, Spec + ": the paint booth does not depend on Slitting people");
                     report.Expect($"{step}: PAINT-BOOTH executable hours unchanged", previous.Get("capacity.PAINT-BOOTH.PAINT.executableHours.7d"), after.Get("capacity.PAINT-BOOTH.PAINT.executableHours.7d"), "Capacity");
                     report.Rule(Basis.Plan, "Plan arithmetic: the work still fits before the due dates");

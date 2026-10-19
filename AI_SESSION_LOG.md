@@ -883,3 +883,21 @@ Committed, then restarted Forge on port 5080.
 
 **Next.** Owner decisions: fix D1; add the I and X scenarios the gate still lacks, or accept the gap and move to
 Phase C (the full factory and 30/60/90-day runs).
+
+## Claude: Phase B gate closed and ADR 0056 (2026-10-18, evening)
+
+**Agent:** Claude (Claude Opus 5.5), in a cloud session linked to this PC.
+
+**Owner decisions.** The same-instant maintenance completion is not a bug (work takes time); write the extra scenarios; record the rulings in an ADR.
+
+**Done.**
+- ADR 0056: capacity follows home work center; scanned-code answers; maintenance timing. S03, S04 and S14 cite it.
+- Scenarios S18–S27; every amendment area now has an I and an X scenario.
+- Oracle corrections: labour-hour rounding tolerance; presence by supervisor confirmation; gauges checked only for measured characteristics; SLITTER-B in S19; planned outages need a second planner's approval; report periods.
+
+**Gates.**
+- `simulate.cmd`: PASS, 71/71 tests (64 scenario runs, 2,466 expectations, 7/7 negative controls; 26 of 26 areas with an I and an X scenario).
+
+Committed, then restarted Forge on port 5080.
+
+**Next.** Phase C (the full factory and 30/60/90-day runs) when the owner approves it.

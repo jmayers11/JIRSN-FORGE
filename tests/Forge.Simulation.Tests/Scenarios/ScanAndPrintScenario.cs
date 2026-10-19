@@ -21,7 +21,7 @@ internal static class ScanAndPrintScenario
 {
     public const string Name = "S14-incorrect-scan-and-failed-print";
     private const string Spec = "V4.1 label lifecycle";
-    private const string Namespace = "SIM.EXAMPLE";
+    internal const string Namespace = "SIM.EXAMPLE";
 
     public static EventLog Plan(int seed)
     {
@@ -89,13 +89,13 @@ internal static class ScanAndPrintScenario
                     var answer = await ResolveAsync(scanned);
                     if (scanned.StartsWith("forge:", StringComparison.Ordinal))
                     {
-                        report.Rule(Basis.Spec, "V4.1 identification: a well-formed code that names nothing is not found, and the answer does not echo it");
+                        report.Rule(Basis.Spec, "ADR 0056 §2: a well-formed code that names nothing is not found (404), and the answer does not echo it");
                         report.Expect($"{step} {scanned}: resolve", "404 identification_not_found", answer, "Identity");
                     }
                     else
                     {
-                        report.Rule(Basis.Inferred, "A foreign barcode (here an EAN) is refused as invalid (400 or 422) or not found (404), never matched to something, and not echoed");
-                        report.Expect($"{step} {scanned}: refused without echo", "True", (answer.StartsWith("400", StringComparison.Ordinal) || answer.StartsWith("404", StringComparison.Ordinal) || answer.StartsWith("422", StringComparison.Ordinal)) && !answer.Contains("echoed", StringComparison.Ordinal) ? "True" : "False", "Identity");
+                        report.Rule(Basis.Spec, "ADR 0056 §2: anything that is not a Forge code is refused as invalid (400), never matched to something, and not echoed");
+                        report.Expect($"{step} {scanned}: refused without echo", "400 invalid_identification", answer, "Identity");
                         report.Note($"{step}: a foreign barcode answered {answer}.");
                     }
 
@@ -161,14 +161,14 @@ internal static class ScanAndPrintScenario
         return (report, log, await Invariants.StateHash(f.StoresUser, parts));
     }
 
-    private static void Configure(IWebHostBuilder builder)
+    internal static void Configure(IWebHostBuilder builder)
     {
         builder.UseSetting(CanonicalIdentification.NamespaceConfigurationKey, Namespace);
         builder.UseSetting(QmsService.ConfigurationKey, "SIM-ORG");
     }
 
     /// <summary>The V4.1 label setup: label authority, an adopted label-copy policy, and an approved order-label template.</summary>
-    private static async Task SetupAsync(SlittingPlant.Plant plant)
+    internal static async Task SetupAsync(SlittingPlant.Plant plant)
     {
         string[] permissions =
         [

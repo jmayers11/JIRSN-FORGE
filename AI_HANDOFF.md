@@ -1,4 +1,17 @@
 # AI_HANDOFF.md
+## V5 simulation Phase B gate closed and ADR 0056: Claude, 2026-10-18 (current)
+
+**Owner rulings, recorded in ADR 0056** (`docs/adr/0056-v5-owner-rulings-capacity-scans-and-maintenance-timing.md`; no code change):
+1. Projected capacity follows home work center and shift; an assignment changes only what runs now.
+2. Scanned codes: an unknown Forge code answers 404 `identification_not_found`; anything else answers 400 `invalid_identification`; neither repeats the value.
+3. Maintenance work takes time. Same-instant start and completion is not supported, so the former D1 (a 500 in that case) is not a defect.
+
+**Ten more scenarios (test code only), S18–S27:** production execution, a lone-work rule, demand change, MRP planned purchase, customer shipment, label print failures, reports, corrective action, approved alternates, customer concession. With them every one of the 26 amendment areas has a scenario about it (I) and a scenario that checks it as a consequence (X), which meets the Phase B gate.
+
+- New engine pieces: `Engine/Floor` (badges, kiosk, trainee), `SimReport.ExpectHours` (labour hours allow ±0.05 h of per-day rounding), `Crew.PaintPairRunnable`, `Coverage.Subject` for S18–S27.
+- `simulate.cmd` PASS, 71/71 tests (64 scenario runs, 2,466 expectations, 7/7 negative controls; 26 of 26 areas with an I and an X scenario). `verify.cmd` was last run at `6460119` (PASS, 944); since then only simulation test code and documents changed.
+- Running a `.cmd` from Explorer: double-clicks sometimes only select the file. Select it, then Home → Open.
+
 ## V5 simulation Phase B: Claude, 2026-10-18 (current)
 
 **Test code only**, as the owner approved. No production code or schema changed.

@@ -118,6 +118,56 @@ public sealed class SimulationScenarios(PostgresFixture postgres)
     [MemberData(nameof(PhaseBSeeds))]
     public async Task S17_a_restored_backup_is_the_plant_at_the_backup_and_accepts_new_work(int seed) => await RunAndAssertAsync(RecoveryScenario.Name, seed);
 
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S18_production_runs_through_training_breakdown_restart_and_racing_terminals_to_finished_stock(int seed) => await RunAndAssertAsync(ProductionExecutionScenario.Name, seed);
+
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S19_a_lone_work_rule_stops_solo_painting_and_borrowing_a_responder_stops_slitting(int seed) => await RunAndAssertAsync(LoneWorkRuleScenario.Name, seed);
+
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S20_demand_changes_drive_mrp_to_exactly_the_open_quantity(int seed) => await RunAndAssertAsync(DemandChangeScenario.Name, seed);
+
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S21_mrp_buys_exactly_what_demand_lacks_and_requisitions_keep_their_source(int seed) => await RunAndAssertAsync(MrpPurchaseScenario.Name, seed);
+
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S22_a_customer_order_ships_once_per_command_and_never_from_a_held_lot(int seed) => await RunAndAssertAsync(CustomerShipmentScenario.Name, seed);
+
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S23_failed_replaced_and_voided_labels_are_never_trusted(int seed) => await RunAndAssertAsync(LabelPrintingScenario.Name, seed);
+
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S24_standard_reports_match_the_records_they_summarize(int seed) => await RunAndAssertAsync(ReportsScenario.Name, seed);
+
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S25_corrective_action_is_verified_by_someone_other_than_the_implementer(int seed) => await RunAndAssertAsync(CorrectiveActionScenario.Name, seed);
+
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S26_approved_alternates_are_allocated_only_where_engineering_allows(int seed) => await RunAndAssertAsync(ApprovedAlternateScenario.Name, seed);
+
+    [Theory]
+    [Trait("Phase", "B")]
+    [MemberData(nameof(PhaseBSeeds))]
+    public async Task S27_a_customer_concession_ships_nonconforming_rolls_with_a_second_approval(int seed) => await RunAndAssertAsync(CustomerConcessionScenario.Name, seed);
+
     /// <summary>A deliberate break must be caught by the checks it targets. If this passes, a green run means something.</summary>
     [Theory]
     [MemberData(nameof(NegativeControls))]
@@ -161,6 +211,16 @@ public sealed class SimulationScenarios(PostgresFixture postgres)
     private Task<(SimReport Report, EventLog Log, string Hash)> RunAsync(string scenario, int seed, Mutation mutation = Mutation.None) => scenario switch
     {
         HoldScopeScenario.Name => HoldScopeScenario.RunAsync(postgres, seed, mutation),
+        ProductionExecutionScenario.Name => ProductionExecutionScenario.RunAsync(postgres, seed, mutation),
+        LoneWorkRuleScenario.Name => LoneWorkRuleScenario.RunAsync(postgres, seed, mutation),
+        DemandChangeScenario.Name => DemandChangeScenario.RunAsync(postgres, seed, mutation),
+        MrpPurchaseScenario.Name => MrpPurchaseScenario.RunAsync(postgres, seed, mutation),
+        CustomerShipmentScenario.Name => CustomerShipmentScenario.RunAsync(postgres, seed, mutation),
+        LabelPrintingScenario.Name => LabelPrintingScenario.RunAsync(postgres, seed, mutation),
+        ReportsScenario.Name => ReportsScenario.RunAsync(postgres, seed, mutation),
+        CorrectiveActionScenario.Name => CorrectiveActionScenario.RunAsync(postgres, seed, mutation),
+        ApprovedAlternateScenario.Name => ApprovedAlternateScenario.RunAsync(postgres, seed, mutation),
+        CustomerConcessionScenario.Name => CustomerConcessionScenario.RunAsync(postgres, seed, mutation),
         EngineeringRevisionScenario.Name => EngineeringRevisionScenario.RunAsync(postgres, seed, mutation),
         ExpeditedOrderScenario.Name => ExpeditedOrderScenario.RunAsync(postgres, seed, mutation),
         DocumentErrorScenario.Name => DocumentErrorScenario.RunAsync(postgres, seed, mutation),
@@ -184,6 +244,16 @@ public sealed class SimulationScenarios(PostgresFixture postgres)
     private static EventLog Plan(string scenario, int seed) => scenario switch
     {
         HoldScopeScenario.Name => HoldScopeScenario.Plan(seed),
+        ProductionExecutionScenario.Name => ProductionExecutionScenario.Plan(seed),
+        LoneWorkRuleScenario.Name => LoneWorkRuleScenario.Plan(seed),
+        DemandChangeScenario.Name => DemandChangeScenario.Plan(seed),
+        MrpPurchaseScenario.Name => MrpPurchaseScenario.Plan(seed),
+        CustomerShipmentScenario.Name => CustomerShipmentScenario.Plan(seed),
+        LabelPrintingScenario.Name => LabelPrintingScenario.Plan(seed),
+        ReportsScenario.Name => ReportsScenario.Plan(seed),
+        CorrectiveActionScenario.Name => CorrectiveActionScenario.Plan(seed),
+        ApprovedAlternateScenario.Name => ApprovedAlternateScenario.Plan(seed),
+        CustomerConcessionScenario.Name => CustomerConcessionScenario.Plan(seed),
         EngineeringRevisionScenario.Name => EngineeringRevisionScenario.Plan(seed),
         ExpeditedOrderScenario.Name => ExpeditedOrderScenario.Plan(seed),
         DocumentErrorScenario.Name => DocumentErrorScenario.Plan(seed),

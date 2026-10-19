@@ -102,7 +102,7 @@ internal static class StaffingTransferScenario
                     report.Rule(Basis.Spec, Spec + ": the work running now follows the assignment");
                     await ExpectNow(step);
                     var after = report.Kpi(await Kpis.CollectAsync(f, $"after transfer of {person} to {area}", proposeSchedule: false));
-                    report.Rule(Basis.Inferred, "Projected capacity follows home work centers and shifts, not a current assignment, so an assignment does not move projected hours");
+                    report.Rule(Basis.Spec, "ADR 0056 §1: projected capacity follows home work centers and shifts, not a current assignment, so an assignment does not move projected hours");
                     report.Expect($"{step}: SLITTER-B projected hours unchanged", previous.Get(SlitB), after.Get(SlitB), "Capacity");
                     report.Expect($"{step}: PAINT-BOOTH projected hours unchanged", previous.Get(Paint), after.Get(Paint), "Capacity");
                     report.ImpactOf($"Transfer {person} to {area}", previous, after);

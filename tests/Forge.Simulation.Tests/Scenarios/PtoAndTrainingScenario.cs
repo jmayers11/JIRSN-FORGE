@@ -77,8 +77,8 @@ internal static class PtoAndTrainingScenario
                     await ExpectSlitting(step);
                     var after = report.Kpi(await Kpis.CollectAsync(f, "after suspension", proposeSchedule: false));
                     report.Rule(Basis.Spec, Spec + ": Sarah's hours leave SLIT-II labour; Sarah and Michael are identical 24/7 SLIT-II holders, so that is half");
-                    report.Expect($"{step}: SLIT-II labour hours over 7 days", previous.Get("labor.SLIT-II.hours.7d") / 2m, after.Get("labor.SLIT-II.hours.7d"), "Capacity");
-                    report.Expect($"{step}: FIRST-AID labour hours over 7 days unchanged", previous.Get("labor.FIRST-AID.hours.7d"), after.Get("labor.FIRST-AID.hours.7d"), "Capacity");
+                    report.ExpectHours($"{step}: SLIT-II labour hours over 7 days", previous.Get("labor.SLIT-II.hours.7d") / 2m, after.Get("labor.SLIT-II.hours.7d"), "Capacity");
+                    report.ExpectHours($"{step}: FIRST-AID labour hours over 7 days unchanged", previous.Get("labor.FIRST-AID.hours.7d"), after.Get("labor.FIRST-AID.hours.7d"), "Capacity");
                     report.ImpactOf("Qualification suspended", previous, after);
                     previous = after;
                     break;
@@ -103,7 +103,7 @@ internal static class PtoAndTrainingScenario
                     }
 
                     report.Rule(Basis.Spec, Spec + ": Michael is the only SLIT-II holder while Sarah is suspended, so SLIT-II labour loses the PTO hours");
-                    report.Expect($"{step}: SLIT-II labour hours over 7 days", previous.Get("labor.SLIT-II.hours.7d") - ptoHours, after.Get("labor.SLIT-II.hours.7d"), "Capacity");
+                    report.ExpectHours($"{step}: SLIT-II labour hours over 7 days", previous.Get("labor.SLIT-II.hours.7d") - ptoHours, after.Get("labor.SLIT-II.hours.7d"), "Capacity");
                     report.ImpactOf("Approved PTO recorded", previous, after);
                     previous = after;
                     break;
@@ -117,7 +117,7 @@ internal static class PtoAndTrainingScenario
                     crew.Certify("sarah", "SLIT-II");
                     var after = report.Kpi(await Kpis.CollectAsync(f, "after re-certification", proposeSchedule: false));
                     report.Rule(Basis.Spec, Spec + ": Sarah's SLIT-II hours return; slitter capacity during the PTO does not, because she is still alone then");
-                    report.Expect($"{step}: SLIT-II labour hours over 7 days", previous.Get("labor.SLIT-II.hours.7d") + baseline.Get("labor.SLIT-II.hours.7d") / 2m, after.Get("labor.SLIT-II.hours.7d"), "Capacity");
+                    report.ExpectHours($"{step}: SLIT-II labour hours over 7 days", previous.Get("labor.SLIT-II.hours.7d") + baseline.Get("labor.SLIT-II.hours.7d") / 2m, after.Get("labor.SLIT-II.hours.7d"), "Capacity");
                     report.Expect($"{step}: SLITTER-B executable hours unchanged", previous.Get("capacity.SLITTER-B.RUN_SLITTER.executableHours.7d"), after.Get("capacity.SLITTER-B.RUN_SLITTER.executableHours.7d"), "Capacity");
                     report.ImpactOf("Qualification restored", previous, after);
                     previous = after;

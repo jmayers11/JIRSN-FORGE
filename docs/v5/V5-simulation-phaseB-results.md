@@ -1,6 +1,6 @@
 # V5 full-system simulation: Phase B results
 
-**Run:** 2026-10-18, owner's desktop, full `simulate.cmd` → ****PASS**** (51/51 tests in 35 minutes: 44 scenario runs, 1,680 expectations, 0 failed; 7 of 7 negative controls caught). The log is
+**Run:** 2026-10-18, owner's desktop, full `simulate.cmd` → **PASS** (51/51 tests in 35 minutes: 44 scenario runs, 1,680 expectations, 0 failed; 7 of 7 negative controls caught). The log is
 `.forge-logs/simulate-pass-20261018-phaseB.log` and the summary page is `.forge-logs/simulation-summary-20261018-phaseB.md`.
 **Scope approved by the owner:** test code only. Phase B changes no production code, schema or workflow.
 
@@ -27,7 +27,7 @@ audit-chain invariants.
 | S01 operator callout | 58 | Sarah calls out: with one qualified person left, both slitters stop on the two-person rule, and capacity and FIRST-AID labour hours drop by exactly her hours. The reallocation preview names what would stop and start without committing; moving Jennifer restores Slitting and leaves the paint booth unstaffed. On return, presence is re-confirmed and everything recovers. |
 | S02 PTO and training | 39 | A suspended SLIT-II qualification removes Sarah's SLIT-II labour but does not stop Slitting (Michael operates, Sarah is the responder). Michael's approved PTO later in the day removes its hours from capacity ahead of time, and Slitting stops while he is away. Re-certification by a certifier restores Sarah. |
 | S03 staffing transfer | 38 | A transfer by assignment changes what runs now; projected capacity (home work center and shift) does not move. Two findings below. |
-| S04 breakdown and overdue PM | 39 | An overdue lock-out PM stops SLITTER-A; a breakdown of SLITTER-B then makes every order unschedulable with a maintenance constraint. The technician cannot sign off their own work; a planner can. Capacity and the schedule recover only on sign-off. One defect (D1). |
+| S04 breakdown and overdue PM | 39 | An overdue lock-out PM stops SLITTER-A; a breakdown of SLITTER-B then makes every order unschedulable with a maintenance constraint. The technician cannot sign off their own work; a planner can. Capacity and the schedule recover only on sign-off. Each job runs for its planned duration (ADR 0056 §3). |
 | S05 calibration expiry | 34–46 | A gauge used while calibrated becomes invalid once simulated time passes its due date: a use is refused, a failed calibration does not restore it, a passing one does. The tool-use history records, for every use, whether the gauge was calibrated at that moment. |
 | S06 supplier delay | 27 | An approved purchase order makes missing wire expected and the order schedulable on time. The supplier's promised date slips past the due date and the order becomes late; the wire then arrives early and the order is ready and on time again. MRP buys exactly what is still needed. |
 | S07 inaccurate inventory | 29 | A count that finds less tape posts nothing until a different person approves it; the requester cannot approve their own. Once approved, the order is short and cannot be scheduled, MRP recommends exactly the shortfall, and a replenishment makes it ready again. |
@@ -43,9 +43,7 @@ audit-chain invariants.
 
 **Expectations by basis:** Spec 861 (119 distinct rules), Invariant 640, Plan 161, Inferred 18 (2 rules).
 
-**Rules for you to rule on** (each passed, but no ADR or README states it):
-1. Projected capacity follows home work centers and shifts, not a current assignment (S03).
-2. A foreign barcode is refused as invalid or not found and is never echoed; Forge answers 400 `invalid_identification` (S14).
+**Rules that needed a ruling.** Two passing checks were inferred, not written: projected capacity follows home work centers, and how a foreign barcode is answered. The owner ruled on both (ADR 0056 §1–2) and the checks now cite it.
 
 **Cross-module impact.** The summary page has the full matrix. Examples: a callout moves capacity, labour, readiness
 and constraint readings; a supplier delay moves only the schedule until material arrives; a documentation mismatch
@@ -59,13 +57,9 @@ PostgreSQL integration 349 and UI 216. The simulation project builds in it and r
 
 ## Defect register
 
-| # | Severity | Where | What | Evidence |
-|---|---|---|---|---|
-| D1 | Low | Maintenance, `CompleteWorkOrderAsync` | Completing a PM that holds a planned downtime window in the same instant it was started returns **500** instead of a result. The code ends the window at start + 1 tick (100 ns); PostgreSQL stores microseconds, so the end equals the start and `CHECK (ends_at > starts_at)` fails. A real clock rarely produces this, but the guard written for it does not work, and a database error surfaces as a 500. | Phase B batch 2, S04 seeds 7 and 42, work order 3001 (`.forge-logs/simulate-phaseB-batch2.log`). S04 now lets the 90-minute job take 90 minutes; the finding stays in the S04 report. |
+None. The first run recorded D1: completing a PM that holds a planned downtime window in the same instant it was started answers 500, because the window would end at its start (start + 1 tick rounds to the same microsecond and `CHECK (ends_at > starts_at)` refuses it). The owner ruled that maintenance work takes time and that same-instant completion is not a supported case (ADR 0056 §3), so it is not a defect and nothing changes. S04 lets each job run for its planned duration.
 
-No other expectation drawn from the specification disagreed with Forge.
-
-**Production fix for D1 needs your approval** (Phase D). A one-line fix: end the window at start plus one microsecond, or reject completion in the same instant with a 422.
+No expectation drawn from the specification disagreed with Forge.
 
 ## Findings (not defects)
 
@@ -85,18 +79,45 @@ No other expectation drawn from the specification disagreed with Forge.
 
 The gate in the architecture document (§6) is: *every implemented module has at least one I and one X scenario, and the scorecard lists untested areas.*
 
-- **The scorecard lists untested areas: met.** Three areas have no scenario yet: CAPA, material allocation and alternates (the optimizer is excluded from V5), and customer concessions. Five items Forge does not implement are listed separately and never counted as passing.
-- **Every implemented module has an I and an X scenario: not met.** 8 of 26 areas have both. The table below shows what is missing. The 17 amendment scenarios are each about one subject, so most areas get one of the two; closing the gap needs about a dozen more short scenarios.
+The first full run met only half of it: 8 of 26 areas had both kinds. The owner asked for the missing scenarios (follow-up below). With S18–S27 the scorecard shows **26 of 26 areas with both an I and an X scenario**, and it still lists what Forge does not implement (the allocation optimizer, overtime, a 90-day horizon, physical printing, costing), never counting those as passing.
 
-| Area | Has | Missing |
-|---|---|---|
-| Demand management, MRP, Execution, Safety, Shipping, Printing, Reporting | X only | an I scenario |
-| Engineering changes, Training, Maintenance, Calibration, Identity, Recovery, Network, Concurrency | I only | an X scenario |
-| CAPA, Allocation and alternates, Customer concessions | nothing | both |
+## Follow-up, same day: owner rulings (ADR 0056) and ten more scenarios
+
+**Owner rulings.** Recorded in `docs/adr/0056-v5-owner-rulings-capacity-scans-and-maintenance-timing.md`:
+1. Projected capacity follows home work center and shift; an assignment changes only what runs now.
+2. Scanned codes: an unknown Forge code answers 404 `identification_not_found`; anything that is not a Forge code answers 400 `invalid_identification`; neither repeats the value.
+3. Maintenance work takes time. Completing a job in the same instant it was started is not a supported case, so the former D1 is **not a defect** and no change is made.
+
+The S03 and S14 checks now cite ADR 0056 (no check is left needing a ruling), and the defect register is empty.
+
+**Ten scenarios close the gate.** Each is about one subject (its I area) and checks other modules as consequences (X areas):
+
+| Scenario | I | X | What is proven |
+|---|---|---|---|
+| S18 production execution | Execution | Training, Maintenance, Calibration, Allocation, Concurrency, Network, Recovery, Warehouse | An order made from release to finished stock: a person with no presence evidence cannot start; a trainee needs a trainer; a down machine cannot start; material is issued exactly to the BOM and no more; a lost report retried counts once; a second host on the same database keeps open labor; two terminals reporting the rest at once leave one report; a measured characteristic needs a calibrated gauge; finished goods are received. |
+| S19 lone-work rule | Safety | Workforce, Scheduling | A drafted rule does nothing; its author cannot publish; once published, solo painting stops and the booth's projected hours are zero; borrowing Sarah as responder lets painting run but stops slitting; projected hours do not move (ADR 0056 §1). |
+| S20 demand change | Demand | MRP | Demand raised, added and cancelled (each change with a reason, only by demand authority): MRP plans exactly the open spools and the cores beyond stock each time. |
+| S21 MRP planned purchase | MRP | Procurement, Demand | MRP buys exactly what demand lacks; a requisition from the plan keeps its quantity and demand, and cannot be raised twice; an approved PO stops the plan; added demand is planned exactly. |
+| S22 customer shipment | Shipping | Holds, Warehouse, Demand, Network | Pack and ship by different people; a lost ship response retried ships once; no shipment beyond the lot; a held lot never leaves until released; the demand shows what shipped. |
+| S23 label print failures | Printing | Identity | A failed print is final but does not block a new attempt; a confirmed label is reprinted only through the governed path; a replacement ends the old label on approval; a voided label never resolves; labels never move stock. |
+| S24 reports | Reporting | Maintenance, Warehouse, Execution, Shipping | The inventory, downtime, output and delivery reports equal what was posted; a reader without permission is refused. |
+| S25 corrective action | CAPA | MRB, Execution, Concessions, Reporting | Each NCR holds only its own order; scrap and use-as-is under a concession; CAPA needs the right authority and a note; the implementer cannot verify even with authority; the NCR report shows both decisions. |
+| S26 approved alternate | Allocation | MRP, Engineering changes, Warehouse | A proposed alternate changes nothing; approved but only suggested, MRP still buys; once engineering makes the line automatic, MRP allocates the equivalent; issues never exceed the need and never use an unapproved part; an expired alternate is no longer offered. |
+| S27 customer concession | Concessions | MRB, Holds, Calibration, Execution, Shipping, CAPA | A wide roll fails inspection and raises an NCR that holds only its order; use as is under the customer's concession needs a second person; re-inspection, final inspection, receipt and shipment follow; the NCR closes and a CAPA is verified by someone else. |
+
+**Oracle corrections in this batch (simulation errors, not Forge defects).**
+- Labour hours are sums of per-day rows rounded to 0.01 h, so a window that starts a few minutes later can differ by a rounding step. Labour checks in S01 and S02 now allow ±0.05 h and show both values.
+- A supervisor's confirmed presence counts as presence at the terminal, as a clock-in does. S18 checks the refusal with Alex, who has neither.
+- A gauge is checked only for measured (variable) characteristics; an attribute-only inspection ignores and does not record it. S18 now measures width.
+- SLITTER-A has nobody assigned in the planning plant; S19 reads SLITTER-B, as S03 does.
+- A planned maintenance window is only proposed until a second maintenance planner approves it (it takes no capacity before that), and the downtime report counts hours up to now. S24 has the window approved and reads the report after it ends.
+- `lastDays=1` on a report means today only. S24 reads its reports over yesterday to tomorrow, so a run that crosses midnight still sees its own records.
+
+**Results:** full `simulate.cmd`, 2026-10-18 19:33–20:21: **PASS**, 71/71 tests. That is 64 scenario runs with 2,466 expectations and none failed; all 7 negative controls were caught, and the four reproducibility pairs matched. Every check now cites the specification, an ADR, an invariant or the plan: no check is left inferred. The log is `.forge-logs/simulate-pass-20261018-phaseB-gate.log` and the summary page is `.forge-logs/simulation-summary-20261018-phaseB-gate.md`.
 
 ## Limits, stated plainly
 
 - Still the reference plant at small size, not the 300-order, 70-operator factory, and no 30/60/90-day consequence runs. Both are Phase C.
-- Negative controls cover seven breaks; the Phase B scenarios S02–S06, S08 and S11–S17 do not have their own control yet.
+- Negative controls cover seven breaks; most Phase B scenarios do not have their own control yet.
 - Reproducibility (two runs, same seed, same state hash) is checked for S09, S10, S10b and S15 only.
-- Runtime of the full `simulate.cmd`: 35 minutes for 51 tests.
+- Runtime of the full `simulate.cmd`: 48 minutes for 71 tests.

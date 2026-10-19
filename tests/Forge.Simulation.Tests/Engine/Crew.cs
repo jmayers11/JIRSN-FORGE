@@ -94,6 +94,16 @@ internal sealed class Crew(DateTimeOffset confirmedAt)
         return people.Any(op => Holds(op, "SLIT-II") && people.Any(r => r != op && (Holds(r, "FIRST-AID") || Holds(r, "SLIT-II"))));
     }
 
+    /// <summary>
+    /// PAINT-PAIR (scenario 19): two people present in Paint, an Operator holding PAINT-I and a different Safety
+    /// responder holding FIRST-AID, no trainees.
+    /// </summary>
+    public bool PaintPairRunnable()
+    {
+        var people = PresentIn("PAINT").ToList();
+        return people.Any(op => Holds(op, "PAINT-I") && people.Any(r => r != op && Holds(r, "FIRST-AID")));
+    }
+
     /// <summary>The paint booth needs a present PAINT-I operator in Paint.</summary>
     public bool PaintRunnable() => PresentIn("PAINT").Any(p => Holds(p, "PAINT-I"));
 

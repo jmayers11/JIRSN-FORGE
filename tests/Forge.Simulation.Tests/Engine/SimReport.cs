@@ -33,9 +33,10 @@ public static class Basis
 public sealed record Impact(string Event, string Module, string Key, decimal Before, decimal After);
 
 /// <summary>One expected-versus-actual comparison. It passes only when the actual text equals the expected text.</summary>
-public sealed record Expectation(int Number, string Name, string Expected, string Actual, string Category, string Basis, string Source)
+public sealed record Expectation(int Number, string Name, string Expected, string Actual, string Category, string Basis, string Source, bool? Matched = null)
 {
-    public bool Passed => string.Equals(Expected, Actual, StringComparison.Ordinal);
+    /// <summary>Equal text, or, for a toleranced number, within the stated tolerance.</summary>
+    public bool Passed => Matched ?? string.Equals(Expected, Actual, StringComparison.Ordinal);
 }
 
 /// <summary>
@@ -78,6 +79,14 @@ public sealed class SimReport(string scenario, int seed)
 
     public void Expect(string name, decimal expected, decimal actual, string category = "Inventory") =>
         Expect(name, Invariants.Q(expected), Invariants.Q(actual), category);
+
+    /// <summary>
+    /// Hours read from Forge's projections are sums of per-day rows, each rounded to 0.01 h, so a window that starts
+    /// a few minutes later can differ by a rounding step at its edges. The comparison allows that tolerance and shows both values.
+    /// </summary>
+    public void ExpectHours(string name, decimal expected, decimal actual, string category = "Capacity", decimal tolerance = 0.05m) =>
+        expectations.Add(new Expectation(expectations.Count + 1, name, Invariants.Q(expected) + " ±" + Invariants.Q(tolerance), Invariants.Q(actual), category, basis, source,
+            Math.Abs(expected - actual) <= tolerance));
 
     /// <summary>Records one invariant comparison, whatever rule is current.</summary>
     public void ExpectInvariant(string name, string expected, string actual, string source) =>

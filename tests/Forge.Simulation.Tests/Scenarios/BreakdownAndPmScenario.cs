@@ -122,7 +122,7 @@ internal static class BreakdownAndPmScenario
                     var pm = await WorkOrderAsync("Preventive");
                     report.Rule(Basis.Spec, Spec + ": the technician completes every checklist task; only someone else can sign it off");
                     report.Expect($"{step}: PM started", "200", (await f.Api.Send(tech, $"/api/maintenance/work-orders/{pm}/start", new { })).Label);
-                    // The plan's 90-minute job takes time. Completing in the same instant as starting returns 500 (see the finding below).
+                    // ADR 0056 §3: the plan's 90-minute job takes its 90 minutes.
                     f.Clock.Advance(TimeSpan.FromMinutes(90));
                     report.Expect($"{step}: PM completed", "200", (await f.Api.Send(tech, $"/api/maintenance/work-orders/{pm}/complete", new { findings = "Knives rotated, guards OK", tasksDone = new[] { true, true, true } })).Label);
                     report.Expect($"{step}: the technician cannot sign off", "403", ((int)(await f.Api.Send(tech, $"/api/maintenance/work-orders/{pm}/sign-off", new { })).Status).ToString(CultureInfo.InvariantCulture), "Authorization");
@@ -159,7 +159,7 @@ internal static class BreakdownAndPmScenario
         }
 
         await Invariants.AuditChain(report, "End", f.Plant.Admin);
-        report.Finding("Defect (low): completing a PM that holds a planned downtime window in the same instant it was started returns 500, not a result. CompleteWorkOrderAsync ends the planned window at start + 1 tick, which PostgreSQL rounds to the same microsecond, so the CHECK ends_at > starts_at fails (seen in Phase B batch 2, S04 calls.jsonl, work order 3001). Real clocks rarely hit it; the run now lets the 90-minute job take 90 minutes.");
+        report.Note("ADR 0056 §3: maintenance work takes time; each job runs for its planned duration before it is completed (same-instant completion is not a supported case).");
         return (report, log, await Invariants.StateHash(f.StoresUser, parts));
     }
 }

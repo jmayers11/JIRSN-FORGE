@@ -67,6 +67,16 @@ public static class Coverage
         ["S15-network-interruption"] = Network,
         ["S16-concurrent-transactions"] = Concurrency,
         ["S17-backup-and-recovery"] = Recovery,
+        ["S18-production-execution"] = Execution,
+        ["S19-lone-work-rule"] = Safety,
+        ["S20-demand-change"] = Demand,
+        ["S21-mrp-planned-purchase"] = Mrp,
+        ["S22-customer-shipment"] = Shipping,
+        ["S23-label-print-failures"] = Printing,
+        ["S24-reports-match-records"] = Reporting,
+        ["S25-corrective-action"] = Capa,
+        ["S26-approved-alternate"] = Allocation,
+        ["S27-customer-concession"] = Concessions,
     };
 
     /// <summary>What the amendment names that Forge does not have; reported as not implemented, never as passing.</summary>
