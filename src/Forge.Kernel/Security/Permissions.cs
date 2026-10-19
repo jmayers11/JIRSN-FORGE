@@ -310,6 +310,7 @@ public static class Roles
     {
         [MaintenanceInstallation] = [Permissions.MaintenanceWork, Permissions.MaintenanceRead, Permissions.EngineeringRead, Permissions.InventoryRead],
         [ChangePropagation] = [Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.OrdersManage, Permissions.OrdersRelease, Permissions.PurchasingRead, Permissions.WorkforceRead, Permissions.ChangesManage],
+        [QualityReplan] = [Permissions.ScheduleRead, Permissions.SchedulePropose],
     };
 
     static Roles()
@@ -324,6 +325,9 @@ public static class Roles
 
     /// <summary>The system role the propagation of a released engineering change acts with (V2.5).</summary>
     public const string ChangePropagation = "system.ChangePropagation";
+
+    /// <summary>The system role that re-plans the schedule after a failed inspection or a new NCR (ADR 0057 §2.4).</summary>
+    public const string QualityReplan = "system.QualityReplan";
 
     /// <summary>The system role that records a part issued to a work order as installed on its asset (V2.9).</summary>
     public const string MaintenanceInstallation = "system.MaintenanceInstallation";

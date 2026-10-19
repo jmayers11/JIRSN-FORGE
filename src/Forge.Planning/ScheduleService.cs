@@ -14,6 +14,24 @@ public sealed record ProposeSchedule(int HorizonDays);
 
 public sealed record ApproveSchedule(long VersionId);
 
+/// <summary>Re-plan at once after a quality event on an order (ADR 0057 §2.4); the approved schedule stays in force.</summary>
+public sealed record ReplanAfterQuality(long OrderNumber, string Cause);
+
+/// <summary>One order whose projected completion moved in a re-plan, against the approved schedule.</summary>
+public sealed record ScheduleImpactLine(long OrderNumber, DateTimeOffset? Was, DateTimeOffset? Now, string WasStatus, string NowStatus, string Why);
+
+/// <summary>
+/// A re-plan found orders whose projected completion moves (ADR 0057 §2.4). The proposal waits for a planner's approval;
+/// planners can be notified of this event by a notification rule.
+/// </summary>
+public sealed record ScheduleImpactFound(long VersionId, long ApprovedVersionId, long CauseOrderNumber, string Cause, int OrdersMoved, string Message,
+    IReadOnlyList<ScheduleImpactLine> Lines) : IDomainEvent
+{
+    public static string EventType => nameof(ScheduleImpactFound);
+
+    public static int SchemaVersion => 1;
+}
+
 public sealed record InvestigateConstraint(long ConstraintId);
 
 public sealed record ResolveConstraint(long ConstraintId, string Resolution);
@@ -63,53 +81,147 @@ public sealed class ScheduleService(CommandPipeline pipeline, IKernelUnitOfWorkF
         }
 
         // Compute from one consistent snapshot first; the command only stores the result.
-        EngineRun<ScheduleResult> run;
-        IReadOnlyList<ConstraintFinding> findings;
-        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
-        {
-            var snapshot = await SnapshotLoader.LoadAsync(read, time, ct);
-            var lookup = read.Store<IExecutionLookup>();
-            var orders = new List<OrderInfo>();
-            foreach (var summary in (await lookup.ListOrdersAsync(ct)).Where(o => o.Status == OrderStatus.Released).OrderBy(o => o.OrderNumber))
-            {
-                orders.Add((await lookup.FindOrderAsync(summary.OrderNumber, ct))!);
-            }
-
-            var material = (await MaterialPlanningService.RunMaterialAsync(read, time, ct)).Output;
-            var quality = await ScheduleQuality.LoadAsync(read, orders, ct);
-            var request = new ScheduleRequest(snapshot.AsOf, snapshot.AsOf.AddDays(c.HorizonDays), orders, material, quality);
-            run = EngineRunner.Run(new SchedulingEngine(), snapshot, request, snapshot.AsOf);
-            findings = new ConstraintEngine().Evaluate(snapshot, new ConstraintRequest(run.Output), snapshot.AsOf).Output;
-        }
-
+        var (run, findings) = await ComputeAsync(c.HorizonDays, ct);
         var spec = new CommandSpec(SourceContext, nameof(ProposeSchedule), Permissions.SchedulePropose, ResourceRef.Of(ScheduleEntity));
         return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
-            var store = uow.Store<IPlanningStore>();
             var notOnTime = run.Output.Orders.Count(o => o.Status != DeliveryStatus.OnTime);
             var summary = $"{run.Output.Orders.Count} order(s), {notOnTime} at risk, late or unschedulable, {findings.Count} constraint(s).";
-            if (await store.LatestAsync(ScheduleStatus.Proposed, false, ct) is { } pending)
-            {
-                await store.SetStatusAsync(pending.VersionId, ScheduleStatus.Discarded, null, null, ct);
-            }
-
-            var versionId = await store.InsertProposalAsync(
-                new ScheduleVersion(0, ScheduleStatus.Proposed, run.Output.From, run.Output.To, $"{run.EngineName}@{run.EngineVersion}", run.InputFingerprint, run.OutputFingerprint, summary, context.Actor, now, null, null, null),
-                CanonicalJson.Serialize(run.Output),
-                ct);
-
-            foreach (var finding in findings)
-            {
-                await store.UpsertFindingAsync(finding, versionId, now, ct);
-            }
-
-            var closed = await store.ResolveMissingAsync(findings.Select(f => f.Key).ToList(), versionId, now, ct);
+            var (versionId, closed) = await StoreProposalAsync(uow, run, findings, summary, context.Actor, now, ct);
             var id = versionId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             return new CommandOutcome(
                 CommandResult.Ok(id, $"Schedule version {id} proposed: {summary}" + (closed > 0 ? $" {closed} earlier constraint(s) no longer found." : string.Empty)),
                 [pipeline.Event(new ScheduleProposed(versionId, run.Output.Orders.Count, notOnTime, findings.Count), context, SourceContext, ScheduleEntity, id)],
                 new AuditChange(ScheduleEntity, id, null, CanonicalJson.Serialize(new { run.InputFingerprint, run.OutputFingerprint, summary })));
         }, ct);
+    }
+
+    /// <summary>
+    /// Re-plans at once after an inspection failed or an NCR was raised on an order (ADR 0057 §2.4), over the approved
+    /// schedule's horizon. When orders' projected completions move against the approved schedule, the re-plan is stored
+    /// as the current proposal and <see cref="ScheduleImpactFound"/> names each order, by how much, and why. The approved
+    /// schedule stays in force until a planner approves the proposal. With no approved schedule, or nothing moved,
+    /// nothing is stored.
+    /// </summary>
+    public async Task<CommandResult> ReplanAfterQualityAsync(ReplanAfterQuality c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        ArgumentNullException.ThrowIfNull(context);
+        ScheduleVersion? approved;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            approved = await read.Store<IPlanningStore>().LatestAsync(ScheduleStatus.Approved, true, ct);
+        }
+
+        var order = c.OrderNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (approved?.Result is null)
+        {
+            return CommandResult.Ok(order, "No approved schedule to compare with; nothing re-planned.");
+        }
+
+        var approvedId = approved.VersionId;
+        var approvedText = approvedId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var horizonDays = (int)Math.Clamp(Math.Ceiling((approved.To - approved.From).TotalDays), 1, 62);
+        var (run, findings) = await ComputeAsync(horizonDays, ct);
+        var lines = Impact(approved.Result, run.Output);
+        if (lines.Count == 0)
+        {
+            return CommandResult.Ok(order, $"Re-planned after {c.Cause}: no order's projected completion moves.");
+        }
+
+        var message = $"Re-plan after {c.Cause}: {lines.Count} order(s) move against approved schedule {approvedText}. "
+            + string.Join(" ", lines.Take(10).Select(Describe)) + (lines.Count > 10 ? $" And {lines.Count - 10} more." : string.Empty);
+        var spec = new CommandSpec(SourceContext, nameof(ReplanAfterQuality), Permissions.SchedulePropose, ResourceRef.Of(ScheduleEntity));
+        return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var notOnTime = run.Output.Orders.Count(o => o.Status != DeliveryStatus.OnTime);
+            var summary = Shorten(message, 1000);
+            var (versionId, _) = await StoreProposalAsync(uow, run, findings, summary, context.Actor, now, ct);
+            var id = versionId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return new CommandOutcome(
+                CommandResult.Ok(id, $"Schedule version {id} proposed. {message}"),
+                [
+                    pipeline.Event(new ScheduleProposed(versionId, run.Output.Orders.Count, notOnTime, findings.Count), context, SourceContext, ScheduleEntity, id),
+                    pipeline.Event(new ScheduleImpactFound(versionId, approvedId, c.OrderNumber, c.Cause, lines.Count, summary, lines), context, SourceContext, ScheduleEntity, id),
+                ],
+                new AuditChange(ScheduleEntity, id, approvedText, CanonicalJson.Serialize(new { run.InputFingerprint, run.OutputFingerprint, summary })));
+        }, ct);
+    }
+
+    /// <summary>Orders whose projected completion is later than in the approved schedule, or that can no longer be scheduled, latest move first.</summary>
+    public static IReadOnlyList<ScheduleImpactLine> Impact(ScheduleResult approved, ScheduleResult replanned)
+    {
+        ArgumentNullException.ThrowIfNull(approved);
+        ArgumentNullException.ThrowIfNull(replanned);
+        var before = approved.Orders.ToDictionary(o => o.OrderNumber);
+        var lines = new List<ScheduleImpactLine>();
+        foreach (var now in replanned.Orders)
+        {
+            if (!before.TryGetValue(now.OrderNumber, out var was))
+            {
+                continue;
+            }
+
+            var later = now.ProjectedCompletion is { } n && was.ProjectedCompletion is { } w && n - w >= TimeSpan.FromMinutes(1);
+            var lost = now.Status == DeliveryStatus.Unschedulable && was.Status != DeliveryStatus.Unschedulable;
+            if (later || lost)
+            {
+                lines.Add(new ScheduleImpactLine(now.OrderNumber, was.ProjectedCompletion, now.ProjectedCompletion, was.Status.ToString(), now.Status.ToString(), now.Explanation));
+            }
+        }
+
+        return lines
+            .OrderByDescending(l => l.Now is { } n && l.Was is { } w ? n - w : TimeSpan.MaxValue)
+            .ThenBy(l => l.OrderNumber)
+            .ToList();
+    }
+
+    private static string Describe(ScheduleImpactLine l) => l.Now is { } now
+        ? $"Order {l.OrderNumber}: projected {l.Was:u}, now {now:u} ({l.NowStatus}). {l.Why}"
+        : $"Order {l.OrderNumber}: projected {l.Was:u}, now cannot be scheduled. {l.Why}";
+
+    private static string Shorten(string text, int max) => text.Length <= max ? text : text[..(max - 1)] + "…";
+
+    private async Task<(EngineRun<ScheduleResult> Run, IReadOnlyList<ConstraintFinding> Findings)> ComputeAsync(int horizonDays, CancellationToken ct)
+    {
+        await using var read = await unitOfWork.BeginSnapshotAsync(ct);
+        var snapshot = await SnapshotLoader.LoadAsync(read, time, ct);
+        var lookup = read.Store<IExecutionLookup>();
+        var orders = new List<OrderInfo>();
+        foreach (var summary in (await lookup.ListOrdersAsync(ct)).Where(o => o.Status == OrderStatus.Released).OrderBy(o => o.OrderNumber))
+        {
+            orders.Add((await lookup.FindOrderAsync(summary.OrderNumber, ct))!);
+        }
+
+        var material = (await MaterialPlanningService.RunMaterialAsync(read, time, ct)).Output;
+        var quality = await ScheduleQuality.LoadAsync(read, orders, ct);
+        var request = new ScheduleRequest(snapshot.AsOf, snapshot.AsOf.AddDays(horizonDays), orders, material, quality);
+        var run = EngineRunner.Run(new SchedulingEngine(), snapshot, request, snapshot.AsOf);
+        var findings = new ConstraintEngine().Evaluate(snapshot, new ConstraintRequest(run.Output), snapshot.AsOf).Output;
+        return (run, findings);
+    }
+
+    private static async Task<(long VersionId, int Closed)> StoreProposalAsync(IKernelUnitOfWork uow, EngineRun<ScheduleResult> run, IReadOnlyList<ConstraintFinding> findings,
+        string summary, string actor, DateTimeOffset now, CancellationToken ct)
+    {
+        var store = uow.Store<IPlanningStore>();
+        if (await store.LatestAsync(ScheduleStatus.Proposed, false, ct) is { } pending)
+        {
+            await store.SetStatusAsync(pending.VersionId, ScheduleStatus.Discarded, null, null, ct);
+        }
+
+        var versionId = await store.InsertProposalAsync(
+            new ScheduleVersion(0, ScheduleStatus.Proposed, run.Output.From, run.Output.To, $"{run.EngineName}@{run.EngineVersion}", run.InputFingerprint, run.OutputFingerprint, summary, actor, now, null, null, null),
+            CanonicalJson.Serialize(run.Output),
+            ct);
+
+        foreach (var finding in findings)
+        {
+            await store.UpsertFindingAsync(finding, versionId, now, ct);
+        }
+
+        var closed = await store.ResolveMissingAsync(findings.Select(f => f.Key).ToList(), versionId, now, ct);
+        return (versionId, closed);
     }
 
     public Task<CommandResult> ApproveAsync(ApproveSchedule c, CommandContext context, CancellationToken ct)

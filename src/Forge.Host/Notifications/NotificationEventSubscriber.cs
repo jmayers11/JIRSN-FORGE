@@ -62,7 +62,8 @@ public sealed class NotificationEventSubscriber(NpgsqlDataSource dataSource, Tim
         }
         var alertId = ForgeIds.New(time);
         var title = rule.Name;
-        var message = Render(rule.Template, evt);
+        using var payload = TryJson(evt.Payload);
+        var message = Render(rule.Template, evt, payload);
         var deepLink = Render(rule.DeepLinkTemplate, evt);
         if (!NotificationCommands.IsLocalLink(deepLink)) deepLink = "#/notifications";
         var visibleAt = now.AddSeconds(rule.DelaySeconds);
@@ -189,7 +190,7 @@ public sealed class NotificationEventSubscriber(NpgsqlDataSource dataSource, Tim
         _ => false,
     };
 
-    private static string Render(string template, EventEnvelope evt)
+    private static string Render(string template, EventEnvelope evt, JsonDocument? payload = null)
     {
         var substitutions = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -200,6 +201,12 @@ public sealed class NotificationEventSubscriber(NpgsqlDataSource dataSource, Tim
             ["actor"] = evt.Actor,
             ["recordedAt"] = evt.RecordedAt.ToString("O"),
         };
+        // An event that writes its own plain-words message (ADR 0057) can be shown as it is.
+        if (payload?.RootElement is { ValueKind: JsonValueKind.Object } root && root.TryGetProperty("message", out var text) && text.ValueKind == JsonValueKind.String)
+        {
+            substitutions["message"] = text.GetString()!;
+        }
+
         foreach (var (key, value) in substitutions) template = template.Replace("{" + key + "}", value, StringComparison.Ordinal);
         return template;
     }

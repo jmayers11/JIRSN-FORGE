@@ -19,7 +19,7 @@ public sealed record NewCharacteristic(string Name, CharacteristicKind Kind, dec
 
 /// <summary>Replaces the inspection point after an operation of a part.</summary>
 /// <param name="Revision">The item revision this plan is for; null for every revision.</param>
-public sealed record SetInspectionPlan(string PartNumber, int Sequence, string Title, IReadOnlyList<NewCharacteristic> Characteristics, string? Revision = null);
+public sealed record SetInspectionPlan(string PartNumber, int Sequence, string Title, IReadOnlyList<NewCharacteristic> Characteristics, string? Revision = null, int PlannedMinutes = 0);
 
 public sealed record RemoveInspectionPlan(string PartNumber, int Sequence, string? Revision = null);
 
@@ -194,9 +194,14 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
             }).ToList();
 
             var previous = (await uow.Store<IQualityLookup>().ListPlansAsync(part, ct)).FirstOrDefault(p => p.Sequence == c.Sequence && p.Revision == planRevision);
-            var plan = new InspectionPlanInfo(part, c.Sequence, title, characteristics, planRevision);
+            if (c.PlannedMinutes is < 0 or > 20160)
+            {
+                throw new CommandRejectedException("invalid_inspection_time", "Planned inspection time is between 0 minutes and 14 days.");
+            }
+
+            var plan = new InspectionPlanInfo(part, c.Sequence, title, characteristics, planRevision, c.PlannedMinutes);
             await uow.Store<IQualityStore>().SavePlanAsync(plan, now, context.Actor, ct);
-            return Outcome(context, "InspectionPlan", id, previous is null ? "Defined" : "Changed", $"Inspection after {part}{(planRevision is null ? string.Empty : " rev " + planRevision)} operation {c.Sequence}: {characteristics.Count} characteristic(s).", previous, plan);
+            return Outcome(context, "InspectionPlan", id, previous is null ? "Defined" : "Changed", $"Inspection after {part}{(planRevision is null ? string.Empty : " rev " + planRevision)} operation {c.Sequence}: {characteristics.Count} characteristic(s){(c.PlannedMinutes > 0 ? $", planned to take {c.PlannedMinutes} min" : string.Empty)}.", previous, plan);
         }, ct);
     }
 

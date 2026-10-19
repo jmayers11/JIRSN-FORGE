@@ -14,7 +14,8 @@ public sealed record CharacteristicInfo(int Number, string Name, CharacteristicK
 
 /// <summary>An inspection point: after operation <see cref="Sequence"/> of a part, check these characteristics.</summary>
 /// <param name="Revision">The item revision the plan is for; null for every revision (V2.3).</param>
-public sealed record InspectionPlanInfo(string PartNumber, int Sequence, string Title, IReadOnlyList<CharacteristicInfo> Characteristics, string? Revision = null);
+/// <param name="PlannedMinutes">How long the inspection is planned to take (ADR 0057 §2): a gap in the order's flow before the next operation.</param>
+public sealed record InspectionPlanInfo(string PartNumber, int Sequence, string Title, IReadOnlyList<CharacteristicInfo> Characteristics, string? Revision = null, int PlannedMinutes = 0);
 
 /// <summary>Which plans apply to work at a revision: a plan for that revision, otherwise the plan for every revision.</summary>
 public static class InspectionPlans
@@ -143,7 +144,14 @@ public sealed record GaugeInfo(string Code, string Description, DateOnly Calibra
 }
 
 /// <summary>Quality state of one order as readiness and receiving need it.</summary>
-public sealed record OrderQuality(long OrderNumber, IReadOnlyList<int> PlannedSequences, IReadOnlyList<int> PassedSequences, IReadOnlyList<NcrInfo> OpenNcrs);
+/// <param name="InspectionMinutes">Planned inspection minutes per inspection point (ADR 0057 §2); missing means 0.</param>
+/// <param name="FailedSequences">Inspection points whose latest inspection failed (a re-inspection is due once its NCR is decided).</param>
+public sealed record OrderQuality(long OrderNumber, IReadOnlyList<int> PlannedSequences, IReadOnlyList<int> PassedSequences, IReadOnlyList<NcrInfo> OpenNcrs,
+    IReadOnlyDictionary<int, int>? InspectionMinutes = null, IReadOnlyList<int>? FailedSequences = null)
+{
+    /// <summary>The planned minutes of the inspection after an operation.</summary>
+    public int MinutesAfter(int sequence) => InspectionMinutes?.GetValueOrDefault(sequence) ?? 0;
+}
 
 /// <summary>What other contexts may ask Quality.</summary>
 public interface IQualityLookup

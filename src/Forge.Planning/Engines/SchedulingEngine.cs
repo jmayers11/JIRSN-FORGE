@@ -7,7 +7,9 @@ namespace Forge.Planning.Engines;
 /// <summary>
 /// Orders to schedule over a horizon. When <paramref name="Material"/> is given, an order that has
 /// not started waits for its material: short or overdue material leaves it unscheduled, expected
-/// material holds its first operation until the receipt's date.
+/// material holds its first operation until the receipt's date. When <paramref name="Quality"/> is
+/// given, an inspection that has not happened yet is a planned gap after the inspected operation;
+/// only an undecided nonconformance stops the order (ADR 0057 §2).
 /// </summary>
 public sealed record ScheduleRequest(
     DateTimeOffset From,
@@ -116,9 +118,21 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
                     waited = ("Material", materialBlock ?? "Waiting for material.");
                 }
 
-                var qualityCheck = quality is null ? null : OrderReadinessEngine.QualityCheck(quality, op.Sequence);
-                var scheduled = (qualityCheck is { Outcome: EvidenceOutcome.Fail or EvidenceOutcome.Indeterminate }
-                    ? Unscheduled(order, op, "Quality", qualityCheck.Detail)
+                // Inspections after earlier operations that have not passed yet take their planned time; they do not stop the plan.
+                if (quality is not null && predecessorEnd is { } flow)
+                {
+                    var (inspected, gap) = InspectionGap(quality, predecessorSequence, op.Sequence);
+                    var ready = (predecessorSequence is null ? horizon.Start : flow) + gap;
+                    if (inspected.Count > 0 && gap > TimeSpan.Zero && ready > flow)
+                    {
+                        predecessorEnd = ready;
+                        waited = ("Inspection", InspectionDetail(quality, inspected, ready));
+                    }
+                }
+
+                var blocking = quality is { OpenNcrs.Count: > 0 } ? OrderReadinessEngine.QualityCheck(quality with { PlannedSequences = [] }, op.Sequence) : null;
+                var scheduled = (blocking is { Outcome: EvidenceOutcome.Fail }
+                    ? Unscheduled(order, op, "Quality", blocking.Detail)
                     : predecessorSequence is null && materialStart is null && materialBlock is not null
                     ? Unscheduled(order, op, "Material", materialBlock)
                     : predecessorEnd is { } earliest
@@ -130,8 +144,20 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
                 predecessorSequence = op.Sequence;
             }
 
+            // An inspection after the last operation is part of the order's flow too: the order is done when it has passed.
+            (DateTimeOffset At, string Detail)? finalInspection = null;
+            if (quality is not null && predecessorEnd is { } last)
+            {
+                var (inspected, gap) = InspectionGap(quality, predecessorSequence, int.MaxValue);
+                var ready = (predecessorSequence is null ? horizon.Start : last) + gap;
+                if (inspected.Count > 0 && gap > TimeSpan.Zero)
+                {
+                    finalInspection = (ready, InspectionDetail(quality, inspected, ready));
+                }
+            }
+
             operations.AddRange(orderOps);
-            orders.Add(Deliver(snapshot, order, orderOps) with { ProgramId = order.ProgramId });
+            orders.Add(Deliver(snapshot, order, orderOps, finalInspection) with { ProgramId = order.ProgramId });
         }
 
         var late = orders.Where(o => o.Status != DeliveryStatus.OnTime).ToList();
@@ -170,6 +196,26 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
         }
 
         return start > horizon.Start ? (start, status.Summary) : (null, null);
+    }
+
+    /// <summary>
+    /// The inspection points between the previous unfinished operation (or the start, when there is none) and this
+    /// operation that have not passed, and their planned time together. An inspection after a finished operation is
+    /// due now; one after an operation still to do follows it.
+    /// </summary>
+    private static (IReadOnlyList<int> Points, TimeSpan Gap) InspectionGap(OrderQuality quality, int? previous, int sequence)
+    {
+        var points = quality.PlannedSequences
+            .Where(s => s < sequence && (previous is null || s >= previous) && !quality.PassedSequences.Contains(s))
+            .Order()
+            .ToList();
+        return (points, TimeSpan.FromMinutes(points.Sum(quality.MinutesAfter)));
+    }
+
+    private static string InspectionDetail(OrderQuality quality, IReadOnlyList<int> points, DateTimeOffset until)
+    {
+        var parts = points.Select(s => (quality.FailedSequences?.Contains(s) ?? false ? "re-inspection" : "inspection") + $" after operation {s} ({quality.MinutesAfter(s)} min)");
+        return $"Waiting for the {string.Join(" and ", parts)}, planned until {until:u}.";
     }
 
     private static ScheduledOperation Schedule(CapacityTimeline timeline, Bookings state, OrderInfo order, OrderOperationInfo op, DateTimeOffset earliest, int? predecessor, (string Limiting, string Detail)? waited = null)
@@ -417,10 +463,16 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
     private static ScheduledOperation Unscheduled(OrderInfo order, OrderOperationInfo op, string limiting, string detail) => new(
         order.OrderNumber, op.Sequence, op.Description, op.WorkCenterCode, null, op.ActivityCode, false, null, null, op.PlannedMinutes, limiting, detail, [], [], []);
 
-    private static ScheduledOrder Deliver(SiteSnapshot snapshot, OrderInfo order, IReadOnlyList<ScheduledOperation> ops)
+    private static ScheduledOrder Deliver(SiteSnapshot snapshot, OrderInfo order, IReadOnlyList<ScheduledOperation> ops, (DateTimeOffset At, string Detail)? finalInspection = null)
     {
         var site = WorkCalendar.SiteOfWorkCenter(snapshot, ops.Count > 0 ? ops[0].WorkCenterCode : string.Empty);
         var dueAt = WorkCalendar.EndOfDay(snapshot, site, order.DueDate);
+        if (ops.Count == 0 && finalInspection is { } only)
+        {
+            var onlyStatus = only.At > dueAt ? DeliveryStatus.Late : dueAt - only.At < AtRiskMargin ? DeliveryStatus.AtRisk : DeliveryStatus.OnTime;
+            return new ScheduledOrder(order.OrderNumber, order.PartNumber, order.Priority, order.DueDate, dueAt, only.At, onlyStatus, $"Projected completion {only.At:u}, due {dueAt:u}. {only.Detail}");
+        }
+
         if (ops.Count == 0)
         {
             return new ScheduledOrder(order.OrderNumber, order.PartNumber, order.Priority, order.DueDate, dueAt, null, DeliveryStatus.OnTime, "No remaining operations.");
@@ -432,7 +484,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             return new ScheduledOrder(order.OrderNumber, order.PartNumber, order.Priority, order.DueDate, dueAt, null, DeliveryStatus.Unschedulable, $"Operation {blocked.Sequence} cannot be scheduled: {blocked.BindingConstraint}. {blocked.BindingDetail}");
         }
 
-        var completion = ops[^1].End!.Value;
+        var completion = finalInspection is { } final && final.At > ops[^1].End!.Value ? final.At : ops[^1].End!.Value;
         var status = completion > dueAt ? DeliveryStatus.Late : dueAt - completion < AtRiskMargin ? DeliveryStatus.AtRisk : DeliveryStatus.OnTime;
         var cause = ops
             .Select(o => (Op: o, Delay: o.Interruptions.Aggregate(TimeSpan.Zero, (t, i) => t + (i.Until - i.From)), Binding: o.BindingConstraint is "Now" or "Predecessor" ? null : o))
@@ -441,6 +493,11 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
                 ? $"operation {x.Op.Sequence} waited for {x.Op.BindingConstraint}: {x.Op.BindingDetail}"
                 : $"operation {x.Op.Sequence} was interrupted by {string.Join(", ", x.Op.Interruptions.Select(i => i.Limiting).Distinct())}")
             .ToList();
+        if (finalInspection is { } f && completion == f.At)
+        {
+            cause.Add(char.ToLowerInvariant(f.Detail[0]) + f.Detail[1..].TrimEnd('.'));
+        }
+
         var explanation = $"Projected completion {completion:u}, due {dueAt:u}." + (cause.Count == 0 ? string.Empty : " Delays: " + string.Join("; ", cause) + ".");
         return new ScheduledOrder(order.OrderNumber, order.PartNumber, order.Priority, order.DueDate, dueAt, completion, status, explanation);
     }

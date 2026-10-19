@@ -125,6 +125,7 @@ builder.Services.AddSingleton<Forge.Host.Propagation.ChangePropagationRunner>();
 builder.Services.AddSingleton<Forge.Host.Propagation.PropagationRetry>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Propagation.ChangePropagationSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Installation.InstallationSubscriber>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Replanning.QualityReplanSubscriber>();
 
 var sentinelEventsEndpoint = builder.Configuration["Forge:Sentinel:SecurityEventsEndpoint"];
 if (!string.IsNullOrWhiteSpace(sentinelEventsEndpoint))

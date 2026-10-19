@@ -86,4 +86,7 @@ public static class SystemActors
 
     /// <summary>Records parts issued to a work order as installed on its asset (V2.9).</summary>
     public const string Installation = "system:installation";
+
+    /// <summary>Re-plans the schedule after a failed inspection or a new NCR (ADR 0057 §2.4).</summary>
+    public const string QualityReplan = "system:quality-replan";
 }

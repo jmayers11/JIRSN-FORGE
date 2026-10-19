@@ -26,8 +26,8 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
         ArgumentNullException.ThrowIfNull(plan);
         await DeletePlanAsync(plan.PartNumber, plan.Sequence, plan.Revision, ct);
         await using (var cmd = uow.Command(
-            "INSERT INTO quality.inspection_plan (part_number, sequence, title, updated_at, updated_by, revision) VALUES ($1, $2, $3, $4, $5, $6)",
-            plan.PartNumber, plan.Sequence, plan.Title, at, actor, plan.Revision ?? AllRevisions))
+            "INSERT INTO quality.inspection_plan (part_number, sequence, title, updated_at, updated_by, revision, planned_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            plan.PartNumber, plan.Sequence, plan.Title, at, actor, plan.Revision ?? AllRevisions, plan.PlannedMinutes))
         {
             await cmd.ExecuteNonQueryAsync(ct);
         }
@@ -136,8 +136,8 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
     public async Task<IReadOnlyList<InspectionPlanInfo>> ListPlansAsync(string? partNumber, CancellationToken ct)
     {
         var plans = await ReadAsync(
-            "SELECT part_number, sequence, title, revision FROM quality.inspection_plan WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, sequence, revision",
-            r => (Part: r.GetString(0), Sequence: r.GetInt32(1), Title: r.GetString(2), Revision: r.GetString(3)),
+            "SELECT part_number, sequence, title, revision, planned_minutes FROM quality.inspection_plan WHERE ($1::text IS NULL OR part_number = $1) ORDER BY part_number, sequence, revision",
+            r => (Part: r.GetString(0), Sequence: r.GetInt32(1), Title: r.GetString(2), Revision: r.GetString(3), Minutes: r.GetInt32(4)),
             ct,
             Text(partNumber));
         var characteristics = await ReadAsync(
@@ -147,7 +147,7 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
             ct,
             Text(partNumber));
         var byPlan = characteristics.ToLookup(c => (c.Part, c.Sequence, c.Revision), c => c.Info);
-        return plans.Select(p => new InspectionPlanInfo(p.Part, p.Sequence, p.Title, byPlan[(p.Part, p.Sequence, p.Revision)].ToList(), p.Revision == AllRevisions ? null : p.Revision)).ToList();
+        return plans.Select(p => new InspectionPlanInfo(p.Part, p.Sequence, p.Title, byPlan[(p.Part, p.Sequence, p.Revision)].ToList(), p.Revision == AllRevisions ? null : p.Revision, p.Minutes)).ToList();
     }
 
     public async Task<IReadOnlyList<InspectionInfo>> ListInspectionsAsync(long? orderNumber, int take, CancellationToken ct)
@@ -208,25 +208,25 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
     {
         // The plans for the revision the order builds (V2.3): that revision's, else the plan for every revision.
         var revision = (await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct))?.Revision;
-        var planned = await ReadAsync(
-            "SELECT DISTINCT sequence FROM quality.inspection_plan WHERE part_number = $1 AND (revision = '*' OR revision = $2) ORDER BY sequence",
-            r => r.GetInt32(0),
+        // The revision's own plan decides the planned minutes where it has one (ADR 0057 §2).
+        var points = await ReadAsync(
+            "SELECT DISTINCT ON (sequence) sequence, planned_minutes FROM quality.inspection_plan WHERE part_number = $1 AND (revision = '*' OR revision = $2) ORDER BY sequence, (revision = '*')",
+            r => (Sequence: r.GetInt32(0), Minutes: r.GetInt32(1)),
             ct,
             partNumber,
             Text(revision));
+        var planned = points.Select(p => p.Sequence).ToList();
 
         // An operation counts as passed when its latest inspection passed.
-        var passed = await ReadAsync(
-            """
-            SELECT sequence FROM (
-                SELECT DISTINCT ON (sequence) sequence, result FROM quality.inspection WHERE order_number = $1 ORDER BY sequence, inspection_id DESC
-            ) latest WHERE result = 'Pass' ORDER BY sequence
-            """,
-            r => r.GetInt32(0),
+        var latest = await ReadAsync(
+            "SELECT DISTINCT ON (sequence) sequence, result FROM quality.inspection WHERE order_number = $1 ORDER BY sequence, inspection_id DESC",
+            r => (Sequence: r.GetInt32(0), Passed: r.GetString(1) == "Pass"),
             ct,
             orderNumber);
+        var passed = latest.Where(l => l.Passed).Select(l => l.Sequence).Order().ToList();
+        var failed = latest.Where(l => !l.Passed).Select(l => l.Sequence).Order().ToList();
         var open = await ReadAsync(NcrSql + " WHERE order_number = $1 AND status IN ('Open', 'AwaitingApproval') ORDER BY ncr_id", ReadNcr, ct, orderNumber);
-        return new OrderQuality(orderNumber, planned, passed, open);
+        return new OrderQuality(orderNumber, planned, passed, open, points.Where(p => p.Minutes > 0).ToDictionary(p => p.Sequence, p => p.Minutes), failed);
     }
 
     /// <summary>Quality's holds for the shop floor: undecided NCRs hold the whole order; an inspection point not yet passed holds the operations after it.</summary>

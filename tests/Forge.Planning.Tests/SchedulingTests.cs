@@ -2,6 +2,7 @@ using Forge.Execution.Contracts;
 using Forge.Kernel.Engines;
 using Forge.Maintenance.Contracts;
 using Forge.Planning.Engines;
+using Forge.Quality.Contracts;
 using Forge.Workforce.Contracts;
 using static Forge.Planning.Tests.CalendarTests;
 using static Forge.Planning.Tests.TestFactory;
@@ -149,5 +150,51 @@ public class SchedulingTests
         var snapshot = Plant().Build();
         var schedule = engine.Evaluate(snapshot, new ScheduleRequest(Now, Now.AddDays(14), [Order(10001, 1, ["SLITTER-A", "SLITTER-B"], 120), Order(10002, 2, ["SLITTER-B"], 120)]), Now).Output;
         Assert.Empty(new ConstraintEngine().Evaluate(snapshot, new ConstraintRequest(schedule), Now).Output);
+    }
+    private ScheduleResult RunWithQuality(TestFactory f, OrderInfo order, OrderQuality quality) =>
+        engine.Evaluate(f.Build(), new ScheduleRequest(Now, Now.AddDays(14), [order], Quality: new Dictionary<long, OrderQuality> { [order.OrderNumber] = quality }), Now).Output;
+
+    private static NcrInfo OpenNcr(long id) => new(
+        id, "ROLL-100", 10001, 10, null, 2, "Burr on edge", "Edge burr over limit", NcrStatus.Open, null, null, "insp", Now.AddMinutes(-10), null, null, null, null, null);
+
+    [Fact]
+    public void An_inspection_that_has_not_happened_yet_is_planned_time_not_a_stop()
+    {
+        // ADR 0057 §2: the inspection after operation 10 takes 90 minutes; operation 20 is planned after it.
+        var result = RunWithQuality(Plant(), Order(10001, 3, ["SLITTER-A"], 120), new OrderQuality(10001, [10], [], [], new Dictionary<int, int> { [10] = 90 }));
+        var slit = result.Operations.Single(o => o.Sequence == 10);
+        var kit = result.Operations.Single(o => o.Sequence == 20);
+
+        Assert.True(kit.Scheduled);
+        Assert.True(kit.Start >= slit.End!.Value.AddMinutes(90));
+        Assert.Equal("Inspection", kit.BindingConstraint);
+        Assert.Contains("inspection after operation 10 (90 min)", kit.BindingDetail, StringComparison.Ordinal);
+        Assert.NotEqual(DeliveryStatus.Unschedulable, result.Orders[0].Status);
+        Assert.Contains("waited for Inspection", result.Orders[0].Explanation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_inspection_without_planned_time_changes_nothing_and_a_final_inspection_moves_completion()
+    {
+        var plain = RunWithQuality(Plant(), Order(10001, 3, ["SLITTER-A"], 120), new OrderQuality(10001, [10], [], []));
+        Assert.Equal(plain.Operations.Single(o => o.Sequence == 10).End, plain.Operations.Single(o => o.Sequence == 20).Start);
+
+        var final = RunWithQuality(Plant(), Order(10001, 3, ["SLITTER-A"], 120), new OrderQuality(10001, [20], [], [], new Dictionary<int, int> { [20] = 45 }));
+        var kitEnd = final.Operations.Single(o => o.Sequence == 20).End!.Value;
+        Assert.Equal(kitEnd.AddMinutes(45), final.Orders[0].ProjectedCompletion);
+        Assert.Contains("inspection after operation 20 (45 min)", final.Orders[0].Explanation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_failed_inspection_stops_the_order_until_its_nonconformance_is_decided_then_the_reinspection_is_planned()
+    {
+        var undecided = RunWithQuality(Plant(), Order(10001, 3, ["SLITTER-A"], 120), new OrderQuality(10001, [10], [], [OpenNcr(9001)], new Dictionary<int, int> { [10] = 30 }, [10]));
+        Assert.Equal(DeliveryStatus.Unschedulable, undecided.Orders[0].Status);
+        Assert.Equal("Quality", undecided.Operations.Single(o => o.Sequence == 10).BindingConstraint);
+
+        var decided = RunWithQuality(Plant(), Order(10001, 3, ["SLITTER-A"], 120), new OrderQuality(10001, [10], [], [], new Dictionary<int, int> { [10] = 30 }, [10]));
+        var kit = decided.Operations.Single(o => o.Sequence == 20);
+        Assert.True(kit.Scheduled);
+        Assert.Contains("re-inspection after operation 10", kit.BindingDetail, StringComparison.Ordinal);
     }
 }

@@ -16,7 +16,7 @@ public sealed record GaugeRequest(string Code, string Description, DateOnly Cali
 
 public sealed record CalibrationRequest(DateOnly CalibratedOn, DateOnly DueDate, string? Certificate, string? Reason);
 
-public sealed record InspectionPlanRequest(string PartNumber, int Sequence, string Title, NewCharacteristic[] Characteristics, string? Reason, string? Revision = null);
+public sealed record InspectionPlanRequest(string PartNumber, int Sequence, string Title, NewCharacteristic[] Characteristics, string? Reason, string? Revision = null, int? PlannedMinutes = null);
 
 public sealed record InspectionRequest(long OrderNumber, int Sequence, decimal Quantity, string? GaugeCode, string? Notes, Finding[] Findings, decimal? RejectedQuantity, string? Reason);
 
@@ -157,7 +157,7 @@ public static class QualityEndpoints
         api.MapPost("/gauges/{code}/calibrations", (HttpContext http, string code, CalibrationRequest b, QualityService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordCalibrationAsync(new RecordCalibration(code, b.CalibratedOn, b.DueDate, b.Certificate), c, ct)));
         api.MapPost("/plans", (HttpContext http, InspectionPlanRequest b, QualityService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.SetInspectionPlanAsync(new SetInspectionPlan(b.PartNumber, b.Sequence, b.Title, b.Characteristics ?? [], b.Revision), c, ct)));
+            Command(http, b.Reason, c => s.SetInspectionPlanAsync(new SetInspectionPlan(b.PartNumber, b.Sequence, b.Title, b.Characteristics ?? [], b.Revision, b.PlannedMinutes ?? 0), c, ct)));
         api.MapPost("/plans/{part}/{sequence:int}/remove", (HttpContext http, string part, int sequence, string? revision, ReasonRequest b, QualityService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RemoveInspectionPlanAsync(new RemoveInspectionPlan(part, sequence, revision), c, ct)));
         api.MapPost("/inspections", (HttpContext http, InspectionRequest b, QualityService s, CancellationToken ct) =>
