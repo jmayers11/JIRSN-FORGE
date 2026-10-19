@@ -108,6 +108,12 @@ public sealed class SimReport(string scenario, int seed)
 
     public IReadOnlyCollection<string> Covered => covers;
 
+    public IReadOnlyList<Impact> Impacts => impacts;
+
+    public IReadOnlyList<string> Findings => findings;
+
+    public IReadOnlyList<string> Notes => notes;
+
     /// <summary>Keeps a KPI reading for kpis.json.</summary>
     public KpiSnapshot Kpi(KpiSnapshot snapshot)
     {

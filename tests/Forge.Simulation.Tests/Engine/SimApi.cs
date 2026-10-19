@@ -45,8 +45,11 @@ public sealed record Outcome(HttpStatusCode Status, string Body)
     }
 }
 
-/// <summary>One command as sent and answered, kept as evidence for the defect register.</summary>
-public sealed record CallRecord(int Index, string Subject, string Url, string Key, int Status, string Label, string Body);
+/// <summary>One command as sent and answered, kept as evidence for the defect register. Milliseconds is the in-process response time.</summary>
+public sealed record CallRecord(int Index, string Subject, string Url, string Key, int Status, string Label, string Body, double Milliseconds = 0);
+
+/// <summary>One timed request (command or read): its endpoint group (path with numbers and codes generalized), method, status and time.</summary>
+public readonly record struct Timing(string Group, string Method, int Status, double Milliseconds);
 
 /// <summary>
 /// Sends commands to the real host exactly as a client would, with an idempotency key per command.
@@ -56,7 +59,70 @@ public sealed record CallRecord(int Index, string Subject, string Url, string Ke
 public sealed class SimApi(ForgeApp app, string keyPrefix)
 {
     private readonly List<CallRecord> calls = [];
+    private readonly List<Timing> timings = [];
     private int key;
+
+    /// <summary>
+    /// Keep every command as evidence (the default). The full factory sends tens of thousands of commands, so it keeps only
+    /// refused and failed ones; every request is still timed.
+    /// </summary>
+    public bool KeepAllCalls { get; set; } = true;
+
+    public IReadOnlyList<Timing> Timings
+    {
+        get
+        {
+            lock (timings)
+            {
+                return [.. timings];
+            }
+        }
+    }
+
+    /// <summary>The path of a URL with its query removed and identifiers generalized, so timings group by endpoint.</summary>
+    public static string GroupOf(string url)
+    {
+        var path = url.Split('?')[0];
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.All(char.IsDigit) || Guid.TryParse(p, out _) ? "{id}" : p.Any(char.IsLower) || p.Length < 3 ? p : "{code}");
+        return "/" + string.Join('/', parts);
+    }
+
+    private void Time(string url, string method, int status, double ms)
+    {
+        lock (timings)
+        {
+            timings.Add(new Timing(GroupOf(url), method, status, ms));
+        }
+    }
+
+    /// <summary>A timed read; throws on a non-success status like <see cref="Get"/>.</summary>
+    public async Task<JsonElement> Read(HttpClient client, string url)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        using var response = await client.GetAsync(new Uri(url, UriKind.Relative));
+        var text = await response.Content.ReadAsStringAsync();
+        Time(url, "GET", (int)response.StatusCode, watch.Elapsed.TotalMilliseconds);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"GET {url} -> {(int)response.StatusCode}: {text}");
+        }
+
+        return JsonDocument.Parse(text).RootElement;
+    }
+
+    /// <summary>A timed read that answers null instead of throwing, for optional readings.</summary>
+    public async Task<JsonElement?> TryRead(HttpClient client, string url)
+    {
+        try
+        {
+            return await Read(client, url);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
 
     public IReadOnlyList<CallRecord> Calls
     {
@@ -76,12 +142,18 @@ public sealed class SimApi(ForgeApp app, string keyPrefix)
     public async Task<Outcome> Send(HttpClient client, string url, object body, string? idempotencyKey = null)
     {
         var commandKey = idempotencyKey ?? NextKey();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         using var response = await client.CommandAsync(url, body, commandKey);
         var outcome = new Outcome(response.StatusCode, await response.Content.ReadAsStringAsync());
-        lock (calls)
+        var ms = watch.Elapsed.TotalMilliseconds;
+        Time(url, "POST", (int)outcome.Status, ms);
+        if (KeepAllCalls || !outcome.Succeeded)
         {
-            calls.Add(new CallRecord(calls.Count, Subject(client), url, commandKey, (int)outcome.Status, outcome.Label,
-                outcome.Body.Length > 4000 ? outcome.Body[..4000] + "…" : outcome.Body));
+            lock (calls)
+            {
+                calls.Add(new CallRecord(calls.Count, Subject(client), url, commandKey, (int)outcome.Status, outcome.Label,
+                    outcome.Body.Length > 4000 ? outcome.Body[..4000] + "…" : outcome.Body, Math.Round(ms, 1)));
+            }
         }
 
         return outcome;

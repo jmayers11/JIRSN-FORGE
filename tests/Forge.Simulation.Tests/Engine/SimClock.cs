@@ -7,9 +7,10 @@ namespace Forge.Simulation.Tests.Engine;
 /// </summary>
 public sealed class SimClock(DateTimeOffset start) : TimeProvider
 {
-    private DateTimeOffset now = start;
+    // Always UTC: Forge stores what TimeProvider.GetUtcNow() answers, and the database accepts only offset 0.
+    private DateTimeOffset now = start.ToUniversalTime();
 
-    public DateTimeOffset Start { get; } = start;
+    public DateTimeOffset Start { get; } = start.ToUniversalTime();
 
     public TimeSpan Elapsed => now - Start;
 
@@ -23,6 +24,14 @@ public sealed class SimClock(DateTimeOffset start) : TimeProvider
         }
 
         now += by;
+    }
+
+    /// <summary>The next Monday at 00:00 UTC, so a factory run's weeks line up with its Monday-to-Friday shifts.</summary>
+    public static SimClock NextMonday()
+    {
+        var today = DateTimeOffset.UtcNow.Date;
+        var days = ((int)DayOfWeek.Monday - (int)today.DayOfWeek + 7) % 7;
+        return new SimClock(new DateTimeOffset(today.AddDays(days == 0 ? 7 : days), TimeSpan.Zero));
     }
 
     /// <summary>A start anchored to the current UTC hour, so dated rules (due dates, expiry) behave as in production.</summary>

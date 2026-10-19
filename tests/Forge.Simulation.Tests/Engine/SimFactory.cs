@@ -99,9 +99,10 @@ internal sealed class SimFactory : IAsyncDisposable
     }
 
     /// <param name="configure">Host settings a scenario needs before the host starts (for example the label namespace).</param>
-    public static async Task<SimFactory> BuildAsync(PostgresFixture postgres, string keyPrefix, Action<IWebHostBuilder>? configure = null)
+    /// <param name="clock">The run's clock; the full factory (Phase C) starts on a Monday at midnight. Default: the current hour.</param>
+    public static async Task<SimFactory> BuildAsync(PostgresFixture postgres, string keyPrefix, Action<IWebHostBuilder>? configure = null, SimClock? clock = null)
     {
-        var clock = SimClock.AtCurrentHour();
+        clock ??= SimClock.AtCurrentHour();
         var app = new ForgeApp(await postgres.CreateDatabaseAsync(), services => services.AddSingleton<TimeProvider>(clock), configure);
         var (plant, _) = await SlittingPlant.BuildEngineeredAsync(app);
         foreach (var (who, role) in new[] { ("insp", "Inspector"), ("qe", "QualityEngineer"), ("qm", "QualityManager"), ("ship", "Shipper"), ("pat", "PurchasingManager") })
