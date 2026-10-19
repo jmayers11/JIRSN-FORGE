@@ -210,6 +210,9 @@ if (app.Configuration.GetValue("Forge:Database:MigrateOnStartup", false))
     await app.Services.GetRequiredService<MigrationRunner>().MigrateAsync(CancellationToken.None);
 }
 
+// Each site's own clock decides "today" (ADR 0057 §1): read the site zones once the schema is in place.
+await app.Services.GetRequiredService<SiteClockLoader>().LoadAsync(CancellationToken.None);
+
 var bootstrapSubject = app.Configuration["Forge:Bootstrap:AdminSubject"];
 if (!string.IsNullOrWhiteSpace(bootstrapSubject))
 {

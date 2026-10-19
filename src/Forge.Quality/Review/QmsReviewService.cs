@@ -9,6 +9,7 @@ using Forge.Kernel.Serialization;
 using Forge.Quality.Contracts;
 using Forge.Quality.Planning;
 using Forge.Quality.Qms;
+using Forge.Resources.Contracts;
 
 namespace Forge.Quality.Review;
 
@@ -167,8 +168,8 @@ public sealed class QmsReviewService(CommandPipeline pipeline, IKernelUnitOfWork
             var actual = await uow.Store<IDocumentLookup>().FindDocumentAsync(document.DocumentNumber, ct) ?? throw Unavailable();
             var revision = actual.Revisions.FirstOrDefault(version => version.Revision == document.Revision) ?? throw Unavailable();
             if (requireEffective) Require(actual.Current?.Revision == document.Revision && revision.Status is DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable
-                && (revision.EffectiveFrom is null || revision.EffectiveFrom <= DateOnly.FromDateTime(now.UtcDateTime))
-                && (revision.EffectiveTo is null || DateOnly.FromDateTime(now.UtcDateTime) <= revision.EffectiveTo), "review_document_not_current", "Use an exact currently applicable controlled document.");
+                && (revision.EffectiveFrom is null || revision.EffectiveFrom <= (await uow.SiteDateAsync(now, ct)))
+                && (revision.EffectiveTo is null || (await uow.SiteDateAsync(now, ct)) <= revision.EffectiveTo), "review_document_not_current", "Use an exact currently applicable controlled document.");
             sources.Add(await evidence.ResolveAsync(uow, principal, new("Engineering", "DocumentRevision", document.DocumentNumber, document.Revision), true, ct));
         }
         foreach (var (reference, expectedKind) in (content.Mapping?.Processes ?? []).Select(reference => (reference, QmsRecordKind.Process))

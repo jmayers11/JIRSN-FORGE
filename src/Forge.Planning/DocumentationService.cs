@@ -8,6 +8,7 @@ using Forge.Kernel.Security;
 using Forge.Planning.Engines;
 using Forge.Procurement.Contracts;
 using Forge.Programs.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Planning;
 
@@ -58,7 +59,7 @@ public sealed class DocumentationService(IKernelUnitOfWorkFactory unitOfWork, IF
         ArgumentNullException.ThrowIfNull(po);
         var engineering = uow.Store<IEngineeringLookup>();
         var documents = uow.Store<IDocumentLookup>();
-        var cache = new Cache(documents);
+        var cache = new Cache(documents, await uow.SiteTimeZoneAsync(ct));
         var attached = (await documents.ListLinksAsync(DocumentTargetType.PurchaseOrder, po.PoNumber.ToString(System.Globalization.CultureInfo.InvariantCulture), null, false, ct))
             .Where(l => l.Purpose == DocumentPurpose.Follow).ToList();
         var lines = new List<PurchaseLineDocumentation>();
@@ -104,7 +105,7 @@ public sealed class DocumentationService(IKernelUnitOfWorkFactory unitOfWork, IF
             : await engineering.GetEffectiveRevisionAsync(need.PartNumber, now, ct);
         if (revision is null)
             throw new CommandRejectedException("required_revision_not_released", "The sourcing need's required revision is not released.");
-        var cache = new Cache(uow.Store<IDocumentLookup>());
+        var cache = new Cache(uow.Store<IDocumentLookup>(), await uow.SiteTimeZoneAsync(ct));
         var requirements = revision is null ? [] : await cache.RequirementsAsync(need.PartNumber, revision.Revision, ct);
         var needs = requirements.Where(r => r.RemovedAt is null).Select(r => new DocumentNeed(r.DocumentNumber, r.DocumentRevision, r.OperationSequence,
             $"{need.PartNumber} rev {revision!.Revision}", r.AddedAt)).ToList();
@@ -128,7 +129,7 @@ public sealed class DocumentationService(IKernelUnitOfWorkFactory unitOfWork, IF
         var enforced = (await documents.ListPoliciesAsync(ct)).FirstOrDefault(p => p.ItemClass == itemClass)?.Enforced ?? false;
         var customer = order.ProgramId is { } programId ? (await uow.Store<IProgramsLookup>().FindProgramAsync(programId, ct))?.Customer : null;
         var facts = new ApplicabilityFacts(order.OrderNumber, order.PartNumber, order.Revision, order.ProgramId, customer, order.DueDate);
-        var cache = new Cache(documents);
+        var cache = new Cache(documents, await uow.SiteTimeZoneAsync(ct));
 
         var needs = new List<DocumentNeed>();
         needs.AddRange((await cache.RequirementsAsync(order.PartNumber, order.Revision, ct)).Where(r => r.RemovedAt is null)
@@ -164,7 +165,7 @@ public sealed class DocumentationService(IKernelUnitOfWorkFactory unitOfWork, IF
             }
 
             var rules = await cache.RulesAsync(document.Number, ct);
-            var result = ApplicabilityEngine.Evaluate(document, need, rules, facts, now, releasedAt);
+            var result = ApplicabilityEngine.Evaluate(document, need, rules, facts, now, releasedAt, cache.TimeZone);
             if (viewer is not null && !DocumentAccess.CanSee(viewer, document))
             {
                 result = result with
@@ -226,8 +227,10 @@ public sealed class DocumentationService(IKernelUnitOfWorkFactory unitOfWork, IF
     }
 
     /// <summary>Documents, rules and requirements read once per evaluation.</summary>
-    private sealed class Cache(IDocumentLookup lookup)
+    private sealed class Cache(IDocumentLookup lookup, string timeZone)
     {
+        public string TimeZone { get; } = timeZone;
+
         private readonly Dictionary<string, DocumentInfo?> documents = new(StringComparer.Ordinal);
         private readonly Dictionary<string, IReadOnlyList<ApplicabilityRuleInfo>> rules = new(StringComparer.Ordinal);
         private readonly Dictionary<(string, string), IReadOnlyList<DocumentRequirementInfo>> requirements = [];

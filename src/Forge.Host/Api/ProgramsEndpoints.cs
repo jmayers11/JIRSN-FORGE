@@ -8,6 +8,7 @@ using Forge.Planning;
 using Forge.Programs;
 using Forge.Programs.Contracts;
 using static Forge.Host.Api.ApiSupport;
+using Forge.Resources.Contracts;
 
 namespace Forge.Host.Api;
 
@@ -159,9 +160,9 @@ public static class ProgramsEndpoints
             Command(http, b.Reason, c => s.IssueToWorkOrderAsync(new Forge.Inventory.IssueToWorkOrder(id, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.AlternateFor), c, ct)));
         maintenance.MapPost("/work-orders/{id:long}/parts/return", (HttpContext http, long id, SparesRequest b, Forge.Inventory.InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReturnFromWorkOrderAsync(new Forge.Inventory.ReturnFromWorkOrder(id, b.PartNumber, b.Quantity, b.LocationCode, b.LotNumber, b.AlternateFor), c, ct)));
-        maintenance.MapPost("/plans", (HttpContext http, PmPlanRequest b, MaintenanceService s, TimeProvider time, CancellationToken ct) =>
+        maintenance.MapPost("/plans", (HttpContext http, PmPlanRequest b, MaintenanceService s, TimeProvider time, ISiteClock siteClock, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DefinePmPlanAsync(new DefinePmPlan(
-                b.MachineCode, b.Title, b.IntervalDays, b.FirstDue ?? (b.IntervalDays is null ? null : DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime)),
+                b.MachineCode, b.Title, b.IntervalDays, b.FirstDue ?? (b.IntervalDays is null ? null : siteClock.DateAt(time.GetUtcNow())),
                 b.DurationMinutes, b.Tasks ?? [], b.LockOutWhenOverdue, b.GraceDays, b.IntervalRunHours, b.GraceRunHours ?? 0), c, ct)));
         maintenance.MapPost("/plans/{id:long}", (HttpContext http, long id, PmPlanChangeRequest b, MaintenanceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ChangePmPlanAsync(new ChangePmPlan(id, b.Title, b.IntervalDays, b.DurationMinutes, b.Tasks ?? [], b.LockOutWhenOverdue, b.GraceDays, b.IntervalRunHours, b.GraceRunHours ?? 0), c, ct)));

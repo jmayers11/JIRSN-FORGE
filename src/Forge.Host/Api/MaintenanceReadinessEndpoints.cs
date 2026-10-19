@@ -8,6 +8,7 @@ using Forge.Planning.Engines;
 using Forge.Procurement;
 using Forge.Procurement.Contracts;
 using static Forge.Host.Api.ApiSupport;
+using Forge.Resources.Contracts;
 
 namespace Forge.Host.Api;
 
@@ -49,7 +50,7 @@ public static class MaintenanceReadinessEndpoints
         });
 
         // Scenario 5: what blocked work is short of goes to purchasing as requisitions, sourced to the work order.
-        maintenance.MapPost("/work-orders/{id:long}/request-parts", async (HttpContext http, long id, ReasonRequest b, MaintenancePlanningService planning, RequisitionService requisitions, IKernelUnitOfWorkFactory uows, TimeProvider time, CancellationToken ct) =>
+        maintenance.MapPost("/work-orders/{id:long}/request-parts", async (HttpContext http, long id, ReasonRequest b, MaintenancePlanningService planning, RequisitionService requisitions, IKernelUnitOfWorkFactory uows, TimeProvider time, ISiteClock siteClock, CancellationToken ct) =>
         {
             var principal = await PrincipalAsync(http);
             if (principal is null)
@@ -65,7 +66,8 @@ public static class MaintenanceReadinessEndpoints
             }
 
             var lines = new List<PartsRequestLine>();
-            var need = order.DueDate is { } due && due > DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime) ? due : DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime);
+            var today = siteClock.DateAt(time.GetUtcNow());
+            var need = order.DueDate is { } due && due > today ? due : today;
             foreach (var part in readiness.Parts.Where(p => !p.Covered))
             {
                 var quantity = part.StillNeeded - part.OnHand;

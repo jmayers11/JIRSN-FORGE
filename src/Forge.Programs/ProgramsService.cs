@@ -7,6 +7,7 @@ using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
 using Forge.Programs.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Programs;
 
@@ -84,7 +85,7 @@ public interface IProgramsStore
 /// program-scoped record is visible only to people with access to that program; others are told it
 /// does not exist. Contract modifications and delivery changes need a reason.
 /// </summary>
-public sealed class ProgramsService(CommandPipeline pipeline, TimeProvider time)
+public sealed class ProgramsService(CommandPipeline pipeline, TimeProvider time, ISiteClock siteClock)
 {
     public const string SourceContext = "Programs";
     private const string ProgramEntity = "Program";
@@ -296,7 +297,7 @@ public sealed class ProgramsService(CommandPipeline pipeline, TimeProvider time)
                 return CommandOutcome.NoChange(CommandResult.NoChange(id, "Already complete."));
             }
 
-            if (c.CompletedOn > DateOnly.FromDateTime(now.UtcDateTime.AddDays(1)))
+            if (c.CompletedOn > siteClock.DateAt(now).AddDays(1))
             {
                 throw new CommandRejectedException("future_date", "A milestone cannot be completed in the future.");
             }

@@ -125,7 +125,7 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
         var spec = new CommandSpec(SourceContext, nameof(RecordCalibration), Permissions.QualityPlan, ResourceRef.Of("Gauge", code));
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
-            if (c.DueDate <= c.CalibratedOn || c.CalibratedOn > DateOnly.FromDateTime(now.UtcDateTime))
+            if (c.DueDate <= c.CalibratedOn || c.CalibratedOn > (await uow.SiteDateAsync(now, ct)))
             {
                 throw new CommandRejectedException("invalid_calibration", "Calibration date cannot be in the future and the next due date must come after it.");
             }
@@ -261,7 +261,7 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
                 var lookup = uow.Store<IToolLookup>();
                 var info = GaugeInfo.From(await lookup.ListToolsAsync(ct), await lookup.ListToolTypesAsync(ct)).FirstOrDefault(g => g.Code == gauge)
                     ?? throw new CommandRejectedException("gauge_not_found", $"Gauge {gauge} does not exist.");
-                if (!info.InCalibrationOn(DateOnly.FromDateTime(now.UtcDateTime)))
+                if (!info.InCalibrationOn((await uow.SiteDateAsync(now, ct))))
                 {
                     throw new CommandRejectedException("gauge_out_of_calibration", $"Gauge {gauge} was due for calibration {info.CalibrationDue:yyyy-MM-dd}. Use a calibrated gauge.");
                 }

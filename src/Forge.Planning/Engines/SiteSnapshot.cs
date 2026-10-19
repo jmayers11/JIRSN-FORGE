@@ -62,6 +62,19 @@ public sealed record SiteSnapshot(
 {
     public IReadOnlyList<SiteInfo> Sites { get; init; } = [];
 
+    /// <summary>
+    /// The home site's zone (the first site created): records that belong to no site, such as tools, are judged on its
+    /// date (ADR 0057 §1). Null in engine tests that state their instants in UTC.
+    /// </summary>
+    public string? HomeTimeZone { get; init; }
+
+    /// <summary>A site's zone, or the home site's for null or an unknown code.</summary>
+    public string? TimeZoneOf(string? siteCode) =>
+        siteCode is not null && Sites.FirstOrDefault(s => s.Code == siteCode) is { } site ? site.TimeZone : HomeTimeZone;
+
+    /// <summary>The local date at a site (the home site for null) of an instant.</summary>
+    public DateOnly LocalDate(DateTimeOffset at, string? siteCode = null) => SiteTime.DateAtOrUtc(at, TimeZoneOf(siteCode));
+
     public IReadOnlyList<ShiftInfo> Shifts { get; init; } = [];
 
     public IReadOnlyList<WorkCenterShiftInfo> WorkCenterShifts { get; init; } = [];
@@ -98,7 +111,7 @@ public sealed record SiteSnapshot(
 
     /// <summary>Whether the tools <paramref name="activity"/> needs on <paramref name="machine"/> are valid at <paramref name="at"/> (V3.9).</summary>
     public ToolingCheck Tooling(string? machine, string activity, DateTimeOffset at) =>
-        ToolingCheck.For(ToolRequirements, ToolTypes, Tools, ToolEvents.ToLookup(e => e.ToolCode, StringComparer.Ordinal), machine, activity, at);
+        ToolingCheck.For(ToolRequirements, ToolTypes, Tools, ToolEvents.ToLookup(e => e.ToolCode, StringComparer.Ordinal), machine, activity, at, HomeTimeZone);
 
     public PersonSnapshot? Person(Guid id) => People.FirstOrDefault(p => p.PersonId == id);
 

@@ -54,7 +54,7 @@ public sealed partial class DocumentService
                 throw new CommandRejectedException("revision_not_released", $"{number} rev {revision.Revision} is {revision.Status}; training is on a released revision.");
             }
 
-            var today = DateOnly.FromDateTime(now.UtcDateTime);
+            var today = siteClock.DateAt(now);
             var on = c.TrainedOn ?? today;
             if (on > today)
             {

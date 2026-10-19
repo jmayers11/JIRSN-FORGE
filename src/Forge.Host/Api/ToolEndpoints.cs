@@ -40,9 +40,10 @@ internal static class ToolEndpoints
             ReadStore<IToolLookup>(http, Permissions.ResourcesRead, async (l, ct) =>
             {
                 var when = at ?? http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
+                var zone = http.RequestServices.GetRequiredService<ISiteClock>().HomeTimeZone;
                 var types = (await l.ListToolTypesAsync(ct)).ToDictionary(t => t.Code, StringComparer.Ordinal);
                 var events = (await l.ListToolEventsAsync(null, ct)).ToLookup(e => e.ToolCode);
-                return (await l.ListToolsAsync(ct)).Select(t => new ToolView(t, types[t.TypeCode], ToolValidity.At(t, types[t.TypeCode], events[t.Code], when, Code(machine), Code(activity)))).ToList();
+                return (await l.ListToolsAsync(ct)).Select(t => new ToolView(t, types[t.TypeCode], ToolValidity.At(t, types[t.TypeCode], events[t.Code], when, Code(machine), Code(activity), zone))).ToList();
             }));
         api.MapGet("/tools/{code}/history", (HttpContext http, string code, CancellationToken _) =>
             Read(http, Permissions.ResourcesRead, async principal =>

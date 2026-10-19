@@ -63,7 +63,7 @@ public sealed class MaintenancePlanningService(IKernelUnitOfWorkFactory unitOfWo
                 : order.MachineCode is { } m ? assets.Values.FirstOrDefault(x => x.MachineCode == m) : null;
             var procedure = order.ProcedureDocument is { } doc ? await documents.FindDocumentAsync(doc, ct) : null;
             var request = new MaintenanceReadinessRequest(order, asset, parts[order.WorkOrderId].ToList(), issued[order.WorkOrderId].ToList(), available, alternates, procedure,
-                snapshot.People, snapshot.Unavailability, from, from + duration);
+                snapshot.People, snapshot.Unavailability, from, from + duration, snapshot.HomeTimeZone);
             results.Add(MaintenanceReadinessEngine.Decide(request));
         }
 

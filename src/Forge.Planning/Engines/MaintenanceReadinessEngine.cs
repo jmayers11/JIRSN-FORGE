@@ -4,6 +4,7 @@ using Forge.Inventory.Contracts;
 using Forge.Kernel.Engines;
 using Forge.Maintenance.Contracts;
 using Forge.Workforce.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Planning.Engines;
 
@@ -22,7 +23,8 @@ public sealed record MaintenanceReadinessRequest(
     IReadOnlyList<PersonSnapshot> People,
     IReadOnlyList<UnavailabilityWindow> Unavailability,
     DateTimeOffset From,
-    DateTimeOffset Until);
+    DateTimeOffset Until,
+    string? TimeZone = null);
 
 /// <summary>One required part: what is still needed, and whether stock (or an approved alternate) covers it.</summary>
 public sealed record PartReadiness(
@@ -111,7 +113,7 @@ public static class MaintenanceReadinessEngine
             return new PartReadiness(line.PartNumber, line.Quantity, issued, still, onHand, true, null, null, 0, $"{line.PartNumber}: {Q(still)} needed, {Q(onHand)} on hand.");
         }
 
-        var context = new AlternateContext(DateOnly.FromDateTime(r.From.UtcDateTime), AssetCode: r.Order.AssetCode, MachineCode: r.Order.MachineCode, Maintenance: true);
+        var context = new AlternateContext(SiteTime.DateAtOrUtc(r.From, r.TimeZone), AssetCode: r.Order.AssetCode, MachineCode: r.Order.MachineCode, Maintenance: true);
         var candidates = Alternates.Candidates(r.Alternates, line.PartNumber, context);
         var shortPrimary = still - onHand;
         foreach (var c in candidates.Approved.OrderBy(c => c.Relationship.AlternateId))
@@ -177,7 +179,7 @@ public static class MaintenanceReadinessEngine
             return new ReadinessDimension("Procedure", EvidenceOutcome.Fail, $"{number} has no revision {order.ProcedureRevision}.");
         }
 
-        var on = DateOnly.FromDateTime(r.From.UtcDateTime);
+        var on = SiteTime.DateAtOrUtc(r.From, r.TimeZone);
         return revision.Status switch
         {
             DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable when revision.EffectiveFrom is { } from && from > on =>

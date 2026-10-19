@@ -7,6 +7,7 @@ using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
+using Forge.Resources.Contracts;
 
 namespace Forge.Inventory;
 
@@ -194,7 +195,7 @@ public sealed partial class InventoryService
             var item = await ItemAsync(uow, part, ct);
             var lot = await ExistingLotAsync(uow, item, c.LotNumber, ct);
             var rule = await uow.Store<IShelfLifeLookup>().FindRuleAsync(part, ct);
-            var today = DateOnly.FromDateTime(now.UtcDateTime);
+            var today = (await uow.SiteDateAsync(now, ct));
             DateOnly? next = null;
             if (c.Passed)
             {
@@ -250,8 +251,9 @@ public sealed partial class InventoryService
     {
         var lookup = uow.Store<IShelfLifeLookup>();
         var residence = (await lookup.ListLotResidenceAsync(lot.PartNumber, ct)).Where(r => r.LotNumber == lot.LotNumber).Select(r => (r.Location, r.From, r.Until));
+        var zone = await uow.SiteTimeZoneAsync(ct);
         return LotShelfLife.For(lot, await lookup.FindRuleAsync(lot.PartNumber, ct), await lookup.ListExtensionsAsync(lot.PartNumber, ct), await lookup.ListRetestsAsync(lot.PartNumber, ct),
-            await lookup.ListExcursionsAsync(ct), residence, DateOnly.FromDateTime(now.UtcDateTime), now);
+            await lookup.ListExcursionsAsync(ct), residence, SiteTime.DateAt(now, zone), now, zone);
     }
 
     /// <summary>The hard rule (V3.6): a lot that is not usable by shelf life is never issued or shipped.</summary>
@@ -272,7 +274,7 @@ public sealed partial class InventoryService
     /// <summary>The dates a newly received lot gets from the part's rule and its paperwork (V3.6). Dates it already has stay.</summary>
     private static async Task ReceiptDatesAsync(IKernelUnitOfWork uow, ItemInfo item, string lot, DateOnly? manufacturedOn, DateOnly? expiresOn, DateTimeOffset now, CancellationToken ct)
     {
-        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        var today = (await uow.SiteDateAsync(now, ct));
         if (manufacturedOn > today || expiresOn < manufacturedOn)
         {
             throw new CommandRejectedException("invalid_dates", "Manufacture is not in the future and expiry is after manufacture.");

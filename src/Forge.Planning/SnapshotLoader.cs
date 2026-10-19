@@ -99,6 +99,7 @@ internal static class SnapshotLoader
             await uow.Store<ISafetyRuleLookup>().GetEffectiveRulesAsync(at, ct))
         {
             Sites = await resources.ListSitesAsync(ct),
+            HomeTimeZone = await resources.SiteTimeZoneAsync(null, ct),
             Shifts = await resources.ListShiftsAsync(ct),
             WorkCenterShifts = await resources.ListWorkCenterShiftsAsync(ct),
             Closures = await resources.ListSiteClosuresAsync(ct),

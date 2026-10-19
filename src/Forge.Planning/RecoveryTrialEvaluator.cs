@@ -156,7 +156,7 @@ internal static class RecoveryTrialEvaluator
                     var alternate = Alternates.For(sources.Alternates, primary).FirstOrDefault(a => a.Relationship.AlternateId == selection.AlternateId && a.OfferedPart == position.PartNumber);
                     if (alternate.Relationship is null) { constraints.Add("The selected directional relationship does not offer this part for the primary component."); break; }
                     // Use exactly the context the source IssueToOrder command can establish; unknown conditions never pass.
-                    var check = Alternates.Evaluate(alternate.Relationship, new AlternateContext(DateOnly.FromDateTime(snapshot.AsOf.UtcDateTime), target!.PartNumber, target.ProgramId));
+                    var check = Alternates.Evaluate(alternate.Relationship, new AlternateContext(snapshot.LocalDate(snapshot.AsOf), target!.PartNumber, target.ProgramId));
                     evidence.AddRange(check.Reasons);
                     if (check.Usability != AlternateUsability.Usable) constraints.AddRange(check.Reasons);
                     factor = alternate.Factor;

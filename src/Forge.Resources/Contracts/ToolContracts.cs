@@ -1,3 +1,4 @@
+
 namespace Forge.Resources.Contracts;
 
 public enum ToolKind
@@ -98,13 +99,13 @@ public sealed record ToolValidity(string ToolCode, DateTimeOffset AsOf, bool Val
     /// calibration on or before that day, unless a failure came after it), its status, custody and condition then,
     /// its uses then against the type's limits, and its eligibility for the machine and activity.
     /// </summary>
-    public static ToolValidity At(ToolInfo tool, ToolTypeInfo type, IEnumerable<ToolEvent> history, DateTimeOffset at, string? machine = null, string? activity = null)
+    public static ToolValidity At(ToolInfo tool, ToolTypeInfo type, IEnumerable<ToolEvent> history, DateTimeOffset at, string? machine = null, string? activity = null, string? timeZone = null)
     {
         ArgumentNullException.ThrowIfNull(tool);
         ArgumentNullException.ThrowIfNull(type);
         var events = history.Where(e => e.ToolCode == tool.Code && e.At <= at).OrderBy(e => e.At).ThenBy(e => e.EventId).ToList();
         var problems = new List<string>();
-        var day = DateOnly.FromDateTime(at.UtcDateTime);
+        var day = SiteTime.DateAtOrUtc(at, timeZone); // the site's date (ADR 0057 §1); tools belong to the home site
 
         if (events.Count == 0)
         {
@@ -229,7 +230,8 @@ public sealed record ToolingCheck(bool Required, bool Ready, IReadOnlyList<strin
         ILookup<string, ToolEvent> history,
         string? machine,
         string activity,
-        DateTimeOffset at)
+        DateTimeOffset at,
+        string? timeZone = null)
     {
         ArgumentNullException.ThrowIfNull(requirements);
         ArgumentNullException.ThrowIfNull(types);
@@ -253,7 +255,7 @@ public sealed record ToolingCheck(bool Required, bool Ready, IReadOnlyList<strin
                 continue;
             }
 
-            var judged = candidates.Select(t => ToolValidity.At(t, type, history[t.Code], at, machine, activity)).ToList();
+            var judged = candidates.Select(t => ToolValidity.At(t, type, history[t.Code], at, machine, activity, timeZone)).ToList();
             var valid = judged.Where(v => v.Valid).Select(v => v.ToolCode).ToList();
             if (valid.Count >= requirement.Quantity)
             {

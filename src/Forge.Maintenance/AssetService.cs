@@ -89,7 +89,7 @@ public interface IAssetStore
 /// is requested by one person and approved by another; a restricted or decommissioned production asset takes
 /// its machine out of capacity until it is returned to service.
 /// </summary>
-public sealed class AssetService(CommandPipeline pipeline)
+public sealed class AssetService(CommandPipeline pipeline, ISiteClock siteClock)
 {
     public const string SourceContext = MaintenanceService.SourceContext;
     private const string Entity = "Asset";
@@ -152,7 +152,7 @@ public sealed class AssetService(CommandPipeline pipeline)
         ArgumentNullException.ThrowIfNull(c);
         return AssetCommandAsync(nameof(SetAssetStatus), c.AssetCode, c, Permissions.AssetsManage, true, context, (uow, asset, now) =>
         {
-            var today = DateOnly.FromDateTime(now.UtcDateTime);
+            var today = siteClock.DateAt(now);
             var (kind, message) = (asset.Status, c.Target) switch
             {
                 (AssetStatus.Planned, AssetStatus.Active) => ("Commissioned", "commissioned and in service"),

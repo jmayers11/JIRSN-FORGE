@@ -5,6 +5,7 @@ using Forge.Kernel.Commands;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Quality.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Quality.Qms;
 
@@ -45,7 +46,7 @@ internal sealed class QmsPolicyCurrentAccess(QmsService qms, IForgeAuthorizer au
                 var documentRevision=document.Revisions.FirstOrDefault(r=>r.Revision==source.Revision)??throw Unavailable();
                 if(requireEffective)
                 {
-                    var day=DateOnly.FromDateTime(at.UtcDateTime);
+                    var day=(await uow.SiteDateAsync(at, ct));
                     if(document.Authority==DocumentAuthority.Reference || documentRevision.Status is not(DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable)
                         || documentRevision.EffectiveFrom is null || documentRevision.EffectiveFrom>day || documentRevision.EffectiveTo is{} end && end<=day) throw Unavailable();
                 }

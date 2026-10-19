@@ -8,6 +8,7 @@ using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
 using Forge.Procurement.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Procurement;
 
@@ -104,7 +105,7 @@ public sealed class SourcingService(CommandPipeline pipeline, ISourcingPackageRe
             var currency = (c.Currency ?? string.Empty).Trim().ToUpperInvariant();
             if (c.Quantity <= 0 || c.Quantity > 100_000_000 || c.UnitPrice < 0 || c.UnitPrice > 100_000_000 || currency.Length != 3 || !currency.All(char.IsAsciiLetter))
                 throw new CommandRejectedException("invalid_quote", "Record a positive quantity, nonnegative unit price and three-letter currency.");
-            var today = DateOnly.FromDateTime(now.UtcDateTime);
+            var today = (await uow.SiteDateAsync(now, ct));
             if (c.PromisedDate < today || c.ValidThrough < today) throw new CommandRejectedException("quote_dates", "The response must have a current validity date and a future or current promised date.");
             var number = BusinessCode.Require(c.OriginalDocumentNumber, "Document");
             var document = await uow.Store<IDocumentLookup>().FindDocumentAsync(number, ct);
@@ -138,7 +139,7 @@ public sealed class SourcingService(CommandPipeline pipeline, ISourcingPackageRe
             var quote = (await uow.Store<ISourcingLookup>().ListQuotesAsync(rfq.RfqId, ct)).FirstOrDefault(q => q.QuoteId == c.QuoteId)
                 ?? throw new CommandRejectedException("quote_not_found", "That response is not part of this RFQ.");
             if (quote.RecordedBy == context.Actor) throw new CommandRejectedException("separation_of_duties", "A different person selects the supplier response you recorded.");
-            if (quote.ValidThrough < DateOnly.FromDateTime(now.UtcDateTime)) throw new CommandRejectedException("quote_expired", "The supplier must renew the response before selection.");
+            if (quote.ValidThrough < (await uow.SiteDateAsync(now, ct))) throw new CommandRejectedException("quote_expired", "The supplier must renew the response before selection.");
             if (quote.Quantity < need.Quantity) throw new CommandRejectedException("quote_quantity", "This response does not cover the requested quantity; reconcile the need before selecting it.");
             if (quote.ProposedAlternatePart is not null && quote.ProposedAlternatePart != need.PartNumber)
                 throw new CommandRejectedException("alternate_requires_engineering", "A proposed alternate is not approved configuration. Resolve engineering authority and the requisition before purchasing it.");

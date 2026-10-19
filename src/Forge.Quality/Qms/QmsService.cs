@@ -252,7 +252,7 @@ public sealed class QmsService(CommandPipeline pipeline, IKernelUnitOfWorkFactor
             var revision = doc.Revisions.FirstOrDefault(r => r.Revision == documentRevision) ?? throw SourceNotFound();
             if (requireEffective)
             {
-                var day = DateOnly.FromDateTime(now.UtcDateTime);
+                var day = (await uow.SiteDateAsync(now, ct));
                 if (doc.Authority == DocumentAuthority.Reference || revision.Status is not (DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable)
                     || revision.EffectiveFrom is null || revision.EffectiveFrom > day || revision.EffectiveTo is { } to && to <= day)
                     Reject("document_not_effective", "An adopting QMS revision needs the exact released internal or applicable external document revision in effect.");

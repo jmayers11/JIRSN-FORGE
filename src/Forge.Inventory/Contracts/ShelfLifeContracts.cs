@@ -1,3 +1,5 @@
+using Forge.Resources.Contracts;
+
 namespace Forge.Inventory.Contracts;
 
 /// <summary>What a part's shelf life counts from (V3.6).</summary>
@@ -101,6 +103,7 @@ public sealed record LotShelfLife(
     public bool Usable => Status is ShelfLifeStatus.NotTracked or ShelfLifeStatus.Ok or ShelfLifeStatus.Expiring;
 
     /// <param name="today">The site's date.</param>
+    /// <param name="timeZone">The site's zone, for the date a lot without a manufacture date was first received.</param>
     /// <param name="locationsHeld">The locations the lot has had stock in, with when it arrived and left (left null while there).</param>
     public static LotShelfLife For(
         LotInfo lot,
@@ -110,7 +113,8 @@ public sealed record LotShelfLife(
         IEnumerable<StorageExcursion> excursions,
         IEnumerable<(string Location, DateTimeOffset From, DateTimeOffset? Until)> locationsHeld,
         DateOnly today,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string? timeZone = null)
     {
         ArgumentNullException.ThrowIfNull(lot);
         var mine = extensions.Where(e => e.PartNumber == lot.PartNumber && e.LotNumber == lot.LotNumber && e.Approved == true).OrderBy(e => e.DecidedAt).ToList();
@@ -119,7 +123,7 @@ public sealed record LotShelfLife(
         var expires = mine.Count > 0 ? mine[^1].NewExpires : lot.ExpiresOn;
         var retestDue = lastTest is { Passed: true } ? lastTest.NextDue : lot.RetestDue;
         var openExpires = lot.OpenedAt is { } opened && rule?.OpenLifeHours is { } hours ? opened.AddHours(hours) : (DateTimeOffset?)null;
-        var start = lot.ManufacturedOn ?? DateOnly.FromDateTime(lot.FirstReceivedAt.UtcDateTime);
+        var start = lot.ManufacturedOn ?? SiteTime.DateAtOrUtc(lot.FirstReceivedAt, timeZone);
         var age = Math.Max(0, today.DayNumber - start.DayNumber);
 
         // Storage excursions while the lot was in the location, outside the part's storage conditions, and not retested since.

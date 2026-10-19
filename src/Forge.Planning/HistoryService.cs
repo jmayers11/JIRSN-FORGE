@@ -96,7 +96,7 @@ public sealed class HistoryService(IKernelUnitOfWorkFactory unitOfWork, IForgeAu
     /// <summary>
     /// Dated events in [from, until) as the records state them, limited to what the reader may see: each
     /// context only with its read permission, and programs the reader has access to. Dates without a time
-    /// are taken as the start of that day (UTC).
+    /// are taken as the start of that day at the home site (ADR 0057 §1).
     /// </summary>
     public static async Task<IReadOnlyList<FutureEvent>> CollectFutureAsync(IKernelUnitOfWork uow, ForgePrincipal principal, DateTimeOffset from, DateTimeOffset until, CancellationToken ct)
     {
@@ -105,7 +105,8 @@ public sealed class HistoryService(IKernelUnitOfWorkFactory unitOfWork, IForgeAu
         var now = from;
         bool In(DateTimeOffset at) => at >= now && at < until;
         static bool Can(ForgePrincipal who, string permission) => who.IsActive && who.HasPermission(permission);
-        static DateTimeOffset Day(DateOnly d) => new(d.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var zone = await uow.SiteTimeZoneAsync(ct);
+        DateTimeOffset Day(DateOnly d) => SiteTime.StartOf(d, zone);
         var list = new List<FutureEvent>();
         if (Can(principal, Permissions.EngineeringRead))
         {
@@ -284,7 +285,7 @@ public sealed class HistoryService(IKernelUnitOfWorkFactory unitOfWork, IForgeAu
 
         foreach (var t in (await projects.ListTasksAsync(code, ct)).Where(t => t.CompletedOn is not null))
         {
-            events.Add(new HistoryEvent(new DateTimeOffset(t.CompletedOn!.Value.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero), t.Milestone ? "Milestone met" : "Task done", t.Title, t.CompletedBy, link, "Project tasks"));
+            events.Add(new HistoryEvent(SiteTime.StartOf(t.CompletedOn!.Value, await uow.SiteTimeZoneAsync(ct)), t.Milestone ? "Milestone met" : "Task done", t.Title, t.CompletedBy, link, "Project tasks"));
         }
 
         foreach (var o in (await uow.Store<IMaintenanceLookup>().ListOutagesAsync(true, ct)).Where(o => o.ProjectCode == code))

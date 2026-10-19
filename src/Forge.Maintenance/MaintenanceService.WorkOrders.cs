@@ -425,8 +425,7 @@ public sealed partial class MaintenanceService
     private static async Task<DateOnly> LocalDateAsync(IKernelUnitOfWork uow, DateTimeOffset at, CancellationToken ct)
     {
         // NodaTime's own time-zone database, so IANA zone names work the same on every operating system.
-        var sites = await uow.Store<IResourcesLookup>().ListSitesAsync(ct);
-        var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(sites.Count > 0 ? sites[0].TimeZone : "UTC") ?? DateTimeZone.Utc;
+        var zone = SiteTime.Zone(await uow.SiteTimeZoneAsync(ct));
         var date = Instant.FromDateTimeOffset(at).InZone(zone).Date;
         return new DateOnly(date.Year, date.Month, date.Day);
     }

@@ -71,8 +71,7 @@ public sealed class MaterialFlowService(IKernelUnitOfWorkFactory unitOfWork, IFo
     internal static async Task<IReadOnlyList<CountDue>> CountsDueAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct)
     {
         var inventory = uow.Store<IInventoryLookup>();
-        var sites = await uow.Store<IResourcesLookup>().ListSitesAsync(ct);
-        var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull((sites.Count > 0 ? sites[0].TimeZone : null) ?? "America/New_York") ?? DateTimeZoneProviders.Tzdb["America/New_York"];
+        var zone = SiteTime.Zone(await uow.SiteTimeZoneAsync(ct));
         DateOnly Local(DateTimeOffset at)
         {
             var d = Instant.FromDateTimeOffset(at).InZone(zone).Date;

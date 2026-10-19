@@ -675,8 +675,7 @@ public sealed class AnalystService(
     private async Task<(AnalystVocabulary Vocabulary, AnalystClock Clock, DateTimeZone Zone)> ContextAsync(IKernelUnitOfWork uow, ForgePrincipal principal, CancellationToken ct)
     {
         var resources = uow.Store<IResourcesLookup>();
-        var sites = await resources.ListSitesAsync(ct);
-        var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(sites.Count > 0 ? sites[0].TimeZone : "America/New_York") ?? DateTimeZoneProviders.Tzdb["America/New_York"];
+        var zone = SiteTime.Zone(await uow.SiteTimeZoneAsync(ct));
         var now = time.GetUtcNow();
         var local = Instant.FromDateTimeOffset(now).InZone(zone).LocalDateTime;
         var clock = new AnalystClock(

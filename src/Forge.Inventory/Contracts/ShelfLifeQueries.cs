@@ -1,5 +1,6 @@
 using Forge.Inventory.Contracts;
 using Forge.Kernel.Access;
+using Forge.Resources.Contracts;
 
 namespace Forge.Inventory.Contracts;
 
@@ -22,9 +23,10 @@ public static class ShelfLifeQueries
         var retests = (await lookup.ListRetestsAsync(partNumber, ct)).ToLookup(r => (r.PartNumber, r.LotNumber));
         var excursions = await lookup.ListExcursionsAsync(ct);
         var residence = (await lookup.ListLotResidenceAsync(partNumber, ct)).ToLookup(r => (r.PartNumber, r.LotNumber), r => (r.Location, r.From, r.Until));
-        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        var zone = await uow.SiteTimeZoneAsync(ct);
+        var today = SiteTime.DateAt(now, zone);
         return lots.Select(l => LotShelfLife.For(l, rules.GetValueOrDefault(l.PartNumber), extensions[(l.PartNumber, l.LotNumber)], retests[(l.PartNumber, l.LotNumber)],
-            excursions, residence[(l.PartNumber, l.LotNumber)], today, now)).ToList();
+            excursions, residence[(l.PartNumber, l.LotNumber)], today, now, zone)).ToList();
     }
 
     /// <summary>Stock positions where a lot that is not usable by shelf life does not count for planning.</summary>

@@ -30,8 +30,7 @@ public sealed class BriefService(IKernelUnitOfWorkFactory unitOfWork, IForgeAuth
         var now = time.GetUtcNow();
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
         var resources = uow.Store<IResourcesLookup>();
-        var sites = await resources.ListSitesAsync(ct);
-        var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(sites.Count > 0 ? sites[0].TimeZone : "America/New_York") ?? DateTimeZoneProviders.Tzdb["America/New_York"];
+        var zone = SiteTime.Zone(await uow.SiteTimeZoneAsync(ct));
         var shifts = await resources.ListShiftsAsync(ct);
 
         // The shift window: the named shift's current or next occurrence; otherwise the shift running now; otherwise the next 12 hours.

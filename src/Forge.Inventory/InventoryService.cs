@@ -501,7 +501,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline, ProductRe
         }
 
         var primary = alternateFor.Trim().ToUpperInvariant();
-        var context = new AlternateContext(DateOnly.FromDateTime(now.UtcDateTime), order.PartNumber, order.ProgramId);
+        var context = new AlternateContext((await uow.SiteDateAsync(now, ct)), order.PartNumber, order.ProgramId);
         var options = Alternates.For(await uow.Store<IAlternateLookup>().ListAlternatesAsync(ct), primary).Where(x => x.OfferedPart == part).ToList();
         foreach (var (relationship, _, factor) in options)
         {
@@ -693,7 +693,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline, ProductRe
                 if (lot is not null)
                 {
                     await LotAsync(uow, item.PartNumber, lot, null, order.Revision, item.Serialized ? IdentityKind.Serial : IdentityKind.Lot, now, context.Actor, ct);
-                    await ReceiptDatesAsync(uow, item, lot, DateOnly.FromDateTime(now.UtcDateTime), null, now, ct); // made today (V3.6)
+                    await ReceiptDatesAsync(uow, item, lot, (await uow.SiteDateAsync(now, ct)), null, now, ct); // made today (V3.6)
                 }
 
                 var outputStatus = governedRelease is null ? StockStatus.Released : StockStatus.Inspection;

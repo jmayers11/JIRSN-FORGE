@@ -12,6 +12,7 @@ using Forge.Procurement.Contracts;
 using Forge.Programs.Contracts;
 using Forge.Workforce.Contracts;
 using Npgsql;
+using Forge.Resources.Contracts;
 
 namespace Forge.Host.Propagation;
 
@@ -46,7 +47,8 @@ public sealed class ChangePropagationRunner(
     ChangeActionService actions,
     IPropagationFaults faults,
     TimeProvider time,
-    NpgsqlDataSource dataSource)
+    NpgsqlDataSource dataSource,
+    ISiteClock siteClock)
 {
     private const string Reason = "Propagation of a released engineering change";
     private const string NotMoved = "Not moved:";
@@ -77,7 +79,7 @@ public sealed class ChangePropagationRunner(
                 DataMarking.ControlledUnclassified | DataMarking.ExportControlled | DataMarking.Proprietary);
         }
 
-        var inForce = change.EffectiveFrom is not { } from || from <= DateOnly.FromDateTime(now.UtcDateTime);
+        var inForce = change.EffectiveFrom is not { } from || from <= siteClock.DateAt(now);
         var releaseEventId = await ReleaseEventIdAsync(change.Number, ct);
         string? firstError = null;
 

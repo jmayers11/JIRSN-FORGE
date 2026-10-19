@@ -10,6 +10,7 @@ using Forge.Quality.Qms;
 using Forge.Engineering.Contracts;
 using static Forge.Quality.Planning.QmsPlanningRules;
 using static Forge.Quality.Planning.QmsPlanningService;
+using Forge.Resources.Contracts;
 
 namespace Forge.Quality.Audit;
 
@@ -324,7 +325,7 @@ public sealed class QmsAuditService(CommandPipeline pipeline,IKernelUnitOfWorkFa
     private async Task ValidateDocument(IKernelUnitOfWork u,ForgePrincipal p,QmsDocumentReference source,DateTimeOffset now,bool locks,CancellationToken ct)
     {
         await evidence.ResolveAsync(u,p,new("Engineering","DocumentRevision",source.DocumentNumber,source.Revision),locks,ct);
-        var document=await u.Store<IDocumentLookup>().FindDocumentAsync(source.DocumentNumber,ct)??throw Missing();var revision=document.Revisions.FirstOrDefault(x=>x.Revision==source.Revision)??throw Missing();var day=DateOnly.FromDateTime(now.UtcDateTime);
+        var document=await u.Store<IDocumentLookup>().FindDocumentAsync(source.DocumentNumber,ct)??throw Missing();var revision=document.Revisions.FirstOrDefault(x=>x.Revision==source.Revision)??throw Missing();var day=(await u.SiteDateAsync(now, ct));
         Require(document.Current?.Revision==source.Revision&&revision.Status is DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable&&(revision.EffectiveFrom is null||revision.EffectiveFrom<=day)&&(revision.EffectiveTo is null||day<=revision.EffectiveTo),"audit_document_not_current","Use exact currently applicable controlled governing documents.");
     }
     private static async Task<QmsAuditRun> RunAsync(IKernelUnitOfWork u,Guid id,CancellationToken ct)=>await u.Store<IAuditCapaLookup>().FindAuditAsync(id,ct)??throw Missing();

@@ -32,7 +32,7 @@ public static class WorkCalendar
         var spans = new List<Span>();
         for (var day = firstDay; day <= lastDay; day = day.PlusDays(1))
         {
-            if (!shift.Days.Contains((int)day.DayOfWeek) || closed.Contains(DateOnly.FromDateTime(day.ToDateTimeUnspecified())))
+            if (!shift.Days.Contains((int)day.DayOfWeek) || closed.Contains(new DateOnly(day.Year, day.Month, day.Day)))
             {
                 continue;
             }

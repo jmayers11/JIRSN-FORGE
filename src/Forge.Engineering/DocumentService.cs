@@ -7,6 +7,7 @@ using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
+using Forge.Resources.Contracts;
 
 namespace Forge.Engineering;
 
@@ -120,7 +121,7 @@ public interface IDocumentStore
 /// released; reference documents are uncontrolled attachments and never production authority. Documents
 /// are invisible to people without their program or markings, everywhere.
 /// </summary>
-public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentTargetResolver targets, IGeneratedContentOwnerAccess? generatedContent = null)
+public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentTargetResolver targets, ISiteClock siteClock, IGeneratedContentOwnerAccess? generatedContent = null)
 {
     public const string SourceContext = EngineeringService.SourceContext;
 
@@ -306,7 +307,7 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
             }
 
             RequireNotAuthor(current, context, external ? "record as applicable" : "release");
-            var today = DateOnly.FromDateTime(now.UtcDateTime);
+            var today = siteClock.DateAt(now);
             var from = c.EffectiveFrom ?? today;
             if (from < today)
             {
@@ -342,7 +343,7 @@ public sealed partial class DocumentService(CommandPipeline pipeline, IDocumentT
                         Status = DocumentRevisionStatus.Obsolete,
                         ObsoletedBy = context.Actor,
                         ObsoletedAt = now,
-                        EffectiveTo = current.EffectiveFrom is { } f ? Max(f, DateOnly.FromDateTime(now.UtcDateTime)) : null,
+                        EffectiveTo = current.EffectiveFrom is { } f ? Max(f, siteClock.DateAt(now)) : null,
                     },
                     "Obsoleted",
                     "obsolete; it no longer applies anywhere"),

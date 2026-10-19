@@ -9,6 +9,7 @@ using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
 using Forge.Planning.Engines;
+using Forge.Resources.Contracts;
 
 namespace Forge.Planning;
 
@@ -249,7 +250,7 @@ public sealed class GoalService(CommandPipeline pipeline, IKernelUnitOfWorkFacto
 
         var risk = orders.Count == 0 ? new Dictionary<long, GoalRiskLine>() : await RiskAsync(uow, time, ct, viewer);
         var today = await MaterialData.TodayAsync(uow, time, ct);
-        return GoalAttainmentEngine.Evaluate(goals, risk, orders, demand, today);
+        return GoalAttainmentEngine.Evaluate(goals, risk, orders, demand, today, await uow.SiteTimeZoneAsync(ct));
     }
 
     /// <summary>

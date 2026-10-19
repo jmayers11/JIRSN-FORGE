@@ -7,6 +7,7 @@ using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
 using Forge.Planning;
 using Forge.Quality.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Host.Commercial;
 
@@ -72,7 +73,7 @@ public sealed partial class CommercialQualitySourceResolver
         {
             var document=await uow.Store<IDocumentLookup>().FindDocumentAsync(reference.Key,ct)??throw Missing();
             var revision=document.Revisions.FirstOrDefault(r=>r.Revision==reference.Revision)??throw Missing();
-            var date=DateOnly.FromDateTime(at.UtcDateTime);
+            var date=(await uow.SiteDateAsync(at, ct));
             if(document.Authority!=DocumentAuthority.External||document.ExternalAuthority!=party.Customer||string.IsNullOrWhiteSpace(document.ExternalNumber)
                 ||document.Current?.Revision!=revision.Revision||revision.Status!=DocumentRevisionStatus.Applicable||revision.FileSha256 is null
                 ||revision.EffectiveFrom is{} from&&date<from||revision.EffectiveTo is{} to&&date>=to)continue;

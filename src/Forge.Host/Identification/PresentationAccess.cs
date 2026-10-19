@@ -87,7 +87,7 @@ public sealed class PresentationAccess(IdentificationResolver subjects, IForgeAu
             var resource = new ResourceRef("DocumentRevision", reference.DocumentNumber + "/" + reference.Revision,
                 document.ProgramId is { } program ? new ProgramId(program) : null, document.Markings);
             Permit(principal, Permissions.EngineeringRead, resource);
-            var day = DateOnly.FromDateTime(now.UtcDateTime);
+            var day = (await uow.SiteDateAsync(now, ct));
             if (requireEffective && (document.Authority == DocumentAuthority.Reference
                 || revision.Status is not (DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable)
                 || revision.EffectiveFrom is null || revision.EffectiveFrom > day || revision.EffectiveTo is { } end && end <= day))

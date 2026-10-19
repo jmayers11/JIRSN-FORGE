@@ -1,5 +1,6 @@
 using Forge.Execution.Contracts;
 using Forge.Planning.Engines;
+using Forge.Resources.Contracts;
 
 namespace Forge.Planning;
 
@@ -103,7 +104,8 @@ public static class GoalAttainmentEngine
         IReadOnlyDictionary<long, GoalRiskLine> risk,
         IReadOnlyDictionary<long, OrderInfo> orders,
         IReadOnlyDictionary<long, GoalDemand> demand,
-        DateOnly today)
+        DateOnly today,
+        string? timeZone = null)
     {
         ArgumentNullException.ThrowIfNull(goals);
         ArgumentNullException.ThrowIfNull(risk);
@@ -222,7 +224,7 @@ public static class GoalAttainmentEngine
                 }
                 else if (projected is { } p)
                 {
-                    var day = DateOnly.FromDateTime(p.UtcDateTime);
+                    var day = SiteTime.DateAtOrUtc(p, timeZone);
                     if (day > requiredBy)
                     {
                         state = GoalState.Late;

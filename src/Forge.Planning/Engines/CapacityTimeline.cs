@@ -1,4 +1,5 @@
 using Forge.Kernel.Engines;
+using Forge.Resources.Contracts;
 
 namespace Forge.Planning.Engines;
 
@@ -55,7 +56,7 @@ internal sealed class CapacityTimeline
                 .Concat(snapshot.ToolEvents.Select(e => e.At))
                 .Concat(snapshot.ToolEvents.Select(e => e.DueOn).OfType<DateOnly>()
                     .Where(d => d < DateOnly.MaxValue)
-                    .Select(d => new DateTimeOffset(d.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))))
+                    .Select(d => SiteTime.StartOfOrUtc(d.AddDays(1), snapshot.HomeTimeZone)))
                 .Where(horizon.Contains));
     }
 

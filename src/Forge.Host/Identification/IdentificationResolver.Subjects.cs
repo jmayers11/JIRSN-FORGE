@@ -42,7 +42,7 @@ public sealed partial class IdentificationResolver
         var document=await uow.Store<IDocumentLookup>().FindDocumentAsync(subject.Display.SubjectKey!,ct) ?? throw MissingSubject();
         var revision=document.Current;
         var at=(time ?? throw new CommandRejectedException("identification_clock_unavailable","Instruction staging requires the configured host clock.")).GetUtcNow();
-        var day=DateOnly.FromDateTime(at.UtcDateTime);
+        var day=(await uow.SiteDateAsync(at, ct));
         if(document.Authority==DocumentAuthority.Reference || revision is null || revision.Revision!=subject.Display.Revision
             || revision.Status is not(DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable)
             || revision.EffectiveFrom is null || revision.EffectiveFrom>day || revision.EffectiveTo is{} end && end<=day

@@ -116,6 +116,13 @@ internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : I
     public Task<IReadOnlyList<SiteInfo>> ListSitesAsync(CancellationToken ct) =>
         Read("SELECT code, name, time_zone FROM resources.site ORDER BY code", r => new SiteInfo(r.GetString(0), r.GetString(1), r.GetString(2)), ct);
 
+    public async Task<string> SiteTimeZoneAsync(string? siteCode, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "SELECT time_zone FROM resources.site ORDER BY (code = $1) DESC, created_at, code LIMIT 1", (object?)siteCode ?? DBNull.Value);
+        return await cmd.ExecuteScalarAsync(ct) as string ?? SiteTime.DefaultTimeZone;
+    }
+
     public async Task SetSiteTimeZoneAsync(string siteCode, string timeZone, CancellationToken ct)
     {
         await using var cmd = uow.Command("UPDATE resources.site SET time_zone = $2 WHERE code = $1", siteCode, timeZone);
@@ -241,6 +248,9 @@ public static class ResourcesRegistration
         services.AddForgeMigrations(typeof(ResourcesRegistration).Assembly, "resources");
         services.AddForgeStore<IResourcesStore>(uow => new PostgresResourcesStore(uow));
         services.AddForgeStore<IResourcesLookup>(uow => new PostgresResourcesStore(uow));
+        services.AddSingleton<Contracts.SiteClock>();
+        services.AddSingleton<Contracts.ISiteClock>(sp => sp.GetRequiredService<Contracts.SiteClock>());
+        services.AddSingleton<SiteClockLoader>();
         services.AddSingleton<ResourcesService>();
         services.AddForgeStore<IToolLookup>(uow => new PostgresToolStore(uow));
         services.AddForgeStore<IToolStore>(uow => new PostgresToolStore(uow));

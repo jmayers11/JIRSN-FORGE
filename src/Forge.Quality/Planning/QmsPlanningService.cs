@@ -295,7 +295,7 @@ public sealed class QmsPlanningService(CommandPipeline pipeline,IKernelUnitOfWor
             var document=await uow.Store<IDocumentLookup>().FindDocumentAsync(documentNumber,ct)??throw Unavailable();
             var revision=document.Revisions.FirstOrDefault(x=>x.Revision==revisionCode)??throw Unavailable();
             if(requireEffective) Require(document.Current?.Revision==revisionCode && revision.Status is DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable
-                && (revision.EffectiveFrom is null || revision.EffectiveFrom<=DateOnly.FromDateTime(now.UtcDateTime)) && (revision.EffectiveTo is null || DateOnly.FromDateTime(now.UtcDateTime)<=revision.EffectiveTo),
+                && (revision.EffectiveFrom is null || revision.EffectiveFrom<=(await uow.SiteDateAsync(now, ct))) && (revision.EffectiveTo is null || (await uow.SiteDateAsync(now, ct))<=revision.EffectiveTo),
                 "planning_document_not_current","Use an exact currently applicable controlled document revision.");
             sources.Add(await evidence.ResolveAsync(uow,principal,new("Engineering","DocumentRevision",documentNumber,revisionCode),true,ct));
         }

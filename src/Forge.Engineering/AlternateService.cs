@@ -5,6 +5,7 @@ using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
+using Forge.Resources.Contracts;
 
 namespace Forge.Engineering;
 
@@ -63,7 +64,7 @@ public interface IAlternateStore
 /// maintenance for maintenance-only alternates) approves or rejects it; approved relationships can be
 /// expired. What was proposed never changes: a different relationship is proposed instead.
 /// </summary>
-public sealed class AlternateService(CommandPipeline pipeline)
+public sealed class AlternateService(CommandPipeline pipeline, ISiteClock siteClock)
 {
     public const string SourceContext = EngineeringService.SourceContext;
     private const string Entity = "Alternate";
@@ -99,7 +100,7 @@ public sealed class AlternateService(CommandPipeline pipeline)
                 throw new CommandRejectedException("conversion_required", $"{primary} is counted in {primaryItem.UnitOfMeasure} and {alternate} in {alternateItem.UnitOfMeasure}: state the conversion.");
             }
 
-            var today = DateOnly.FromDateTime(now.UtcDateTime);
+            var today = siteClock.DateAt(now);
             if (c.ValidTo is { } to && (to < today || (c.ValidFrom is { } from && to < from)))
             {
                 throw new CommandRejectedException("invalid_dates", "The end date is in the past or before the start date.");
@@ -163,7 +164,7 @@ public sealed class AlternateService(CommandPipeline pipeline)
                 throw new CommandRejectedException("invalid_status", $"Alternate {a.AlternateId} is {a.Status}; only a proposed alternate is approved.");
             }
 
-            if (a.ValidTo is { } to && to < DateOnly.FromDateTime(now.UtcDateTime))
+            if (a.ValidTo is { } to && to < siteClock.DateAt(now))
             {
                 throw new CommandRejectedException("invalid_dates", $"Alternate {a.AlternateId} ended {to:yyyy-MM-dd}; propose a new one.");
             }

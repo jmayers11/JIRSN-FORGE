@@ -150,7 +150,7 @@ public sealed partial class MaintenanceService(CommandPipeline pipeline)
             var id = await store.InsertDowntimeAsync(machine, DowntimeKind.Unplanned, now, null, description, now, context.Actor, ct);
 
             // Every breakdown gets a corrective work order; the machine returns to service when it is signed off.
-            var order = new WorkOrderInfo(0, machine, WorkOrderKind.Corrective, null, $"Repair: {Shorten(description, 80)}", description, [], DateOnly.FromDateTime(now.UtcDateTime),
+            var order = new WorkOrderInfo(0, machine, WorkOrderKind.Corrective, null, $"Repair: {Shorten(description, 80)}", description, [], (await uow.SiteDateAsync(now, ct)),
                 WorkOrderStatus.Open, null, null, id, context.Actor, now, null, null, null, null, null, null, null, null, AssetCode: await AssetOfMachineAsync(uow, machine, ct));
             var orderId = await store.InsertWorkOrderAsync(order, ct);
             return new CommandOutcome(

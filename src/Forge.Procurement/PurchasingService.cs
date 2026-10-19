@@ -6,6 +6,7 @@ using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
 using Forge.Procurement.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Procurement;
 
@@ -306,7 +307,7 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             var original = await uow.Store<IDocumentLookup>().FindDocumentAsync(selected.OriginalDocumentNumber, ct);
             if (original is null || !DocumentAccess.CanSee(context.Principal, original))
                 throw new CommandRejectedException("source_selection_required", "The selected supplier response is not available to you.");
-            if (selected.SupplierCode != supplierCode || selected.Quantity < line.Quantity || selected.ValidThrough < DateOnly.FromDateTime(now.UtcDateTime))
+            if (selected.SupplierCode != supplierCode || selected.Quantity < line.Quantity || selected.ValidThrough < (await uow.SiteDateAsync(now, ct)))
                 throw new CommandRejectedException("selected_source_mismatch", "The purchase line must match the selected supplier, quoted quantity and current response validity.");
         }
 
@@ -335,7 +336,7 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             throw new CommandRejectedException("invalid_quantity", $"Line {lineNumber}: quantity must be above zero.");
         }
 
-        if (promised < DateOnly.FromDateTime(now.UtcDateTime).AddDays(-1))
+        if (promised < (await uow.SiteDateAsync(now, ct)).AddDays(-1))
         {
             throw new CommandRejectedException("promised_in_past", $"Line {lineNumber}: the promised date {promised:yyyy-MM-dd} is in the past.");
         }

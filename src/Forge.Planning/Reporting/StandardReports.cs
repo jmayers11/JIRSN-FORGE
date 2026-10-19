@@ -832,7 +832,7 @@ internal static class StandardReports
         var p = run.Parameters;
         var onHand = (await run.Uow.Store<IInventoryLookup>().ListBalancesAsync(null, ct))
             .Where(b => b.LotNumber is not null).GroupBy(b => (b.PartNumber, b.LotNumber!)).ToDictionary(g => g.Key, g => g.Sum(b => b.Quantity));
-        var today = DateOnly.FromDateTime(run.Now.UtcDateTime);
+        var today = run.Today;
         var rows = new List<ReportRow>();
         foreach (var s in await Forge.Inventory.Contracts.ShelfLifeQueries.StatesAsync(run.Uow, null, run.Now, ct))
         {
@@ -989,12 +989,12 @@ internal static class StandardReports
         var tools = run.Uow.Store<Forge.Resources.Contracts.IToolLookup>();
         var types = (await tools.ListToolTypesAsync(ct)).ToDictionary(t => t.Code, StringComparer.Ordinal);
         var events = (await tools.ListToolEventsAsync(null, ct)).ToLookup(e => e.ToolCode);
-        var today = DateOnly.FromDateTime(run.Now.UtcDateTime);
+        var today = run.Today;
         var rows = new List<ReportRow>();
         foreach (var t in await tools.ListToolsAsync(ct))
         {
             var type = types[t.TypeCode];
-            var v = Forge.Resources.Contracts.ToolValidity.At(t, type, events[t.Code], run.Now);
+            var v = Forge.Resources.Contracts.ToolValidity.At(t, type, events[t.Code], run.Now, timeZone: run.ZoneId);
             var where = t.Custodian is { } who ? $"{t.Custody}: {who}" : t.Location ?? "—";
             if (!ReportRun.Is(t.Status.ToString(), p.Status) || !run.Matches(t.Code, t.TypeCode, t.Description, where, string.Join(" ", v.Problems)))
             {
@@ -1029,7 +1029,7 @@ internal static class StandardReports
                 continue;
             }
 
-            var validity = Forge.Resources.Contracts.ToolValidity.At(tool, type, events[tool.Code], use.At);
+            var validity = Forge.Resources.Contracts.ToolValidity.At(tool, type, events[tool.Code], use.At, timeZone: run.ZoneId);
             rows.Add(new ReportRow(
                 [use.At, tool.Code, validity.CalibrationDue, validity.Valid ? "Yes" : "No", validity.UsesLeft is { } left ? (decimal)left : null,
                  string.Join(" ", validity.Problems), use.Reference],

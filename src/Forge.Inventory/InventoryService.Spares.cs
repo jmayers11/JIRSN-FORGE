@@ -5,6 +5,7 @@ using Forge.Kernel.Events;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Security;
 using Forge.Maintenance.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Inventory;
 
@@ -99,7 +100,7 @@ public sealed partial class InventoryService
         }
 
         var primary = alternateFor.Trim().ToUpperInvariant();
-        var context = new AlternateContext(DateOnly.FromDateTime(now.UtcDateTime), AssetCode: order.AssetCode, MachineCode: order.MachineCode, Maintenance: true);
+        var context = new AlternateContext((await uow.SiteDateAsync(now, ct)), AssetCode: order.AssetCode, MachineCode: order.MachineCode, Maintenance: true);
         var options = Alternates.For(await uow.Store<IAlternateLookup>().ListAlternatesAsync(ct), primary).Where(x => x.OfferedPart == part).ToList();
         foreach (var (relationship, _, factor) in options)
         {

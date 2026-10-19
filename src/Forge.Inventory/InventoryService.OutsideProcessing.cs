@@ -8,6 +8,7 @@ using Forge.Kernel.Serialization;
 using Forge.Kernel.Holds;
 using Forge.Engineering.Contracts;
 using Forge.Procurement.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Inventory;
 
@@ -81,8 +82,8 @@ public sealed partial class InventoryService
                 throw new CommandRejectedException("process_specification_unavailable", "The process specification is unavailable to the sender.");
             var applicable = document.Current;
             if (applicable is null || (specificationRevision is not null && applicable.Revision != specificationRevision)
-                || applicable.FileSha256 is null || applicable.EffectiveFrom > DateOnly.FromDateTime(now.UtcDateTime)
-                || applicable.EffectiveTo < DateOnly.FromDateTime(now.UtcDateTime))
+                || applicable.FileSha256 is null || applicable.EffectiveFrom > (await uow.SiteDateAsync(now, ct))
+                || applicable.EffectiveTo < (await uow.SiteDateAsync(now, ct)))
                 throw new CommandRejectedException("process_specification_not_applicable", "Send an applicable controlled process specification with its recorded file.");
             specificationRevision = applicable.Revision;
             programId = document.ProgramId;

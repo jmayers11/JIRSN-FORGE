@@ -68,6 +68,9 @@ public interface IResourcesLookup
     Task<SafetyAreaInfo?> FindRecordedSafetyAreaAsync(string code, CancellationToken ct);
     Task<IReadOnlyList<SiteInfo>> ListSitesAsync(CancellationToken ct);
 
+    /// <summary>A site's IANA time zone; the home site's (the first created) when the code is null or unknown; the default when there is no site (ADR 0057 §1).</summary>
+    Task<string> SiteTimeZoneAsync(string? siteCode, CancellationToken ct);
+
     Task<IReadOnlyList<SafetyAreaInfo>> ListSafetyAreasAsync(CancellationToken ct);
 
     Task<IReadOnlyList<WorkCenterInfo>> ListWorkCentersAsync(CancellationToken ct);

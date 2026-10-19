@@ -5,6 +5,7 @@ using Forge.Kernel.Commands;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using static Forge.Host.Api.ApiSupport;
+using Forge.Resources.Contracts;
 
 namespace Forge.Host.Api;
 
@@ -89,7 +90,7 @@ public static class AlternateEndpoints
                 }
 
                 await using var uow = await Snapshot(http);
-                var today = date ?? DateOnly.FromDateTime(http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime);
+                var today = date ?? await uow.SiteDateAsync(http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow(), http.RequestAborted);
                 var context = new AlternateContext(today, Upper(parent), program, string.IsNullOrWhiteSpace(customer) ? null : customer.Trim(), Upper(asset), Upper(machine), operation, Upper(supplier), maintenance == true);
                 var all = (await uow.Store<IAlternateLookup>().ListAlternatesAsync(http.RequestAborted)).Where(a => Visible(principal, a));
                 return Alternates.Candidates(all, part.Trim().ToUpperInvariant(), context);

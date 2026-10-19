@@ -7,6 +7,7 @@ using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
 using Forge.Projects.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Projects;
 
@@ -85,7 +86,7 @@ public interface IProjectsStore
 /// applied only when someone other than the requester approves it. Material lines carry the source key that
 /// demand, requisitions, purchase lines, receipts and issues are recorded against.
 /// </summary>
-public sealed class ProjectService(CommandPipeline pipeline, IKernelUnitOfWorkFactory unitOfWork)
+public sealed class ProjectService(CommandPipeline pipeline, IKernelUnitOfWorkFactory unitOfWork, ISiteClock siteClock)
 {
     public const string SourceContext = "Projects";
     private const string Entity = "Project";
@@ -348,7 +349,7 @@ public sealed class ProjectService(CommandPipeline pipeline, IKernelUnitOfWorkFa
                 throw new CommandRejectedException("task_done", $"Task {key} was completed on {task.CompletedOn:yyyy-MM-dd}.");
             }
 
-            if (c.CompletedOn > DateOnly.FromDateTime(now.UtcDateTime).AddDays(1))
+            if (c.CompletedOn > siteClock.DateAt(now).AddDays(1))
             {
                 throw new CommandRejectedException("completed_in_future", "A task is completed on a day that has come.");
             }

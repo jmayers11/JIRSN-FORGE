@@ -122,7 +122,7 @@ public interface IResourcesStore
 /// The physical and organizational model: site → safety area → work center → machine, the
 /// activity types performed there, and what each machine requires to run each activity.
 /// </summary>
-public sealed class ResourcesService(CommandPipeline pipeline)
+public sealed class ResourcesService(CommandPipeline pipeline, Contracts.SiteClock siteClock)
 {
     public const string SourceContext = "Resources";
 
@@ -135,7 +135,19 @@ public sealed class ResourcesService(CommandPipeline pipeline)
             throw new CommandRejectedException("invalid_time_zone", $"'{zone}' is not an IANA time zone (for example America/New_York).");
         }
 
-        return CreateAsync(nameof(CreateSite), "Site", c.Code, c.Name, null, null, c, context, (_, _) => Task.CompletedTask, ct, (store, code, token) => store.SetSiteTimeZoneAsync(code, zone, token));
+        return RememberZone(CreateAsync(nameof(CreateSite), "Site", c.Code, c.Name, null, null, c, context, (_, _) => Task.CompletedTask, ct, (store, code, token) => store.SetSiteTimeZoneAsync(code, zone, token)), c.Code, zone);
+    }
+
+    /// <summary>Keeps the site clock current once a site command has succeeded (ADR 0057 §1).</summary>
+    private async Task<CommandResult> RememberZone(Task<CommandResult> command, string? siteCode, string? zone)
+    {
+        var result = await command;
+        if (zone is not null && !string.IsNullOrWhiteSpace(siteCode))
+        {
+            siteClock.Remember(BusinessCode.Require(siteCode, "Site"), zone);
+        }
+
+        return result;
     }
 
     public Task<CommandResult> DefineShiftAsync(DefineShift c, CommandContext context, CancellationToken ct)
@@ -372,8 +384,8 @@ public sealed class ResourcesService(CommandPipeline pipeline)
             throw new CommandRejectedException("invalid_time_zone", $"'{zone}' is not an IANA time zone (for example America/New_York).");
         }
 
-        return UpdateAsync(nameof(UpdateSite), "Site", c.Code, c, context, (current, _, _) =>
-            Task.FromResult(current with { Name = BusinessCode.RequireName(c.Name, "Site"), Detail = zone ?? current.Detail }), ct);
+        return RememberZone(UpdateAsync(nameof(UpdateSite), "Site", c.Code, c, context, (current, _, _) =>
+            Task.FromResult(current with { Name = BusinessCode.RequireName(c.Name, "Site"), Detail = zone ?? current.Detail }), ct), c.Code, zone);
     }
 
     public Task<CommandResult> UpdateSafetyAreaAsync(UpdateSafetyArea c, CommandContext context, CancellationToken ct)

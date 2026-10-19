@@ -126,7 +126,7 @@ public sealed class AcceptanceCriteriaService(CommandPipeline pipeline,IKernelUn
    var recorded=revision.Sources.FirstOrDefault(s=>s.Key==number&&s.Revision==numberRevision);if(recorded is not null)Permit(principal,Permissions.EngineeringRead,new("DocumentRevision",number+"/"+numberRevision,Program(recorded.ProgramId),recorded.Markings));
    if(locked)await uow.Store<IQmsStore>().LockSourceAsync("DocumentRevision",number,numberRevision,ct);
    var document=await uow.Store<IDocumentLookup>().FindDocumentAsync(number,ct)??throw Missing();Permit(principal,Permissions.EngineeringRead,new("DocumentRevision",number+"/"+numberRevision,Program(document.ProgramId),document.Markings));
-   var selected=document.Revisions.FirstOrDefault(r=>r.Revision==numberRevision)??throw Missing();var day=DateOnly.FromDateTime(now.UtcDateTime);
+   var selected=document.Revisions.FirstOrDefault(r=>r.Revision==numberRevision)??throw Missing();var day=(await uow.SiteDateAsync(now, ct));
    if(effective&&(document.Authority==DocumentAuthority.Reference||selected.Status is not(DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable)||selected.EffectiveFrom is null||selected.EffectiveFrom>day||selected.EffectiveTo<=day))throw new CommandRejectedException("criteria_source_unavailable","The exact controlled acceptance source is no longer effective.");
    result.Add(new("DocumentRevision",number,numberRevision,document.ProgramId,document.Markings,null));
   }

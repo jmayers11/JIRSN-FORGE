@@ -38,6 +38,9 @@ internal sealed class ReportRun
 
     public required DateTimeZone Zone { get; init; }
 
+    /// <summary>The home site's IANA zone id (ADR 0057 §1).</summary>
+    public required string ZoneId { get; init; }
+
     public IReadOnlyList<ShiftInfo> Shifts { get; init; } = [];
     public MaterialSourceVisibility? SourceVisibility { get; init; }
 
@@ -138,12 +141,10 @@ public sealed class ReportService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
         }
 
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
-        var sites = await uow.Store<IResourcesLookup>().ListSitesAsync(ct);
-        var zoneId = sites.Count > 0 ? sites[0].TimeZone : "America/New_York";
-        var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(zoneId) ?? DateTimeZoneProviders.Tzdb["America/New_York"];
+        var zoneId = await uow.SiteTimeZoneAsync(ct);
+        var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(zoneId) ?? DateTimeZoneProviders.Tzdb[SiteTime.DefaultTimeZone];
         var now = time.GetUtcNow();
-        var todayLocal = Instant.FromDateTimeOffset(now).InZone(zone).Date;
-        var today = new DateOnly(todayLocal.Year, todayLocal.Month, todayLocal.Day);
+        var today = SiteTime.DateAt(now, zoneId);
 
         var (fromDate, toDate) = Period(parameters, today, spec.Entry.MaxDays, spec.Entry.Forward);
         DateTimeOffset StartOf(DateOnly d) => zone.AtStartOfDay(new LocalDate(d.Year, d.Month, d.Day)).ToDateTimeOffset().ToUniversalTime();
@@ -159,6 +160,7 @@ public sealed class ReportService(IKernelUnitOfWorkFactory unitOfWork, IForgeAut
             Now = now,
             Today = today,
             Zone = zone,
+            ZoneId = zoneId,
             Shifts = await uow.Store<IResourcesLookup>().ListShiftsAsync(ct),
             SourceVisibility = await MaterialSourceVisibility.LoadAsync(uow, principal, ct, authorizer: authorizer),
         };

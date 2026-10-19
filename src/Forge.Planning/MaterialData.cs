@@ -8,7 +8,6 @@ using Forge.Planning.Engines;
 using Forge.Procurement.Contracts;
 using Forge.Programs.Contracts;
 using Forge.Resources.Contracts;
-using NodaTime;
 
 namespace Forge.Planning;
 
@@ -22,14 +21,9 @@ internal static class MaterialData
 
     public sealed record Supply(string Key, string PartNumber, decimal Quantity, DateOnly DueDate, string Kind, string Description);
 
-    public static async Task<DateOnly> TodayAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct)
-    {
-        var sites = await uow.Store<IResourcesLookup>().ListSitesAsync(ct);
-        var site = sites.Count > 0 ? sites[0] : null;
-        var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(site?.TimeZone ?? "America/New_York") ?? DateTimeZoneProviders.Tzdb["America/New_York"];
-        var date = Instant.FromDateTimeOffset(time.GetUtcNow()).InZone(zone).Date;
-        return new DateOnly(date.Year, date.Month, date.Day);
-    }
+    /// <summary>Today at the home site (ADR 0057 §1).</summary>
+    public static Task<DateOnly> TodayAsync(IKernelUnitOfWork uow, TimeProvider time, CancellationToken ct) =>
+        uow.SiteDateAsync(time.GetUtcNow(), ct);
 
     /// <summary>Approved purchase order lines and unfinished production orders, less what has been received.</summary>
     public static async Task<IReadOnlyList<Supply>> SuppliesAsync(IKernelUnitOfWork uow, ForgePrincipal? principal, CancellationToken ct,
@@ -104,14 +98,8 @@ internal static class MaterialData
     public static async Task<MrpSnapshot> MrpSnapshotAsync(IKernelUnitOfWork uow, TimeProvider time, ForgePrincipal principal, CancellationToken ct)
     {
         var today = await TodayAsync(uow, time, ct);
-        var sites = await uow.Store<IResourcesLookup>().ListSitesAsync(ct);
-        var site = sites.Count > 0 ? sites[0] : null;
-        var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(site?.TimeZone ?? "America/New_York") ?? DateTimeZoneProviders.Tzdb["America/New_York"];
-        DateOnly Local(DateTimeOffset at)
-        {
-            var d = Instant.FromDateTimeOffset(at).InZone(zone).Date;
-            return new DateOnly(d.Year, d.Month, d.Day);
-        }
+        var zone = await uow.SiteTimeZoneAsync(ct);
+        DateOnly Local(DateTimeOffset at) => SiteTime.DateAt(at, zone);
 
         var engineering = uow.Store<IEngineeringLookup>();
         var itemList = await engineering.ListItemsAsync(ct);

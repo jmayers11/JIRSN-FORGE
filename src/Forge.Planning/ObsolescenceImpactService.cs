@@ -7,6 +7,7 @@ using Forge.Kernel.Security;
 using Forge.Maintenance.Contracts;
 using Forge.Planning.Engines;
 using Forge.Procurement.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Planning;
 
@@ -81,6 +82,6 @@ public sealed class ObsolescenceImpactService(IKernelUnitOfWorkFactory unitOfWor
                 .Select(r => new ObsolescenceDemand($"requisition {r.RequisitionId} ({r.SourceKey})", r.SourceKind.ToString(), r.Quantity, r.NeedDate)))
             .ToList();
 
-        return new ObsolescenceSnapshot(record, item?.UnitOfMeasure ?? "EA", installed, available, held, purchases, alternates, whereUsed, demand, DateOnly.FromDateTime(now.UtcDateTime));
+        return new ObsolescenceSnapshot(record, item?.UnitOfMeasure ?? "EA", installed, available, held, purchases, alternates, whereUsed, demand, await uow.SiteDateAsync(now, ct));
     }
 }

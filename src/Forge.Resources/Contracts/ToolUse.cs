@@ -22,7 +22,7 @@ public static class ToolUse
         var lookup = uow.Store<IToolLookup>();
         var tool = await lookup.FindToolAsync(code, ct) ?? throw new CommandRejectedException("tool_not_found", $"Tool {code} does not exist.");
         var type = (await lookup.ListToolTypesAsync(ct)).First(t => t.Code == tool.TypeCode);
-        var validity = ToolValidity.At(tool, type, await lookup.ListToolEventsAsync(code, ct), now, machine, activity);
+        var validity = ToolValidity.At(tool, type, await lookup.ListToolEventsAsync(code, ct), now, machine, activity, await uow.SiteTimeZoneAsync(ct));
         if (!validity.Valid)
         {
             throw new CommandRejectedException("tool_not_valid", string.Join(" ", validity.Problems));

@@ -128,7 +128,7 @@ public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver ho
                     var original = quote is null ? null : await uow.Store<IDocumentLookup>().FindDocumentAsync(quote.OriginalDocumentNumber, ct);
                     return quote is null || original is null ? null : new(Permissions.PurchasingRead,
                         [await Forge.Procurement.SourcingService.ResourceForRfqAsync(uow, rfq, quote, ct)],
-                        rfq.Status == RfqStatus.Released && quote.ValidThrough >= DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime)
+                        rfq.Status == RfqStatus.Released && quote.ValidThrough >= (await uow.SiteDateAsync(time.GetUtcNow(), ct))
                             && quote.Quantity >= need.Quantity && (quote.ProposedAlternatePart is null || quote.ProposedAlternatePart == need.PartNumber));
                 }
                 return new(Permissions.PurchasingRead, [await Forge.Procurement.SourcingService.ResourceForRfqAsync(uow, rfq, null, ct)], rfq.Status is RfqStatus.Draft or RfqStatus.Released,
@@ -214,7 +214,7 @@ public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver ho
                 if (alternate is null) return null;
                 var alternateMachine = await MachineResourceAsync(uow, "Alternate", id, alternate.MachineCode, ct);
                 return new(Permissions.EngineeringRead, [alternateMachine with { Program = Program(alternate.ProgramId), CustomerId = alternate.Customer }],
-                    alternate.Status == AlternateStatus.Proposed && (alternate.ValidTo is null || alternate.ValidTo >= DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime)));
+                    alternate.Status == AlternateStatus.Proposed && (alternate.ValidTo is null || alternate.ValidTo >= (await uow.SiteDateAsync(time.GetUtcNow(), ct))));
             case "SafetyRule":
                 var ruleId = id.Split('/');
                 if (ruleId.Length != 2 || !int.TryParse(ruleId[1], NumberStyles.None, CultureInfo.InvariantCulture, out var ruleVersion)) return null;

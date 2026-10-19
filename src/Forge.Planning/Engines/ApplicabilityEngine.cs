@@ -1,6 +1,7 @@
 using System.Globalization;
 using Forge.Engineering.Contracts;
 using Forge.Kernel.Engines;
+using Forge.Resources.Contracts;
 
 namespace Forge.Planning.Engines;
 
@@ -93,7 +94,7 @@ public sealed record OrderDocumentation(long OrderNumber, string PartNumber, str
 /// </summary>
 public static class ApplicabilityEngine
 {
-    public static Resolution Resolve(DocumentInfo document, string? pinned, IReadOnlyList<ApplicabilityRuleInfo> rules, ApplicabilityFacts facts, DateTimeOffset asOf)
+    public static Resolution Resolve(DocumentInfo document, string? pinned, IReadOnlyList<ApplicabilityRuleInfo> rules, ApplicabilityFacts facts, DateTimeOffset asOf, string? timeZone = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(rules);
@@ -126,7 +127,7 @@ public static class ApplicabilityEngine
 
         // As known at that instant: only revisions released by then count, and the newest one in effect wins.
         // (A later release supersedes by taking effect, so effective_to written afterwards is not used here.)
-        var day = DateOnly.FromDateTime(asOf.UtcDateTime);
+        var day = SiteTime.DateAtOrUtc(asOf, timeZone);
         var inForce = document.Revisions
             .Where(r => r.EffectiveFrom is { } from && from <= day && r.ReleasedAt is { } released && released <= asOf
                 && r.Status is DocumentRevisionStatus.Released or DocumentRevisionStatus.Applicable or DocumentRevisionStatus.Superseded or DocumentRevisionStatus.Obsolete
@@ -143,13 +144,13 @@ public static class ApplicabilityEngine
     /// The state of one needed document for the work, now. For a released order the revision that
     /// applied at release is what the order references (history is kept, so it is reconstructed exactly).
     /// </summary>
-    public static DocumentApplicability Evaluate(DocumentInfo document, DocumentNeed need, IReadOnlyList<ApplicabilityRuleInfo> rules, ApplicabilityFacts facts, DateTimeOffset now, DateTimeOffset? releasedAt)
+    public static DocumentApplicability Evaluate(DocumentInfo document, DocumentNeed need, IReadOnlyList<ApplicabilityRuleInfo> rules, ApplicabilityFacts facts, DateTimeOffset now, DateTimeOffset? releasedAt, string? timeZone = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(need);
-        var current = Resolve(document, need.PinnedRevision, rules, facts, now);
+        var current = Resolve(document, need.PinnedRevision, rules, facts, now, timeZone);
         var compare = releasedAt is { } released && need.AddedAt <= released;
-        var atRelease = compare ? Resolve(document, need.PinnedRevision, rules, facts, releasedAt!.Value) : null;
+        var atRelease = compare ? Resolve(document, need.PinnedRevision, rules, facts, releasedAt!.Value, timeZone) : null;
 
         DocumentApplicability Result(DocumentState state, string explanation) => new(
             document.Number, document.Title, document.Authority, need.Source, need.OperationSequence, need.PinnedRevision,
@@ -208,7 +209,7 @@ public static class ApplicabilityEngine
             return Result(DocumentState.Mismatch, $"{document.Number}: the order was released with rev {then.Revision}, which was made obsolete; rev {applies.Revision} applies now.");
         }
 
-        var releasedDay = DateOnly.FromDateTime(releasedAt!.Value.UtcDateTime);
+        var releasedDay = SiteTime.DateAtOrUtc(releasedAt!.Value, timeZone);
         if (current.Basis == ResolutionBasis.DateEffectivity && atRelease.Basis == ResolutionBasis.DateEffectivity
             && (applies.ReleasedAt > releasedAt || applies.EffectiveFrom > releasedDay))
         {

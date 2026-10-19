@@ -6,6 +6,7 @@ using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
+using Forge.Resources.Contracts;
 
 namespace Forge.Engineering;
 
@@ -83,7 +84,7 @@ public interface IChangeStore
 /// other than the approver — releases every listed revision in one transaction. Revisions listed on an
 /// open change can only be released by it.
 /// </summary>
-public sealed class ChangeService(CommandPipeline pipeline)
+public sealed class ChangeService(CommandPipeline pipeline, ISiteClock siteClock)
 {
     public const string SourceContext = EngineeringService.SourceContext;
     private const string ChangeEntity = "EngineeringChange";
@@ -329,14 +330,14 @@ public sealed class ChangeService(CommandPipeline pipeline)
                 throw new CommandRejectedException("separation_of_duties", "You approved this change; a different person releases it (no review policy combines approval and release for it).");
             }
 
-            var today = DateOnly.FromDateTime(now.UtcDateTime);
+            var today = siteClock.DateAt(now);
             var from = c.EffectiveFrom ?? change.RequestedEffective ?? today;
             if (from < today)
             {
                 throw new CommandRejectedException("effective_in_past", "A change cannot take effect before today.");
             }
 
-            var itemFrom = from == today ? now : new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            var itemFrom = from == today ? now : siteClock.StartOf(from);
             var released = new List<string>();
             foreach (var line in change.ActiveLines.OrderBy(l => l.LineNumber))
             {

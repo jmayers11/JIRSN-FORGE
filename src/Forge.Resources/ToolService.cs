@@ -46,7 +46,7 @@ public sealed record ToolChanged(string Code, string Change) : IDomainEvent
 /// (sent out, returned), moves and uses are events kept for good; a tool's validity is judged as of the moment it is
 /// used. Gauges are tools of the Gauge kind.
 /// </summary>
-public sealed class ToolService(CommandPipeline pipeline)
+public sealed class ToolService(CommandPipeline pipeline, ISiteClock siteClock)
 {
     public const string SourceContext = "Resources";
     private const string Entity = "Tool";
@@ -88,7 +88,7 @@ public sealed class ToolService(CommandPipeline pipeline)
                 ?? throw new CommandRejectedException("unknown_tool_type", $"Tool type {c.TypeCode} does not exist.");
             var machines = await KnownMachinesAsync(uow, c.EligibleMachines, ct);
             var activities = await KnownActivitiesAsync(uow, c.EligibleActivities, ct);
-            var today = DateOnly.FromDateTime(now.UtcDateTime);
+            var today = siteClock.DateAt(now);
             DateOnly? due = c.CalibrationDue ?? (c.CalibratedOn is { } on && type.CalibrationDays is { } days ? on.AddDays(days) : null);
             if (c.CalibratedOn > today || (c.CalibratedOn is { } o && due is { } d && d <= o))
             {
@@ -128,7 +128,7 @@ public sealed class ToolService(CommandPipeline pipeline)
     public Task<CommandResult> CalibrateAsync(CalibrateTool c, CommandContext context, CancellationToken ct) =>
         ChangeAsync(nameof(CalibrateTool), c?.Code, c, context, Permissions.ToolsCalibrate, false, (tool, type, now) =>
         {
-            var today = DateOnly.FromDateTime(now.UtcDateTime);
+            var today = siteClock.DateAt(now);
             if (c!.CalibratedOn > today)
             {
                 throw new CommandRejectedException("invalid_calibration", "A calibration is not in the future.");
@@ -291,7 +291,7 @@ public sealed class ToolService(CommandPipeline pipeline)
             var type = (await lookup.ListToolTypesAsync(ct)).First(t => t.Code == tool.TypeCode);
             if (requireValid)
             {
-                var validity = ToolValidity.At(tool, type, await lookup.ListToolEventsAsync(code, ct), now, Optional(machine), Optional(activity));
+                var validity = ToolValidity.At(tool, type, await lookup.ListToolEventsAsync(code, ct), now, Optional(machine), Optional(activity), siteClock.HomeTimeZone);
                 if (!validity.Valid)
                 {
                     throw new CommandRejectedException("tool_not_valid", string.Join(" ", validity.Problems));
