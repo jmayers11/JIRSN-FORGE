@@ -120,7 +120,7 @@ public sealed class MaterialSourceVisibility
     public ScheduleResult Schedule(ScheduleResult value) => value with
     {
         Orders = value.Orders.Where(o => CanSeeOrder(o.OrderNumber)).Select(o => o with { Explanation = Text(o.Explanation) }).ToArray(),
-        Operations = value.Operations.Where(o => CanSeeOrder(o.OrderNumber)).Select(o => o with { BindingDetail = Text(o.BindingDetail) }).ToArray(),
+        Operations = value.Operations.Where(o => CanSeeOrder(o.OrderNumber)).Select(o => o with { BindingDetail = Text(o.BindingDetail), Setup = o.Setup is null ? null : Text(o.Setup) }).ToArray(),
     };
 
     public ConstraintRecord Constraint(ConstraintRecord value) => value with

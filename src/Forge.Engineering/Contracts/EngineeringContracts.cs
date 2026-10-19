@@ -154,7 +154,9 @@ public sealed record RoutingOperationInfo(
     IReadOnlyList<string> RequiredQualifications,
     decimal SetupMinutes,
     decimal RunMinutesPerUnit,
-    int CrewSize);
+    int CrewSize,
+    string? SetupFamily = null,
+    decimal? FamilySetupMinutes = null);
 
 /// <summary>A released revision and its bill of materials, for MRP explosion.</summary>
 public sealed record RevisionStructure(RevisionInfo Revision, IReadOnlyList<BomLineInfo> Bom);

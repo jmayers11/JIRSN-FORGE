@@ -264,4 +264,27 @@ public class SchedulingTests
         Assert.Equal(DeliveryStatus.Unschedulable, top.Status);
         Assert.Contains("Waiting for SUB-1 (order 10001), which cannot be planned", top.Explanation, StringComparison.Ordinal);
     }
+    private static OrderInfo Family(long number, int priority, string family, decimal setup = 60, decimal same = 10)
+    {
+        var order = Order(number, priority, ["SLITTER-A"], 120);
+        return order with
+        {
+            Operations = order.Operations.Select(o => o.Sequence == 10 ? o with { SetupMinutes = setup, SetupFamily = family, FamilySetupMinutes = same } : o).ToList(),
+        };
+    }
+
+    [Fact]
+    public void A_same_family_job_after_another_gets_the_reduced_set_up_and_the_scheduler_says_why()
+    {
+        // ADR 0057 §3.2: 120 planned minutes include a 60-minute set-up; after a job of the same family it takes 10.
+        var result = Run(Plant(), Family(10001, 1, "FIX-1"), Family(10002, 2, "FIX-1"), Family(10003, 3, "FIX-2"));
+        ScheduledOperation Slit(long order) => result.Operations.Single(o => o.OrderNumber == order && o.Sequence == 10);
+
+        Assert.Equal(120, Slit(10001).PlannedMinutes);
+        Assert.Contains("Full set-up (60 min): no earlier job on SLITTER-A", Slit(10001).Setup!, StringComparison.Ordinal);
+        Assert.Equal(70, Slit(10002).PlannedMinutes);
+        Assert.Contains("Same-family set-up: 10 min instead of 60, after order 10001 operation 10 (FIX-1)", Slit(10002).Setup!, StringComparison.Ordinal);
+        Assert.Equal(120, Slit(10003).PlannedMinutes);
+        Assert.Contains("is FIX-1, not FIX-2", Slit(10003).Setup!, StringComparison.Ordinal);
+    }
 }

@@ -35,7 +35,10 @@ public sealed record OrderOperationInfo(
     decimal GoodQuantity = 0,
     decimal ScrapQuantity = 0,
     DateTimeOffset? StartedAt = null,
-    DateTimeOffset? CompletedAt = null);
+    DateTimeOffset? CompletedAt = null,
+    decimal? SetupMinutes = null,
+    string? SetupFamily = null,
+    decimal? FamilySetupMinutes = null);
 
 /// <summary>A material requirement, copied from the BOM with the component revision in force at release.</summary>
 public sealed record OrderMaterialInfo(int LineNumber, string ComponentPartNumber, string? ComponentRevision, decimal RequiredQuantity, string UnitOfMeasure);

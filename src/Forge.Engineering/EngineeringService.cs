@@ -31,7 +31,9 @@ public sealed record AddRoutingOperation(
     IReadOnlyList<string>? RequiredQualifications,
     decimal SetupMinutes,
     decimal RunMinutesPerUnit,
-    int CrewSize);
+    int CrewSize,
+    string? SetupFamily = null,
+    decimal? FamilySetupMinutes = null);
 
 public sealed record RemoveRoutingOperation(string PartNumber, string Revision, int Sequence);
 
@@ -319,7 +321,14 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
                 }
             }
 
-            var operation = new RoutingOperationInfo(c.Sequence, description, workCenter, activity, machines, quals, c.SetupMinutes, c.RunMinutesPerUnit, c.CrewSize);
+            // ADR 0057 §3.2: a set-up family names what a following job of the same family can keep (a fixture, a gauge).
+            var family = string.IsNullOrWhiteSpace(c.SetupFamily) ? null : BusinessCode.Require(c.SetupFamily, "Set-up family");
+            if (family is null != c.FamilySetupMinutes is null || c.FamilySetupMinutes is < 0 || c.FamilySetupMinutes > c.SetupMinutes)
+            {
+                throw new CommandRejectedException("invalid_setup_family", "A set-up family needs its same-family set-up minutes, between 0 and the full set-up.");
+            }
+
+            var operation = new RoutingOperationInfo(c.Sequence, description, workCenter, activity, machines, quals, c.SetupMinutes, c.RunMinutesPerUnit, c.CrewSize, family, c.FamilySetupMinutes);
             if (!await uow.Store<IEngineeringStore>().InsertOperationAsync(part, rev, operation, ct))
             {
                 throw new CommandRejectedException("operation_exists", $"Operation {c.Sequence} already exists.");

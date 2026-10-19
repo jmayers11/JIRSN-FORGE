@@ -318,7 +318,10 @@ public sealed class ProductionOrderService(CommandPipeline pipeline)
                 op.RequiredQualifications,
                 op.SetupMinutes + (op.RunMinutesPerUnit * quantity),
                 op.CrewSize,
-                OperationStatus.Pending))
+                OperationStatus.Pending,
+                SetupMinutes: op.SetupMinutes,
+                SetupFamily: op.SetupFamily,
+                FamilySetupMinutes: op.FamilySetupMinutes))
             .ToList();
 
         var materials = new List<OrderMaterialInfo>();

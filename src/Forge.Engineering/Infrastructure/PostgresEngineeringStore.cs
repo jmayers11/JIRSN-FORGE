@@ -48,11 +48,13 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
         await using var cmd = uow.Command(
             """
             INSERT INTO engineering.routing_operation (part_number, revision, sequence, description, work_center_code, activity_code,
-                eligible_machines, required_qualifications, setup_minutes, run_minutes_per_unit, crew_size)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING
+                eligible_machines, required_qualifications, setup_minutes, run_minutes_per_unit, crew_size, setup_family, family_setup_minutes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT DO NOTHING
             """,
             partNumber, revision, operation.Sequence, operation.Description, operation.WorkCenterCode, operation.ActivityCode,
-            TextArray(operation.EligibleMachines), TextArray(operation.RequiredQualifications), operation.SetupMinutes, operation.RunMinutesPerUnit, operation.CrewSize);
+            TextArray(operation.EligibleMachines), TextArray(operation.RequiredQualifications), operation.SetupMinutes, operation.RunMinutesPerUnit, operation.CrewSize,
+            new NpgsqlParameter { Value = (object?)operation.SetupFamily ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text },
+            new NpgsqlParameter { Value = (object?)operation.FamilySetupMinutes ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric });
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
@@ -117,10 +119,12 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
             revision);
         var routing = await Read(
             """
-            SELECT sequence, description, work_center_code, activity_code, eligible_machines, required_qualifications, setup_minutes, run_minutes_per_unit, crew_size
+            SELECT sequence, description, work_center_code, activity_code, eligible_machines, required_qualifications, setup_minutes, run_minutes_per_unit, crew_size,
+                setup_family, family_setup_minutes
             FROM engineering.routing_operation WHERE part_number = $1 AND revision = $2 ORDER BY sequence
             """,
-            r => new RoutingOperationInfo(r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4), r.GetFieldValue<string[]>(5), r.GetDecimal(6), r.GetDecimal(7), r.GetInt32(8)),
+            r => new RoutingOperationInfo(r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4), r.GetFieldValue<string[]>(5), r.GetDecimal(6), r.GetDecimal(7), r.GetInt32(8),
+                r.IsDBNull(9) ? null : r.GetString(9), r.IsDBNull(10) ? null : r.GetDecimal(10)),
             ct,
             partNumber,
             revision);

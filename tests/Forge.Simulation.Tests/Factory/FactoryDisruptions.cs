@@ -99,8 +99,8 @@ internal sealed class FactoryDisruptions
         // Workforce: two swing-shift assemblers move to Packing (day shift) for a week.
         var transfer = D(0.7);
         var movers = new[] { Worker("ASSEMBLY", FactorySpec.Swing), Worker("ASSEMBLY", FactorySpec.Swing, 1) };
-        Add(transfer, "Two swing-shift assemblers move to Packing for a week", Coverage.Workforce, "Assembly capacity down, packing up; schedule", () => TransferAsync(movers, "PACKING", FactorySpec.Day));
-        Add(After(transfer, 7), "The assemblers return to Assembly", Coverage.Workforce, "Capacity back", () => TransferAsync(movers, "ASSEMBLY", FactorySpec.Swing));
+        Add(transfer, "Two swing-shift assemblers move to Packing for a week (temporary move)", Coverage.Workforce, "Assembly capacity down, packing up; schedule", () => TransferAsync(movers, "PACKING", FactorySpec.Day, moveDays: 7));
+        Add(After(transfer, 7), "The assemblers return to Assembly (the move ran out)", Coverage.Workforce, "Capacity back", () => TransferAsync(movers, "ASSEMBLY", FactorySpec.Swing));
 
         // Maintenance: WELD-1 is down for four days.
         var weld = D(0.8);
@@ -409,18 +409,31 @@ internal sealed class FactoryDisruptions
         return $"fastener kits counted {Invariants.Q(counted)} against {Invariants.Q(book)} on the book";
     }
 
-    private async Task<string?> TransferAsync(string[] people, string area, string shift)
+    private async Task<string?> TransferAsync(string[] people, string area, string shift, int? moveDays = null)
     {
         var p = run.Plant;
         var dept = run.Spec.Department(area);
+        var today = FactorySpec.LocalDate(p.Clock.GetUtcNow());
         foreach (var subject in people.Distinct())
         {
             var id = p.PersonId(subject);
-            var onShift = await run.Cmd(p.Engineer, $"/api/workforce/workers/{id}/shift", new { shiftCode = shift, reason = "Staffing transfer" }, "shift change");
-            var assigned = await run.Cmd(p.Engineer, $"/api/workforce/workers/{id}/assignment", new { safetyAreaCode = area, activityCode = dept.Activity, reason = "Staffing transfer" }, "assignment");
-            // ADR 0056: there is no command to change a home work center, so a transfer is a shift change and an assignment.
-            run.Report.Rule(Basis.Plan, "Setup: the supervisor transfers the person (shift and assignment; ADR 0056 consequences)");
-            run.Report.Expect($"Day {run.Today + 1}: {subject} to {area}", "200 200", $"{onShift.Label} {assigned.Label}", "Workforce");
+            var onShift = await run.Cmd(p.Engineer, $"/api/workforce/workers/{id}/shift", new { shiftCode = shift, reason = "Staffing move" }, "shift change");
+            var assigned = await run.Cmd(p.Engineer, $"/api/workforce/workers/{id}/assignment", new { safetyAreaCode = area, activityCode = dept.Activity, reason = "Staffing move" }, "assignment");
+            if (moveDays is { } days)
+            {
+                // ADR 0057 §5: a temporary move with an estimated end; projected capacity counts the person in the new
+                // work center until then and back home afterwards, without anyone acting.
+                var moved = await run.Cmd(p.Engineer, $"/api/workforce/workers/{id}/moves",
+                    new { workCenterCode = dept.WorkCenter, startsOn = today.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), estimatedEndOn = today.AddDays(days - 1).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), reason = "Cover for packing" },
+                    "temporary move");
+                run.Report.Rule(Basis.Plan, "Setup: the supervisor moves the person temporarily (shift, assignment and a temporary move with an estimated end; ADR 0057 §5)");
+                run.Report.Expect($"Day {run.Today + 1}: {subject} to {area} until {today.AddDays(days - 1):yyyy-MM-dd}", "200 200 200", $"{onShift.Label} {assigned.Label} {moved.Label}", "Workforce");
+            }
+            else
+            {
+                run.Report.Expect($"Day {run.Today + 1}: {subject} back to {area}", "200 200", $"{onShift.Label} {assigned.Label}", "Workforce");
+            }
+
             run.ShiftOf[subject] = shift;
         }
 

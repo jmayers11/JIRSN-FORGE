@@ -40,11 +40,12 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
             await using var cmd = uow.Command(
                 """
                 INSERT INTO execution.order_operation (order_number, sequence, description, work_center_code, activity_code, eligible_machines,
-                    required_qualifications, planned_minutes, crew_size, status)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    required_qualifications, planned_minutes, crew_size, status, setup_minutes, setup_family, family_setup_minutes)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 """,
                 orderNumber, op.Sequence, op.Description, op.WorkCenterCode, op.ActivityCode, TextArray(op.EligibleMachines),
-                TextArray(op.RequiredQualifications), op.PlannedMinutes, op.CrewSize, op.Status.ToString());
+                TextArray(op.RequiredQualifications), op.PlannedMinutes, op.CrewSize, op.Status.ToString(),
+                Numeric(op.SetupMinutes), new NpgsqlParameter { Value = (object?)op.SetupFamily ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text }, Numeric(op.FamilySetupMinutes));
             await cmd.ExecuteNonQueryAsync(ct);
         }
 
@@ -93,11 +94,12 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
             await using var cmd = uow.Command(
                 """
                 INSERT INTO execution.order_operation (order_number, sequence, description, work_center_code, activity_code, eligible_machines,
-                    required_qualifications, planned_minutes, crew_size, status)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    required_qualifications, planned_minutes, crew_size, status, setup_minutes, setup_family, family_setup_minutes)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 """,
                 orderNumber, op.Sequence, op.Description, op.WorkCenterCode, op.ActivityCode, TextArray(op.EligibleMachines),
-                TextArray(op.RequiredQualifications), op.PlannedMinutes, op.CrewSize, op.Status.ToString());
+                TextArray(op.RequiredQualifications), op.PlannedMinutes, op.CrewSize, op.Status.ToString(),
+                Numeric(op.SetupMinutes), new NpgsqlParameter { Value = (object?)op.SetupFamily ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text }, Numeric(op.FamilySetupMinutes));
             await cmd.ExecuteNonQueryAsync(ct);
         }
 
@@ -177,14 +179,17 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         reader => new OrderCommitment(reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetFieldValue<DateTimeOffset>(3), reader.GetString(4)), ct, at);
 
     private const string OperationColumns =
-        "sequence, description, work_center_code, activity_code, eligible_machines, required_qualifications, planned_minutes, crew_size, status, good_quantity, scrap_quantity, started_at, completed_at";
+        "sequence, description, work_center_code, activity_code, eligible_machines, required_qualifications, planned_minutes, crew_size, status, good_quantity, scrap_quantity, started_at, completed_at, setup_minutes, setup_family, family_setup_minutes";
+
+    private static NpgsqlParameter Numeric(decimal? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric };
 
     private static string Qualified(string alias) => string.Join(", ", OperationColumns.Split(", ").Select(c => alias + "." + c));
 
     private static OrderOperationInfo ReadOperation(NpgsqlDataReader r, int o) => new(
         r.GetInt32(o), r.GetString(o + 1), r.GetString(o + 2), r.GetString(o + 3), r.GetFieldValue<string[]>(o + 4), r.GetFieldValue<string[]>(o + 5),
         r.GetDecimal(o + 6), r.GetInt32(o + 7), Enum.Parse<OperationStatus>(r.GetString(o + 8)), r.GetDecimal(o + 9), r.GetDecimal(o + 10),
-        r.IsDBNull(o + 11) ? null : r.GetFieldValue<DateTimeOffset>(o + 11), r.IsDBNull(o + 12) ? null : r.GetFieldValue<DateTimeOffset>(o + 12));
+        r.IsDBNull(o + 11) ? null : r.GetFieldValue<DateTimeOffset>(o + 11), r.IsDBNull(o + 12) ? null : r.GetFieldValue<DateTimeOffset>(o + 12),
+        r.IsDBNull(o + 13) ? null : r.GetDecimal(o + 13), r.IsDBNull(o + 14) ? null : r.GetString(o + 14), r.IsDBNull(o + 15) ? null : r.GetDecimal(o + 15));
 
     public Task<IReadOnlyList<OpenOperation>> ListOpenOperationsAsync(CancellationToken ct) => Read(
         $"""

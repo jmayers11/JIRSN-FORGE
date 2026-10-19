@@ -44,7 +44,8 @@ public sealed record ScheduledOperation(
     IReadOnlyList<Interruption> Interruptions,
     IReadOnlyList<string> Operators,
     Guid? ProgramId = null,
-    string? SiteCode = null);
+    string? SiteCode = null,
+    string? Setup = null);
 
 public enum DeliveryStatus
 {
@@ -363,7 +364,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
         if (!snapshot.WorkCenters.Any(w => w.Code == op.WorkCenterCode && w.Active))
             return Unscheduled(order, op, "Equipment", $"Work center {op.WorkCenterCode} is inactive or missing.");
         var minutes = TimeSpan.FromMinutes((double)RemainingMinutes(order, op));
-        var options = new List<(WorkRequirement Requirement, Placement Placement)>();
+        var options = new List<(WorkRequirement Requirement, Placement Placement, string? Setup, decimal Minutes)>();
         var holdBlocks = new List<string>();
 
         if (op.EligibleMachines.Count == 0)
@@ -374,7 +375,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
                 return Unscheduled(order, op, "Holds", holdBlocks[^1]);
             }
 
-            options.Add((requirement, Place(timeline, state, requirement, minutes, earliest)));
+            options.Add((requirement, Place(timeline, state, requirement, minutes, earliest), null, RemainingMinutes(order, op)));
         }
         else
         {
@@ -392,7 +393,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
                 }
 
                 var requirement = new WorkRequirement(op.WorkCenterCode, machine, op.ActivityCode, profile.OperatorQualifications, op.RequiredQualifications, op.CrewSize);
-                options.Add((requirement, Place(timeline, state, requirement, minutes, earliest)));
+                options.Add(WithSetup(timeline, state, order, op, requirement, machine, minutes, earliest));
             }
         }
 
@@ -421,7 +422,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
         {
             if (best.Requirement.MachineCode is { } m)
             {
-                state.Book(m, segment.Start, segment.End, order.OrderNumber, op.Sequence);
+                state.Book(m, segment.Start, segment.End, order.OrderNumber, op.Sequence, op.SetupFamily);
             }
 
             foreach (var person in segment.Operators)
@@ -449,12 +450,13 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             true,
             placement.Segments[0].Start,
             placement.End,
-            RemainingMinutes(order, op),
+            best.Minutes,
             binding,
             detail,
             placement.Segments,
             placement.Interruptions,
-            names);
+            names,
+            Setup: best.Setup);
 
         bool IsHeld(string? machine)
         {
@@ -467,6 +469,34 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             holdBlocks.Add(readiness.Detail);
             return true;
         }
+    }
+
+    /// <summary>
+    /// Places an operation on one machine. When it names a set-up family and the machine's previous job in this schedule
+    /// is the same family, it gets the reduced same-family set-up; otherwise the full one (ADR 0057 §3.2). Which one, and
+    /// why, is recorded. Only work not yet started can save set-up, and only jobs in this schedule count as previous.
+    /// </summary>
+    private static (WorkRequirement Requirement, Placement Placement, string? Setup, decimal Minutes) WithSetup(
+        CapacityTimeline timeline, Bookings state, OrderInfo order, OrderOperationInfo op, WorkRequirement requirement, string machine, TimeSpan minutes, DateTimeOffset earliest)
+    {
+        var full = Place(timeline, state, requirement, minutes, earliest);
+        var remaining = RemainingMinutes(order, op);
+        if (op is not { Status: OperationStatus.Pending, SetupFamily: { } family, SetupMinutes: { } setup, FamilySetupMinutes: { } same } || same >= setup)
+        {
+            return (requirement, full, null, remaining);
+        }
+
+        Booking? Previous(Placement p) => p.Segments.Count == 0 ? null : state.PreviousOnMachine(machine, p.Segments[0].Start);
+        var saved = setup - same;
+        var reduced = Place(timeline, state, requirement, minutes - TimeSpan.FromMinutes((double)saved), earliest);
+        if (reduced.End is not null && Previous(reduced) is { Family: { } before } previous && before == family)
+        {
+            return (requirement, reduced, $"Same-family set-up: {Quantities.Text(same)} min instead of {Quantities.Text(setup)}, after order {previous.Order} operation {previous.Sequence} ({family}) on {machine}.", remaining - saved);
+        }
+
+        var after = Previous(full);
+        var why = after is null ? $"no earlier job on {machine} in this schedule" : after.Family is null ? $"the previous job on {machine} (order {after.Order}) has no set-up family" : $"the previous job on {machine} (order {after.Order}) is {after.Family}, not {family}";
+        return (requirement, full, $"Full set-up ({Quantities.Text(setup)} min): {why}.", remaining);
     }
 
     /// <summary>
@@ -641,15 +671,19 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
         return new ScheduledOrder(order.OrderNumber, order.PartNumber, order.Priority, order.DueDate, dueAt, completion, status, explanation);
     }
 
-    private sealed record Booking(DateTimeOffset Start, DateTimeOffset End, long Order, int Sequence);
+    private sealed record Booking(DateTimeOffset Start, DateTimeOffset End, long Order, int Sequence, string? Family = null);
 
     private sealed class Bookings
     {
         private readonly Dictionary<string, List<Booking>> machines = new(StringComparer.Ordinal);
         private readonly Dictionary<Guid, List<Booking>> people = [];
 
-        public void Book(string machine, DateTimeOffset start, DateTimeOffset end, long order, int sequence) =>
-            Get(machines, machine).Add(new Booking(start, end, order, sequence));
+        public void Book(string machine, DateTimeOffset start, DateTimeOffset end, long order, int sequence, string? family = null) =>
+            Get(machines, machine).Add(new Booking(start, end, order, sequence, family));
+
+        /// <summary>The job booked on the machine just before an instant (the latest that ended at or before it).</summary>
+        public Booking? PreviousOnMachine(string machine, DateTimeOffset at) =>
+            machines.TryGetValue(machine, out var list) ? list.Where(b => b.End <= at).OrderByDescending(b => b.End).FirstOrDefault() : null;
 
         public void BookPerson(Guid person, DateTimeOffset start, DateTimeOffset end, long order, int sequence) =>
             Get(people, person).Add(new Booking(start, end, order, sequence));

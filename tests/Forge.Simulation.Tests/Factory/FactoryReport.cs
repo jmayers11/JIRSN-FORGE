@@ -236,7 +236,7 @@ internal static class FactoryReport
 
         var findings = baseline.Report.Findings.Concat(disrupted.Report.Findings).Distinct().ToList();
         md.Append("\n### Findings\n\n").Append(findings.Count == 0 ? "- None recorded by the runs.\n" : string.Concat(findings.Select(f => "- " + f + "\n")));
-        md.Append("- Standing finding (ADR 0056): there is no command to change a worker's home work center; the transfer event is a shift change plus an assignment, and projected capacity keeps the original work center.\n\n");
+        md.Append("- Workforce moves (ADR 0057 §5): the week in Packing is a temporary move with an estimated end date; projected capacity counts the movers in Packing until then and back in Assembly afterwards. The shift change and assignment are still separate commands.\n\n");
     }
 
     // 9 ------------------------------------------------------------------------------------------------
