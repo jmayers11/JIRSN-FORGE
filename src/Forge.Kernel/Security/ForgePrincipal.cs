@@ -89,4 +89,7 @@ public static class SystemActors
 
     /// <summary>Re-plans the schedule after a failed inspection or a new NCR (ADR 0057 §2.4).</summary>
     public const string QualityReplan = "system:quality-replan";
+
+    /// <summary>Reminds supervisors of temporary moves ending and returns workers when they run out (ADR 0057 §5).</summary>
+    public const string WorkforceMoves = "system:workforce-moves";
 }

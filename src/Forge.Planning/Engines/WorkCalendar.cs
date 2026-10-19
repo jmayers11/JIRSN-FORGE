@@ -160,7 +160,9 @@ public static class Projection
         var people = snapshot.People.Select(p =>
         {
             var working = scheduled.TryGetValue(p.PersonId, out var spans) && spans.Any(s => s.Contains(at));
-            var home = snapshot.WorkCenters.FirstOrDefault(w => w.Code == p.HomeWorkCenterCode);
+            // A temporary move or a transfer in force that day decides where the person counts (ADR 0057 §5, amends ADR 0056 §1).
+            var center = p.WorkCenterPeriods.Count == 0 ? p.HomeWorkCenterCode : p.WorkCenterOn(snapshot.LocalDate(at));
+            var home = snapshot.WorkCenters.FirstOrDefault(w => w.Code == center);
             var valid = p.ValidQualifications.Where(q => p.HoldsAt(q, at)).ToList();
             return p with
             {

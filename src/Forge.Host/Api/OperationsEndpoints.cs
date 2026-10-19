@@ -36,6 +36,13 @@ public sealed record PresenceRequest(PresenceKind Kind, DateTimeOffset? ValidUnt
 
 public sealed record UnavailabilityRequest(UnavailabilityKind Kind, DateTimeOffset StartsAt, DateTimeOffset EndsAt, string? Reason);
 
+/// <summary>A temporary move (ADR 0057 §5): the estimated end date is required.</summary>
+public sealed record TemporaryMoveRequest(string WorkCenterCode, DateOnly StartsOn, DateOnly EstimatedEndOn, string? Reason);
+
+public sealed record MoveEndRequest(DateOnly NewEndOn, string? Reason);
+
+public sealed record WorkerTransferRequest(string WorkCenterCode, DateOnly EffectiveFrom, string? Reason);
+
 public sealed record SafetyRuleRequest(
     string Code,
     string Title,
@@ -163,6 +170,24 @@ public static class OperationsEndpoints
             Command(http, b.Reason, c => s.RecordDepartureAsync(new RecordDeparture(new PersonId(personId)), c, ct)));
         api.MapPost("/workers/{personId:guid}/unavailability", (HttpContext http, Guid personId, UnavailabilityRequest b, WorkforceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordUnavailabilityAsync(new RecordUnavailability(new PersonId(personId), b.Kind, b.StartsAt, b.EndsAt), c, ct)));
+
+        // ADR 0057 §5: temporary moves (with an estimated end, extended or renewed) and transfers are separate actions.
+        api.MapGet("/workers", (HttpContext http, TimeProvider time, CancellationToken _) =>
+            ReadStore<IWorkforceLookup>(http, Permissions.WorkforceRead, async (l, ct) => await l.GetWorkerStatesAsync(time.GetUtcNow(), ct)));
+        api.MapGet("/moves", (HttpContext http, Guid? personId, bool? includeClosed, CancellationToken _) =>
+            ReadStore<IWorkforceLookup>(http, Permissions.WorkforceRead, async (l, ct) => await l.ListTemporaryMovesAsync(personId, includeClosed ?? false, ct)));
+        api.MapPost("/workers/{personId:guid}/moves", (HttpContext http, Guid personId, TemporaryMoveRequest b, WorkforceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.StartTemporaryMoveAsync(new StartTemporaryMove(new PersonId(personId), b.WorkCenterCode, b.StartsOn, b.EstimatedEndOn), c, ct)));
+        api.MapPost("/moves/{moveId:long}/extend", (HttpContext http, long moveId, MoveEndRequest b, WorkforceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ExtendTemporaryMoveAsync(new ExtendTemporaryMove(moveId, b.NewEndOn), c, ct)));
+        api.MapPost("/moves/{moveId:long}/renew", (HttpContext http, long moveId, MoveEndRequest b, WorkforceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ExtendTemporaryMoveAsync(new ExtendTemporaryMove(moveId, b.NewEndOn, Renew: true), c, ct)));
+        api.MapPost("/moves/{moveId:long}/end", (HttpContext http, long moveId, ReasonRequest b, WorkforceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.EndTemporaryMoveAsync(new EndTemporaryMove(moveId), c, ct)));
+        api.MapGet("/transfers", (HttpContext http, Guid? personId, CancellationToken _) =>
+            ReadStore<IWorkforceLookup>(http, Permissions.WorkforceRead, async (l, ct) => await l.ListTransfersAsync(personId, ct)));
+        api.MapPost("/workers/{personId:guid}/transfer", (HttpContext http, Guid personId, WorkerTransferRequest b, WorkforceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.TransferWorkerAsync(new TransferWorker(new PersonId(personId), b.WorkCenterCode, b.EffectiveFrom), c, ct)));
     }
 
     private static void MapSafetyRules(RouteGroupBuilder api)

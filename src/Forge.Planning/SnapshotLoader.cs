@@ -40,6 +40,7 @@ internal static class SnapshotLoader
             .GroupBy(l => l.PersonId)
             .ToDictionary(g => g.Key, g => g.OrderBy(l => l.StartedAt).Last());
 
+        var periods = (await uow.Store<IWorkforceLookup>().ListWorkCenterPeriodsAsync(ct)).ToLookup(p => p.PersonId);
         var people = workers
             .Select(w =>
             {
@@ -55,6 +56,7 @@ internal static class SnapshotLoader
                     held.Select(q => q.Code).ToList())
                 {
                     HomeWorkCenterCode = w.HomeWorkCenterCode,
+                    WorkCenterPeriods = periods[w.PersonId].ToList(),
                     ShiftCode = w.ShiftCode,
                     QualificationExpiry = held.ToDictionary(q => q.Code, q => q.ExpiresAt, StringComparer.Ordinal),
                     TrainedDocuments = trained.TryGetValue(w.PersonId, out var docs) ? docs : new HashSet<string>(StringComparer.Ordinal),

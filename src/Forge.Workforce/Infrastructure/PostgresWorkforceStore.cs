@@ -196,7 +196,7 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
     {
         await using var cmd = uow.Command(
             """
-            SELECT w.person_id, w.display_name, w.home_work_center, p.is_active,
+            SELECT w.person_id, w.display_name, COALESCE(h.work_center, w.home_work_center), p.is_active,
                    pr.kind, pr.valid_until,
                    un.kind,
                    a.safety_area_code, a.work_center_code, a.machine_code, a.activity_code, a.as_trainee, w.shift_code
@@ -211,6 +211,12 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
                 WHERE person_id = w.person_id AND starts_at <= $1 AND ends_at > $1
                 ORDER BY starts_at, unavailability_id LIMIT 1) un ON true
             LEFT JOIN workforce.assignment a ON a.person_id = w.person_id
+            -- The home in force on the home site's date (ADR 0057 §5): the latest transfer that has taken effect.
+            LEFT JOIN LATERAL (
+                SELECT work_center FROM workforce.home_history
+                WHERE person_id = w.person_id
+                  AND effective_from <= ($1 AT TIME ZONE COALESCE((SELECT time_zone FROM resources.site ORDER BY created_at, code LIMIT 1), 'America/New_York'))::date
+                ORDER BY effective_from DESC LIMIT 1) h ON true
             ORDER BY w.person_id
             """,
             at);
@@ -231,6 +237,152 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
         }
 
         return states;
+    }
+
+    private const string MoveSql = """
+        SELECT m.move_id, m.person_id, w.display_name, m.from_work_center, m.to_work_center, m.starts_on, m.ends_on, m.status, m.created_at, m.created_by,
+               m.reminded_for, m.closed_at, m.closed_by
+        FROM workforce.temporary_move m JOIN workforce.worker w ON w.person_id = m.person_id
+        """;
+
+    public async Task<long> InsertTemporaryMoveAsync(Guid person, string from, string to, DateOnly startsOn, DateOnly endsOn, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "INSERT INTO workforce.temporary_move (person_id, from_work_center, to_work_center, starts_on, ends_on, status, created_at, created_by) VALUES ($1, $2, $3, $4, $5, 'Active', $6, $7) RETURNING move_id",
+            person, from, to, startsOn, endsOn, at, actor);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<TemporaryMoveInfo?> FindTemporaryMoveAsync(long moveId, CancellationToken ct) =>
+        await ReadMovesAsync(MoveSql + " WHERE m.move_id = $1 FOR UPDATE OF m", ct, moveId) is [var move, ..] ? move : null;
+
+    public Task<IReadOnlyList<TemporaryMoveInfo>> ListTemporaryMovesAsync(Guid? personId, bool includeClosed, CancellationToken ct) =>
+        ReadMovesAsync(MoveSql + " WHERE ($1::uuid IS NULL OR m.person_id = $1) AND ($2 OR m.status = 'Active') ORDER BY m.move_id DESC", ct,
+            new NpgsqlParameter { Value = (object?)personId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid }, includeClosed);
+
+    private async Task<IReadOnlyList<TemporaryMoveInfo>> ReadMovesAsync(string sql, CancellationToken ct, params object[] args)
+    {
+        var rows = new List<TemporaryMoveInfo>();
+        await using (var cmd = uow.Command(sql, args))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct))
+            {
+                rows.Add(new TemporaryMoveInfo(r.GetInt64(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetFieldValue<DateOnly>(5), r.GetFieldValue<DateOnly>(6),
+                    Enum.Parse<TemporaryMoveStatus>(r.GetString(7)), r.GetFieldValue<DateTimeOffset>(8), r.GetString(9),
+                    r.IsDBNull(10) ? null : r.GetFieldValue<DateOnly>(10), r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11),
+                    r.IsDBNull(12) ? null : r.GetString(12), []));
+            }
+        }
+
+        if (rows.Count == 0)
+        {
+            return rows;
+        }
+
+        var changes = new List<(long MoveId, TemporaryMoveChange Change)>();
+        await using (var cmd = uow.Command(
+            "SELECT move_id, change_number, kind, previous_ends_on, ends_on, changed_at, changed_by FROM workforce.temporary_move_change WHERE move_id = ANY($1) ORDER BY move_id, change_number",
+            rows.Select(m => m.MoveId).ToArray()))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct))
+            {
+                changes.Add((r.GetInt64(0), new TemporaryMoveChange(r.GetInt32(1), r.GetString(2), r.GetFieldValue<DateOnly>(3), r.GetFieldValue<DateOnly>(4),
+                    r.GetFieldValue<DateTimeOffset>(5), r.GetString(6))));
+            }
+        }
+
+        var byMove = changes.ToLookup(c => c.MoveId, c => c.Change);
+        return rows.Select(m => m with { Changes = byMove[m.MoveId].ToList() }).ToList();
+    }
+
+    public async Task ChangeTemporaryMoveAsync(long moveId, string kind, DateOnly previousEndsOn, DateOnly endsOn, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using (var insert = uow.Command(
+            """
+            INSERT INTO workforce.temporary_move_change (move_id, change_number, kind, previous_ends_on, ends_on, changed_at, changed_by)
+            SELECT $1, COALESCE(max(change_number), 0) + 1, $2, $3, $4, $5, $6 FROM workforce.temporary_move_change WHERE move_id = $1
+            """,
+            moveId, kind, previousEndsOn, endsOn, at, actor))
+        {
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+
+        await using var update = uow.Command("UPDATE workforce.temporary_move SET ends_on = $2, reminded_for = NULL WHERE move_id = $1", moveId, endsOn);
+        await update.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task CloseTemporaryMoveAsync(long moveId, TemporaryMoveStatus status, DateOnly endsOn, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE workforce.temporary_move SET status = $2, ends_on = $3, closed_at = $4, closed_by = $5 WHERE move_id = $1 AND status = 'Active'",
+            moveId, status.ToString(), endsOn, at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task SetMoveRemindedAsync(long moveId, DateOnly endsOn, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE workforce.temporary_move SET reminded_for = $2 WHERE move_id = $1", moveId, endsOn);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<long?> InsertTransferAsync(Guid person, string from, string to, DateOnly effectiveFrom, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO workforce.home_history (person_id, from_work_center, work_center, effective_from, recorded_at, recorded_by)
+            VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (person_id, effective_from) DO NOTHING RETURNING transfer_id
+            """,
+            person, from, to, effectiveFrom, at, actor);
+        return await cmd.ExecuteScalarAsync(ct) is long id ? id : null;
+    }
+
+    public async Task<IReadOnlyList<HomeTransfer>> ListTransfersAsync(Guid? personId, CancellationToken ct)
+    {
+        var list = new List<HomeTransfer>();
+        await using var cmd = uow.Command(
+            "SELECT transfer_id, person_id, from_work_center, work_center, effective_from, recorded_at, recorded_by FROM workforce.home_history WHERE ($1::uuid IS NULL OR person_id = $1) ORDER BY person_id, effective_from",
+            new NpgsqlParameter { Value = (object?)personId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid });
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            list.Add(new HomeTransfer(r.GetInt64(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.GetFieldValue<DateOnly>(4), r.GetFieldValue<DateTimeOffset>(5), r.GetString(6)));
+        }
+
+        return list;
+    }
+
+    public async Task<IReadOnlyList<WorkCenterPeriod>> ListWorkCenterPeriodsAsync(CancellationToken ct)
+    {
+        var homes = new List<(Guid Person, string Center)>();
+        await using (var cmd = uow.Command("SELECT person_id, home_work_center FROM workforce.worker ORDER BY person_id"))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct))
+            {
+                homes.Add((r.GetGuid(0), r.GetString(1)));
+            }
+        }
+
+        var transfers = (await ListTransfersAsync(null, ct)).ToLookup(t => t.PersonId);
+        var moves = (await ListTemporaryMovesAsync(null, true, ct)).Where(m => m.EndsOn >= m.StartsOn).ToLookup(m => m.PersonId);
+        var periods = new List<WorkCenterPeriod>();
+        foreach (var (person, registered) in homes)
+        {
+            var center = registered;
+            var from = DateOnly.MinValue;
+            foreach (var transfer in transfers[person].OrderBy(t => t.EffectiveFrom))
+            {
+                periods.Add(new WorkCenterPeriod(person, center, from, transfer.EffectiveFrom.AddDays(-1), "Home"));
+                (center, from) = (transfer.WorkCenter, transfer.EffectiveFrom);
+            }
+
+            periods.Add(new WorkCenterPeriod(person, center, from, null, "Home"));
+            periods.AddRange(moves[person].OrderBy(m => m.StartsOn).Select(m => new WorkCenterPeriod(person, m.ToWorkCenter, m.StartsOn, m.EndsOn, "TemporaryMove", m.MoveId)));
+        }
+
+        return periods.OrderBy(p => p.PersonId).ThenBy(p => p.From).ThenBy(p => p.Kind, StringComparer.Ordinal).ToList();
     }
 
     private static WorkAssignment ReadAssignment(NpgsqlDataReader r, int o) => new(

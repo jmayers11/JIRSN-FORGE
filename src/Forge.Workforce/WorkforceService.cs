@@ -81,13 +81,26 @@ public interface IWorkforceStore
     Task<string?> SetShiftAsync(PersonId person, string? shiftCode, CancellationToken ct);
 
     Task InsertUnavailabilityAsync(PersonId person, UnavailabilityKind kind, DateTimeOffset startsAt, DateTimeOffset endsAt, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task<long> InsertTemporaryMoveAsync(Guid person, string from, string to, DateOnly startsOn, DateOnly endsOn, DateTimeOffset at, string actor, CancellationToken ct);
+
+    /// <summary>The move, locked for update.</summary>
+    Task<TemporaryMoveInfo?> FindTemporaryMoveAsync(long moveId, CancellationToken ct);
+
+    Task ChangeTemporaryMoveAsync(long moveId, string kind, DateOnly previousEndsOn, DateOnly endsOn, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task CloseTemporaryMoveAsync(long moveId, TemporaryMoveStatus status, DateOnly endsOn, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task SetMoveRemindedAsync(long moveId, DateOnly endsOn, CancellationToken ct);
+
+    Task<long?> InsertTransferAsync(Guid person, string from, string to, DateOnly effectiveFrom, DateTimeOffset at, string actor, CancellationToken ct);
 }
 
 /// <summary>
 /// Manufacturing workforce state. Keeps presence (evidence someone is on site, which expires),
 /// assignment (where and on what they work) and unavailability (no reason recorded) as separate facts.
 /// </summary>
-public sealed class WorkforceService(CommandPipeline pipeline)
+public sealed partial class WorkforceService(CommandPipeline pipeline)
 {
     public const string SourceContext = "Workforce";
     public static readonly TimeSpan DefaultPresence = TimeSpan.FromHours(8);

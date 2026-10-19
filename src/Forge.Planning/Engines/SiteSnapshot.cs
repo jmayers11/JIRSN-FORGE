@@ -27,6 +27,15 @@ public sealed record PersonSnapshot(
 
     public string? HomeWorkCenterCode { get; init; }
 
+    /// <summary>Home periods (transfers) and temporary moves over site dates (ADR 0057 §5); empty means always <see cref="HomeWorkCenterCode"/>.</summary>
+    public IReadOnlyList<WorkCenterPeriod> WorkCenterPeriods { get; init; } = [];
+
+    /// <summary>Where planning counts the person on a site date: a temporary move, else the home then in force.</summary>
+    public string? WorkCenterOn(DateOnly day) =>
+        WorkCenterPeriods.LastOrDefault(p => p.Kind == "TemporaryMove" && p.Covers(day))?.WorkCenterCode
+        ?? WorkCenterPeriods.LastOrDefault(p => p.Kind == "Home" && p.Covers(day))?.WorkCenterCode
+        ?? HomeWorkCenterCode;
+
     public string? ShiftCode { get; init; }
 
     /// <summary>Expiry of each currently valid qualification (null = never expires).</summary>
