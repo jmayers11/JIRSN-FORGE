@@ -1,4 +1,65 @@
 # AI_HANDOFF.md
+## Parallel work plan: Codex on UI/UX, Claude on simulation Phase C (2026-10-18, current)
+
+**Owner decision (2026-10-18 evening).** Codex does the UI/UX upgrades from the Gemini review while Claude builds
+simulation Phase C at the same time. The review is `jirsn_forge_ui_ux_architecture_review.gemini.md` in the repo
+root (untracked; Codex may move it to `docs/ui/` and commit it).
+
+### Who owns what
+
+| Agent | Scope (files it changes) | Must not change |
+|---|---|---|
+| **Codex** | `src/Forge.Host/wwwroot/**`, `tests/ui/**`, UI docs | C# code, schema, migrations, `tests/Forge.Simulation.Tests/**` |
+| **Claude** | `tests/Forge.Simulation.Tests/**`, `docs/v5/V5-simulation-*`, `simulate.cmd` | `src/**`, `tests/ui/**` |
+
+Anything outside these scopes (C#, schema, a new endpoint) needs the owner's approval first, as before.
+
+### Rules for working side by side (same PC, same working copy, same branch)
+
+1. **One heavy gate at a time.** `verify.cmd` and `simulate.cmd` both rebuild Forge in Release and use the local
+   PostgreSQL. Before starting either, check that `.forge-logs/verify.status` and `.forge-logs/simulate.status` do not
+   say `RUNNING`. Quick UI checks (`node --test tests/ui/*.test.mjs`, `node --check`) are fine at any time.
+2. **Commit only your own files.** Never `git add -A` or `git add .`. Stage paths explicitly. Pull/inspect `git status`
+   before committing; leave the other agent's uncommitted files alone.
+3. **Forge on port 5080 must be stopped during a build** (it locks the Release DLLs). Whoever stops it restarts it with
+   `.forge-logs/run-forge-release.cmd` when done.
+4. **Handoff files are shared.** Add a new dated section at the top of `AI_HANDOFF.md` and append to
+   `AI_SESSION_LOG.md`; never rewrite or delete the other agent's sections.
+5. **Git lock files.** Claude's sandbox cannot delete files, so a Claude git command can leave `.git/*.lock`. Claude
+   renames any it leaves to `.git/stale-*`. If Codex hits "File exists" on a lock and no git process is running, the
+   `.git/stale-*` and leftover `.lock` files can be deleted.
+
+### Corrections to the Gemini review (read before starting)
+
+1. **D1 is not a defect any more.** The owner ruled that maintenance work takes time (ADR 0056 §3). Drop deferred item 1
+   in §5.7 and the D1 notes in the Maintenance scorecard row; no UI work is needed for it.
+2. **Sprint 3 task 3.3 (scan staging) needs an owner ruling first.** Pre-filled default audit reasons would replace the
+   person's own reason with canned text, and auto-setting the "declared capture method" from keystroke timing turns an
+   operator declaration into a Forge guess. Both change V4.1 governance (ADR 0053/0054), not just presentation. Do the
+   rest of Sprint 3 (kiosk shell, idle countdown, touch numpad, work-instruction and hold buttons) but leave these two
+   until the owner decides.
+3. **Verify claims against the code before fixing them**, for example the "Material Constraint KPI hardcoded to null"
+   (`wwwroot/js/model.js`). The review is a starting point, not a specification.
+4. **§5.7 items stay deferred** (home work center change, overtime, audit-log viewer endpoint, BOM/routing editing,
+   costing, consigned tooling, excluded V5 slices). Each is backend work needing separate owner approval.
+5. **Scanned-code answers are now ruled** (ADR 0056 §2): unknown Forge code → 404 `identification_not_found`; anything
+   else → 400 `invalid_identification`; never echo the scanned value. UI messages should match.
+
+### Suggested order for Codex
+
+1. **Sprint 1** (CSS for the six unstyled pages, WCAG contrast, focus trapping in `confirmWithReason`/`formModal`, keep
+   user input on 5xx, replace `window.prompt`). Low risk; gate: all `tests/ui` suites.
+2. **Sprint 2** (repeater fields instead of JSON / `|`-delimited textareas; entity lookups instead of raw IDs). Keep the
+   existing parser functions exported so current UI tests still pass.
+3. **Sprints 3–4** after 1–2 settle (kiosk mode, navigation, tabbed object pages, lazy loading), with the exclusions above.
+4. Finish each sprint with a full `verify.cmd` (944+ checks), observing rule 1.
+
+### Claude, meanwhile
+
+Simulation Phase C (owner-approved factory size: 300 orders, 70 operators; 7/30/90-day consequences; readiness
+scorecard). Test code only. Phase C will produce a large realistic disposable database per run; it can serve as a demo
+dataset for checking the new screens at scale.
+
 ## V5 simulation Phase B gate closed and ADR 0056: Claude, 2026-10-18 (current)
 
 **Owner rulings, recorded in ADR 0056** (`docs/adr/0056-v5-owner-rulings-capacity-scans-and-maintenance-timing.md`; no code change):

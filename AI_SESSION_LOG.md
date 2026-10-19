@@ -901,3 +901,14 @@ Phase C (the full factory and 30/60/90-day runs).
 Committed, then restarted Forge on port 5080.
 
 **Next.** Phase C (the full factory and 30/60/90-day runs) when the owner approves it.
+
+## Claude: parallel work plan and handoff for Codex UI/UX (2026-10-18, evening)
+
+**Owner decision.** Codex starts the UI/UX upgrades from the Gemini review in parallel with Claude's simulation Phase C.
+
+**Done.** Handoff section with file ownership, rules for sharing the PC (one heavy gate at a time, explicit staging,
+Forge stop/restart, shared handoff files, git locks), corrections to the Gemini review (D1 ruled not a defect; scan
+staging defaults need an owner ruling; verify claims first; §5.7 stays deferred; ADR 0056 §2 code answers), and the
+suggested sprint order.
+
+**Next.** Codex: Sprint 1. Claude: simulation Phase C.
