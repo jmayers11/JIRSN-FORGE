@@ -264,7 +264,7 @@ internal static class FactoryBuilder
             var test = product.Routing.Single(o => o.Department == "TESTING").Sequence;
             await plant.Ok(fp.QualityEngineer, "/api/quality/plans", new
             {
-                partNumber = product.Part, sequence = test, title = "Functional test",
+                partNumber = product.Part, sequence = test, title = "Functional test", plannedMinutes = FactorySpec.TestInspectionMinutes,
                 characteristics = new object[] { new { name = "Leak rate", kind = "Variable", nominal = 1.0m, lower = 0m, upper = 2.0m, unit = "ml/min" }, new { name = "Label present", kind = "Attribute" } },
             });
         }

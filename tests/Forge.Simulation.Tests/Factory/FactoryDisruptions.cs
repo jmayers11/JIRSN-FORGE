@@ -86,7 +86,7 @@ internal sealed class FactoryDisruptions
         // Quality: the test rig drifts and a quarter of tests fail for four days.
         var drift = D(0.5);
         Add(drift, "Test failures rise to 25% for 4 days", Coverage.Mrb, "NCRs; concessions; packing waits; delivery", () => { run.InspectionFailure = 0.25; return Task.FromResult<string?>(null); });
-        Add(After(drift, 4), "Test failures back to normal", Coverage.Mrb, "NCR queue clears", () => { run.InspectionFailure = 0.02; return Task.FromResult<string?>(null); });
+        Add(After(drift, 4), "Test failures back to normal", Coverage.Mrb, "NCR queue clears", () => { run.InspectionFailure = FactoryRun.NormalInspectionFailure; return Task.FromResult<string?>(null); });
 
         // Network: for one day every seventh floor report loses its response and is retried with the same key.
         var network = D(0.6);

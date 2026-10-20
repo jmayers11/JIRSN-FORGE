@@ -1,4 +1,5 @@
 using Forge.Integration.Tests;
+using Forge.Kernel.Postgres;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -35,6 +36,17 @@ internal sealed class SimFactory : IAsyncDisposable
     public SlittingPlant.Plant Plant { get; }
 
     public SimApi Api { get; }
+
+    /// <summary>Delivers Forge's events to its subscribers now (re-plans, notifications), as the host's background services would.</summary>
+    public async Task DeliverEventsAsync()
+    {
+        var relay = App.Services.GetRequiredService<OutboxRelay>();
+        while (await relay.RelayBatchAsync(500, CancellationToken.None) > 0)
+        {
+        }
+
+        await App.Services.GetRequiredService<SubscriptionPump>().PumpOnceAsync(1_000_000, CancellationToken.None);
+    }
 
     /// <summary>The MaterialHandler and InventoryController from the reference plant; reads stock and the ledger.</summary>
     public HttpClient StoresUser => Api.As("stores");

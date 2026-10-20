@@ -66,6 +66,9 @@ public sealed record DemandSpec(int Index, int ArrivalDay, string Customer, stri
 /// </summary>
 public sealed class FactorySpec
 {
+    /// <summary>Planned time for the functional test inspection (ADR 0057 §2): the plan leaves this gap after the test operation.</summary>
+    public const int TestInspectionMinutes = 30;
+
     public const string Day = "DAY";
     public const string Swing = "SWING";
     public const string Night = "NIGHT";

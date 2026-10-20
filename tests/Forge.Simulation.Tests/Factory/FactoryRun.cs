@@ -99,6 +99,14 @@ internal sealed class DayStats
 
     public int InspectionsRefusedCalibration { get; set; }
 
+    /// <summary>Inspections Forge listed as due that the floor routine had not done; the morning sweep did them.</summary>
+    public int InspectionsCaughtUp { get; set; }
+
+    /// <summary>Re-plans Forge made after a failed inspection or a new NCR (ADR 0057 §2.4), and the orders they moved.</summary>
+    public int Replans { get; set; }
+
+    public int ReplanOrdersMoved { get; set; }
+
     public int ScheduledOrders { get; set; }
 
     public int OnTime { get; set; }
@@ -197,7 +205,10 @@ internal sealed class FactoryRun
     public HashSet<string> HeldLots { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Test failure probability at inspection (raised by the inspection-failure disruption).</summary>
-    public double InspectionFailure { get; set; } = 0.02;
+    public double InspectionFailure { get; set; } = NormalInspectionFailure;
+
+    /// <summary>The usual share of tests that fail: high enough to exercise NCRs, concessions, re-tests and re-plans every few days.</summary>
+    public const double NormalInspectionFailure = 0.05;
 
     /// <summary>Drop every n-th shop-floor report's response and retry with the same key (network disruption); 0 = never.</summary>
     public int LoseEveryNthReport { get; set; }
@@ -315,6 +326,7 @@ internal sealed class FactoryRun
                 await CalibrationAsync();
                 await ReceiveAsync();
                 await QualityAsync();
+                await CatchUpInspectionsAsync();
                 await MrpAsync();
                 await ShipAsync();
                 var schedule = await ScheduleAsync();
@@ -322,6 +334,8 @@ internal sealed class FactoryRun
                 {
                     await ExecuteAsync(s);
                 }
+
+                await ReplansAsync();
             }
 
             if (IsCheckpoint(day))
@@ -336,6 +350,8 @@ internal sealed class FactoryRun
         report.Expect("End: days with an approved schedule", "more than 0", Days.Any(d => d.ScheduledOrders > 0) ? "more than 0" : "0", "Execution");
         report.Expect("End: scheduled segments started on the floor", "more than 0", Days.Sum(d => d.SegmentsStarted) > 0 ? "more than 0" : "0", "Execution");
         report.Expect("End: operations completed", "more than 0", Days.Sum(d => d.OperationsCompleted) > 0 ? "more than 0" : "0", "Execution");
+        report.Note($"Inspections: {Days.Sum(d => d.Inspections)} recorded ({Days.Sum(d => d.InspectionsCaughtUp)} by the morning sweep of Forge's due list), {Days.Sum(d => d.Ncrs)} failed and raised an NCR; "
+            + $"{Days.Sum(d => d.Replans)} re-plan(s) after quality events moved {Days.Sum(d => d.ReplanOrdersMoved)} order projection(s) (ADR 0057 §2).");
         await Invariants.AuditChain(report, "End", p.F.Plant.Admin);
         report.Rule(Basis.Invariant, "Amendment: no server errors");
         report.ExpectInvariant("End: commands answered without a server error", "0", ServerErrors.Count.ToString(CultureInfo.InvariantCulture), "Amendment: resilience (no 5xx)");
@@ -997,6 +1013,54 @@ internal sealed class FactoryRun
         }
     }
 
+    /// <summary>
+    /// The morning sweep: every inspection Forge lists as due that has never failed is done now, with the usual chance
+    /// of failing (ADR 0057 §2). Failed ones wait for their NCR decision, which re-tests them. Counted, so a gap in the
+    /// floor routine shows in the results.
+    /// </summary>
+    private async Task CatchUpInspectionsAsync()
+    {
+        if (await p.Api.TryRead(p.Inspector, "/api/quality/due") is not { ValueKind: JsonValueKind.Array } due)
+        {
+            return;
+        }
+
+        foreach (var item in due.EnumerateArray().Where(d => !d.GetProperty("lastFailed").GetBoolean() && d.GetProperty("operationStatus").GetString() == "Complete").ToList())
+        {
+            var number = item.GetProperty("orderNumber").GetInt64();
+            var seq = item.GetProperty("sequence").GetInt32();
+            if (Orders.ContainsKey(number) && await InspectAsync(number, seq, forcePass: false))
+            {
+                stats.InspectionsCaughtUp++;
+                pendingInspections.RemoveAll(x => x == (number, seq));
+            }
+        }
+    }
+
+    /// <summary>
+    /// At the end of the working day Forge's events are delivered, so a failed inspection's re-plan (ADR 0057 §2.4)
+    /// happens as it would in the plant. The re-plan is counted with the orders it moved; the next morning's proposal
+    /// replaces it, as a planner's would.
+    /// </summary>
+    private async Task ReplansAsync()
+    {
+        var before = (await p.Api.TryRead(p.Planner, "/api/planning/schedules/proposed"))?.GetProperty("versionId").GetInt64();
+        await p.F.DeliverEventsAsync();
+        if (await p.Api.TryRead(p.Planner, "/api/planning/schedules/proposed") is { } proposed
+            && proposed.GetProperty("versionId").GetInt64() != before
+            && proposed.GetProperty("proposedBy").GetString() == "system:quality-replan")
+        {
+            stats.Replans++;
+            var summary = proposed.GetProperty("summary").GetString() ?? string.Empty;
+            var marker = summary.IndexOf(" order(s) move", StringComparison.Ordinal);
+            var start = summary.LastIndexOf(':', Math.Max(0, marker)) + 1;
+            if (marker > 0 && int.TryParse(summary.AsSpan(start, marker - start).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var moved))
+            {
+                stats.ReplanOrdersMoved += moved;
+            }
+        }
+    }
+
     /// <summary>The inspector tests a sample at the gauge; a seeded share fail and raise an NCR. Answers whether a result was recorded.</summary>
     private async Task<bool> InspectAsync(long number, int seq, bool forcePass)
     {
@@ -1281,13 +1345,13 @@ internal sealed class FactoryRun
     /// <summary>The day-by-day table as CSV.</summary>
     public string DaysCsv()
     {
-        var sb = new StringBuilder("day,arrived,ordersCreated,purchaseOrders,receipts,segmentsPlanned,segmentsStarted,startsRefused,segmentsSkipped,reportsRefused,operationsCompleted,ordersCompleted,unitsShipped,inspections,inspectionsRefusedCalibration,ncrs,scheduledOrders,onTime,atRisk,late,unschedulable,scheduleMs,events\n");
+        var sb = new StringBuilder("day,arrived,ordersCreated,purchaseOrders,receipts,segmentsPlanned,segmentsStarted,startsRefused,segmentsSkipped,reportsRefused,operationsCompleted,ordersCompleted,unitsShipped,inspections,inspectionsRefusedCalibration,inspectionsCaughtUp,ncrs,replans,replanOrdersMoved,scheduledOrders,onTime,atRisk,late,unschedulable,scheduleMs,events\n");
         foreach (var d in Days)
         {
             sb.Append(string.Join(',', new object[]
             {
                 d.Day + 1, d.Arrived, d.OrdersCreated, d.PurchaseOrders, d.Receipts, d.SegmentsPlanned, d.SegmentsStarted, d.StartsRefused, d.SegmentsSkipped, d.ReportsRefused,
-                d.OperationsCompleted, d.OrdersCompleted, d.UnitsShipped, d.Inspections, d.InspectionsRefusedCalibration, d.Ncrs, d.ScheduledOrders, d.OnTime, d.AtRisk, d.Late, d.Unschedulable,
+                d.OperationsCompleted, d.OrdersCompleted, d.UnitsShipped, d.Inspections, d.InspectionsRefusedCalibration, d.InspectionsCaughtUp, d.Ncrs, d.Replans, d.ReplanOrdersMoved, d.ScheduledOrders, d.OnTime, d.AtRisk, d.Late, d.Unschedulable,
                 Math.Round(d.ScheduleMilliseconds), "\"" + d.Events.Replace("\"", "'", StringComparison.Ordinal) + "\"",
             }.Select(x => Convert.ToString(x, CultureInfo.InvariantCulture)))).Append('\n');
         }
