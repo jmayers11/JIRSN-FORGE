@@ -95,6 +95,20 @@ test('stale version reports refresh requirement without updating the captured ve
   assert.equal(h.calls.find(call => call.path.endsWith('/approve')).body.expectedVersion, 7); assert.equal(h.document.querySelector('.toast'), null);
 });
 
+test('uncertain QMS command outcome preserves the form and blocks another decision until refresh', async t => {
+  const h = await pageHarness(t, { route: (path, body) => body && path.endsWith('/approve') ? response({ detail: 'The service is temporarily unavailable.' }, 503) : null });
+  await h.open(); fire(h.page.querySelector('[data-qms-action="approve"]'), 'click');
+  const modal = h.document.querySelector('.modal'); fill(modal, { qmsNote: 'Approval based on the current controlled scope', qmsReason: 'Independent review completed' });
+  const submit = modal.querySelector('[data-qms-confirm]'); fire(submit, 'click'); await flush();
+  assert.equal(modal.isConnected, true); assert.equal(modal.querySelector('#f-qmsNote').value, 'Approval based on the current controlled scope');
+  assert.equal(modal.querySelector('#f-qmsReason').value, 'Independent review completed'); assert.equal(submit.disabled, true);
+  assert.match(modal.querySelector('[data-qms-error]').textContent, /entries are preserved/); assert.equal(h.document.querySelector('.toast'), null);
+  fire(modal.querySelector('[data-cancel]'), 'click');
+  assert.equal(h.page.querySelector('[data-qms-action="approve"]'), null);
+  fire(h.page.querySelector('[data-qms-refresh]'), 'click'); await flush();
+  assert.ok(h.page.querySelector('[data-qms-action="approve"]'));
+});
+
 test('refresh, signout and disposal invalidate detached decision contexts before a command can be sent', async t => {
   for (const mode of ['refresh', 'signout', 'dispose']) await t.test(mode, async child => {
     const h = await pageHarness(child); await h.open(); fire(h.page.querySelector('[data-qms-action="approve"]'), 'click');
@@ -203,9 +217,12 @@ test('scope-specific permission hides a decision outside the granted actual faci
   assert.equal(h.page.querySelector('[data-qms-action="approve"]'), null); assert.equal(h.page.querySelector('[data-qms-create]'), null);
 });
 
-test('an uncertain approval outcome closes the decision and never queues an automatic retry', async t => {
+test('an uncertain approval outcome preserves entries, blocks retry and requires record refresh', async t => {
   const h = await pageHarness(t, { route: (path, body) => body && path.endsWith('/approve') ? Promise.reject(new TypeError('Failed to fetch')) : null }); await h.open(); fire(h.page.querySelector('[data-qms-action="approve"]'), 'click');
-  const modal = h.document.querySelector('.modal'); fill(modal, { qmsNote: 'Approval basis', qmsReason: 'Recorded decision' }); fire(modal.querySelector('[data-qms-confirm]'), 'click'); await flush();
-  assert.equal(modal.isConnected, false); assert.match(h.document.querySelector('.toast').textContent, /Check the record before retrying/);
-  assert.equal(h.calls.filter(call => call.path.endsWith('/approve')).length, 1); assert.equal(h.document.listeners.get('keydown').size, 0);
+  const modal = h.document.querySelector('.modal'); fill(modal, { qmsNote: 'Approval basis', qmsReason: 'Recorded decision' }); const submit = modal.querySelector('[data-qms-confirm]'); fire(submit, 'click'); await flush();
+  assert.equal(modal.isConnected, true); assert.equal(modal.querySelector('#f-qmsNote').value, 'Approval basis'); assert.equal(modal.querySelector('#f-qmsReason').value, 'Recorded decision');
+  assert.equal(submit.disabled, true); assert.match(modal.querySelector('[data-qms-error]').textContent, /entries are preserved/);
+  assert.equal(h.calls.filter(call => call.path.endsWith('/approve')).length, 1); assert.equal(h.document.querySelector('.toast'), null);
+  fire(modal.querySelector('[data-cancel]'), 'click'); assert.equal(h.page.querySelector('[data-qms-action="approve"]'), null);
+  fire(h.page.querySelector('[data-qms-refresh]'), 'click'); await flush(); assert.ok(h.page.querySelector('[data-qms-action="approve"]'));
 });

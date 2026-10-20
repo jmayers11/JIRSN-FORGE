@@ -1,4 +1,4 @@
-import { session, loadConfig, get, tryGet, signedIn, signInDevelopment, signOut, whenSignedOut, beginOidcSignIn, completeOidcSignIn } from './api.js';
+import { session, loadConfig, get, tryGet, signedIn, signInDevelopment, signOut, whenSignedOut, beginOidcSignIn, completeOidcSignIn, onCommand } from './api.js';
 import { icon, img } from './icons.js';
 import { esc, $, $$, setTimeZone, closeOverlays, drawer, toast } from './ui.js';
 import { horizonPage } from './pages/horizon.js';
@@ -11,7 +11,7 @@ import { workforcePage } from './pages/workforce.js';
 import { settingsPage } from './pages/settings.js';
 import { shopFloorPage } from './pages/shopfloor.js';
 import { plantSetupPage } from './pages/plantsetup.js';
-import { inventoryPage } from './pages/inventory.js';
+import { inventoryPage, receivingPage } from './pages/inventory.js';
 import { mrpPage } from './pages/mrp.js';
 import { procurementPage } from './pages/procurement.js';
 import { qualityPage } from './pages/quality.js';
@@ -38,6 +38,9 @@ import { integrityPage } from './pages/integrity.js';
 import { scenariosPage } from './pages/scenarios.js';
 import { loadDirectory } from './people.js';
 import { roleTitle } from './roles.js';
+import { isKioskMode } from './shell-mode.mjs';
+import { filterNavGroups } from './navigation.mjs';
+import { canAction } from './ui-authority.mjs';
 
 const NAV = [
   { route: 'home', label: 'Home', icon: 'dashboard', page: horizonPage },
@@ -50,6 +53,7 @@ const NAV = [
   { route: 'scenarios', label: 'Scenarios', icon: 'scenarios', page: scenariosPage },
   { route: 'material-plan', label: 'Material Plan', icon: 'material', page: mrpPage },
   { route: 'work-centers', label: 'Work Centers', icon: 'production', page: workCentersPage },
+  { route: 'tools', label: 'Tools & Calibration', icon: 'gauge', href: '#/work-centers?focus=tools' },
   { route: 'shop-floor', label: 'Shop Floor', icon: 'operator', page: shopFloorPage },
   { route: 'plant-setup', label: 'Plant Setup', icon: 'factory', page: plantSetupPage },
   { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
@@ -59,6 +63,7 @@ const NAV = [
   { route: 'my-work', label: 'My Work', icon: 'inbox', page: workInboxPage },
   { route: 'integrity', label: 'Data Integrity', icon: 'integrity', page: integrityPage },
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
+  { route: 'receiving', label: 'Receiving', icon: 'inventory', page: receivingPage },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
   { route: 'acceptance', label: 'Product Acceptance', icon: 'acceptance', page: acceptancePage },
@@ -77,11 +82,33 @@ const NAV = [
 ];
 const NAV_GROUPS = [
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
-  ['Make', ['orders', 'work-centers', 'shop-floor', 'plant-setup', 'workforce', 'safety-rules', 'shift-continuity', 'inventory', 'procurement', 'maintenance', 'shipping']],
+  ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'workforce', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'maintenance', 'shipping']],
   ['Quality', ['quality', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
   ['Admin', ['my-work', 'notifications', 'integrity', 'reports', 'analyst', 'access']],
 ];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
+
+const NAV_ACCESS = {
+  home: ['planning.readiness.read', 'planning.schedule.read', 'execution.orders.read', 'resources.read', 'quality.read', 'inventory.read'],
+  horizon: ['planning.schedule.read', 'planning.readiness.read'], programs: ['programs.read', 'programs.manage'],
+  projects: ['projects.read', 'projects.manage'], orders: ['execution.orders.read', 'execution.orders.manage'],
+  engineering: ['engineering.read', 'engineering.manage'], scheduling: ['planning.schedule.read', 'planning.schedule.propose', 'planning.schedule.approve'],
+  scenarios: ['planning.schedule.read', 'planning.readiness.read'], 'material-plan': ['planning.mrp.read', 'planning.demand.manage'],
+  'work-centers': ['resources.read', 'planning.readiness.read', 'execution.shopfloor.read'], 'shop-floor': ['execution.shopfloor.read'],
+  tools: ['resources.read', 'planning.readiness.read', 'execution.shopfloor.read'],
+  'plant-setup': ['resources.manage', 'resources.read'], workforce: ['workforce.read', 'workforce.manage'],
+  receiving: ['inventory.read', 'inventory.transact'],
+  'safety-rules': ['safety.rules.read', 'safety.rules.draft', 'safety.rules.approve'],
+  'shift-continuity': ['execution.shopfloor.read', 'workforce.read'], notifications: ['notifications.read'],
+  integrity: ['kernel.audit.read'], inventory: ['inventory.read', 'inventory.transact'], procurement: ['procurement.read', 'procurement.manage'],
+  quality: ['quality.read', 'quality.inspect'], acceptance: ['quality.read', 'quality.inspect', 'quality.product.release'],
+  investigations: ['quality.read', 'quality.plan', 'quality.disposition'], qms: ['quality.qms.read'],
+  'qms-planning': ['quality.qms.read', 'quality.qms.manage'], 'qms-audit': ['quality.audit.conduct', 'quality.audit.manage', 'quality.qms.read'],
+  'qms-review': ['quality.qms.read', 'quality.qms.review'], 'qms-metrics': ['quality.qms.read'],
+  'commercial-quality': ['quality.read', 'quality.qms.read'], maintenance: ['maintenance.read', 'maintenance.work', 'maintenance.plan'],
+  shipping: ['inventory.read', 'inventory.shipping.ship'], reports: ['planning.reports.save', 'planning.schedule.read', 'quality.read'],
+  analyst: ['planning.analyst.use'], access: ['kernel.access.manage'],
+};
 
 export { roleTitle };
 
@@ -132,27 +159,33 @@ function renderLogin(message) {
 // ---------------------------------------------------------------- shell
 
 let lookups = null; // search index, loaded lazily
+let supervisorKioskMode = null;
+let showAllModules = false;
+onCommand(() => { lookups = null; $('#search-results')?.classList.add('hidden'); });
 
 function renderShell() {
   const me = session.me;
   const initials = me.displayName.split(/\s+/).map(p => p[0]).join('').slice(0, 2).toUpperCase();
-  const navItem = n => `<li><a href="#/${n.route}" data-route="${n.route}">${img(n.icon)}<span>${esc(n.label)}</span>${n.badge ?? ''}</a></li>`;
-  const groupedNav = (() => {
+  const navItem = n => `<li><a href="${n.href ?? `#/${n.route}`}" data-route="${n.route}">${img(n.icon)}<span>${esc(n.label)}</span>${n.badge ?? ''}</a></li>`;
+  const groupedNav = () => {
+    const activeRoute = location.hash.replace(/^#\/?/, '').split(/[/?#]/)[0] || 'home';
+    const groupsToShow = filterNavGroups(NAV_GROUPS, NAV_ACCESS, permission => canAction(me, permission), showAllModules);
     const byRoute = new Map(NAV.map(item => [item.route, item]));
     const assigned = new Set();
-    const groups = NAV_GROUPS.map(([label, routes]) => {
+    const groups = groupsToShow.map(([label, routes]) => {
       const entries = routes.map(route => byRoute.get(route)).filter(Boolean);
       entries.forEach(item => assigned.add(item.route));
-      return entries.length ? `<li class="nav-section">${esc(label)}</li>${entries.map(navItem).join('')}` : '';
+      return entries.length ? `<li class="nav-group"><details data-nav-group="${esc(label)}" ${routes.includes(activeRoute) ? 'open' : ''}><summary>${esc(label)}<span>${entries.length}</span></summary><ul class="nav-sub">${entries.map(navItem).join('')}</ul></details></li>` : '';
     }).join('');
     const remaining = NAV.filter(item => !assigned.has(item.route));
-    return groups + (remaining.length ? `<li class="nav-section">More</li>${remaining.map(navItem).join('')}` : '');
-  })();
+    return groups + (remaining.length ? `<li class="nav-group"><details><summary>More</summary><ul class="nav-sub">${remaining.map(navItem).join('')}</ul></details></li>` : '');
+  };
   $('#app').innerHTML = `
     <div class="shell" id="shell">
       <nav class="sidebar" aria-label="Main">
         ${brand()}
-        <ul class="nav">${groupedNav}</ul>
+        <ul class="nav" id="main-nav">${groupedNav()}</ul>
+        <div class="nav-tools"><button class="btn small ghost" id="show-all-modules" type="button" aria-pressed="${showAllModules}">${showAllModules ? 'Show permitted modules' : 'Show all modules'}</button></div>
         <ul class="nav nav-bottom">${navItem(SETTINGS)}</ul>
       </nav>
       <div class="main">
@@ -177,6 +210,13 @@ function renderShell() {
       </div>
     </div>`;
   $('#menu').onclick = () => $('#shell').classList.toggle('nav-open');
+  const allModules = $('#show-all-modules');
+  allModules.onclick = () => {
+    showAllModules = !showAllModules;
+    allModules.setAttribute('aria-pressed', String(showAllModules));
+    allModules.textContent = showAllModules ? 'Show permitted modules' : 'Show all modules';
+    $('#main-nav').innerHTML = groupedNav();
+  };
   $('#user-card').onclick = () => { location.hash = '#/settings'; };
   $('#bell').onclick = () => { location.hash = '#/notifications'; };
   $('#help').onclick = showHelp;
@@ -248,7 +288,16 @@ async function route() {
   const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
   const [name, ...rest] = path.split('/');
   const entry = [...NAV, SETTINGS].find(n => n.route === (name || 'home')) ?? NAV[0];
-  $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.route === entry.route));
+  const supervisorCanToggleKiosk = entry.route === 'shop-floor' && session.me.roles.includes('Supervisor');
+  const setKioskMode = value => {
+    if (!supervisorCanToggleKiosk) return;
+    supervisorKioskMode = !!value;
+    $('#shell')?.classList.toggle('kiosk-mode', isKioskMode(entry.route, session.me.roles, supervisorKioskMode));
+  };
+  $('#shell')?.classList.toggle('kiosk-mode', isKioskMode(entry.route, session.me.roles, supervisorKioskMode));
+  const focus = new URLSearchParams(location.hash.split('?')[1] ?? '').get('focus');
+  const activeRoute = entry.route === 'work-centers' && focus === 'tools' ? 'tools' : entry.route;
+  $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.route === activeRoute));
   // Each visit renders into a fresh element, so a slow page that finishes after you moved on writes nowhere.
   const page = document.createElement('div');
   page.style.display = 'contents';
@@ -256,7 +305,8 @@ async function route() {
   current?.dispose?.();
   page.innerHTML = '<div class="muted">Loading…</div>';
   try {
-    current = await entry.page(page, { params: rest.map(decodeURIComponent), query: new URLSearchParams(query ?? ''), me: session.me, refreshBell }) ?? null;
+    current = await entry.page(page, { params: rest.map(decodeURIComponent), query: new URLSearchParams(query ?? ''), route: entry.route, me: session.me, refreshBell,
+      kioskMode: isKioskMode(entry.route, session.me.roles, supervisorKioskMode), setKioskMode }) ?? null;
   } catch (e) {
     page.innerHTML = `<div class="empty"><b>This page could not load</b>${esc(e.message)}</div>`;
   }

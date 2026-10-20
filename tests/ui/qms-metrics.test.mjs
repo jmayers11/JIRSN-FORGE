@@ -31,10 +31,15 @@ test('metrics page requests an explicit inclusive/exclusive period and renders r
   };
   const controller = await qmsMetricsPage(page); t.after(controller.dispose);
   assert.match(page.innerHTML, /From, inclusive/); assert.match(page.innerHTML, /To, exclusive/);
+  assert.match(page.querySelector('[data-from]').value, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(page.querySelector('[data-to]').value, /^\d{4}-\d{2}-\d{2}T/);
+  await flush(); await flush();
+  assert.equal(calls.length, 1, 'the default 30-day window loads on entry');
+  assert.match(calls[0].path, /metrics\/dashboard/);
   page.querySelector('[data-from]').value = '2026-10-01T00:00'; page.querySelector('[data-to]').value = '2026-10-02T00:00';
   fire(page.querySelector('[data-metric-period]'), 'submit'); await flush();
-  assert.equal(calls.length, 1); assert.match(calls[0].path, /metrics\/dashboard/);
-  assert.ok(calls[0].path.includes('from=' + encodeURIComponent(new Date('2026-10-01T00:00').toISOString())));
-  assert.ok(calls[0].path.includes('to=' + encodeURIComponent(new Date('2026-10-02T00:00').toISOString())));
+  assert.equal(calls.length, 2); assert.match(calls[1].path, /metrics\/dashboard/);
+  assert.ok(calls[1].path.includes('from=' + encodeURIComponent(new Date('2026-10-01T00:00').toISOString())));
+  assert.ok(calls[1].path.includes('to=' + encodeURIComponent(new Date('2026-10-02T00:00').toISOString())));
   assert.match(page.innerHTML, /Recorded good/); assert.match(page.innerHTML, /24 EA/); assert.match(page.innerHTML, /Complete declared cohort/); assert.match(page.innerHTML, /OnTarget/);
 });

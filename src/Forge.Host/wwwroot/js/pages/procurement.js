@@ -2,7 +2,7 @@ import { sourcingQueue } from '../sourcing.js';
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
-import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, drawer } from '../ui.js';
+import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, drawer, enhanceTables } from '../ui.js';
 import { formModal, qty, canAction, plusDays } from '../forms.js';
 
 // Purchase orders (spec §48): a buyer drafts, someone else approves, and only approved open lines
@@ -53,6 +53,7 @@ export async function procurementPage(page, ctx) {
       ${late.length ? `<div class="notice bad">${late.length} line(s) are past their promised date and not fully received. Receive them or record the supplier's new date so MRP and the schedule stay honest.</div>` : ''}
       ${data.orders.error ? errorBlock(data.orders.error, 'purchase orders') : !list.length ? emptyBlock('No purchase orders', buyer ? 'Draft one here, or from a Buy recommendation on the Material Plan.' : 'A buyer drafts purchase orders.') : list.map(card).join('')}`;
 
+    enhanceTables(page);
     bindTabs();
     $('#closed', page).onchange = e => { showClosed = e.target.checked; render(); };
     $('#new-po', page)?.addEventListener('click', newPo);
@@ -169,6 +170,7 @@ export async function procurementPage(page, ctx) {
             <td class="nowrap">${buyer ? `<button class="btn small primary" data-order-req="${r.requisitionId}">Order</button> <button class="btn small ghost" data-alts-req="${esc(r.partNumber)}">Alternates</button>` : ''}
               <button class="btn small ghost" data-cancel-req="${r.requisitionId}">Cancel</button></td></tr>`).join('')}
           </tbody></table></section>`).join('')}`;
+    enhanceTables(page);
     bindTabs();
     $('#raise', page)?.addEventListener('click', raise);
     $$('[data-order-req]', page).forEach(b => b.addEventListener('click', () => orderRequisition(list.find(r => String(r.requisitionId) === b.dataset.orderReq))));
@@ -259,6 +261,7 @@ export async function procurementPage(page, ctx) {
               <button class="btn small ghost" data-docs-supplier="${esc(x.code)}">Documents</button></td></tr>`;
         }).join('')}
       </tbody></table></div></section>`}`;
+    enhanceTables(page);
     bindTabs();
     $('#new-supplier', page)?.addEventListener('click', () => formModal({ title: 'New supplier', confirmLabel: 'Add supplier',
       fields: [

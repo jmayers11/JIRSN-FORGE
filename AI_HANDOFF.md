@@ -1,4 +1,155 @@
 # AI_HANDOFF.md
+
+## Codex: production-order workspace and all-pages UI review (2026-10-19, latest)
+
+The owner asked for a UI pass across all pages and specifically requested a work-order header, Operations and Bill of
+materials tabs, order search, and work-instruction printing by operation. The source-level review and prioritized
+follow-up are in `docs/ui/ui-ux-audit-2026-10-19.md`.
+
+- Production order details (`#/orders/{number}`) now have a structured facts header with part/revision, quantity,
+  due date, priority, state, available program/WBS/contract context, creator and release information.
+- Operations and Bill of materials are independent workspace tabs. Operations show description, work center,
+  activity, eligible machines, set-up family, planned hours, quantities and status.
+- Each operation with applicable controlled Work Instructions gets a print action. Item-wide instructions apply to
+  every operation and sequence-specific instructions apply only to that sequence. The packet loads the order's
+  recorded revision at release, or current/pinned applicability for an unreleased order. Browser-printable files are
+  embedded; other files remain downloadable from the print view. The Engineering read permission and existing
+  document/file APIs remain in force.
+- Production Orders list search covers number, part, revision and status, including the single-row case. It shows a
+  live result count and does not duplicate the shared table filter; shared column sorting remains enabled.
+- Scope is frontend, UI tests and UI handoff only. Maintenance work orders remain asset-maintenance records with
+  checklists/parts; they have no manufacturing routing or BOM.
+
+**Checks.** `node --test tests/ui/*.test.mjs` passed **262/262**; `node --check` passed for all **63** frontend
+modules; `git diff --check` found no whitespace errors (only repository LF-to-CRLF working-copy warnings). The full
+backend/database gate and seeded-role browser smoke were not rerun. See the audit document for the review inventory,
+findings and recommended next slices.
+
+**Preview check.** PostgreSQL service `postgresql-x64-18` is Running and `127.0.0.1:5432` accepts TCP connections.
+`run-forge.cmd` could not restore because NuGet vulnerability-feed access failed (`NU1900`, promoted to an error).
+Running the existing Release build with restore disabled reached PostgreSQL but failed with `28P01` password
+authentication for database user `forge`; no credential was printed or changed. Port 5080 is not listening, so the
+new page has not had a live browser check. Once the local Forge connection settings match the database, run
+`run-forge.cmd` and smoke-check `#/orders` and a released order with PDF work instructions.
+
+## Codex: ADR 0057 UI screens (2026-10-19, latest)
+
+Implemented the three UI screens called out in the ADR 0057 handoff. Work is limited to frontend modules and UI tests;
+no backend, database, migration, or simulation files were changed.
+
+- **Site time:** Plant Setup displays each site's live date and time in its configured IANA zone. Adding a site
+  requires an explicit timezone instead of inheriting the operator's device or a guessed default. Editing a site's
+  timezone is audited and requires a reason.
+- **Worker moves and transfers:** Manage People now separates a temporary move from a permanent home-work-center
+  transfer. It shows move and transfer history, supports move extension, renewal and early end, applies the worker's
+  home site's date for defaults, and refreshes worker state after commands. Commands retain the existing reason/audit
+  flow and permission gates.
+- **Routing operations:** Engineering item details now show the selected revision's routing, allow draft creation,
+  and add/remove operations on a draft. Operation forms include machine and qualification constraints, full set-up
+  and run times, and the optional set-up family/same-family time pair. The pair is validated together and same-family
+  time cannot exceed full set-up. Released revisions remain read-only.
+- Entry points: Plant Setup is `#/plant-setup`; moves and transfers are in the Manage People panel on `#/workforce`;
+  routing is on Engineering item details (`#/engineering/{partNumber}`).
+- Added regression coverage for the site clock/timezone, worker move and transfer API payloads and site-local date,
+  and routing operation validation, submission and display.
+
+**Checks.** `node --test tests/ui/*.test.mjs` passed **256/256**. `node --check` passed for all **63** JavaScript
+modules under `src/Forge.Host/wwwroot/js`. `git diff --check` reported no whitespace errors; Git emitted only its
+working-copy LF-to-CRLF notices. The full `verify.cmd`/database suite was not rerun for this frontend-only slice.
+
+**Integration and preview.** The existing `.forge-logs/check-adr57.log` ended with 353 integration tests: 347 passed,
+6 failed, including `WorkerMoveTests.A_temporary_move_ends_by_itself_unless_extended_and_a_transfer_is_separate`
+(`no_change` expected, `ok` returned). `.forge-logs/check-adr57.status` still contains `RUNNING integration` and
+`FAIL`, so its status text is inconsistent with the completed log; neither file was changed. PostgreSQL was running
+and reachable, and no test/host process was active when checked. The documented Release preview is now running on
+port 5080 (host PID 9352); `http://localhost:5080/` and the updated Plant Setup, Workforce, and Engineering modules
+returned HTTP 200. Startup applied the current workforce move, setup-family, inspection-time, and schedule-impact
+migrations to the local `forge` database. The log also records Data Protection failures decrypting old DPAPI key-ring
+entries and a denied Windows Event Log write; the host still started. If sign-in or session cookies fail, inspect
+`.forge-logs/forge-5080.log`. Stop the preview before a Release rebuild or full `verify.cmd` run.
+
+## Codex UI/UX Sprint 5 implementation status (2026-10-19, latest)
+
+This section supersedes the older sprint “Next” notes below. The attached review is
+`jirsn_forge_ui_ux_architecture_review.gemini.md`; its recommendations were applied within the frontend scope and the
+parallel-work boundaries already recorded below. No C#, schema, migration, simulation-test, or backend changes were
+made for this UI/UX work.
+
+**Sprints 1–5 implemented.**
+- Sprint 1: shared responsive styles and WCAG AA text contrast; focus trapping and Escape handling for reason
+  dialogs; safe preservation of entered form data when a command result is uncertain; replaced the work inbox prompt.
+- Sprint 2: typed repeaters and searchable entity lookups now collect structured rows/labels while preserving the
+  existing API payload and exported parser contracts.
+- Sprint 3: shop-floor kiosk shell with supervisor toggle, visible idle warning and extension, touch keypads,
+  permission-gated operation shortcuts, and a shift pass-on notice.
+- Sprint 4: collapsible permission-filtered navigation and “Show all modules”; Receiving and Tools & Calibration
+  shortcuts; search index invalidation after commands; tabbed order and work-center workspaces; lazy inventory tab
+  data with a focused `#/receiving` route; a material constraint KPI from recorded material readiness; default
+  30-day Quality Metrics window that loads on entry; and shared searchable/sortable tables for orders, inventory,
+  procurement, and quality.
+- Sprint 5: seed empty repeaters to their configured minimum and bind repeaters to the newest modal; prefill scan
+  reasons with one-tap alternatives and infer keyboard-wedge mode from fast typing while keeping the capture-mode
+  selector editable; fix active navigation contrast; add focus trapping and preserve QMS review entries after an
+  uncertain server response; replace return-cohort JSON with a structured card and inspection-prefill action; and
+  provide directory-backed shift assignees plus inline kiosk handoff acknowledgment.
+
+**Owner ruling (2026-10-19).** The owner approved “prefilled reasons and cadence-based mode” for Sprint 5.2. The scan
+workflow uses the approved reason defaults and presets, chooses a suggested mode from keyboard cadence, and leaves the
+mode selector editable. Camera and configured-adapter evidence remain explicit capture paths. This ruling supersedes
+the historical Sprint 1 checkpoint below. Sprint 4 did not consolidate separately governed Quality/QMS page routes;
+it improves default visibility and grouping without changing their route contracts.
+
+**Checks (Sprint 5).** `node --test tests/ui/*.test.mjs`: PASS, **252/252**. `node --check` passed for all **63** JS
+modules under `src/Forge.Host/wwwroot/js`; `git diff --check` found no whitespace errors (Git printed only
+LF-to-CRLF working-copy notices). Sprint 5 changed only frontend modules, UI tests, and these handoff records; no
+backend, database, simulation, or deployment gate was rerun for it.
+
+**Prior broader verification evidence (2026-10-18).** The database-backed UI smoke test
+`WebUiTests.Ui_is_served_and_says_how_to_sign_in_and_who_is_who` passed **1/1**. At that check, PostgreSQL service
+`postgresql-x64-18` was running and `127.0.0.1:5432` was reachable, and the preview at
+`http://127.0.0.1:5080/` returned HTTP 200. The full `verify.cmd` rerun failed during Release build because the live
+preview (`.NET Host`, PID 59208) held project DLLs open (`MSB3027`/`MSB3021`); `.forge-logs/verify.status` is **FAIL**.
+An earlier gate reached integration tests but PostgreSQL recovery caused fixture connection failures. A no-build
+non-simulation rerun against the recovered database was stopped before completion and is not a passing full-suite
+result. On 2026-10-19, no listener on port 5080 was detected; the older HTTP 200 check is historical, not a current
+preview claim. The full integration suite remains unverified.
+
+**Next.** When the owner is ready to end preview use, rerun `verify.cmd` and complete browser smoke across roles. If
+the preview must stay available, build/test from an isolated output directory. Claude's simulation Phase C files and
+the pending Phases A/B regression remain separate; preserve those files and stage only files in the UI scope.
+
+## Codex UI/UX Sprint 1 complete (2026-10-18)
+
+Work followed the Gemini review at `jirsn_forge_ui_ux_architecture_review.gemini.md`, with the corrections and scope
+limits in the parallel-work handoff below.
+
+**Done.**
+- Added shared `.section`, `.card`, `.stack`, `.row`, `.inline`, `.eyebrow` and related layout rules used by the newer
+  routed pages. Segmented controls can wrap on narrow screens; selected rows and informational notices are styled.
+- Raised `--faint` to `#8B949E` and changed primary/selected orange and green/red status surfaces to colors whose
+  foreground text meets WCAG AA. The test computes contrast against all three main dark surfaces and each gradient
+  stop.
+- `confirmWithReason()` now uses the common focus manager: it labels the dialog, traps keyboard focus, closes on
+  Escape, and restores focus when closed. My Work Inbox assignment changes now use that reason dialog instead of
+  `window.prompt()`.
+- QMS governance, QMS planning, audit/CAPA and label dialogs preserve typed values when a network/5xx result makes a
+  command outcome uncertain. They show an inline warning and disable the submit control; closing the dialog blocks
+  further consequential controls until the user refreshes the owning record or page.
+- Added regression coverage for contrast, dialog focus and preserved inputs, uncertain QMS/label outcomes, and the work
+  inbox reason flow.
+
+**Verification.** All `tests/ui/*.test.mjs` passed: **221/221**. `node --check` passed on the modified JavaScript
+modules. `verify.cmd` was not run because this slice changes only static UI and UI tests; that shared build gate
+requires stopping Forge on port 5080.
+
+**Historical owner ruling needed at this checkpoint (superseded 2026-10-19).** At the Sprint 1 checkpoint, V4.1 audit
+reason defaults and cadence-based capture-mode suggestions were held for an owner decision under ADR 0053/0054. The
+owner later approved both Sprint 5.2 behaviors; see the latest status above. Backend work and all §5.7 deferred items
+remain out of scope.
+
+**Next.** Codex: Sprint 2 structured repeaters and entity lookups, preserving existing parser exports/tests. Claude:
+continue simulation Phase C in its assigned test/doc files.
+
 ## Parallel work plan: Codex on UI/UX, Claude on simulation Phase C (2026-10-18, current)
 
 **Owner decision (2026-10-18 evening).** Codex does the UI/UX upgrades from the Gemini review while Claude builds
@@ -777,3 +928,31 @@ The plan is the "V3 plan" Claude Doc. Its increments map the brief's sections A�
 * Document breaking changes and migrations in the ADR and the README.
 * Keep modifications focused on the assigned task. Only one tool edits the repository at a time.
 * Update the session log after every development session.
+
+
+## Claude, 2026-10-19: simulation Phase C done (commit 07b0feb)
+
+- Full factory (300 orders, 70 operators, 90 days; baseline + disrupted) passed every check. Results and the
+  defect-register candidates: `docs/v5/V5-simulation-phaseC-results.md`; outputs 1-10 in
+  `.forge-logs/simulation-factory/factory/seed-42/factory-report.md`.
+- Run it with `simulate-factory.cmd` (about 40 minutes; stop Forge first). `simulate.cmd` now excludes `Mode=Factory`.
+- Candidates for the owner (no production change made): UTC "today" in about 50 places; scheduler cannot plan past an
+  inspection that has not happened; late sub-orders make orders unschedulable; schedule/floor material disagreements.
+- PostgreSQL on the PC was reinitialised on 2026-10-18 (old data folder kept as `data-old`); the old live `forge`
+  data is gone from the running server. Load the sample plant again with `seed-sample-plant.cmd` if needed.
+- Not yet done: a regression run of `simulate.cmd` (Phases A/B) against the Phase C engine changes. Codex: these two
+  notes files still contain your uncommitted edits; this section is appended, not committed.
+
+## Claude: review fixes to the production-order workspace (2026-10-19)
+
+The owner asked me to review Codex's production-order changes, fix what I found, and commit the UI work.
+
+- Work-instruction printing now prints only revisions that apply: Current, Pinned, or LegitimatelySuperseded. For a
+  Mismatch, Obsolete, NotReleased, Missing or RequiresReview document, the operation shows "not printable. See
+  Documents" instead of a print button, so an outdated revision cannot reach the floor.
+- After "Reissue documentation" the order view is rebuilt, so the print buttons use the reissued revisions
+  (`appendApplicability` takes an optional `onChanged`).
+- `tabifyPanels`: the back-link check compared `tagName` with lower-case `'a'`; it now uses `'A'`.
+- `qms-review.test.mjs`: the meeting due-time assertion no longer depends on the machine's time zone.
+- Checks: `node --check` on the changed modules; `node --test tests/ui/*.test.mjs` passed 263/263 in UTC and in
+  America/New_York. There was still no live browser check (see Codex's preview note above).

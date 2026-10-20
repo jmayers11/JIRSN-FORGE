@@ -52,6 +52,8 @@ function headers(json) {
 
 let onSignedOut = () => {};
 export function whenSignedOut(fn) { onSignedOut = fn; }
+const commandListeners = new Set();
+export function onCommand(listener) { commandListeners.add(listener); return () => commandListeners.delete(listener); }
 
 async function handle(response) {
   const text = await response.text();
@@ -82,7 +84,9 @@ export async function command(path, body = {}, reason, options = {}) {
     commandHeaders['X-Forge-Scan-Session'] = id;
     commandHeaders['X-Forge-Scan-Version'] = String(version);
   }
-  return handle(await fetch(path, { method: 'POST', headers: commandHeaders, body: JSON.stringify(payload) }));
+  const result = await handle(await fetch(path, { method: 'POST', headers: commandHeaders, body: JSON.stringify(payload) }));
+  for (const listener of commandListeners) { try { listener(); } catch { /* observers cannot change a command result */ } }
+  return result;
 }
 
 /** Stores a file (at most 50 MB) and returns its SHA-256 reference, which documents and attachments then name. */
@@ -96,15 +100,21 @@ export async function upload(file) {
 
 /** Downloads a file the API serves (signed in), under the name the server gives it. */
 export async function download(path, fallbackName) {
+  const { blob, name } = await fetchFile(path, fallbackName);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+/** Reads a protected file into a Blob for an in-browser preview or print view. */
+export async function fetchFile(path, fallbackName = 'file') {
   const res = await fetch(path, { headers: headers(false) });
   if (!res.ok) await handle(res);
   const blob = await res.blob();
   const cd = res.headers.get('Content-Disposition') ?? '';
   const star = /filename\*=UTF-8''([^;]+)/i.exec(cd)?.[1];
   const name = star ? decodeURIComponent(star) : (/filename="?([^";]+)"?/.exec(cd)?.[1] ?? fallbackName);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  return { blob, name };
 }
 
 /** Like get, but turns a failure into { error } so one panel's failure does not blank the page. */

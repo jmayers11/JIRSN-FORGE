@@ -23,6 +23,25 @@ const MPN_CLASSES = ['Cots', 'RawMaterial', 'StandardHardware', 'Consumable', 'M
 const classesFor = makeBuy => Object.entries(CLASS_LABEL)
   .filter(([k]) => k !== 'Unclassified' && (k === 'Make' ? makeBuy === 'Make' : makeBuy === 'Buy' || !ALWAYS_BOUGHT.includes(k)));
 
+export function routingOperationBody(v) {
+  const sequence = Number(v.sequence), setupMinutes = Number(v.setupMinutes), runMinutesPerUnit = Number(v.runMinutesPerUnit), crewSize = Number(v.crewSize);
+  if (!Number.isInteger(sequence) || sequence < 1 || sequence > 9999) throw new Error('Sequence must be from 1 to 9999.');
+  if (!Number.isFinite(setupMinutes) || setupMinutes < 0 || !Number.isFinite(runMinutesPerUnit) || runMinutesPerUnit < 0) throw new Error('Set-up and run minutes must be zero or greater.');
+  if (!Number.isInteger(crewSize) || crewSize < 1 || crewSize > 20) throw new Error('Crew size must be from 1 to 20.');
+  const setupFamily = v.setupFamily?.trim().toUpperCase() || null;
+  const familySetupMinutes = v.familySetupMinutes == null || v.familySetupMinutes === '' ? null : Number(v.familySetupMinutes);
+  if ((setupFamily == null) !== (familySetupMinutes == null)) throw new Error('Enter both a set-up family and its same-family set-up minutes.');
+  if (familySetupMinutes != null && (!Number.isFinite(familySetupMinutes) || familySetupMinutes < 0 || familySetupMinutes > setupMinutes)) {
+    throw new Error('Same-family set-up minutes must be between zero and the full set-up time.');
+  }
+  const codes = value => [...new Set(String(value ?? '').split(/[\n,]/).map(code => code.trim().toUpperCase()).filter(Boolean))];
+  return {
+    sequence, description: v.description?.trim(), workCenterCode: v.workCenterCode, activityCode: v.activityCode,
+    eligibleMachines: codes(v.eligibleMachines), requiredQualifications: codes(v.requiredQualifications),
+    setupMinutes, runMinutesPerUnit, crewSize, setupFamily, familySetupMinutes,
+  };
+}
+
 export async function engineeringPage(page, ctx) {
   const [first, second] = ctx.params;
   if (first === 'documents') return second ? documentDetail(page, ctx, decodeURIComponent(second)) : documentList(page, ctx);
@@ -109,6 +128,7 @@ async function itemDetail(page, ctx, partNumber) {
     </section>`;
 
   appendRequirements(page, ctx, item);
+  await appendRoutingOperations(page, ctx, item);
   appendAlternates(page, ctx, item, items.data);
   appendAttachments(page, { type: 'Item', id: item.partNumber, me, title: 'Documents', note: 'Drawings, specifications and datasheets for this item. Released revisions apply; reference files never do.' });
 
@@ -341,6 +361,95 @@ async function documentDetail(page, ctx, number) {
 }
 
 // ── What each item revision is built to (V2.3) ───────────────────────────────────────────────────
+async function appendRoutingOperations(page, ctx, item) {
+  const section = document.createElement('section');
+  section.className = 'panel';
+  section.setAttribute('aria-label', 'Routing operations');
+  page.append(section);
+  const manage = canAction(ctx.me, 'engineering.manage');
+  const part = encodeURIComponent(item.partNumber);
+  const [revisionResult, resourcesResult, qualificationsResult] = await Promise.all([
+    tryGet(`/api/engineering/items/${part}/revisions`),
+    manage ? tryGet('/api/resources/') : Promise.resolve({ data: null }),
+    manage ? tryGet('/api/competency/qualification-types') : Promise.resolve({ data: [] }),
+  ]);
+  if (revisionResult.error) { section.innerHTML = `<header><h2>Routing operations</h2></header>${errorBlock(revisionResult.error, 'item revisions')}`; return; }
+  let revisions = revisionResult.data ?? [];
+  let selected = revisions.find(revision => revision.status === 'Draft')?.revision ?? revisions.at(-1)?.revision ?? '';
+  let renderSequence = 0;
+  const resources = resourcesResult.data;
+  const workCenters = (resources?.workCenters ?? []).filter(record => record.active !== false);
+  const activities = (resources?.activityTypes ?? []).filter(record => record.active !== false);
+  const qualifications = qualificationsResult.data ?? [];
+  const revisionUrl = revision => `/api/engineering/items/${part}/revisions/${encodeURIComponent(revision)}`;
+
+  async function reload(prefer = selected) {
+    const result = await tryGet(`/api/engineering/items/${part}/revisions`);
+    if (result.error) { section.innerHTML = `<header><h2>Routing operations</h2></header>${errorBlock(result.error, 'item revisions')}`; return; }
+    revisions = result.data ?? [];
+    selected = revisions.some(revision => revision.revision === prefer) ? prefer
+      : revisions.find(revision => revision.status === 'Draft')?.revision ?? revisions.at(-1)?.revision ?? '';
+    await render();
+  }
+
+  async function render() {
+    const sequence = ++renderSequence;
+    const revision = revisions.find(candidate => candidate.revision === selected) ?? null;
+    const detailResult = revision ? await tryGet(revisionUrl(selected)) : null;
+    if (sequence !== renderSequence) return;
+    const operations = detailResult?.data?.routing ?? [];
+    const isDraft = revision?.status === 'Draft';
+    section.innerHTML = `
+      <header><div><h2>Routing operations</h2><div class="faint">Set-up time is counted once per order. A matching set-up family can reduce it on the same machine.</div></div><span class="spacer"></span>
+        ${revisions.length ? `<label for="routing-revision">Revision</label><select class="select" id="routing-revision">${revisions.map(candidate => `<option value="${esc(candidate.revision)}" ${candidate.revision === selected ? 'selected' : ''}>${esc(candidate.revision)} · ${esc(candidate.status)}</option>`).join('')}</select>` : ''}
+        ${manage && !revisions.some(candidate => candidate.status === 'Draft') ? '<button class="btn small" id="routing-new-revision">New draft revision</button>' : ''}
+        ${manage && isDraft ? '<button class="btn small primary" id="routing-add-operation">Add operation</button>' : ''}</header>
+      ${!revisions.length ? emptyBlock(item.makeBuy === 'Make' ? 'No routing revision' : 'No item revisions', item.makeBuy === 'Make' ? 'Create a draft revision, then add its routing operations before a separate release.' : 'A routing is added to a draft item revision.') : detailResult?.error ? errorBlock(detailResult.error, 'routing') : operations.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Step</th><th>Operation</th><th>Work center / activity</th><th>Machines / qualifications</th><th>Set-up</th><th></th></tr></thead><tbody>
+        ${operations.map(operation => `<tr><td>${operation.sequence}</td><td>${esc(operation.description)}</td><td>${esc(operation.workCenterCode)} · ${esc(operation.activityCode)}</td><td>${esc(operation.eligibleMachines?.join(', ') || 'Any allowed machine')}<div class="faint">${esc(operation.requiredQualifications?.join(', ') || 'No additional qualifications')}</div></td>
+          <td>${Number(operation.setupMinutes).toLocaleString()} min${operation.setupFamily ? `<div class="faint">${esc(operation.setupFamily)} · ${Number(operation.familySetupMinutes).toLocaleString()} min same family</div>` : ''}<div class="faint">Run ${Number(operation.runMinutesPerUnit).toLocaleString()} min/unit · crew ${operation.crewSize}</div></td>
+          <td>${manage && isDraft ? `<button class="btn small ghost" data-routing-remove="${operation.sequence}">Remove</button>` : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : `<div class="muted">No routing operations in revision ${esc(selected)}.${item.makeBuy === 'Make' ? ' A made item needs at least one operation before release.' : ''}</div>`}
+      ${revision && !isDraft ? '<div class="faint" style="margin-top:8px">Released routing definitions are preserved. Create a new draft revision to change them.</div>' : ''}
+      ${manage && !resourcesResult.data && resourcesResult.error ? errorBlock(resourcesResult.error, 'plant resources') : ''}
+    `;
+    $('#routing-revision', section)?.addEventListener('change', event => { selected = event.target.value; render(); });
+    $('#routing-new-revision', section)?.addEventListener('click', () => {
+      let newRevision = '';
+      formModal({ title: `New revision of ${item.partNumber}`, detail: 'Routing operations are added to a draft revision. Release remains a separate controlled action.', confirmLabel: 'Create revision', reasonRequired: true,
+        fields: [{ name: 'revision', label: 'Revision code', code: true, required: true, placeholder: 'A, B, 1, 2…' }] },
+      (values, reason) => { newRevision = values.revision; return command(`/api/engineering/items/${part}/revisions`, values, reason); },
+      () => reload(newRevision));
+    });
+    $('#routing-add-operation', section)?.addEventListener('click', () => {
+      if (!workCenters.length || !activities.length) { toast('Set up at least one active work center and activity before adding a routing operation.', true); return; }
+      const nextSequence = Math.min(9999, Math.max(0, ...operations.map(operation => operation.sequence)) + 10);
+      formModal({ title: `Add routing operation to ${item.partNumber} rev ${selected}`, detail: 'Eligible machines and extra qualifications are optional. Set-up family and same-family minutes must be entered together; same-family time cannot exceed full set-up.', confirmLabel: 'Add operation', reasonRequired: true,
+        fields: [
+          { name: 'sequence', label: 'Operation sequence', type: 'number', value: nextSequence, min: 1, max: 9999, required: true },
+          { name: 'description', label: 'Operation', required: true, placeholder: 'Cut, wind, inspect…' },
+          { name: 'workCenterCode', label: 'Work center', type: 'select', required: true, options: workCenters.map(center => [center.code, `${center.name} (${center.code})`]) },
+          { name: 'activityCode', label: 'Activity', type: 'select', required: true, options: activities.map(activity => [activity.code, `${activity.name} (${activity.code})`]) },
+          { name: 'eligibleMachines', label: 'Eligible machines (optional)', type: 'textarea', hint: 'Enter machine codes separated by commas or new lines.' },
+          { name: 'requiredQualifications', label: 'Additional qualifications (optional)', type: 'textarea', hint: `Known qualifications: ${qualifications.map(qualification => qualification.code).join(', ') || 'none listed'}.` },
+          { name: 'setupMinutes', label: 'Full set-up minutes', type: 'number', value: 0, min: 0, step: '0.01', required: true },
+          { name: 'runMinutesPerUnit', label: 'Run minutes per unit', type: 'number', value: 0, min: 0, step: '0.01', required: true },
+          { name: 'crewSize', label: 'Crew size', type: 'number', value: 1, min: 1, max: 20, required: true },
+          { name: 'setupFamily', label: 'Set-up family (optional)', code: true, placeholder: 'FIXTURE-42' },
+          { name: 'familySetupMinutes', label: 'Same-family set-up minutes', type: 'number', min: 0, step: '0.01', hint: 'Required with a set-up family; must be no greater than full set-up.' },
+        ] },
+      (values, reason) => command(`${revisionUrl(selected)}/routing`, routingOperationBody(values), reason), () => reload());
+    });
+    $$('[data-routing-remove]', section).forEach(button => button.addEventListener('click', async () => {
+      const operationSequence = Number(button.dataset.routingRemove);
+      const result = await confirmWithReason({ title: `Remove operation ${operationSequence}`, detail: 'The operation is removed from this draft revision. Released revisions remain unchanged.', confirmLabel: 'Remove', reasonRequired: true },
+        reason => command(`${revisionUrl(selected)}/routing/${operationSequence}/remove`, {}, reason));
+      if (result) await reload();
+    }));
+  }
+
+  await render();
+}
+
 async function appendRequirements(page, ctx, item) {
   const section = document.createElement('section');
   section.className = 'panel';

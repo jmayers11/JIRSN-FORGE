@@ -1,5 +1,7 @@
 import { command, tryGet, session, uuid } from '../api.js';
-import { esc, $, $$, errorBlock, toast } from '../ui.js';
+import { esc, $, $$, errorBlock, toast, manageDialogFocus } from '../ui.js';
+import { fieldHtml, readFields, bindRepeaters } from '../forms.js';
+import { isServiceUnavailable } from '../terminal-state.mjs';
 
 const ROOT = '/api/quality/qms/review', enc = encodeURIComponent;
 const TABS = ['programs', 'runs', 'mappings', 'editions'];
@@ -20,27 +22,36 @@ const detailPath = (tab, id) => tab === 'programs' ? ROOT + '/definitions/' + en
     : ROOT + (tab === 'mappings' ? '/mappings/assessments/' : '/editions/assessments/') + enc(id);
 const listPath = tab => ROOT + ({ programs: '/definitions', runs: '/runs', mappings: '/mappings/assessments', editions: '/editions/assessments' }[tab]);
 
+export function parseMeetingRows(text, count, name) {
+  return String(text ?? '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+    const pieces = line.split('|').map(value => value.trim());
+    if (pieces.length !== count || pieces.some((part, index) => name === 'decision' ? (index < 5 || index === 7) && !part : index < 2 && !part))
+      throw new Error('Each ' + name + ' line needs exactly ' + count + ' fields separated by |.');
+    return pieces;
+  });
+}
+
 export async function qmsReviewPage(page, ctx) {
   const auth = { subject: session.subject, token: session.token };
-  let disposed = false, generation = 0;
+  let disposed = false, generation = 0, blocked = false;
   let tab = TABS.includes(ctx.query?.get('tab')) ? ctx.query.get('tab') : 'programs';
   let data = {}, error = null, selected = null, actions = [], cursor = null;
   const live = token => !disposed && page.isConnected && generation === token && session.subject === auth.subject && session.token === auth.token;
   async function load(after = null) {
-    const token = ++generation; selected = null; actions = []; error = null; cursor = after;
+    const token = ++generation; blocked = true; selected = null; actions = []; error = null; cursor = after;
     page.innerHTML = '<div class="muted">Loading authorized quality review records…</div>';
     const response = await tryGet(listPath(tab) + '?take=30' + (after ? '&after=' + enc(after) : ''));
     if (!live(token)) return;
     if (response.error) { error = response.error; data = null; }
-    else { data = response.data; error = null; }
+    else { data = response.data; error = null; blocked = false; }
     render();
   }
   async function open(id) {
-    const token = ++generation; selected = null; actions = []; render();
+    const token = ++generation; blocked = true; selected = null; actions = []; render();
     const result = await tryGet(detailPath(tab, id));
     if (!live(token)) return;
     if (result.error) { error = result.error; selected = null; render(); return; }
-    selected = result.data; error = null;
+    selected = result.data; error = null; blocked = false;
     if (tab === 'runs') {
       const resultActions = await tryGet(ROOT + '/runs/' + enc(id) + '/actions');
       if (!live(token)) return;
@@ -48,19 +59,36 @@ export async function qmsReviewPage(page, ctx) {
     }
     render();
   }
-  function modal(title, content, onSubmit) {
+  function modal(title, content, onSubmit, fields = []) {
     const scrim = document.createElement('div'), box = document.createElement('div');
     scrim.className = 'scrim'; scrim.setAttribute('aria-hidden', 'true'); box.className = 'modal';
-    box.innerHTML = '<h2>' + esc(title) + '</h2>' + content + '<label class="field"><span>Reason recorded in the audit trail</span><textarea class="input" data-reason required></textarea></label><div class="notice bad hidden" role="alert" data-error></div><div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-confirm>Record decision</button></div>';
-    document.body.append(scrim, box); let closed = false, busy = false;
-    const close = () => { if (closed) return; closed = true; scrim.remove(); box.remove(); };
+    box.innerHTML = '<h2>' + esc(title) + '</h2>' + content + '<label class="field"><span>Reason recorded in the audit trail</span><textarea class="input" data-reason required></textarea></label><div class="notice bad hidden" role="alert" aria-live="assertive" data-error></div><div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-confirm>Record decision</button></div>';
+    document.body.append(scrim, box); let closed = false, busy = false, uncertain = false, releaseFocus = () => {};
+    fields.filter(field => field.type === 'repeater').forEach(field => {
+      const element = $('#f-' + field.name, box);
+      if (element) element.repeaterField = field;
+    });
+    bindRepeaters(box);
+    const close = () => {
+      if (closed) return;
+      closed = true; scrim.remove(); box.remove(); releaseFocus();
+      if (uncertain && page.isConnected) { blocked = true; render(); }
+    };
     scrim.onclick = close; $('[data-cancel]', box).onclick = close;
     $('[data-confirm]', box).onclick = async () => {
       if (closed || busy) return; busy = true; const btn = $('[data-confirm]', box), err = $('[data-error]', box); btn.disabled = true; err.classList.add('hidden');
       try { await onSubmit(box, live(generation)); close(); toast('The review record was updated.'); await load(); }
-      catch (e) { err.textContent = e.message; err.classList.remove('hidden'); btn.disabled = false; busy = false; }
+      catch (e) {
+        if (e instanceof TypeError || Number.isInteger(e.status) && isServiceUnavailable(e)) {
+          uncertain = true;
+          err.textContent = 'Forge could not confirm this change. Your entries are preserved. Close this dialog and refresh the review record before deciding whether to retry.';
+          err.classList.remove('hidden');
+        } else {
+          err.textContent = e.message; err.classList.remove('hidden');
+        }
+      } finally { busy = false; if (!closed) btn.disabled = uncertain; }
     };
-    $('[data-reason]', box).focus();
+    releaseFocus = manageDialogFocus(box, close);
   }
   const formField = (name, label, type = 'text', value = '') => '<label class="field"><span>' + esc(label) + '</span>' + (type === 'textarea'
     ? '<textarea class="input" data-field="' + name + '">' + esc(value) + '</textarea>'
@@ -120,21 +148,45 @@ export async function qmsReviewPage(page, ctx) {
     });
   const recordMeeting = run => {
     const agenda = run.manifest?.inputs ?? [];
-    const assessmentFormat = agenda.map(item => item.agendaCode + '|Adequate| | |').join('\n');
+    const loadPeople = tryGet('/api/kernel/directory');
+    loadPeople.then(result => {
+      if (result.error) { toast('Could not load the current people directory. Refresh and try again.', true); return; }
+      const people = (result.data ?? []).filter(person => person.personId && person.displayName);
+      if (!people.length) { toast('The current people directory is empty; meeting participants cannot be recorded.', true); return; }
+      const personOptions = people.map(person => [person.personId, `${person.displayName} · ${person.personId}`]);
+      const assessmentField = { name: 'assessments', label: 'Agenda assessments', type: 'repeater', required: true, minRows: agenda.length,
+        rowLabel: 'assessment', pluralRowLabel: 'assessments', value: agenda.map(item => ({ agendaCode: item.agendaCode, adequacy: 'Adequate' })),
+        columns: [
+          { name: 'agendaCode', label: 'Frozen agenda code', required: true, readonly: true },
+          { name: 'adequacy', label: 'Adequacy', type: 'select', required: true, options: [['Adequate', 'Adequate'], ['Inadequate', 'Inadequate'], ['Unavailable', 'Unavailable']] },
+          { name: 'assessment', label: 'Actual assessment', type: 'textarea' },
+          { name: 'limits', label: 'Limits', type: 'textarea' },
+          { name: 'decision', label: 'Decision', type: 'textarea' },
+        ],
+        serialize: rows => rows.map(row => [row.agendaCode, row.adequacy, row.assessment ?? '', row.limits ?? '', row.decision ?? ''].join(' | ')).join('\n') };
+      const decisionField = { name: 'decisions', label: 'Assigned decisions', type: 'repeater', rowLabel: 'decision', pluralRowLabel: 'decisions',
+        columns: [
+          { name: 'code', label: 'Code', required: true }, { name: 'decision', label: 'Decision', required: true },
+          { name: 'basis', label: 'Basis', type: 'textarea', required: true }, { name: 'intendedResult', label: 'Intended result', required: true },
+          { name: 'resources', label: 'Resources', required: true }, { name: 'owner', label: 'Owner', type: 'select', blank: 'Unassigned', options: personOptions },
+          { name: 'due', label: 'Due date (local time)', type: 'datetime-local' }, { name: 'completionCriteria', label: 'Completion criteria', required: true },
+        ],
+        serialize: rows => rows.map(row => [row.code, row.decision, row.basis, row.intendedResult, row.resources, row.owner ?? '', row.due ?? '', row.completionCriteria].join(' | ')).join('\n') };
+      const participantsField = { name: 'participants', label: 'Meeting participants', type: 'repeater', required: true, minRows: 1,
+        rowLabel: 'participant', pluralRowLabel: 'participants', value: [{}], columns: [{ name: 'personId', label: 'Person', type: 'select', required: true, blank: 'Choose a participant', options: personOptions }],
+        serialize: rows => rows.map(row => row.personId).join('\n') };
     modal('Record actual meeting judgments',
       '<p class="muted">Assess each frozen agenda item. Use one line per item: agenda code | Adequate, Inadequate, Unavailable | actual assessment | limits | decision. Separate human judgments from captured source linkage.</p>' +
-      formField('meeting', 'Meeting record', 'textarea') + formField('participants', 'Actual participant person IDs, one per line', 'textarea') +
-      formField('assessments', 'Agenda assessments', 'textarea', assessmentFormat) +
-      formField('decisions', 'Assigned decisions: code | decision | basis | intended result | resources | owner person ID or blank | due UTC or blank | completion criteria', 'textarea') +
-      formField('limitations', 'Limitations', 'textarea'),
+      formField('meeting', 'Meeting record', 'textarea') + fieldHtml(participantsField) + fieldHtml(assessmentField) + fieldHtml(decisionField) + formField('limitations', 'Limitations', 'textarea'),
       async (box, current) => {
-        const parse = (text, count, name) => text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => { const pieces = line.split('|').map(x => x.trim()); if (pieces.length !== count || pieces.some((part, index) => name === 'decision' ? (index < 5 || index === 7) && !part : index < 2 && !part)) throw new Error('Each ' + name + ' line needs exactly ' + count + ' fields separated by |.'); return pieces; });
-        const assessments = parse(value(box, 'assessments'), 5, 'assessment').map(([agendaCode, adequacy, assessment, limits, decision]) => ({ agendaCode, adequacy, assessment, limits, decision, additionalEvidence: [] }));
-        const decisions = parse(value(box, 'decisions'), 8, 'decision').map(([code, decision, basis, intendedResult, resources, owner, due, completionCriteria]) => ({ code, decision, basis, intendedResult, resources, ownerPersonId: owner || null, dueAt: due ? new Date(due).toISOString() : null, completionCriteria, sourceActionReferences: [] }));
-        const participants = value(box, 'participants').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+        const values = readFields(box, [participantsField, assessmentField, decisionField]);
+        const assessments = parseMeetingRows(values.assessments, 5, 'assessment').map(([agendaCode, adequacy, assessment, limits, decision]) => ({ agendaCode, adequacy, assessment, limits, decision, additionalEvidence: [] }));
+        const decisions = parseMeetingRows(values.decisions, 8, 'decision').map(([code, decision, basis, intendedResult, resources, owner, due, completionCriteria]) => ({ code, decision, basis, intendedResult, resources, ownerPersonId: owner || null, dueAt: due ? new Date(due).toISOString() : null, completionCriteria, sourceActionReferences: [] }));
+        const participants = values.participants.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
         if (!current || !reason(box) || !value(box, 'meeting') || !value(box, 'limitations') || assessments.length !== agenda.length || !participants.length) throw new Error('Record the meeting, every frozen agenda assessment, active participants and limitations.');
         await command(ROOT + '/runs/' + enc(run.id) + '/meeting', { data: { expectedVersion: run.version, meetingRecord: value(box, 'meeting'), participants, assessments, decisions, limitations: value(box, 'limitations') } }, reason(box));
-      });
+      }, [participantsField, assessmentField, decisionField]);
+    });
   };
   function actionsFor(run) {
     const result = [];
@@ -162,13 +214,14 @@ export async function qmsReviewPage(page, ctx) {
     const sourceText = error ? errorBlock(error, 'current quality review records') : rows.length
       ? '<table class="table"><thead><tr><th>Record</th><th>State</th><th>Scope</th><th></th></tr></thead><tbody>' + rows.map(item => '<tr><td>' + esc(idFor(tab, item)) + '</td><td>' + esc(stateFor(tab, item) ?? '—') + '</td><td>' + esc(item.organizationCode ?? item.facilityCode ?? item.mappingCode ?? '') + '</td><td><button class="btn small" data-open="' + esc(idFor(tab, item)) + '">Open</button></td></tr>').join('') + '</tbody></table>'
       : '<div class="empty">No authorized records are available in this page.</div>';
-    const createButton = selected?.kind === 'ManagementReviewProgram' && permission(ctx.me, 'quality.qms.manage')
+    const createButton = !blocked && selected?.kind === 'ManagementReviewProgram' && permission(ctx.me, 'quality.qms.manage')
       ? '<button class="btn primary" data-create-run>Start review</button>' : '';
-    const toolbarCreate = tab === 'editions' && permission(ctx.me, 'quality.qms.manage')
+    const toolbarCreate = !blocked && tab === 'editions' && permission(ctx.me, 'quality.qms.manage')
       ? '<button class="btn primary" data-create-edition>New edition assessment</button>' : '';
-    const actionButtons = tab === 'runs' && selected ? actionsFor(selected).map(([name]) => '<button class="btn" data-run-action="' + esc(name) + '">' + esc(name) + '</button>').join('')
-      : tab === 'editions' && selected ? editionActions(selected).map(name => '<button class="btn" data-edition-action="' + esc(name) + '">' + esc(name) + '</button>').join('') : '';
+    const actionButtons = !blocked && tab === 'runs' && selected ? actionsFor(selected).map(([name]) => '<button class="btn" data-run-action="' + esc(name) + '">' + esc(name) + '</button>').join('')
+      : !blocked && tab === 'editions' && selected ? editionActions(selected).map(name => '<button class="btn" data-edition-action="' + esc(name) + '">' + esc(name) + '</button>').join('') : '';
     page.innerHTML = '<div class="page-head"><div><h1>QMS reviews and evidence</h1><p class="sub">Review actual owner records, frozen inputs and human decisions. Evidence links do not declare conformity.</p></div><button class="btn" data-refresh>Refresh</button></div>' +
+      (blocked && !error ? '<div class="notice warn" role="status">Refresh the current review records before trying another decision.</div>' : '') +
       '<section class="panel"><div class="seg">' + TABS.map(name => '<button class="' + (tab === name ? 'on' : '') + '" data-tab="' + name + '">' + esc(TAB_LABEL[name]) + '</button>').join('') + '</div>' + sourceText +
       (data?.nextCursor ? '<div class="toolbar"><button class="btn" data-next>Next page</button></div>' : '') + '</section>' +
       '<div class="toolbar">' + toolbarCreate + '</div>' +

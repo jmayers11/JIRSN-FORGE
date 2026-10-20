@@ -8,10 +8,10 @@ const operatorPersonId = 'bd97b4ea-b83a-43b0-aa65-377d614ee66a';
 const operationCode = 'forge:v1:configured-plant:operation:17:10';
 const config = { namespace: 'configured-plant', maxCodeLength: 1024, maxKeyLength: 40, supportedKinds: ['order', 'operation', 'material', 'location'], version: 'v1' };
 const queue = [{ orderNumber: 17, partNumber: 'PART-A', orderQuantity: 10, operation: { sequence: 10, description: 'Cut', workCenterCode: 'CUT', eligibleMachines: ['M1'], goodQuantity: 0 } }];
-const person = (labor, queueView = queue) => ({ personId: operatorPersonId, displayName: 'Current verified operator', hasPin: true, isWorker: true, clockedInSince: '2026-10-14T13:00:00Z', queue: queueView, training: [], labor });
+const person = (labor, queueView = queue) => ({ personId: operatorPersonId, displayName: 'Current verified operator', hasPin: true, isWorker: true, clockedInSince: '2026-10-14T13:00:00Z', homeWorkCenter: 'CUT', queue: queueView, training: [], labor });
 const initialSession = () => ({ id: '1d8f8421-28e4-4f7d-88ad-4890313c6aa9', version: 3, state: 'Active', operatorPersonId, operationCode, machineCode: 'M1', selections: [{ kind: 'Operation', code: operationCode, subjectCode: operationCode, inputMode: 'KeyboardWedge' }], requiredKinds: ['Operation'], manualAllowed: true, expiresAt: new Date(Date.now() + 120000).toISOString(), policy: { code: 'EXECUTION', revision: 2 }, accepted: [] });
 
-async function harness(t, { adopted = true, required = true, route = () => null, queueView = queue } = {}) {
+async function harness(t, { adopted = true, required = true, route = () => null, queueView = queue, permissions = [] } = {}) {
   const browser = installBrowser(t), calls = [], page = browser.document.createElement('div'); browser.document.body.append(page);
   let labor = null, scan = initialSession();
   const before = { subject: session.subject, token: session.token }; session.subject = 'shopfloor-session-user'; session.token = null; t.after(() => Object.assign(session, before));
@@ -19,6 +19,7 @@ async function harness(t, { adopted = true, required = true, route = () => null,
     const body = options.body ? JSON.parse(options.body) : null; calls.push({ path, body, headers: options.headers });
     const override = route(path, body); if (override) return Promise.resolve(override);
     if (path === '/api/execution/reason-codes') return Promise.resolve(response([]));
+    if (path.startsWith('/api/execution/shifts/handoffs?')) return Promise.resolve(response([]));
     if (path === '/api/shopfloor/identify') return Promise.resolve(response(person(labor, queueView)));
     if (path === '/api/identification/config') return Promise.resolve(response(config));
     if (path === '/api/identification/scanners/config') return Promise.resolve(response({ configured: false, adapters: [], supportedInputModes: ['Manual', 'KeyboardWedge'] }));
@@ -30,7 +31,7 @@ async function harness(t, { adopted = true, required = true, route = () => null,
     if (path === '/api/shopfloor/report') { scan = { ...scan, accepted: [...scan.accepted, { commandType: 'ReportProduction', entityType: 'Operation', entityId: '17/10', auditId: 'audit-report', correlationId: 'correlation-report', recordedAt: '2026-10-14T14:10:00Z' }] }; return Promise.resolve(response({ message: 'Reported.' })); }
     return Promise.resolve(response({ message: 'Recorded.' }));
   };
-  const controller = await shopFloorPage(page, { me: { roles: ['ShopFloorTerminal'], shopFloorIdleTimeoutSeconds: 60 } }); t.after(controller.dispose);
+  const controller = await shopFloorPage(page, { me: { roles: ['ShopFloorTerminal'], permissions, shopFloorIdleTimeoutSeconds: 60 } }); t.after(controller.dispose);
   page.querySelector('#badge').value = 'B-17'; fire(page.querySelector('form[data-scan="badge"]'), 'submit'); await flush();
   return { ...browser, calls, page, controller, stage: async () => { fire(page.querySelector('[data-stage-work]'), 'click'); await flush(); page.querySelector('[data-session-reason]').value = 'Stage this verified operation'; fire(page.querySelector('[data-session-start]'), 'click'); await flush(); } };
 }
@@ -73,4 +74,33 @@ test('changing the displayed eligible machine invalidates staged references and 
   const h = await harness(t, { queueView: [q] }); await h.stage(); const machine = h.page.querySelector('[data-machine]'); machine.value = 'M2'; fire(machine, 'change'); await flush();
   assert.equal(h.page.querySelector('[data-session-stage]'), null); assert.ok(h.calls.some(call => call.path.endsWith('/invalidate')));
   fire(h.page.querySelector('[data-start]'), 'click'); await flush(); assert.equal(h.calls.filter(call => call.path === '/api/shopfloor/start').length, 0); assert.ok(h.calls.some(call => call.path.includes('/requirements?orderNumber=17&sequence=10&machineCode=M2')));
+});
+
+test('the kiosk acknowledges an unacknowledged reviewed pass-on inline', async t => {
+  const handoff = { handoffId: 42, workCenterCode: 'CUT', shiftCode: 'DAY', shiftUntil: '2026-10-14T12:00:00Z', reviewedAt: '2026-10-14T12:10:00Z', context: 'Setup and tooling were checked.' };
+  const h = await harness(t, { permissions: ['execution.shopfloor.read', 'execution.shopfloor.record'], route: path => {
+    if (path.startsWith('/api/execution/shifts/handoffs?')) return response([handoff]);
+    if (path === '/api/execution/shifts/handoffs/42') return response({ handoff, acknowledgments: [] });
+    return null;
+  } });
+  fire(h.page.querySelector('[data-start]'), 'click'); await flush(); await flush();
+  const button = h.page.querySelector('[data-ack-passon="42"]');
+  assert.ok(button); assert.match(h.page.querySelector('#pass-on-banner').textContent, /Setup and tooling were checked/);
+  fire(button, 'click'); await flush();
+  const acknowledgement = h.calls.find(call => call.path === '/api/execution/shifts/handoffs/42/acknowledge');
+  assert.deepEqual(acknowledgement.body, { note: 'Received by incoming shift', reason: 'Incoming operator acknowledged shift pass-on' });
+  assert.equal(h.page.querySelector('[data-ack-passon]'), null);
+});
+
+test('the kiosk hides a reviewed pass-on already acknowledged by this operator', async t => {
+  const handoff = { handoffId: 42, workCenterCode: 'CUT', shiftCode: 'DAY', shiftUntil: '2026-10-14T12:00:00Z', reviewedAt: '2026-10-14T12:10:00Z', context: 'Already received.' };
+  const h = await harness(t, { permissions: ['execution.shopfloor.read', 'execution.shopfloor.record'], route: path => {
+    if (path.startsWith('/api/execution/shifts/handoffs?')) return response([handoff]);
+    if (path === '/api/execution/shifts/handoffs/42') return response({ handoff, acknowledgments: [{ personId: operatorPersonId, acknowledgedAt: '2026-10-14T13:01:00Z' }] });
+    return null;
+  } });
+  fire(h.page.querySelector('[data-start]'), 'click'); await flush(); await flush();
+  assert.equal(h.page.querySelector('[data-ack-passon]'), null);
+  assert.equal(h.page.querySelector('#pass-on-banner').textContent, '');
+  assert.equal(h.calls.some(call => call.path.endsWith('/42/acknowledge')), false);
 });

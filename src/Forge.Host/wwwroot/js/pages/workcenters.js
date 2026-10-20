@@ -1,6 +1,6 @@
 import { tryGet } from '../api.js';
 import { icon } from '../icons.js';
-import { esc, $, $$, fmtNumber, fmtDateTime, errorBlock, emptyBlock } from '../ui.js';
+import { esc, $, $$, fmtNumber, fmtDateTime, errorBlock, emptyBlock, wireWorkspaceTabs } from '../ui.js';
 import { isDownAt } from '../model.js';
 import { appendStoppages, appendReasonCodes } from '../actuals.js';
 import { appendTools, appendToolRequirements } from '../tools.js';
@@ -50,7 +50,16 @@ export async function workCentersPage(page, ctx) {
     if (!x) return emptyBlock('Unknown work center', selected);
     const capRows = cap.filter(c => c.workCenterCode === x.wc.code);
     return `
-    <section class="panel"><header><h2>${esc(x.wc.name)} — executable capacity, next 7 days</h2></header>
+    <section class="panel object-summary"><header><h2>${esc(x.wc.name)}</h2><span class="spacer"></span><span class="muted">${esc(x.wc.code)} · ${x.ms.length} machine${x.ms.length === 1 ? '' : 's'} · ${x.shifts.length} shift${x.shifts.length === 1 ? '' : 's'}</span></header></section>
+    <section class="workspace-tabs">
+    <div class="workspace-tablist" role="tablist" aria-label="Work center views">
+      <button class="workspace-tab" id="wc-tab-overview" type="button" role="tab" data-workspace-tab="overview" aria-controls="wc-panel-overview" aria-selected="true">Capacity</button>
+      <button class="workspace-tab" id="wc-tab-readiness" type="button" role="tab" data-workspace-tab="readiness" aria-controls="wc-panel-readiness" aria-selected="false" tabindex="-1">Readiness &amp; presence</button>
+      <button class="workspace-tab" id="wc-tab-support" type="button" role="tab" data-workspace-tab="support" aria-controls="wc-panel-support" aria-selected="false" tabindex="-1">Stoppages &amp; tools</button>
+    </div>
+    <div class="workspace-panels">
+    <div id="wc-panel-overview" data-workspace-panel="overview" role="tabpanel" aria-labelledby="wc-tab-overview">
+    <section class="panel"><header><h2>Executable capacity, next 7 days</h2></header>
       ${capacity.error ? errorBlock(capacity.error, 'capacity') : !capRows.length ? emptyBlock('No machine capacity', 'This work center has no machines with activities set up.') : `
       <table class="table"><thead><tr><th>Machine</th><th>Activity</th><th>Working hours</th><th>Executable hours</th><th>Lost to</th><th>Readiness now</th></tr></thead><tbody>
       ${capRows.map((c, index) => {
@@ -66,7 +75,10 @@ export async function workCentersPage(page, ctx) {
     </section>
     <section class="panel"><header><h2>Downtime</h2></header>
       ${(downtime.data ?? []).filter(w => x.ms.some(m => m.code === w.machineCode)).map(w => `<div>${esc(w.machineCode)} · <span class="pill ${w.kind === 'Planned' ? 'info' : 'bad'}">${esc(w.kind)}</span> ${esc(fmtDateTime(w.startsAt))} – ${w.endsAt ? esc(fmtDateTime(w.endsAt)) : 'open'} · ${esc(w.reason)}</div>`).join('') || '<span class="muted">None recorded in the last day or planned in the next two weeks.</span>'}
-    </section>`;
+    </section>
+    </div><div id="wc-panel-readiness" data-workspace-panel="readiness" role="tabpanel" aria-labelledby="wc-tab-readiness" hidden></div>
+    <div id="wc-panel-support" data-workspace-panel="support" role="tabpanel" aria-labelledby="wc-tab-support" hidden></div>
+    </div></section>`;
   }
 
   $$('[data-wc]', page).forEach(row => row.addEventListener('click', () => { location.hash = `#/work-centers/${encodeURIComponent(row.dataset.wc)}`; }));
@@ -89,12 +101,16 @@ export async function workCentersPage(page, ctx) {
 
   // V3.5: stoppages on the selected work center's machines (or all machines), and the plant's reason codes.
   const chosen = selected ? rows.find(x => x.wc.code === selected) : null;
-  await appendStoppages(page, chosen ? chosen.ms : r.machines, ctx.me);
-  await appendReasonCodes(page, ctx.me);
-  await appendTools(page, r.machines, ctx.me);
-  await appendToolRequirements(page, ctx.me);
+  const supportPanel = selected ? $('[data-workspace-panel="support"]', page) : page;
+  const readinessPanel = selected ? $('[data-workspace-panel="readiness"]', page) : page;
+  await appendStoppages(supportPanel, chosen ? chosen.ms : r.machines, ctx.me);
+  await appendReasonCodes(supportPanel, ctx.me);
+  await appendTools(supportPanel, r.machines, ctx.me);
+  await appendToolRequirements(supportPanel, ctx.me);
   // V3.9: can each open operation run now, who is actually present, and production holds.
-  await appendOperations(page, chosen?.wc.code);
-  await appendPresence(page, chosen?.wc.code);
-  await appendHolds(page, ctx.me);
+  await appendOperations(readinessPanel, chosen?.wc.code);
+  await appendPresence(readinessPanel, chosen?.wc.code);
+  await appendHolds(readinessPanel, ctx.me);
+  wireWorkspaceTabs(page);
+  if (selected && ctx.query?.get('focus') === 'tools') $('[data-workspace-tab="support"]', page)?.click();
 }

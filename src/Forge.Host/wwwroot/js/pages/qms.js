@@ -163,20 +163,21 @@ const authored = (revision, actor) => [revision.createdBy, revision.lastEditedBy
 
 export async function qmsPage(page, ctx) {
   const me = ctx.me, auth = { subject: signIn.subject, token: signIn.token };
-  let disposed = false, generation = 0, kind = KINDS.includes(ctx.query?.get('kind')) ? ctx.query.get('kind') : 'Profile';
+  let disposed = false, generation = 0, blocked = false, kind = KINDS.includes(ctx.query?.get('kind')) ? ctx.query.get('kind') : 'Profile';
   let data = {}, selectedCode = null, selectedRevision = null;
   const dialogs = new Set();
   const current = token => !disposed && page.isConnected && auth.subject === signIn.subject && auth.token === signIn.token && token === generation;
   const closeDialogs = () => { for (const close of [...dialogs]) close(); };
   const scope = record => ({ facilityId: record.facilityCode, programId: record.programId });
-  const allowed = (action, record = null) => canAction(me, PERMISSION[action], record ? scope(record) : null);
+  const allowed = (action, record = null) => !blocked && canAction(me, PERMISSION[action], record ? scope(record) : null);
   const myActor = `person:${me.personId}`;
 
   async function load() {
-    const token = ++generation; closeDialogs();
+    const token = ++generation; blocked = true; closeDialogs();
     const [status, records, directory, resources] = await Promise.all([tryGet('/api/quality/qms/status'), tryGet(kind === 'Adoption' ? '/api/quality/qms/adoptions' : `/api/quality/qms/records?kind=${kind}`), tryGet('/api/kernel/directory'), tryGet('/api/resources/')]);
     if (!current(token)) return;
     if (kind === 'Adoption' && records.data) records.data = records.data.map(record => ({ ...record, kind: 'Adoption' }));
+    blocked = !!status.error || !!records.error;
     data = { status, records, directory, resources }; render();
   }
 
@@ -187,9 +188,13 @@ export async function qmsPage(page, ctx) {
     modal.innerHTML = `<h2>${esc(title)}</h2><div class="muted">${esc(detail)}</div>${html}
       ${fieldHtml(paragraph('qmsReason', 'Reason recorded in the audit trail'))}<div class="notice bad hidden" data-qms-error role="alert" aria-live="assertive"></div>
       <div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-qms-confirm>${esc(confirmLabel)}</button></div>`;
-    let closed = false, busy = false, releaseFocus = () => {};
+    let closed = false, busy = false, uncertain = false, releaseFocus = () => {};
     const live = () => !closed && modal.isConnected && current(token);
-    const close = () => { if (closed) return; closed = true; scrim.remove(); modal.remove(); dialogs.delete(close); releaseFocus(); };
+    const close = () => {
+      if (closed) return;
+      closed = true; scrim.remove(); modal.remove(); dialogs.delete(close); releaseFocus();
+      if (uncertain && page.isConnected) { blocked = true; render(); }
+    };
     dialogs.add(close); scrim.onclick = close; document.body.append(scrim, modal);
     $('[data-cancel]', modal).addEventListener('click', close);
     const button = $('[data-qms-confirm]', modal), error = $('[data-qms-error]', modal);
@@ -204,12 +209,14 @@ export async function qmsPage(page, ctx) {
         close(); toast(result.message ?? 'Saved.'); await load();
       } catch (failure) {
         if (!live()) return;
-        if (isServiceUnavailable(failure) && Number.isInteger(failure.status)) {
-          close(); toast('Forge could not confirm that change. Check the record before retrying.', true); return;
+        if (failure instanceof TypeError || Number.isInteger(failure.status) && isServiceUnavailable(failure)) {
+          uncertain = true;
+          error.textContent = 'Forge could not confirm that change. Your entries are preserved. Close this dialog and refresh the record before deciding whether to retry.';
+          error.classList.remove('hidden');
+          return;
         }
-        if (failure instanceof TypeError) { close(); toast('Forge could not confirm that change. Check the record before retrying.', true); return; }
         error.textContent = `${failure.message}${failure.status === 409 ? ' Refresh the record before making another decision.' : ''}`; error.classList.remove('hidden');
-      } finally { busy = false; if (live()) button.disabled = false; }
+      } finally { busy = false; if (live()) button.disabled = uncertain; }
     });
     releaseFocus = manageDialogFocus(modal, close);
     return { modal, close, live };

@@ -4,6 +4,15 @@
 
 const H = 36e5;
 
+export function materialConstraintKpi(result) {
+  if (!result || result.error) return { value: null, why: result?.error?.message ?? 'Material readiness is unavailable with your current roles.' };
+  const orders = result.data?.output;
+  if (!Array.isArray(orders)) return { value: null, why: 'Material readiness did not return a complete order list.' };
+  const shortfall = orders.filter(order => order.state === 'Shortfall').length;
+  const expected = orders.filter(order => order.state === 'Expected').length;
+  return { value: shortfall + expected, why: `${shortfall} short, ${expected} awaiting recorded receipts, of ${orders.length} released orders` };
+}
+
 export const WINDOWS = {
   '-7d': { label: '-7d', describe: 'the last seven days', from: now => now - 7 * 24 * H, to: now => now },
   '-24h': { label: '-24h', describe: 'the last 24 hours', from: now => now - 24 * H, to: now => now },
@@ -197,7 +206,7 @@ export function buildHorizon(d) {
       : { value: null, why: 'No schedule has been proposed yet.' },
     downtime: downtimeKpi(),
     laborConstraint: result ? { value: interruptionHours(['Workforce', 'OperatorsBusy']), why: 'Scheduled work paused for qualified people' } : { value: null, why: 'No schedule yet.' },
-    materialConstraint: { value: null, why: 'Material is not evaluated until Materials/MRP (Phase 6).' },
+    materialConstraint: materialConstraintKpi(d.material),
     safetyConstraint: result ? { value: interruptionHours(['Safety']), why: 'Scheduled work paused for safety staffing' } : { value: null, why: 'No schedule yet.' },
   };
 

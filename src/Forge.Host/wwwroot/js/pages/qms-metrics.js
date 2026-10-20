@@ -3,6 +3,10 @@ import { esc } from '../ui.js';
 
 const ROOT = '/api/quality/qms/planning/metrics/dashboard';
 
+function localInputValue(date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 function valueFor(item) {
   if (!item.calculated) return 'Human assessment required';
   if (item.status !== 'Complete' || item.measurement?.availability !== 'Complete' || item.measurement.actual == null) return 'Not available';
@@ -35,7 +39,8 @@ export function metricDashboardRows(snapshot) {
 
 export async function qmsMetricsPage(page) {
   const auth = { subject: session.subject, token: session.token };
-  let disposed = false, generation = 0, fromValue = '', toValue = '', data = null, error = null, loading = false;
+  const now = new Date();
+  let disposed = false, generation = 0, fromValue = localInputValue(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)), toValue = localInputValue(now), data = null, error = null, loading = false;
   const live = token => !disposed && page.isConnected && generation === token && session.subject === auth.subject && session.token === auth.token;
 
   function render() {
@@ -74,6 +79,7 @@ export async function qmsMetricsPage(page) {
   }
 
   render();
+  load(null);
   return { dispose() { disposed = true; generation++; page.innerHTML = ''; } };
 }
 

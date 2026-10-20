@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { shopFloorPage } from '../../src/Forge.Host/wwwroot/js/pages/shopfloor.js';
-import { toast, manageDialogFocus } from '../../src/Forge.Host/wwwroot/js/ui.js';
+import { toast, manageDialogFocus, confirmWithReason } from '../../src/Forge.Host/wwwroot/js/ui.js';
 import { installBrowser, response, deferred, flush, fire } from './browser-harness.mjs';
 
 const person = badge => ({ displayName: `Operator ${badge}`, personId: badge, clockedInSince: '2026-10-12T09:00:00Z', hasPin: true, isWorker: true, queue: [], training: [] });
@@ -38,6 +38,49 @@ test('rendered shop-floor controls and persistent operator region expose accessi
   fire(h.page.querySelector('#done'), 'click');
   assert.equal(h.document.querySelector('[aria-label="Current shop-floor operator"]'), status);
   assert.equal(status.textContent, 'Terminal locked. Scan your badge.');
+});
+
+test('shared layout classes exist and critical text/background pairs meet WCAG AA', async () => {
+  const css = await readFile(new URL('../../src/Forge.Host/wwwroot/css/forge.css', import.meta.url), 'utf8');
+  const rule = selector => css.match(new RegExp(`${selector}\\s*\\{([^}]+)\\}`))?.[1] ?? '';
+  const hex = value => value.match(/#[0-9A-F]{6}/i)?.[0];
+  const luminance = value => {
+    const [r, g, b] = value.slice(1).match(/../g).map(part => parseInt(part, 16) / 255).map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (foreground, background) => {
+    const a = luminance(foreground), b = luminance(background);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  };
+  const backgroundStops = selector => {
+    const declaration = rule(selector), gradient = declaration.match(/background:\s*linear-gradient\(180deg,\s*(#[0-9A-F]{6}),\s*(#[0-9A-F]{6})/i);
+    if (gradient) return gradient.slice(1);
+    const token = declaration.match(/background:\s*var\((--[\w-]+)\)/)?.[1];
+    return token ? [hex(css.match(new RegExp(`${token}:\\s*(#[0-9A-F]{6})`, 'i'))?.[1] ?? '')] : [];
+  };
+  for (const selector of ['\\.section, \\.card', '\\.section-head, \\.card-head, \\.panel-head, \\.row', '\\.stack', '\\.inline', '\\.eyebrow', '\\.notice\\.info', '\\.table tr\\.on td']) {
+    assert.notEqual(rule(selector), '', `expected a style rule for ${selector}`);
+  }
+  const faint = hex(css.match(/--faint:\s*(#[0-9A-F]{6})/i)?.[1] ?? '');
+  assert.ok(faint); for (const surface of ['#0F1419', '#171C22', '#1C2229']) assert.ok(contrast(faint, surface) >= 4.5, `${faint} on ${surface}`);
+  const white = '#FFFFFF';
+  for (const selector of ['\\.btn\\.primary', '\\.seg button\\.on']) {
+    const backgrounds = backgroundStops(selector);
+    assert.ok(backgrounds.length, `expected an explicit accessible background for ${selector}`);
+    for (const background of backgrounds) assert.ok(contrast(white, background) >= 4.5, `${white} on ${background}`);
+  }
+  for (const selector of ['\\.pill\\.ok', '\\.pill\\.bad']) {
+    const backgrounds = backgroundStops(selector);
+    assert.ok(backgrounds.length); for (const background of backgrounds) assert.ok(contrast(white, background) >= 4.5, `${white} on ${background}`);
+  }
+  const orangeBadge = backgroundStops('\\.badge\\.orange');
+  assert.ok(orangeBadge.length); for (const background of orangeBadge) assert.ok(contrast(white, background) >= 4.5, `${white} on ${background}`);
+  const activeLink = rule('\\.nav a\\.active');
+  const activeGradient = activeLink.match(/background:\s*linear-gradient\(90deg,\s*var\(--red-tail\),\s*(#[0-9A-F]{6})\)/i);
+  const redTail = hex(css.match(/--red-tail:\s*(#[0-9A-F]{6})/i)?.[1] ?? '');
+  assert.ok(activeGradient && redTail, 'the active navigation link uses the explicit accessible red gradient');
+  for (const background of [redTail, activeGradient[1]]) assert.ok(contrast(white, background) >= 4.5, `${white} on ${background}`);
+  assert.match(activeLink, /border-color:\s*#7C2D12/i);
 });
 
 test('modal Tab and Shift+Tab wrap visible enabled controls; Escape restores its opener', t => {
@@ -79,6 +122,21 @@ test('an empty modal traps focus on its root and a detached modal removes its li
   fire(document, 'keydown', { key: 'Tab' });
   assert.equal(document.listeners.get('keydown').size, 0);
   release();
+});
+
+test('reason dialogs trap focus, preserve entered reasons on action errors, and close with Escape', async t => {
+  const { document } = installBrowser(t);
+  const opener = document.createElement('button'); document.body.append(opener); opener.focus();
+  const pending = confirmWithReason({ title: 'Mark assignment complete' }, async () => { throw new Error('The decision was rejected.'); });
+  const modal = document.querySelector('.modal'), reason = modal.querySelector('#reason'), confirm = modal.querySelector('[data-ok]');
+  assert.equal(modal.getAttribute('aria-modal'), 'true'); assert.equal(document.activeElement, reason);
+  reason.value = 'The assigned inspection is finished.';
+  fire(confirm, 'click'); await flush();
+  assert.equal(modal.isConnected, true); assert.equal(reason.value, 'The assigned inspection is finished.');
+  assert.match(modal.querySelector('[data-error]').textContent, /decision was rejected/);
+  assert.equal(fire(reason, 'keydown', { key: 'Escape' }).defaultPrevented, true);
+  assert.equal(await pending, null); assert.equal(document.activeElement, opener);
+  assert.equal(document.listeners.get('keydown').size, 0); assert.equal(document.listeners.get('focusin').size, 0);
 });
 
 test('toast status and errors expose live roles and expire at their intended times', t => {

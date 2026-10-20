@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mountLabelsPanel, materialIdentificationCode } from '../../src/Forge.Host/wwwroot/js/identification-labels.js';
+import { mountIdentificationInput } from '../../src/Forge.Host/wwwroot/js/identification-input.mjs';
 import { session } from '../../src/Forge.Host/wwwroot/js/api.js';
 import { installBrowser, response, deferred, flush, fire } from './browser-harness.mjs';
 
@@ -46,6 +47,22 @@ test('material label identity uses configured namespace and strict escaping with
   assert.equal(materialIdentificationCode(config, 'PART\ufeff', 'LOT'), 'forge:v1:configured-plant:material:PART%EF%BB%BF:LOT');
 });
 
+test('identification input exposes inferred input mode to the selected subject callback', async t => {
+  const browser = installBrowser(t), element = browser.document.createElement('section'); browser.document.body.append(element);
+  const selectedModes = [];
+  const widget = mountIdentificationInput(element, { id: 'cadence-code', label: 'Reference', kinds: ['material'],
+    loadConfig: async () => config, resolve: async code => ({ ...subject, code }),
+    onSelect: (_value, mode) => selectedModes.push(mode) });
+  const input = element.querySelector('#cadence-code'), previousNow = Date.now;
+  let now = 100; Date.now = () => now;
+  try {
+    for (const character of subjectCode) { fire(input, 'keydown', { key: character }); input.value += character; fire(input, 'input'); now += 8; }
+    fire(input, 'keydown', { key: 'Enter' }); await flush(); fire(element.querySelector('[data-identify-use]'), 'click');
+    assert.equal(widget.stage.lastInputMode, 'KeyboardWedge'); assert.deepEqual(selectedModes, ['KeyboardWedge']);
+    input.value = ''; fire(input, 'input'); assert.equal(widget.stage.lastInputMode, 'Manual');
+  } finally { Date.now = previousNow; widget.dispose(); }
+});
+
 test('label panel displays the recorded source revision, exact template and current adopted policy without a stock transaction', async t => {
   const h = await harness(t, { route: path => path === '/api/identification/resolve' ? response({ ...subject, revision: 'B' }) : null });
   assert.match(h.element.innerHTML, /revision A/); assert.match(h.element.innerHTML, /ROLL-LABEL revision 2/); assert.match(h.element.innerHTML, /COPY-POLICY revision 4/);
@@ -80,6 +97,19 @@ test('historical labels remain readable with no consequential controls when curr
   const h = await harness(t, { actions: [], policyAvailable: false }); await h.open();
   assert.match(h.element.innerHTML, /historical label remains readable/); assert.equal(h.element.querySelector('[data-label-action]'), null); assert.equal(h.element.querySelector('[data-label-request-print]'), null);
   assert.equal(changes(h.calls).length, 0);
+});
+
+test('an uncertain label command keeps entries visible, blocks retry and unlocks after refresh', async t => {
+  const h = await harness(t, { route: path => path.endsWith('/reprint') ? response({ detail: 'The label service is unavailable.' }, 503) : null });
+  await h.open(); fire(h.element.querySelector('[data-label-action="reprint"]'), 'click');
+  const modal = h.document.querySelector('.modal'); fill(modal, { labelReason: 'Replace the damaged copy after checking the print station' });
+  const submit = modal.querySelector('[data-label-confirm]'); fire(submit, 'click'); await flush();
+  assert.equal(modal.isConnected, true); assert.equal(modal.querySelector('#f-labelReason').value, 'Replace the damaged copy after checking the print station');
+  assert.equal(submit.disabled, true); assert.match(modal.querySelector('[data-label-error]').textContent, /entries are preserved/);
+  fire(modal.querySelector('[data-label-cancel]'), 'click');
+  assert.equal(h.element.querySelector('[data-label-action]'), null); assert.equal(h.element.querySelector('[data-label-issue]'), null);
+  fire(h.element.querySelector('[data-label-refresh]'), 'click'); await flush(); await flush();
+  assert.ok(h.element.querySelector('[data-label-action="reprint"]'));
 });
 
 test('recording a browser print attempt requires an explicit reason and does not confirm its outcome', async t => {
@@ -149,10 +179,13 @@ test('a recorded replacement opens the newly issued copy using the returned issu
   assert.ok(h.calls.some(call => call.path === '/api/identification/labels/issuances/issuance-2')); assert.match(h.element.textContent, /Label NEW-COPY/); assert.equal(changes(h.calls).length, 1);
 });
 
-test('uncertain command outcome closes the dialog and requires record reconciliation without an automatic retry', async t => {
+test('uncertain command outcome preserves label entries, blocks retry and requires a record refresh', async t => {
   const h = await harness(t, { route: (path, body) => body && path.endsWith('/replace') ? Promise.reject(new TypeError('Failed to fetch')) : null }); await h.open(); fire(h.element.querySelector('[data-label-action="replace"]'), 'click');
-  const modal = h.document.querySelector('.modal'); fill(modal, { labelReason: 'Replace damaged label' }); fire(modal.querySelector('[data-label-confirm]'), 'click'); await flush();
-  assert.equal(modal.isConnected, false); assert.equal(changes(h.calls).length, 1); assert.match(h.document.querySelector('.toast').textContent, /Check the label record before retrying/); assert.equal(h.document.listeners.get('keydown').size, 0);
+  const modal = h.document.querySelector('.modal'); fill(modal, { labelReason: 'Replace damaged label' }); const submit = modal.querySelector('[data-label-confirm]'); fire(submit, 'click'); await flush();
+  assert.equal(modal.isConnected, true); assert.equal(modal.querySelector('#f-labelReason').value, 'Replace damaged label'); assert.equal(submit.disabled, true);
+  assert.match(modal.querySelector('[data-label-error]').textContent, /no print or stock outcome is inferred/); assert.equal(changes(h.calls).length, 1);
+  fire(modal.querySelector('[data-label-cancel]'), 'click'); assert.equal(h.element.querySelector('[data-label-action]'), null);
+  fire(h.element.querySelector('[data-label-refresh]'), 'click'); await flush(); await flush(); assert.ok(h.element.querySelector('[data-label-action="replace"]'));
 });
 
 test('refresh, signout and disposal make detached label commands ineffective', async t => {

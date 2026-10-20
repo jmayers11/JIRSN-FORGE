@@ -148,8 +148,8 @@ export async function scenariosPage(root) {
           text: `${worker.homeWorkCenter ?? worker.workCenter ?? 'No home work center'} · ${worker.countsAsPresent ? 'Present' : 'No current presence evidence'}`,
           value: existing?.personIds?.includes(worker.personId) ?? false })),
       ];
-      if (field.name === 'personId') return [{ ...field, label: 'Alternate worker', type: 'select', blank: 'Choose a worker',
-        options: workers.map(worker => [worker.personId, `${worker.name} · ${worker.homeWorkCenter ?? worker.workCenter ?? 'No home work center'}`]), value }];
+      if (field.name === 'personId') return [{ ...field, label: 'Alternate worker', type: 'lookup',
+        options: workers.map(worker => [worker.personId, `${worker.name} · ${worker.personId} · ${worker.homeWorkCenter ?? worker.workCenter ?? 'No home work center'}`]), value }];
       if (Array.isArray(value)) value = value.join(', ');
       if (field.type === 'datetime-local') value = localTime(value);
       return [{ ...field, value }];

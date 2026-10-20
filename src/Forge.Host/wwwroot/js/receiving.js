@@ -1,5 +1,5 @@
 import { tryGet, command } from './api.js';
-import { esc, $$, fmtDateTime, errorBlock, emptyBlock } from './ui.js';
+import { esc, $$, fmtDateTime, errorBlock, emptyBlock, toast } from './ui.js';
 import { formModal, qty, canAction } from './forms.js';
 import { attachmentsDrawer } from './attachments.js';
 
@@ -100,7 +100,7 @@ export function receivingTab(rec, me) {
     </tbody></table>`}`;
 }
 
-export function bindReceivingTab(page, locations, reload, me) {
+export function bindReceivingTab(page, locations, reload, me, rec = {}) {
   $$('[data-receipt-evidence]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`Receipt ${b.dataset.receiptEvidence} evidence`, { type: 'Receipt', id: b.dataset.receiptEvidence, me, note: 'Reference evidence does not complete the structured inspection.' })));
   $$('[data-inspection-evidence]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`Inspection ${b.dataset.inspectionEvidence} evidence`, { type: 'ReceivingInspection', id: b.dataset.inspectionEvidence, me })));
   $$('[data-inspect]', page).forEach(b => b.addEventListener('click', () => formModal({
@@ -146,13 +146,57 @@ export function bindReceivingTab(page, locations, reload, me) {
       { name: 'quantity', label: 'Quantity', type: 'number', min: 0, required: true }, { name: 'locationCode', label: 'Into', type: 'select', options: locations, required: true },
     ],
   }, (v, reason) => command('/api/inventory/customer-returns', { ...v, shipmentId: Number(v.shipmentId), quantity: Number(v.quantity), lotNumber: v.lotNumber || null }, reason), reload)));
-  $$('[data-rma-dispose]', page).forEach(b => b.addEventListener('click', () => formModal({
-    title: `Disposition return ${b.dataset.rmaDispose}`, confirmLabel: 'Decide', reasonRequired: true,
-    detail: 'Where governed return acceptance is configured, a restock names the independent product release for the prepared return cohort.',
-    fields: [{ name: 'disposition', label: 'Disposition', type: 'select', options: [['Restock', 'Restock (release)'], ['Rework', 'Rework (stays on hold)'], ['Scrap', 'Scrap']] },
-      { name: 'decisionId', label: 'Product release decision (governed restock)', type: 'number', min: 1 }, { name: 'expectedDecisionVersion', label: 'Release decision version', type: 'number', min: 1 },
-      { name: 'quantity', label: 'Quantity (governed disposition)', type: 'number', min: 0, step: 'any' }],
-  }, (v, reason) => command(`/api/inventory/customer-returns/${b.dataset.rmaDispose}/disposition`, { disposition: v.disposition, decisionId: v.decisionId, expectedDecisionVersion: v.expectedDecisionVersion, quantity: v.quantity }, reason), reload)));
+  $$('[data-rma-dispose]', page).forEach(b => b.addEventListener('click', async () => {
+    try {
+      const returned = (rec.returns.data ?? []).find(item => String(item.rmaId) === b.dataset.rmaDispose);
+      if (!returned) throw new Error('Refresh the customer return before deciding its disposition.');
+      const releases = await tryGet('/api/quality/acceptance/product-releases?take=100');
+      if (releases.error) throw new Error('Could not load passed product releases. Refresh and try again.');
+      const source = release => release.subject?.key ?? release.subject;
+      const candidates = (releases.data ?? []).filter(release => {
+        const subject = source(release);
+        return subject?.returnCohortId != null && subject.partNumber === returned.partNumber && subject.lotNumber === returned.lotNumber;
+      });
+      const exact = await Promise.all(candidates.map(async release => {
+        const subject = source(release);
+        const cohort = await tryGet(`/api/quality/acceptance/return-cohorts/${encodeURIComponent(subject.returnCohortId)}`);
+        if (cohort.error) return null;
+        const record = cohort.data, key = record?.subject?.key ?? record?.subject;
+        if (Number(record?.rmaId) !== Number(returned.rmaId) || key?.partNumber !== returned.partNumber || key?.lotNumber !== returned.lotNumber ||
+            key?.locationCode !== subject.locationCode || Number(key?.returnCohortId) !== Number(subject.returnCohortId)) return null;
+        return release;
+      }));
+      const options = exact.filter(Boolean).map(release => {
+        const subject = source(release), token = `${release.decisionId}|${release.version}|${release.quantity}`;
+        return [token, `Release ${release.decisionId} · v${release.version} · ${qty(release.quantity)} units · cohort ${subject.returnCohortId}`];
+      });
+      const selected = options.length === 1 ? options[0][0] : '';
+      const selectedParts = selected ? selected.split('|') : [];
+      const releaseField = { name: 'release', label: 'Passed release for this exact return', type: 'select', blank: options.length ? 'Choose a return release' : 'No matching release available', options, value: selected,
+        onChange: (control, modal) => {
+          const [, version, releaseQuantity] = (control.value ?? '').split('|');
+          const versionField = modal.querySelector('#f-expectedDecisionVersion'), quantityField = modal.querySelector('#f-quantity');
+          if (versionField) versionField.value = version ?? '';
+          if (quantityField) quantityField.value = releaseQuantity ? String(Math.min(Number(releaseQuantity), Number(returned.quantity))) : '';
+        } };
+      const fields = [
+        { name: 'disposition', label: 'Disposition', type: 'select', options: [['Restock', 'Restock (released quantity)'], ['Rework', 'Rework (stays on hold)'], ['Scrap', 'Scrap']] },
+        releaseField,
+        { name: 'expectedDecisionVersion', label: 'Selected release version', type: 'number', readonly: true, value: selectedParts[1] ?? '' },
+        { name: 'quantity', label: 'Quantity to restock or disposition', type: 'number', min: 0, step: 'any', value: selectedParts[2] ? Math.min(Number(selectedParts[2]), Number(returned.quantity)) : '' },
+      ];
+      formModal({ title: `Disposition return ${b.dataset.rmaDispose}`, confirmLabel: 'Decide', reasonRequired: true,
+        detail: 'A restock must name a release for this exact return cohort. The version and quantity fill in when selected; Forge rechecks that the release is still valid when you record the decision.', fields,
+      }, (v, reason) => {
+        const selectedRelease = v.release ? v.release.split('|') : null;
+        if (v.disposition === 'Restock' && !selectedRelease) throw new Error('Choose the passed release for this exact return cohort before restocking.');
+        return command(`/api/inventory/customer-returns/${b.dataset.rmaDispose}/disposition`, {
+          disposition: v.disposition, decisionId: v.disposition === 'Restock' ? Number(selectedRelease[0]) : null,
+          expectedDecisionVersion: v.disposition === 'Restock' ? Number(v.expectedDecisionVersion) : null, quantity: v.quantity,
+        }, reason);
+      }, reload);
+    } catch (error) { toast(error.message, true); }
+  }));
   $$('[data-rma-prepare]', page).forEach(b => b.addEventListener('click', () => formModal({
     title: `Prepare return ${b.dataset.rmaPrepare} for inspection`, detail: 'Identifies the exact returned quantity as a cohort that product acceptance inspects and releases.', confirmLabel: 'Prepare', reasonRequired: true,
     fields: [{ name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', value: b.dataset.qty, required: true }, { name: 'locationCode', label: 'Inspection location (optional)', type: 'select', blank: '— where it is now —', options: locations }],
@@ -167,7 +211,15 @@ export function bindReceivingTab(page, locations, reload, me) {
   $$('[data-fai-record]', page).forEach(b => b.addEventListener('click', () => { const s = faiParts(b.dataset.faiRecord); formModal({
     title: `Record FAI: ${s.partNumber} rev ${s.revision} from ${s.supplierCode}`, detail: 'Backed by a released (signed) FAI report in document control. A failed characteristic means the FAI has not passed.', confirmLabel: 'Record FAI', reasonRequired: true,
     fields: [{ name: 'passed', label: 'Outcome', type: 'check', text: 'FAI passed', value: true },
-      { name: 'results', label: 'Results', type: 'textarea', required: true, hint: 'One per line: characteristic | requirement | measured | pass or fail.' },
+      { name: 'results', label: 'Results', type: 'repeater', required: true, minRows: 1, rowLabel: 'characteristic', pluralRowLabel: 'characteristics',
+        hint: 'Record one result for each characteristic checked.',
+        columns: [
+          { name: 'characteristic', label: 'Characteristic', required: true },
+          { name: 'requirement', label: 'Requirement' },
+          { name: 'measured', label: 'Measured' },
+          { name: 'result', label: 'Result', type: 'select', required: true, options: [['pass', 'Pass'], ['fail', 'Fail']] },
+        ],
+        serialize: rows => rows.map(row => `${row.characteristic} | ${row.requirement ?? ''} | ${row.measured ?? ''} | ${row.result}`).join('\n') },
       { name: 'documentNumber', label: 'FAI report document', code: true, required: true }, { name: 'documentRevision', label: 'Report revision', code: true, required: true }],
   }, (v, reason) => command('/api/quality/fai', { ...s, passed: !!v.passed, results: faiResults(v.results), documentNumber: v.documentNumber, documentRevision: v.documentRevision }, reason), reload); }));
 }

@@ -133,16 +133,16 @@ const STATE_LABEL = {
 const STATE_PILL = { Current: 'ok', Pinned: 'ok', LegitimatelySuperseded: 'info', Mismatch: 'bad', Missing: 'bad', NotReleased: 'bad', Obsolete: 'bad', RequiresReview: 'warn' };
 
 /** Which revision of each document applies to an order and whether the order matches it (V2.3). */
-export async function appendApplicability(page, orderNumber, me) {
+export async function appendApplicability(page, orderNumber, me, supplied, onChanged) {
   const section = document.createElement('section');
   section.className = 'panel';
   page.append(section);
-  await renderApplicability(section, orderNumber, me);
+  return renderApplicability(section, orderNumber, me, supplied, onChanged);
 }
 
-async function renderApplicability(section, orderNumber, me) {
-  const res = await tryGet(`/api/planning/applicability?order=${orderNumber}`);
-  if (res.error) { section.innerHTML = `<header><h2>Applicable documentation</h2></header>${errorBlock(res.error, 'applicability')}`; return; }
+async function renderApplicability(section, orderNumber, me, supplied, onChanged) {
+  const res = supplied ?? await tryGet(`/api/planning/applicability?order=${orderNumber}`);
+  if (res.error) { section.innerHTML = `<header><h2>Applicable documentation</h2></header>${errorBlock(res.error, 'applicability')}`; return null; }
   const d = res.data;
   section.innerHTML = `
     <header><h2>Applicable documentation</h2><span class="spacer"></span>
@@ -159,5 +159,6 @@ async function renderApplicability(section, orderNumber, me) {
     title: `Reissue documentation for order ${orderNumber}`,
     detail: 'Do this when the floor has the revisions that apply now (traveler reprinted, old copies withdrawn). The order then references them.',
     reasonRequired: true, confirmLabel: 'Reissue', fields: [],
-  }, (_, reason) => command(`/api/engineering/orders/${orderNumber}/reissue-documentation`, {}, reason), () => renderApplicability(section, orderNumber, me)));
+  }, (_, reason) => command(`/api/engineering/orders/${orderNumber}/reissue-documentation`, {}, reason), () => (onChanged ? onChanged() : renderApplicability(section, orderNumber, me))));
+  return d;
 }

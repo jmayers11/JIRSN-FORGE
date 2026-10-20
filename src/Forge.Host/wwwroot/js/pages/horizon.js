@@ -32,7 +32,7 @@ export async function horizonPage(page, ctx) {
     const now = Date.now();
     const win = WINDOWS[state.windowKey];
     const from = win.from(now), to = win.to(now);
-    const [resources, approved, proposed, constraints, downtime, capacity, orders, activeWork, attainment, activity] = await Promise.all([
+    const [resources, approved, proposed, constraints, downtime, capacity, orders, activeWork, attainment, activity, material] = await Promise.all([
       tryGet('/api/resources/'),
       tryGet('/api/planning/schedules/approved'),
       tryGet('/api/planning/schedules/proposed'),
@@ -43,10 +43,11 @@ export async function horizonPage(page, ctx) {
       tryGet('/api/readiness/active-work'),
       tryGet(`/api/planning/attainment?from=${encodeURIComponent(iso(now - 24 * H))}&to=${encodeURIComponent(iso(now))}`),
       tryGet(`/api/shopfloor/activity?from=${encodeURIComponent(iso(now - 7 * 24 * H))}&to=${encodeURIComponent(iso(now))}`),
+      tryGet('/api/planning/material'),
     ]);
     // Prefer the approved schedule; fall back to the latest proposal and say so.
     const schedule = approved.data ?? proposed.data ?? null;
-    data = { now, resources, approved, proposed, schedule, constraints, downtime, capacity, orders, activeWork, attainment, activity };
+    data = { now, resources, approved, proposed, schedule, constraints, downtime, capacity, orders, activeWork, attainment, activity, material };
     render();
   }
 
@@ -56,6 +57,7 @@ export async function horizonPage(page, ctx) {
       downtime: data.downtime.data, capacity: data.capacity.data, orders: data.orders.data,
       activeWork: data.activeWork.data, now: data.now, windowKey: state.windowKey, safetyArea: state.safetyArea || null,
       attainment: data.attainment,
+      material: data.material,
     });
   }
 
@@ -141,15 +143,20 @@ export async function horizonPage(page, ctx) {
 
   function kpis(v) {
     const k = v.kpis;
-    const tile = (ic, title, m, unit) => m.value == null
-      ? `<div class="kpi na" title="${esc(m.why)}">${img(ic)}<div><div class="t">${esc(title)}</div><div class="v">Not yet measured</div><div class="why">${esc(m.why)}</div></div></div>`
-      : `<div class="kpi" title="${esc(m.why)}">${img(ic)}<div><div class="t">${esc(title)}</div><div class="v">${fmtNumber(m.value)}${unit ? `<small>${unit}</small>` : ''}</div><div class="why">${esc(m.why)}</div></div></div>`;
+    const tile = (ic, title, m, unit, href = null) => {
+      const tag = href ? 'a' : 'div', linkAttrs = href ? ` href="${href}" aria-label="${esc(`${title}: ${m.value == null ? m.why : `${m.value} ${m.why}`}. Open material exceptions`)}"` : '';
+      const content = m.value == null
+        ? `<div class="v">Not yet measured</div><div class="why">${esc(m.why)}</div>`
+        : `<div class="v">${fmtNumber(m.value)}${unit ? `<small>${unit}</small>` : ''}</div><div class="why">${esc(m.why)}</div>`;
+      return `<${tag} class="kpi ${m.value == null ? 'na' : ''}${href ? ' kpi-link' : ''}" title="${esc(m.why)}"${linkAttrs}>${img(ic)}<div><div class="t">${esc(title)}</div>${content}</div></${tag}>`;
+    };
+    const canOpenMaterialPlan = (ctx.me?.permissions ?? []).some(permission => ['planning.mrp.read', 'planning.demand.manage'].includes(permission));
     return [
       tile('trend', 'Production Attainment', k.attainment, '%'),
       tile('alert', 'Orders At Risk', k.ordersAtRisk, ''),
       tile('maintenance', 'Machine Downtime', k.downtime, 'hr'),
       tile('qualification', 'Qualified Labor Constraint', k.laborConstraint, 'hr'),
-      tile('material', 'Material Constraint', k.materialConstraint, 'hr'),
+      tile('material', 'Material Constraint', k.materialConstraint, '', canOpenMaterialPlan ? '#/material-plan?tab=exceptions' : null),
       tile('quality', 'Safety Constraint', k.safetyConstraint, 'hr'),
     ].join('');
   }

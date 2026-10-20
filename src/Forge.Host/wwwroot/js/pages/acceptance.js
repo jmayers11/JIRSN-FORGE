@@ -64,8 +64,21 @@ function criteriaFields(revision = null, fixed = false) {
     { name: 'maximumRepresented', label: 'Largest quantity one inspection may represent', type: 'number', min: 1, required: true, value: cov.maximumRepresentedQuantity },
     { name: 'method', label: 'Sampling / inspection method', type: 'textarea', required: true, value: cov.method },
     { name: 'approvalBasis', label: 'Basis for this coverage', type: 'textarea', required: true, value: cov.humanApprovalBasis },
-    { name: 'characteristics', label: 'Characteristics', type: 'textarea', required: true, value: formatCharacteristics(c.characteristics), hint: 'One per line: number | name | Variable or Attribute | nominal | lower | upper | unit. Attributes have no limits.' },
-    { name: 'documents', label: 'Controlled documents', type: 'textarea', required: true, value: (c.documents ?? []).map(d => `${d.documentNumber} ${d.revision}`).join('\n'), hint: 'One per line: DOCUMENT-NUMBER REVISION.' },
+    { name: 'characteristics', label: 'Characteristics', type: 'repeater', required: true, minRows: 1, rowLabel: 'characteristic', pluralRowLabel: 'characteristics', value: c.characteristics ?? [],
+      columns: [
+        { name: 'number', label: 'No.', type: 'number', min: 1, required: true },
+        { name: 'name', label: 'Characteristic', required: true },
+        { name: 'kind', label: 'Type', type: 'select', required: true, options: [['Variable', 'Variable'], ['Attribute', 'Attribute']] },
+        { name: 'nominal', label: 'Nominal', type: 'number', step: 'any' },
+        { name: 'lower', label: 'Lower limit', type: 'number', step: 'any' },
+        { name: 'upper', label: 'Upper limit', type: 'number', step: 'any' },
+        { name: 'unit', label: 'Unit' },
+      ],
+      serialize: rows => rows.map(c => [c.number, c.name, c.kind, c.nominal ?? '', c.lower ?? '', c.upper ?? '', c.unit ?? ''].join(' | ')).join('\n'),
+      hint: 'Use one row per characteristic. Attribute checks do not use numeric limits.' },
+    { name: 'documents', label: 'Controlled documents', type: 'repeater', required: true, minRows: 1, rowLabel: 'document', pluralRowLabel: 'documents', value: c.documents ?? [],
+      columns: [{ name: 'documentNumber', label: 'Document number', required: true }, { name: 'revision', label: 'Revision', required: true }],
+      serialize: rows => rows.map(d => `${d.documentNumber} ${d.revision}`).join('\n'), hint: 'Add the exact controlled revision used by this criteria.' },
   ];
 }
 
@@ -134,6 +147,18 @@ export async function acceptancePage(page, ctx) {
     $('#withdraw', page)?.addEventListener('click', withdraw);
     $('#consume', page)?.addEventListener('click', consume);
     $('#release-this', page)?.addEventListener('click', () => { tab = 'release'; render(); });
+    $('#inspect-cohort', page)?.addEventListener('click', () => {
+      const d = found?.data;
+      if (!d) return;
+      const subject = d.subject?.key ?? d.subject ?? {};
+      const cohortId = d.cohortId ?? subject.returnCohortId ?? found.id;
+      tab = 'inspect'; render();
+      $('#i-part', page).value = subject.partNumber ?? '';
+      $('#i-lot', page).value = subject.lotNumber ?? '';
+      $('#i-loc', page).value = subject.locationCode ?? '';
+      $('#i-cohort', page).value = cohortId ?? '';
+      $('#i-qty', page).value = d.quantity ?? '';
+    });
     $$('[data-inspection-id]', page).forEach(b => b.addEventListener('click', () => lookup('inspection', b.dataset.inspectionId)));
     $$('[data-release-id]', page).forEach(b => b.addEventListener('click', () => lookup('release', b.dataset.releaseId)));
   }
@@ -268,7 +293,15 @@ export async function acceptancePage(page, ctx) {
     if (found.kind === 'release') return `<dl class="kv"><dt>Release decision</dt><dd>${esc(d.decisionId)} (version ${esc(d.version)})</dd><dt>Subject</dt><dd>${esc(subjectText(d.subject))} · rev ${esc(d.revision)}</dd>
       <dt>Quantity</dt><dd>${qty(d.quantity)}</dd><dt>Inspections</dt><dd>${(d.inspectionIds ?? []).map(esc).join(', ')}</dd><dt>Approved</dt><dd>${esc(who(d.approvedBy))}, ${esc(fmtDateTime(d.approvedAt))}</dd><dt>Basis</dt><dd>${esc(d.basis)}</dd></dl>
       <div class="actions">${can.consume ? '<button class="btn" id="consume">Consume quantity</button>' : ''}${can.release ? '<button class="btn" id="withdraw">Withdraw release</button>' : ''}</div>`;
-    return `<pre class="mono" style="white-space:pre-wrap">${esc(JSON.stringify(d, null, 2))}</pre>`;
+    const subject = d.subject?.key ?? d.subject ?? {};
+    const cohortId = d.cohortId ?? subject.returnCohortId ?? found.id;
+    return `<dl class="kv"><dt>Return cohort</dt><dd>#${esc(cohortId)} (version ${esc(d.version ?? 1)})</dd>
+      <dt>Customer return (RMA)</dt><dd>${d.rmaId != null ? `<a href="#/receiving">RMA #${esc(d.rmaId)}</a>` : '—'}</dd>
+      <dt>Subject</dt><dd>${esc(subjectText(subject))} · rev ${esc(d.revision ?? d.subject?.revision ?? '—')}</dd>
+      <dt>Prepared quantity</dt><dd>${qty(d.quantity)}</dd>
+      ${d.preparedBy || d.preparedAt ? `<dt>Prepared</dt><dd>${esc(who(d.preparedBy ?? ''))}${d.preparedAt ? `, ${esc(fmtDateTime(d.preparedAt))}` : ''}</dd>` : ''}
+      ${d.consumedQuantity != null ? `<dt>Consumed / restocked</dt><dd>${qty(d.consumedQuantity)}</dd>` : ''}
+    </dl>${can.inspect ? '<div class="actions"><button class="btn primary" id="inspect-cohort" type="button">Inspect this return cohort</button></div>' : ''}`;
   }
 
   async function lookup(kind, id) {

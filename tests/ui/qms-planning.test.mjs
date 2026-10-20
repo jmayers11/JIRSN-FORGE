@@ -98,9 +98,13 @@ test('409 retains captured version and asks for current read without fabricated 
   fire(h.page.querySelector('[data-definition-action="Approve"]'), 'click'); const modal = h.document.querySelector('.modal'); fill(modal, { note: 'Decision', reason: 'Reason' }); fire(modal.querySelector('[data-confirm]'), 'click'); await flush();
   assert.equal(modal.isConnected, true); assert.match(modal.querySelector('[data-error]').textContent, /Read the current version/); assert.equal(h.calls.find(item => item.path.endsWith('/approve')).body.expectedVersion, 8); assert.equal(h.document.querySelector('.toast'), null);
 });
-test('network uncertainty closes staging and offers current-record read; no automatic/offline retry', async t => {
+test('network uncertainty preserves staged decisions, blocks retry and requires current-record read', async t => {
   const h = await harness(t, { route: (path, body) => body && path.endsWith('/approve') ? Promise.reject(new TypeError('Connection lost')) : null }); await h.open();
-  fire(h.page.querySelector('[data-definition-action="Approve"]'), 'click'); const modal = h.document.querySelector('.modal'); fill(modal, { note: 'Actual decision', reason: 'Reason' }); fire(modal.querySelector('[data-confirm]'), 'click'); await flush(); assert.equal(modal.isConnected, false); assert.equal(h.calls.filter(item => item.body).length, 1); assert.match(h.document.querySelector('.toast').textContent, /could not confirm/);
+  fire(h.page.querySelector('[data-definition-action="Approve"]'), 'click'); const modal = h.document.querySelector('.modal'); fill(modal, { note: 'Actual decision', reason: 'Reason' }); const submit = modal.querySelector('[data-confirm]'); fire(submit, 'click'); await flush();
+  assert.equal(modal.isConnected, true); assert.equal(modal.querySelector('#f-note').value, 'Actual decision'); assert.equal(modal.querySelector('#f-reason').value, 'Reason');
+  assert.equal(submit.disabled, true); assert.equal(h.calls.filter(item => item.body).length, 1); assert.match(modal.querySelector('[data-error]').textContent, /entries are preserved/);
+  fire(modal.querySelector('[data-cancel]'), 'click'); assert.equal(h.page.querySelector('[data-definition-action="Approve"]'), null);
+  fire(h.page.querySelector('[data-refresh]'), 'click'); await flush(); await flush(); assert.ok(h.page.querySelector('[data-definition-action="Approve"]'));
 });
 test('typed method form sends real fields instead of raw JSON and preserves explicit scope', async t => {
   const h = await harness(t, { records: [] }), modal = h.create(); fill(modal, { code: 'METHOD-NEW', facilityCode: 'PLANT1', markings: 'None', name: 'Owner qualitative criteria', kind: 'Qualitative', method: 'Assess actual observed consequences', decisionCriteria: 'Record explicit decision and action', reviewInterval: 'On change', reason: 'Actual organization choices' });

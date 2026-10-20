@@ -37,10 +37,44 @@ test('recording an FAI sends the exact subject, results and signed report', asyn
   page.innerHTML = receivingTab(rec('Required'), me); bindReceivingTab(page, [['RECV', 'Receiving']], async () => {}, me);
   fire(page.querySelector('[data-fai-record]'), 'click'); await flush();
   const modal = browser.document.querySelector('.modal');
-  modal.querySelector('#f-results').value = 'Length | 100 | 100.02 | pass'; modal.querySelector('#f-documentNumber').value = 'fai-bar1'; modal.querySelector('#f-documentRevision').value = 'a';
+  const resultRow = modal.querySelector('[data-repeater-row]');
+  resultRow.querySelector('[data-repeater-column="characteristic"]').value = 'Length';
+  resultRow.querySelector('[data-repeater-column="requirement"]').value = '100';
+  resultRow.querySelector('[data-repeater-column="measured"]').value = '100.02';
+  resultRow.querySelector('[data-repeater-column="result"]').value = 'pass';
+  modal.querySelector('#f-documentNumber').value = 'fai-bar1'; modal.querySelector('#f-documentRevision').value = 'a';
   modal.querySelector('#reason').value = 'First shipment from ACME'; fire(modal.querySelector('[data-ok]'), 'click'); await flush(); await flush();
   assert.deepEqual(calls.find(c => c.path === '/api/quality/fai').body, { partNumber: 'BAR-1', revision: 'B', supplierCode: 'ACME', passed: true,
     results: [{ characteristic: 'Length', requirement: '100', measured: '100.02', pass: true }], documentNumber: 'FAI-BAR1', documentRevision: 'A', reason: 'First shipment from ACME' });
+});
+
+test('customer return restock lists only releases tied to its exact cohort and fills version and quantity', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div'); browser.document.body.append(page);
+  const previous = { subject: session.subject, token: session.token }; session.subject = 'return-release-test'; session.token = null; t.after(() => Object.assign(session, previous));
+  const calls = [], returned = { rmaId: 5, customer: 'Globex', shipmentId: 12, partNumber: 'BRKT', lotNumber: 'LOT-9', locationCode: 'RECV', quantity: 4, reason: 'Damaged', disposition: null };
+  const release = (decisionId, cohortId, quantity) => ({ decisionId, version: 3, quantity, subject: { partNumber: 'BRKT', lotNumber: 'LOT-9', locationCode: 'RECV', returnCohortId: cohortId } });
+  globalThis.fetch = (path, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null; calls.push({ path, body });
+    if (path === '/api/quality/acceptance/product-releases?take=100') return Promise.resolve(response([release(10, 9, 3), release(11, 10, 2), release(12, 11, 4)]));
+    if (path === '/api/quality/acceptance/return-cohorts/9') return Promise.resolve(response({ rmaId: 5, subject: { partNumber: 'BRKT', lotNumber: 'LOT-9', locationCode: 'RECV', returnCohortId: 9 } }));
+    if (path === '/api/quality/acceptance/return-cohorts/10') return Promise.resolve(response({ rmaId: 5, subject: { partNumber: 'BRKT', lotNumber: 'LOT-9', locationCode: 'RECV', returnCohortId: 10 } }));
+    if (path === '/api/quality/acceptance/return-cohorts/11') return Promise.resolve(response({ rmaId: 6, subject: { partNumber: 'BRKT', lotNumber: 'LOT-9', locationCode: 'RECV', returnCohortId: 11 } }));
+    return Promise.resolve(response({ message: 'Disposition recorded.' }));
+  };
+  const me = { permissions: ['quality.disposition'] }, data = rec('Complete', { returns: { data: [returned] } });
+  page.innerHTML = receivingTab(data, me); bindReceivingTab(page, [], async () => {}, me, data);
+  fire(page.querySelector('[data-rma-dispose="5"]'), 'click');
+  for (let i = 0; i < 6 && !browser.document.querySelector('.modal'); i++) await flush();
+  const modal = browser.document.querySelector('.modal');
+  assert.ok(modal, `modal did not open; requests: ${calls.map(call => call.path).join(', ')}; notice: ${browser.document.querySelector('.toast')?.textContent}`);
+  const releaseField = modal.querySelector('#f-release');
+  assert.deepEqual(releaseField.querySelectorAll('option').map(option => option.value), ['', '10|3|3', '11|3|2']);
+  releaseField.value = '10|3|3'; fire(releaseField, 'change');
+  assert.equal(modal.querySelector('#f-expectedDecisionVersion').value, '3'); assert.equal(modal.querySelector('#f-quantity').value, '3');
+  modal.querySelector('#f-disposition').value = 'Restock'; modal.querySelector('#reason').value = 'Restock the exact inspected return cohort.';
+  fire(modal.querySelector('[data-ok]'), 'click'); await flush(); await flush();
+  const command = calls.find(call => call.path === '/api/inventory/customer-returns/5/disposition');
+  assert.deepEqual(command.body, { disposition: 'Restock', decisionId: 10, expectedDecisionVersion: 3, quantity: 3, reason: 'Restock the exact inspected return cohort.' });
 });
 
 test('containers can be packed only while open and sealed only once they hold something', () => {

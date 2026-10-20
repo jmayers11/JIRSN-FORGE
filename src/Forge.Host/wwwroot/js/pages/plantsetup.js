@@ -16,6 +16,8 @@ export async function plantSetupPage(page, ctx) {
   const canManage = canAction(ctx.me, 'resources.manage');
   let showRetired = false;
   let r, quals;
+  let clockTimer = null;
+  let disposed = false;
 
   async function load() {
     const [res, q] = await Promise.all([tryGet('/api/resources/?includeRetired=true'), tryGet('/api/competency/qualification-types')]);
@@ -29,6 +31,19 @@ export async function plantSetupPage(page, ctx) {
 
   const visible = list => list.filter(x => showRetired || x.active !== false);
   const shiftText = s => `${s.name} · ${s.start.slice(0, 5)} for ${+(s.durationMinutes / 60).toFixed(2)} h · ${s.days.map(d => DAY[d]).join(' ')}`;
+  const siteClockText = (timeZone, now = new Date()) => new Intl.DateTimeFormat(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone, timeZoneName: 'short',
+  }).format(now);
+  function refreshSiteClocks() {
+    if (disposed) return;
+    for (const site of r?.sites ?? []) {
+      const clock = Array.from(page.querySelectorAll('[data-site-clock]')).find(node => node.dataset.siteClock === site.code);
+      if (clock) clock.textContent = siteClockText(site.timeZone);
+    }
+    if (clockTimer !== null) clearTimeout(clockTimer);
+    clockTimer = setTimeout(refreshSiteClocks, 1000);
+  }
   const retiredPill = x => x.active === false ? ' <span class="pill none">Retired</span>' : '';
   const btn = (act, label, data = {}, cls = '') => canManage
     ? `<button class="btn small ${cls}" data-act="${act}" ${Object.entries(data).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ')}>${esc(label)}</button>` : '';
@@ -70,6 +85,7 @@ export async function plantSetupPage(page, ctx) {
         </div>
       </div>`;
     $('#retired', page).onchange = e => { showRetired = e.target.checked; render(); };
+    refreshSiteClocks();
   }
 
   function site(s) {
@@ -77,6 +93,7 @@ export async function plantSetupPage(page, ctx) {
     return `<section class="panel plant-site">
       <header><div><h2>${esc(s.name)} <span class="faint mono">${esc(s.code)}</span></h2><div class="faint">${esc(s.timeZone)}</div></div><span class="spacer"></span>
         ${btn('edit-site', 'Edit', { code: s.code })}${btn('add-area', '+ Safety area', { site: s.code })}</header>
+      <div class="notice info" style="margin:8px 0 12px"><b>Site date and time</b><div data-site-clock="${esc(s.code)}" role="timer" aria-live="off">${esc(siteClockText(s.timeZone))}</div><div class="faint">Displayed in ${esc(s.timeZone)}. Forge uses this site zone for date rules.</div></div>
       ${areas.map(area).join('') || `<div class="muted">No safety areas yet. A safety area is a part of the floor where staffing and lone-work rules apply — a hall, a line, a room.</div>`}
     </section>`;
   }
@@ -182,10 +199,10 @@ export async function plantSetupPage(page, ctx) {
   const actions = {
     'add-site': () => formModal({ title: 'Add a site', confirmLabel: 'Add site', reasonRequired: false, fields: [
       codeField('Site', 'WEST'), { name: 'name', label: 'Name', required: true, placeholder: 'West plant' },
-      { name: 'timeZone', label: 'Time zone (IANA)', value: Intl.DateTimeFormat().resolvedOptions().timeZone, hint: 'Shift times are local to this zone, for example America/Chicago.' }] },
+      { name: 'timeZone', label: 'Time zone (IANA)', required: true, placeholder: 'America/Chicago', hint: 'Choose the plant’s zone explicitly; for example America/New_York or America/Chicago. This is never taken from your device.' }] },
     (v, reason) => command('/api/resources/sites', { code: v.code, name: v.name, timeZone: v.timeZone }, reason)),
 
-    'edit-site': d => { const s = r.sites.find(x => x.code === d.code); return formModal({ title: `Edit site ${s.code}`, fields: [
+    'edit-site': d => { const s = r.sites.find(x => x.code === d.code); return formModal({ title: `Edit site ${s.code}`, detail: 'Date rules and the site clock use this IANA time zone. The change is audited.', reasonRequired: true, fields: [
       { name: 'name', label: 'Name', value: s.name, required: true }, { name: 'timeZone', label: 'Time zone (IANA)', value: s.timeZone, required: true }] },
     (v, reason) => command(`/api/resources/sites/${enc(s.code)}/edit`, v, reason)); },
 
@@ -287,4 +304,5 @@ export async function plantSetupPage(page, ctx) {
   });
 
   if (await load()) render();
+  return { dispose() { disposed = true; if (clockTimer !== null) clearTimeout(clockTimer); } };
 }

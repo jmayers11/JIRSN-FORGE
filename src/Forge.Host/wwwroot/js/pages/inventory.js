@@ -1,7 +1,7 @@
 import { get, tryGet, command } from '../api.js';
 import { img } from '../icons.js';
 import { who } from '../people.js';
-import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithReason, toast, manageDialogFocus } from '../ui.js';
+import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, drawer, confirmWithReason, toast, manageDialogFocus, enhanceTables } from '../ui.js';
 import { formModal, qty, canAction } from '../forms.js';
 import { serialDrawer, traceDrawer } from '../genealogy.js';
 import { loadShelfLife, shelfLifeTab, bindShelfLifeTab, appendPartShelfLife } from '../shelflife.js';
@@ -25,6 +25,7 @@ const LOCATION_KINDS = ['Stores', 'Receiving', 'Inspection', 'Quarantine', 'Prod
 const KIND_NAME = { MachineSide: 'Machine side', WipStorage: 'WIP storage', ExternalProcessor: 'Outside processor', InTransit: 'In transit' };
 const LEVELS = ['Area', 'Zone', 'Rack', 'Shelf', 'Bin', 'Position'];
 const custodyText = l => l.custody === 'Supplier' ? `Outside processor ${l.custodianSupplier}` : l.custody === 'InTransit' ? 'In transit' : 'Company';
+export const parseInventoryShares = text => (text ?? '').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean).map(x => { const [lotNumber, quantity] = x.split(/\s+/); return { lotNumber: lotNumber.toUpperCase(), quantity: Number(quantity) }; });
 
 export async function inventoryPage(page, ctx) {
   const me = ctx.me;
@@ -35,6 +36,7 @@ export async function inventoryPage(page, ctx) {
   let tab = ctx.query.get('tab') ?? 'stock';
   let data = {};
   let disposed = false, pageGeneration = 0;
+  let loadGeneration = 0;
   const taskDialogs = new Set();
   const closeTaskDialogs = () => { for (const close of [...taskDialogs]) close(); };
   const labelPanels = new Set();
@@ -42,14 +44,20 @@ export async function inventoryPage(page, ctx) {
   const closeLabelPanels = () => { labelSelection++; for (const panel of labelPanels) panel.dispose(); labelPanels.clear(); };
 
   async function load() {
-    const [summary, locations, requests, ledger, items, orders, resources, mro, suppliers, tasks, programs, due] = await Promise.all([
+    const generation = ++loadGeneration;
+    const [summary, locations, requests, items, orders, resources, mro, suppliers, tasks] = await Promise.all([
       tryGet('/api/inventory/summary'), tryGet('/api/inventory/locations'), tryGet('/api/inventory/requests?pending=true'),
-      tryGet('/api/inventory/transactions?take=200'), tryGet('/api/engineering/items'), tryGet('/api/orders/'), tryGet('/api/resources/'), tryGet('/api/inventory/mro'),
-      tryGet('/api/procurement/suppliers'), tryGet('/api/inventory/tasks?open=true'), tryGet('/api/inventory/count-programs'), tryGet('/api/inventory/counts-due'),
+      tryGet('/api/engineering/items'), tryGet('/api/orders/'), tryGet('/api/resources/'), tryGet('/api/inventory/mro'),
+      tryGet('/api/procurement/suppliers'), tryGet('/api/inventory/tasks?open=true'),
     ]);
-    const shelf = await loadShelfLife();
-    const receiving = await loadReceiving();
-    const outside = await tryGet('/api/inventory/outside-processing');
+    let ledger = { data: [] }, programs = { data: [] }, due = { data: [] };
+    let shelf = { pending: { data: [] } }, receiving = null, outside = { data: [] };
+    if (tab === 'ledger') ledger = await tryGet('/api/inventory/transactions?take=200');
+    if (tab === 'counts') [programs, due] = await Promise.all([tryGet('/api/inventory/count-programs'), tryGet('/api/inventory/counts-due')]);
+    if (tab === 'shelf') shelf = await loadShelfLife();
+    if (tab === 'receiving') receiving = await loadReceiving();
+    if (tab === 'outside') outside = await tryGet('/api/inventory/outside-processing');
+    if (disposed || generation !== loadGeneration) return;
     data = { shelf, receiving, outside, summary, locations, requests, ledger, items, orders, mro, tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
   }
 
@@ -60,7 +68,6 @@ export async function inventoryPage(page, ctx) {
   const lotField = { name: 'lotNumber', label: 'Lot (lot-tracked parts only)', hint: 'Leave empty for parts that are not lot-tracked.' };
   const statusField = (value = 'Released') => ({ name: 'status', label: 'Quality status', type: 'select', value, options: [['Released', 'Released'], ['Inspection', 'Inspection'], ['Hold', 'Hold']] });
   const reload = async () => { await load(); render(); };
-  const shares = text => (text ?? '').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean).map(x => { const [lotNumber, q] = x.split(/\s+/); return { lotNumber: lotNumber.toUpperCase(), quantity: Number(q) }; });
 
   function scanTask(task, picking) {
     closeTaskDialogs();
@@ -189,20 +196,24 @@ export async function inventoryPage(page, ctx) {
         { name: 'lotNumber', label: 'Lot to split', value: preset.lotNumber, code: true, required: true },
         { name: 'locationCode', label: 'Where it is', type: 'select', options: locs(), value: preset.locationCode, required: true },
         statusField(preset.status),
-        { name: 'results', label: 'New instances', required: true, placeholder: 'C-1001-A 900, C-1001-B 70', hint: 'Number and quantity for each, separated by commas.' },
+        { name: 'results', label: 'New instances', type: 'repeater', required: true, minRows: 1, rowLabel: 'new instance',
+          columns: [{ name: 'lotNumber', label: 'New lot or batch', required: true, code: true }, { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true }],
+          serialize: rows => rows.map(row => `${row.lotNumber} ${row.quantity}`).join(', ') },
       ],
-    }, (v, reason) => command('/api/inventory/splits', { ...v, results: shares(v.results) }, reason), reload),
+    }, (v, reason) => command('/api/inventory/splits', { ...v, results: parseInventoryShares(v.results) }, reason), reload),
 
     merge: () => formModal({
       title: 'Merge lots', detail: 'Only for parts whose merge policy allows it. The sources stop being separately traceable in the result, so every merge is recorded.', confirmLabel: 'Merge', reasonRequired: true,
       fields: [
         { name: 'partNumber', label: 'Part', type: 'select', options: parts(), required: true },
-        { name: 'sources', label: 'From lots', required: true, placeholder: 'R-12 40, R-13 25', hint: 'Lot and quantity for each, separated by commas.' },
+        { name: 'sources', label: 'From lots', type: 'repeater', required: true, minRows: 1, rowLabel: 'source lot',
+          columns: [{ name: 'lotNumber', label: 'Source lot', required: true, code: true }, { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true }],
+          serialize: rows => rows.map(row => `${row.lotNumber} ${row.quantity}`).join(', ') },
         { name: 'resultLot', label: 'Into lot (new or existing)', code: true, required: true },
         { name: 'locationCode', label: 'Where they are', type: 'select', options: locs(), required: true },
         statusField(),
       ],
-    }, (v, reason) => command('/api/inventory/merges', { ...v, sources: shares(v.sources) }, reason), reload),
+    }, (v, reason) => command('/api/inventory/merges', { ...v, sources: parseInventoryShares(v.sources) }, reason), reload),
 
     issue: () => formModal({
       title: 'Issue material to an order', detail: 'Only to released orders, and never more than the order needs.', confirmLabel: 'Issue',
@@ -490,26 +501,40 @@ export async function inventoryPage(page, ctx) {
     if (disposed) return;
     pageGeneration++; closeTaskDialogs(); closeLabelPanels();
     const pending = data.requests.data?.length ?? 0;
-    const buttons = [
+    const buttons = (ctx.route === 'receiving' ? [handler && ['receive', 'Receive']] : [
       handler && ['receive', 'Receive'], handler && ['issue', 'Issue to order'], handler && ['return', 'Return'], handler && ['move', 'Move'],
       handler && ['produced', 'From production'], handler && ['split', 'Split'], handler && ['merge', 'Merge'], handler && ['request', 'Request material'], handler && ['hold', 'Hold'], controller && ['release', 'Release'], handler && ['scrap', 'Scrap'],
       handler && ['count', 'Count'], handler && ['adjust', 'Adjust'], inventoryManager && ['location', '+ Location'],
-    ].filter(Boolean);
+    ]).filter(Boolean);
+    const tabOptions = ctx.route === 'receiving' ? [['receiving', 'Receiving']] : [
+      ['stock', 'Stock'], ['selection', 'Lot selection'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'],
+      ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`],
+      ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`],
+      ['receiving', `Receiving${data.receiving ? receivingCount(data.receiving) ? ` (${receivingCount(data.receiving)})` : '' : ''}`], ['outside', 'Outside processing'], ['mro', 'MRO levels'],
+    ];
     page.innerHTML = `
       <div class="page-head">
-        <div><h1>Inventory</h1><div class="sub">Every quantity is the sum of its ledger entries. Adjustments, count variances and quality releases need a second person.</div></div>
+        <div><h1>${ctx.route === 'receiving' ? 'Receiving' : 'Inventory'}</h1><div class="sub">${ctx.route === 'receiving' ? 'Record receipts, inspections, returns and customer returns.' : 'Every quantity is the sum of its ledger entries. Adjustments, count variances and quality releases need a second person.'}</div></div>
+        ${ctx.route === 'receiving' ? '<a class="btn" href="#/inventory?tab=receiving">All inventory</a>' : ''}
         <div class="spacer"></div><form id="serial-find" class="inline"><input class="input mono" id="serial-q" placeholder="Serial or lot" style="width:160px"> <button class="btn">Genealogy</button> <button class="btn" type="button" id="trace-q">Trace</button></form>
       </div>
       ${buttons.length ? `<div class="toolbar">${buttons.map(([k, l]) => `<button class="btn ${k === 'receive' ? 'primary' : ''}" data-act="${k}">${esc(l)}</button>`).join('')}</div>` : '<div class="notice">You can look at stock. Material handlers move it; inventory controllers approve changes.</div>'}
       ${kpis()}
       <section class="panel">
-        <header><div class="seg" id="tabs">${[['stock', 'Stock'], ['selection', 'Lot selection'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'], ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`], ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`], ['receiving', `Receiving${receivingCount(data.receiving) ? ` (${receivingCount(data.receiving)})` : ''}`], ['outside', 'Outside processing'], ['mro', 'MRO levels']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        <header><div class="seg" id="tabs">${tabOptions.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
         ${tab === 'outside' ? outsideProcessingTab(data.outside, me) : tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : tab === 'selection' ? selectionTab() : stockTab()}
       </section>`;
+    enhanceTables(page);
     $('#trace-q', page)?.addEventListener('click', () => { const q = $('#serial-q', page).value.trim(); if (q) traceDrawer({ lot: q.toUpperCase() }); });
     $('#serial-find', page)?.addEventListener('submit', ev => { ev.preventDefault(); const q = $('#serial-q', page).value.trim(); if (q) serialDrawer(q.toUpperCase()); });
 
-    $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
+    $$('[data-tab]', page).forEach(b => b.addEventListener('click', async () => {
+      if (b.dataset.tab === tab && ctx.route === 'receiving') return;
+      tab = b.dataset.tab;
+      await load();
+      if (ctx.route === 'receiving' && tab !== 'receiving') location.hash = `#/inventory?tab=${encodeURIComponent(tab)}`;
+      else render();
+    }));
     $('#lot-selection-form', page)?.addEventListener('submit', async ev => {
       ev.preventDefault();
       const part = $('#lot-selection-part', page).value, order = $('#lot-selection-order', page).value;
@@ -533,7 +558,7 @@ export async function inventoryPage(page, ctx) {
     }));
     $$('[data-part]', page).forEach(r => r.addEventListener('click', () => partDrawer(r.dataset.part)));
     if (tab === 'shelf') bindShelfLifeTab(page, locs(true, false), reload);
-    if (tab === 'receiving') bindReceivingTab(page, locs(), reload, me);
+    if (tab === 'receiving') bindReceivingTab(page, locs(), reload, me, data.receiving);
     if (tab === 'outside') bindOutsideProcessingTab(page, data.locations.data ?? [], reload, me);
     $$('[data-mro-set]', page).forEach(b => b.addEventListener('click', () => setMro(b.dataset.mroSet)));
     $$('[data-mro-clear]', page).forEach(b => b.addEventListener('click', async () => {
@@ -656,5 +681,11 @@ export async function inventoryPage(page, ctx) {
   await load();
   render();
   return { dispose: () => { disposed = true; pageGeneration++; closeTaskDialogs(); closeLabelPanels(); } };
+}
+
+export async function receivingPage(page, ctx) {
+  const query = new URLSearchParams(ctx.query);
+  query.set('tab', 'receiving');
+  return inventoryPage(page, { ...ctx, route: 'receiving', query });
 }
 

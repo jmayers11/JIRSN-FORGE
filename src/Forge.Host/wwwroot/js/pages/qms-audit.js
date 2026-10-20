@@ -1,6 +1,6 @@
 import { command, tryGet, session } from '../api.js';
 import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, toast, manageDialogFocus } from '../ui.js';
-import { fieldHtml, readFields, canAction } from '../forms.js';
+import { fieldHtml, readFields, bindRepeaters, canAction } from '../forms.js';
 import { isServiceUnavailable } from '../terminal-state.mjs';
 
 const AUDITS = '/api/quality/audits', CAPAS = '/api/quality/capa-governance', key = encodeURIComponent;
@@ -20,11 +20,19 @@ const refs = [{ name: 'code', label: 'Controlled QMS code', required: true }, nu
 const docs = [text('documentNumber', 'Engineering document number'), text('revision', 'Exact document revision')];
 const evidence = [text('context', 'Actual owning context'), text('type', 'Actual owner record type'), text('key', 'Actual owner ID'), text('revision', 'Exact revision, if applicable', '', { required: false }), text('eventId', 'Actual event ID, if cited', '', { required: false }), text('auditId', 'Actual audit ID, if cited', '', { required: false })];
 const refFields = (prefix, title, value = {}) => [text(prefix + 'Code', title + ' code', value.code), number(prefix + 'Revision', title + ' exact revision', value.revision)];
-function parsedRefs(value, documents = false) {
+export function parsedRefs(value, documents = false) {
   return values(value).map(line => { const parts = line.split('|').map(x => x.trim()); if (parts.length !== 2 || parts.some(x => !x)) throw new Error('Use one exact code | revision per line.'); if (documents) return { documentNumber: parts[0], revision: parts[1] }; const revision = Number(parts[1]); if (!Number.isSafeInteger(revision) || revision <= 0) throw new Error('QMS revisions must be positive whole numbers.'); return { code: parts[0], revision }; });
 }
 const formatRefs = (items, documents = false) => (items ?? []).map(x => (documents ? x.documentNumber : x.code) + ' | ' + x.revision).join('\n');
-const evidenceLines = input => values(input).map(line => { const parts = line.split('|').map(x => x.trim()); if (![3, 4, 6].includes(parts.length) || parts.slice(0, 3).some(x => !x)) throw new Error('Use actual context | owner type | owner ID | exact revision per evidence line; event and audit IDs may follow as two optional fields.'); return { context: parts[0], type: parts[1], key: parts[2], revision: parts[3] || null, eventId: parts[4] || null, auditId: parts[5] || null }; });
+export const evidenceLines = input => values(input).map(line => { const parts = line.split('|').map(x => x.trim()); if (![3, 4, 6].includes(parts.length) || parts.slice(0, 3).some(x => !x)) throw new Error('Use actual context | owner type | owner ID | exact revision per evidence line; event and audit IDs may follow as two optional fields.'); return { context: parts[0], type: parts[1], key: parts[2], revision: parts[3] || null, eventId: parts[4] || null, auditId: parts[5] || null }; });
+const referenceRows = (name, title, documents = false) => ({ name, label: title, type: 'repeater', rowLabel: 'reference', pluralRowLabel: 'references', required: false,
+  columns: documents ? [{ name: 'documentNumber', label: 'Document number', required: true }, { name: 'revision', label: 'Exact revision', required: true }]
+    : [{ name: 'code', label: 'QMS code', required: true }, { name: 'revision', label: 'Exact revision', type: 'number', min: 1, required: true }],
+  serialize: rows => rows.map(row => `${documents ? row.documentNumber : row.code} | ${row.revision}`).join('\n') });
+const evidenceRows = (name, title) => ({ name, label: title, type: 'repeater', rowLabel: 'source', pluralRowLabel: 'sources', required: false,
+  columns: [{ name: 'context', label: 'Actual context', required: true }, { name: 'type', label: 'Owner record type', required: true }, { name: 'key', label: 'Owner record ID', required: true },
+    { name: 'revision', label: 'Exact revision' }, { name: 'eventId', label: 'Event ID' }, { name: 'auditId', label: 'Audit ID' }],
+  serialize: rows => rows.map(row => [row.context, row.type, row.key, row.revision ?? '', row.eventId ?? '', row.auditId ?? ''].join(' | ')).join('\n') });
 function positiveIds(value) { return values(value).map(x => { const n = Number(x); if (!Number.isSafeInteger(n) || n <= 0) throw new Error('Use actual positive owner IDs, one per line.'); return n; }); }
 const meActor = me => 'person:' + me.personId;
 const sourceActors = items => (items ?? []).flatMap(x => x.contributors ?? []);
@@ -85,7 +93,7 @@ export function auditFormDefinition(type, record = {}) {
     add(text('ownerPersonId', 'Actual responsible person ID', c.ownerPersonId), determination('requireFormalQualifications', 'Require formal qualifications?', competence.requireFormalQualifications), paragraph('qualificationCodes', 'Actual qualification codes, one per line', lines(competence.qualificationCodes), { required: false }), determination('requireIndependentCompetenceAssessment', 'Require independently approved competence assessment?', competence.requireIndependentCompetenceAssessment), paragraph('competenceCriteria', 'Actual competence criteria', competence.competenceCriteria), paragraph('reassessmentInterval', 'Organization-defined reassessment interval', competence.reassessmentInterval),
       determination('prohibitAuditingOwnedProcesses', 'Prohibit auditing a process this person owns?', impartiality.prohibitAuditingOwnedProcesses), determination('prohibitAuditingContributedEvidence', 'Prohibit assessing evidence this auditor contributed?', impartiality.prohibitAuditingContributedEvidence), determination('requireIndependentReportApproval', 'Require independent report approval?', impartiality.requireIndependentReportApproval), paragraph('conflictAssessmentCriteria', 'Actual conflict assessment criteria', impartiality.conflictAssessmentCriteria));
     group('processes', 'Exact controlled processes in scope', refs, c.processes, 1);
-    group('criteria', 'Organization-defined audit criteria', [text('code', 'Criterion code'), text('name', 'Criterion name'), paragraph('evaluationMethod', 'Evaluation method'), paragraph('requirements', 'Exact QMS requirement code | revision, one per line', '', { required: false }), paragraph('documents', 'Exact Engineering document number | revision, one per line', '', { required: false }), paragraph('requiredEvidenceKinds', 'Required owner evidence kinds, one per line', '', { required: false }), paragraph('evidenceAdequacyCriteria', 'Qualified human adequacy criteria')], (c.criteria ?? []).map(x => ({ ...x, requirements: formatRefs(x.requirements), documents: formatRefs(x.documents, true), requiredEvidenceKinds: lines(x.requiredEvidenceKinds) })), 1);
+    group('criteria', 'Organization-defined audit criteria', [text('code', 'Criterion code'), text('name', 'Criterion name'), paragraph('evaluationMethod', 'Evaluation method'), referenceRows('requirements', 'Exact QMS requirements'), referenceRows('documents', 'Exact Engineering documents', true), paragraph('requiredEvidenceKinds', 'Required owner evidence kinds, one per line', '', { required: false }), paragraph('evidenceAdequacyCriteria', 'Qualified human adequacy criteria')], (c.criteria ?? []).map(x => ({ ...x, requirements: x.requirements ?? [], documents: x.documents ?? [], requiredEvidenceKinds: lines(x.requiredEvidenceKinds) })), 1);
     group('checklist', 'Controlled questions; no universal checklist is supplied', [text('code', 'Checklist code'), text('criterionCode', 'Declared criterion code'), paragraph('question', 'Actual question'), paragraph('requiredEvidenceBasis', 'Required evidence basis')], c.checklist, 1);
     group('documents', 'Exact controlled supporting document revisions', docs, c.documents); ev(c.evidence);
   } else if (type === 'Competence') {
@@ -97,7 +105,7 @@ export function auditFormDefinition(type, record = {}) {
     add(text('criterionCode', 'Approved program criterion code'), choose('kind', 'Finding type', ['Nonconformity', 'Observation', 'OpportunityForImprovement']), paragraph('statement', 'Finding statement'), paragraph('actualObservation', 'Actual observed evidence'), choose('adequacy', 'Qualified human adequacy assessment', ['Adequate', 'Inadequate', 'Partial', 'Unavailable']), paragraph('adequacyBasis', 'Adequacy assessment basis'), paragraph('limitations', 'Evidence limitations'), determination('followUpRequired', 'Require follow-up?'), paragraph('capaIds', 'Actual existing CAPA IDs, one per line', '', { required: false }), paragraph('planningTaskIds', 'Actual owned planning task IDs, one per line', '', { required: false })); ev();
   } else if (type === 'Report') {
     add(paragraph('summary', 'Report summary'), paragraph('scopePerformed', 'Actual scope performed'), paragraph('evidenceLimitations', 'Evidence limits and omissions'), paragraph('humanAssessment', 'Qualified human assessment')); ev();
-    group('checklistAnswers', 'Actual answers to the approved checklist; gaps stay explicit', [text('checklistCode', 'Exact approved checklist code'), paragraph('question', 'Approved question (reference)', '', { readonly: true, required: false }), paragraph('actualObservation', 'Actual observation for this question'), choose('adequacy', 'Human evidence adequacy', ['Adequate', 'Inadequate', 'Partial', 'Unavailable']), paragraph('adequacyBasis', 'Qualified human adequacy basis'), paragraph('limitations', 'Actual limits and gaps'), paragraph('evidenceReferences', 'Actual context | owner type | owner ID | exact revision, one source per line', '', { required: false })], (record.content?.checklist ?? []).map(item => ({ checklistCode: item.code, question: item.question })), 1);
+    group('checklistAnswers', 'Actual answers to the approved checklist; gaps stay explicit', [text('checklistCode', 'Exact approved checklist code'), paragraph('question', 'Approved question (reference)', '', { readonly: true, required: false }), paragraph('actualObservation', 'Actual observation for this question'), choose('adequacy', 'Human evidence adequacy', ['Adequate', 'Inadequate', 'Partial', 'Unavailable']), paragraph('adequacyBasis', 'Qualified human adequacy basis'), paragraph('limitations', 'Actual limits and gaps'), evidenceRows('evidenceReferences', 'Actual source references')], (record.content?.checklist ?? []).map(item => ({ checklistCode: item.code, question: item.question })), 1);
   } else if (type === 'Capa') {
     add(text('title', 'CAPA title'), ...refFields('process', 'Currently effective source-control process'), paragraph('problemStatement', 'Actual problem statement'), text('ownerPersonId', 'Actual responsible person ID'), text('dueDate', 'Due date', '', { type: 'date' }));
     for (const name of ['investigationMethod', 'investigationCriteria', 'effectivenessCriteria', 'recurrenceMonitoring']) add(paragraph(name, label(name)));
@@ -172,9 +180,13 @@ export async function qmsAuditPage(page, ctx) {
     closeDialogs(); const token = generation, scrim = document.createElement('div'), modal = document.createElement('div');
     scrim.className = 'scrim'; scrim.setAttribute('aria-hidden', 'true'); modal.className = 'modal';
     modal.innerHTML = '<h2>' + esc(title) + '</h2><p class="muted">' + esc(detail) + '</p><div class="form-grid">' + definition.fields.map(fieldHtml).join('') + '</div>' + definition.groups.map(g => '<section data-group="' + g.name + '"><h3>' + esc(g.title) + '</h3><div data-rows></div><button class="btn small" data-add type="button">Add entry</button></section>').join('') + fieldHtml(paragraph('reason', 'Reason recorded in the audit trail')) + '<div class="notice bad hidden" role="alert" aria-live="assertive" data-error></div><div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-confirm>Record human decision</button></div>';
-    let closed = false, busy = false, focus = () => {}, rowId = 0;
+    let closed = false, busy = false, uncertain = false, focus = () => {}, rowId = 0;
     const current = () => !closed && modal.isConnected && live(token) && !blocked;
-    const close = () => { if (closed) return; closed = true; scrim.remove(); modal.remove(); dialogs.delete(close); focus(); };
+    const close = () => {
+      if (closed) return;
+      closed = true; scrim.remove(); modal.remove(); dialogs.delete(close); focus();
+      if (uncertain && !disposed && page.isConnected) { blocked = true; render(); }
+    };
     dialogs.add(close); scrim.onclick = close; document.body.append(scrim, modal); $('[data-cancel]', modal).onclick = close; focus = manageDialogFocus(modal, close);
     for (const g of definition.groups) {
       const area = $('[data-group="' + g.name + '"]', modal), rows = $('[data-rows]', area);
@@ -182,7 +194,8 @@ export async function qmsAuditPage(page, ctx) {
         if (!current()) return; const row = document.createElement('div'); row.className = 'form-grid'; row.prefix = 'audit-entry-' + rowId++ + '-';
         row.fields = g.columns.map(f => ({ ...f, name: row.prefix + f.name, value: value[f.name] ?? f.value }));
         row.innerHTML = row.fields.map(fieldHtml).join('') + '<button class="btn small" data-remove type="button">Remove entry</button>';
-        rows.append(row); $('[data-remove]', row).onclick = () => row.remove();
+        row.fields.filter(field => field.type === 'repeater').forEach(field => { const repeater = $('#f-' + field.name, row); if (repeater) repeater.repeaterField = field; });
+        rows.append(row); bindRepeaters(row); $('[data-remove]', row).onclick = () => row.remove();
       };
       for (const row of g.rows ?? []) add(row); $('[data-add]', area).onclick = () => add();
     }
@@ -195,9 +208,14 @@ export async function qmsAuditPage(page, ctx) {
         if (!current()) return; close(); toast(result.message ?? 'Human decision recorded.'); await load(cursor);
       } catch (failure) {
         if (!current()) return;
-        if (failure instanceof TypeError || Number.isInteger(failure.status) && isServiceUnavailable(failure)) { blocked = true; close(); toast('Forge could not confirm this change. Refresh the current owner before retrying.', true); render(); return; }
+        if (failure instanceof TypeError || Number.isInteger(failure.status) && isServiceUnavailable(failure)) {
+          uncertain = true;
+          error.textContent = 'Forge could not confirm this change. Your entries are preserved. Close this dialog and refresh the current record before deciding whether to retry.';
+          error.classList.remove('hidden');
+          return;
+        }
         error.textContent = failure.message + (failure.status === 409 ? ' Refresh the actual current version before deciding again.' : ''); error.classList.remove('hidden');
-      } finally { busy = false; if (current()) button.disabled = false; }
+      } finally { busy = false; if (current()) button.disabled = uncertain; }
     };
   }
   function guard(current, access, scope) { if (!current() || !allowed(me, access, scope)) throw new Error('This authenticated decision context is no longer active.'); }

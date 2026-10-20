@@ -94,6 +94,13 @@ class Element extends Events {
   append(...elements) {
     for (const element of elements) { element.remove(); element.parentElement = this; this.children.push(element); }
   }
+  appendChild(element) { this.append(element); return element; }
+  insertBefore(element, reference) {
+    element.remove();
+    const index = this.children.indexOf(reference);
+    if (index < 0) return this.append(element);
+    element.parentElement = this; this.children.splice(index, 0, element);
+  }
   remove() {
     if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(c => c !== this);
     this.parentElement = null;
@@ -172,6 +179,8 @@ class Element extends Events {
       select.value = option ? option.getAttribute('value') ?? option.textContent : '';
     }
   }
+  get hidden() { return this.attributes.has('hidden'); }
+  set hidden(value) { if (value) this.setAttribute('hidden', ''); else this.attributes.delete('hidden'); }
 }
 
 export class FakeDocument extends Events {

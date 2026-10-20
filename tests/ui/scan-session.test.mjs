@@ -52,6 +52,39 @@ test('server session is begun explicitly and offers an immutable version snapsho
   assert.match(h.element.innerHTML, /not authentication or physical capture proof/);
 });
 
+test('reason defaults and one-tap presets are available at session start and reference capture', async t => {
+  const h = await harness(t);
+  assert.equal(h.element.querySelector('#session-start-reason').value, 'Stage operation references at point of use');
+  fire(h.element.querySelector('[data-reason-preset="session-start-reason"][data-reason="Verify references before starting work"]'), 'click');
+  assert.equal(h.element.querySelector('#session-start-reason').value, 'Verify references before starting work');
+  await h.start();
+  assert.equal(h.element.querySelector('#stage-reason').value, 'Verified reference at work center');
+  fire(h.element.querySelector('[data-reason-preset="stage-reason"][data-reason="Confirmed reference matches this operation"]'), 'click');
+  assert.equal(h.element.querySelector('#stage-reason').value, 'Confirmed reference matches this operation');
+});
+
+test('fast barcode key cadence auto-selects keyboard wedge while manual capture remains editable', async t => {
+  const h = await harness(t); await h.start();
+  const input = h.element.querySelector('#session-reference-code'), previousNow = Date.now;
+  let now = 1000; Date.now = () => now;
+  try {
+    for (const character of materialCode) {
+      fire(input, 'keydown', { key: character }); input.value += character; fire(input, 'input'); now += 10;
+    }
+    fire(input, 'keydown', { key: 'Enter' }); await flush();
+    assert.equal(h.element.querySelector('[data-identify-use]').disabled, false);
+    fire(h.element.querySelector('[data-identify-use]'), 'click');
+    assert.equal(h.element.querySelector('[data-stage-mode]').value, 'KeyboardWedge');
+    assert.equal(h.element.querySelector('[data-stage-identification]').querySelector('input').value, materialCode);
+    h.element.querySelector('[data-stage-reason]').value = 'Verified reference at work center';
+    fire(h.element.querySelector('[data-session-stage]'), 'click'); await flush();
+    assert.equal(h.calls.find(call => call.path.endsWith('/stages')).body.inputMode, 'KeyboardWedge');
+  } finally { Date.now = previousNow; }
+  assert.equal(h.element.querySelector('[data-stage-mode]').value, '');
+  await h.resolve('forge:v1:configured-plant:material:PART-A:LOT-7');
+  assert.equal(h.element.querySelector('[data-stage-mode]').value, 'Manual');
+});
+
 test('staging records the reviewed original label code with captured server version and refreshes its actual selection', async t => {
   const h = await harness(t); await h.start(); const before = h.controller.snapshot;
   const originalLabelCode = 'forge:v1:configured-plant:label:tracked-copy'; await h.resolve(originalLabelCode);

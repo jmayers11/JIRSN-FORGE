@@ -1,7 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
-import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
+import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, enhanceTables } from '../ui.js';
 import { formModal, qty, canAction, plusDays, today } from '../forms.js';
 
 // Quality (spec §45-46): inspection points after routing operations, inspections by someone who did
@@ -56,6 +56,7 @@ export async function qualityPage(page, ctx) {
         ${{ due: dueTab, ncrs: ncrTab, capas: capaTab, history: historyTab, plans: plansTab, gauges: gaugesTab }[tab]?.() ?? dueTab()}
       </section>`;
 
+    enhanceTables(page);
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
     $('#closed', page).onchange = async e => { showClosed = e.target.checked; await reload(); };
     $('#raise', page)?.addEventListener('click', () => raiseNcr());

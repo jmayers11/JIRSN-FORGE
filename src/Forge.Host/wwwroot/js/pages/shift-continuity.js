@@ -1,6 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { esc, $, toast, errorBlock, fmtDateTime } from '../ui.js';
 import { canAction } from '../forms.js';
+import { who } from '../people.js';
 
 const enc = encodeURIComponent;
 const localDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -36,18 +37,21 @@ export async function shiftContinuityPage(page, ctx) {
   let handoffs = [];
   let closeouts = [];
   let checklist = [];
+  let directory = [];
   let details = null;
   let actions = [];
   const startDate = new Date(); startDate.setDate(startDate.getDate() - 1); startDate.setHours(0, 0, 0, 0);
   const endDate = new Date(startDate); endDate.setDate(endDate.getDate() + 1);
 
   async function load() {
-    const [h, c, cl] = await Promise.all([
+    const [h, c, cl, people] = await Promise.all([
       tryGet(`/api/execution/shifts/handoffs?workCenter=${enc(selected)}&limit=30`),
       tryGet(`/api/execution/shifts/closeouts?workCenter=${enc(selected)}&limit=30`),
       tryGet(`/api/execution/shifts/checklist?workCenter=${enc(selected)}`),
+      tryGet('/api/kernel/directory'),
     ]);
     handoffs = h.data ?? []; closeouts = c.data ?? []; checklist = cl.data ?? [];
+    directory = people.data ?? [];
   }
 
   const centerSelect = () => `<select id="shift-wc" class="select">${centers.map(w => `<option value="${esc(w.code)}" ${w.code === selected ? 'selected' : ''}>${esc(w.name)} · ${esc(w.code)}</option>`).join('')}</select>`;
@@ -111,6 +115,15 @@ export async function shiftContinuityPage(page, ctx) {
       details = result.data; actions = actionList.data ?? [];
       const h = details.handoff;
       const box = $('#handoff-detail', page);
+      const assigneeControl = directory.length
+        ? `<select name="assignee" class="select" required><option value="">Choose assignee</option>${directory.map(p => `<option value="${esc(p.personId)}">${esc(p.displayName)} · ${esc(p.personId)}</option>`).join('')}</select>`
+        : '<input name="assignee" class="input" placeholder="Assignee person ID" required>';
+      const actorName = personId => {
+        const actor = String(personId ?? '');
+        const known = directory.find(person => person.personId === actor)?.displayName;
+        if (known) return known;
+        return who(actor.startsWith('person:') ? actor : `person:${actor}`);
+      };
       box.innerHTML = `<section class="panel"><header><h2>Handoff #${h.handoffId}</h2><span class="spacer"></span>
         ${supervisor && !h.reviewedAt ? '<button class="btn" data-review>Review</button>' : ''}
         ${canRecord && h.reviewedAt ? '<button class="btn" data-ack>Acknowledge receipt</button>' : ''}</header>
@@ -124,8 +137,8 @@ export async function shiftContinuityPage(page, ctx) {
           const allowed = next && ((a.assignee === ctx.me.personId && canRecord) || supervisor);
           return `<div class="row"><span>${esc(a.description)}${a.sourceKind ? `<div class="muted">Linked ${esc(a.sourceKind)} ${esc(a.sourceReference)}</div>` : ''}</span><span class="spacer"></span><span class="pill ${a.status === 'Completed' ? 'ok' : 'warn'}">${esc(a.status)}</span>${allowed ? `<button class="btn small" data-action-next="${a.actionId}" data-status="${esc(a.status)}" data-next="${esc(next)}">Mark ${esc(next)}</button>` : ''}</div>`;
         }).join('') || '<div class="muted">No assigned actions.</div>'}
-        ${supervisor ? `<form data-action-form class="toolbar"><input name="description" class="input" placeholder="Action to follow up" required><input name="sourceKind" class="input" placeholder="Source: Order, Machine, WorkOrder or Tool"><input name="sourceReference" class="input" placeholder="Source record ID or code"><input name="assignee" class="input" placeholder="Assignee person ID" required><button class="btn" type="submit">Assign action</button></form>` : ''}
-        <h3>Incoming shift acknowledgments</h3><div>${details.acknowledgments.map(a => `<span class="pill ok">${esc(a.personId)} · ${esc(fmtDateTime(a.acknowledgedAt))}</span>`).join(' ') || '<span class="muted">No acknowledgment recorded.</span>'}</div></section>`;
+        ${supervisor ? `<form data-action-form class="toolbar"><input name="description" class="input" placeholder="Action to follow up" required><input name="sourceKind" class="input" placeholder="Source: Order, Machine, WorkOrder or Tool"><input name="sourceReference" class="input" placeholder="Source record ID or code">${assigneeControl}<button class="btn" type="submit">Assign action</button></form>` : ''}
+        <h3>Incoming shift acknowledgments</h3><div>${details.acknowledgments.map(a => `<span class="pill ok">${esc(actorName(a.personId))} · ${esc(fmtDateTime(a.acknowledgedAt))}</span>`).join(' ') || '<span class="muted">No acknowledgment recorded.</span>'}</div></section>`;
       box.querySelector('[data-review]')?.addEventListener('click', async () => { try { await command(`/api/execution/shifts/handoffs/${id}/review`, {}, 'Reviewed shift handoff'); toast('Handoff reviewed.'); await render(); await openHandoff(id); } catch (e) { toast(e.message); } });
       box.querySelector('[data-ack]')?.addEventListener('click', async () => { try { await command(`/api/execution/shifts/handoffs/${id}/acknowledge`, { note: 'Received by incoming shift' }, 'Incoming shift received handoff'); toast('Receipt acknowledged. Actions remain independently tracked.'); await render(); await openHandoff(id); } catch (e) { toast(e.message); } });
       box.querySelector('[data-action-form]')?.addEventListener('submit', async e => { e.preventDefault(); const f = new FormData(e.currentTarget); try { await command(`/api/execution/shifts/handoffs/${id}/actions`, { description: f.get('description'), sourceKind: f.get('sourceKind') || null, sourceReference: f.get('sourceReference') || null, assignee: f.get('assignee') }, 'Assign shift follow-up'); toast('Action assigned.'); await openHandoff(id); } catch (error) { toast(error.message); } });

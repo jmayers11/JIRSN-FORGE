@@ -97,6 +97,21 @@ test('safety rules page publishes a draft version', async t => {
   assert.ok(calls.some(c => c.body && c.path.endsWith('/api/safety-rules/CRANE/versions/2/publish')));
 });
 
+test('safety rule drafts collect role slots with rows and keep the existing API representation', async t => {
+  const { page, calls } = wire(t, path => path.endsWith('/api/safety-rules/') ? response([]) : null);
+  const controller = await safetyRulesPage(page, { me: { personId: 'safety-author', permissions: ['safety.rules.draft', 'safety.rules.read'] } }); t.after(controller.dispose);
+  fire(page.querySelector('#new-rule'), 'click'); const modal = page.ownerDocument.querySelector('.modal');
+  for (const [name, value] of Object.entries({ code: 'SLIT-SAFETY', title: 'Slitter crew', scopeCode: 'SLIT-1', activityCodes: 'SLIT', minimumPhysicalPeople: '2' })) modal.querySelector(`#f-${name}`).value = value;
+  modal.querySelector('#f-scopeKind').value = 'Machine'; modal.querySelector('#f-prohibitLoneWork').checked = true;
+  const repeater = modal.querySelector('#f-slots'); fire(repeater.querySelector('[data-repeater-add]'), 'click');
+  const slot = repeater.querySelector('[data-repeater-row]'); slot.querySelector('[data-repeater-column="name"]').value = 'Slitter operator';
+  slot.querySelector('[data-repeater-column="count"]').value = '1'; slot.querySelector('[data-repeater-column="qualifications"]').value = 'SLITTER, LOTO';
+  slot.querySelector('[data-repeater-column="traineeMayFill"]').value = 'no'; modal.querySelector('#reason').value = 'Actual slitter staffing requirement.';
+  fire(modal.querySelector('[data-ok]'), 'click'); await flush(); await flush();
+  const body = calls.find(call => call.body && call.path.endsWith('/api/safety-rules/drafts'))?.body;
+  assert.deepEqual(body.slots, [{ name: 'Slitter operator', count: 1, satisfiedBy: ['SLITTER', 'LOTO'], traineeMayFill: false }]);
+});
+
 test('workforce actions follow permissions and validate windows and assignments', () => {
   assert.deepEqual(personActions({ permissions: ['workforce.supervise'] }).map(([a]) => a), ['assign', 'end-assignment', 'presence', 'departure', 'unavailable']);
   assert.deepEqual(personActions({ permissions: ['competency.certify', 'workforce.badges.manage'] }).map(([a]) => a), ['badge', 'revoke-badge', 'certify']);

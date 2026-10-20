@@ -22,6 +22,27 @@ export function personActions(me) {
   ].filter(Boolean);
 }
 
+export function personActionsForWorker(me, worker, personId = me?.personId) {
+  const actions = personActions(me);
+  if (!worker?.isActive) return actions;
+  if (canAction(me, 'workforce.supervise')) actions.push(['move', 'Temporary move']);
+  if (canAction(me, 'workforce.manage') && personId !== me?.personId) actions.push(['transfer', 'Permanent transfer']);
+  return actions;
+}
+
+export function siteDate(now, timeZone) {
+  const values = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now).map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+const addDays = (date, days) => {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+};
+
 export function unavailabilityBody(v) {
   const startsAt = local(v.startsAt), endsAt = local(v.endsAt);
   if (!startsAt || !endsAt || endsAt <= startsAt) throw new Error('Enter a start and a later end.');
@@ -34,33 +55,55 @@ export function assignmentBody(v) {
 }
 
 export async function appendWorkforceAdmin(page, me) {
-  const actions = personActions(me);
   const section = document.createElement('section');
   section.className = 'panel';
   section.setAttribute('aria-label', 'Manage people');
   page.append(section);
-  if (!actions.length && !canAction(me, 'competency.certify')) return section;
+  const canManagePeople = ['workforce.manage', 'workforce.supervise', 'workforce.badges.manage', 'competency.manage', 'competency.certify']
+    .some(permission => canAction(me, permission));
+  if (!canManagePeople) return section;
 
-  const [people, typesResult, plant] = await Promise.all([tryGet('/api/kernel/directory'), tryGet('/api/competency/qualification-types'), tryGet('/api/resources/')]);
+  const [people, typesResult, plant, workerResult] = await Promise.all([
+    tryGet('/api/kernel/directory'), tryGet('/api/competency/qualification-types'), tryGet('/api/resources/'),
+    canAction(me, 'workforce.read') ? tryGet('/api/workforce/workers') : Promise.resolve({ data: [] }),
+  ]);
   let types = typesResult;
   const codes = key => (plant.data?.[key] ?? []).map(x => x.code);
-  let selected = null, quals = null, previewResult = null, previewError = null, previewBusy = false, previewSequence = 0;
+  let workers = workerResult.data ?? [];
+  const siteTimeZone = worker => {
+    const home = plant.data?.workCenters?.find(center => center.code === worker?.homeWorkCenterCode);
+    const area = plant.data?.safetyAreas?.find(candidate => candidate.code === home?.safetyAreaCode);
+    return plant.data?.sites?.find(site => site.code === area?.siteCode)?.timeZone
+      ?? plant.data?.sites?.[0]?.timeZone ?? 'UTC';
+  };
+  let selected = null, quals = null, moves = null, transfers = null, previewResult = null, previewError = null, previewBusy = false, previewSequence = 0;
 
   async function select(personId) {
     previewSequence++; previewResult = null; previewError = null; previewBusy = false;
     selected = (people.data ?? []).find(p => p.personId === personId) ?? null;
-    quals = selected ? await tryGet(`/api/competency/people/${selected.personId}`) : null;
+    const worker = workers.find(p => p.personId === selected?.personId);
+    const [qualificationResult, moveResult, transferResult] = await Promise.all([
+      selected ? tryGet(`/api/competency/people/${selected.personId}`) : Promise.resolve(null),
+      selected && worker ? tryGet(`/api/workforce/moves?personId=${encodeURIComponent(selected.personId)}&includeClosed=true`) : Promise.resolve(null),
+      selected && worker ? tryGet(`/api/workforce/transfers?personId=${encodeURIComponent(selected.personId)}`) : Promise.resolve(null),
+    ]);
+    quals = qualificationResult;
+    moves = moveResult;
+    transfers = transferResult;
     render();
   }
 
   function render() {
     const list = people.data ?? [];
+    const worker = workers.find(p => p.personId === selected?.personId) ?? null;
+    const actions = personActionsForWorker(me, worker, selected?.personId);
     section.innerHTML = `<header><h2>Manage people</h2><div class="spacer"></div>
         ${canAction(me, 'competency.manage') ? '<button class="btn small ghost" id="prerequisite">Add qualification prerequisite</button>' : ''}</header>
       ${people.error ? errorBlock(people.error, 'people') : !list.length ? emptyBlock('Nobody registered', 'Register people under Access Control.') : `
       <div class="toolbar"><label for="wf-person">Person</label><select class="select" id="wf-person"><option value="">— choose —</option>
         ${list.map(p => `<option value="${p.personId}" ${selected?.personId === p.personId ? 'selected' : ''}>${esc(p.displayName)}</option>`).join('')}</select></div>
       ${selected ? `<div class="actions">${actions.map(([a, text]) => `<button class="btn small" data-wf="${a}">${esc(text)}</button>`).join('')}</div>
+        ${worker ? movementHistory(worker) : ''}
         ${canAction(me, 'readiness.read') ? `<section class="panel" aria-label="Assignment impact preview">
           <h3>Assignment impact preview</h3><p class="muted">Compare active work before and after a proposed assignment. This preview never changes the assignment.</p>
           <div class="form-grid">
@@ -85,13 +128,37 @@ export async function appendWorkforceAdmin(page, me) {
     $('#prerequisite', section)?.addEventListener('click', prerequisite);
     $('[data-reallocation-preview]', section)?.addEventListener('click', previewAssignment);
     $$('[data-wf]', section).forEach(b => b.addEventListener('click', () => run(b.dataset.wf)));
+    $$('[data-move-action]', section).forEach(b => b.addEventListener('click', () => changeMove(b.dataset.moveAction, Number(b.dataset.moveId))));
     $$('[data-qual]', section).forEach(b => b.addEventListener('click', () => b.dataset.qual === 'certify' ? certify(b.dataset.code) : qualification(b.dataset.qual, b.dataset.code)));
+  }
+
+  function movementHistory(worker) {
+    const moveRows = moves?.data ?? [];
+    const transferRows = transfers?.data ?? [];
+    return `<section class="panel" aria-label="Moves and transfers">
+      <header><h3>Moves and transfers</h3><span class="spacer"></span><span class="muted">Home work center: ${esc(worker.homeWorkCenterCode)}</span></header>
+      ${moves?.error ? errorBlock(moves.error, 'temporary moves') : moveRows.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Temporary move</th><th>Dates</th><th>Status and changes</th><th></th></tr></thead><tbody>
+        ${moveRows.map(move => `<tr><td><b>${esc(move.fromWorkCenter)} → ${esc(move.toWorkCenter)}</b><div class="faint">Move ${move.moveId}</div></td>
+          <td>${esc(move.startsOn)} – ${esc(move.endsOn)}</td><td><span class="pill ${move.status === 'Active' ? 'info' : 'none'}">${esc(move.status)}</span>${(move.changes ?? []).map(change => `<div class="faint">${esc(change.kind)}: ${esc(change.previousEndsOn)} → ${esc(change.endsOn)} · ${esc(fmtDateTime(change.changedAt))}</div>`).join('')}</td>
+          <td class="row-actions">${move.status === 'Active' && canAction(me, 'workforce.supervise') ? `<button class="btn small" data-move-action="extend" data-move-id="${move.moveId}">Extend</button><button class="btn small ghost" data-move-action="end" data-move-id="${move.moveId}">End early</button>` : ''}
+            ${move.status !== 'Active' && canAction(me, 'workforce.supervise') ? `<button class="btn small" data-move-action="renew" data-move-id="${move.moveId}">Renew</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : emptyBlock('No temporary moves', 'Temporary moves count the worker at another work center through the estimated end date; they do not change the worker’s shift.')}
+      ${transfers?.error ? errorBlock(transfers.error, 'transfers') : transferRows.length ? `<h4>Permanent transfer history</h4><div class="table-wrap"><table class="table"><thead><tr><th>From</th><th>To</th><th>Effective from</th><th>Recorded</th></tr></thead><tbody>
+        ${transferRows.map(transfer => `<tr><td>${esc(transfer.fromWorkCenter)}</td><td>${esc(transfer.workCenter)}</td><td>${esc(transfer.effectiveFrom)}</td><td>${esc(fmtDateTime(transfer.recordedAt))} · ${esc(transfer.recordedBy)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="muted" style="margin-top:8px">No permanent transfers recorded.</div>'}
+      <div class="faint" style="margin-top:8px">Each change requires a reason and is recorded in the audit history. Temporary-move reminders and returns are handled automatically.</div>
+    </section>`;
   }
 
   const typeName = code => (types.data ?? []).find(t => t.code === code)?.name ?? code;
   const typeOptions = () => (types.data ?? []).map(t => [t.code, `${t.name} (${t.code})`]);
+  const workCenterOptions = () => (plant.data?.workCenters ?? []).filter(w => w.active !== false).map(w => [w.code, `${w.name} (${w.code})`]);
   const base = () => `/api/workforce/workers/${selected.personId}`;
-  const after = () => select(selected.personId);
+  const after = async () => {
+    if (canAction(me, 'workforce.read')) {
+      const currentWorkers = await tryGet('/api/workforce/workers');
+      if (!currentWorkers.error) workers = currentWorkers.data ?? [];
+    }
+    return select(selected.personId);
+  };
   const simple = (title, detail, path, body = {}) => formModal({ title, detail, fields: [], confirmLabel: title, reasonRequired: true }, (_, reason) => command(path, body, reason), after);
 
   function previewHtml(run) {
@@ -146,6 +213,27 @@ export async function appendWorkforceAdmin(page, me) {
       case 'unavailable': return formModal({ title: `Record ${name} unavailable`, fields: [{ name: 'kind', label: 'Kind', type: 'select', options: [['CallOut', 'Call-out'], ['Unavailable', 'Unavailable'], ['ApprovedPto', 'Approved time off'], ['Training', 'Training']] },
           { name: 'startsAt', label: 'From', type: 'datetime-local', required: true }, { name: 'endsAt', label: 'To', type: 'datetime-local', required: true }], confirmLabel: 'Record', reasonRequired: true },
         (v, reason) => command(`${base()}/unavailability`, unavailabilityBody(v), reason), after);
+      case 'move': {
+        const worker = workers.find(person => person.personId === selected.personId);
+        const timeZone = siteTimeZone(worker);
+        const today = siteDate(new Date(), timeZone);
+        return formModal({ title: `Temporarily move ${name}`, detail: 'This is a time-limited loan to another work center. The estimated end date is required; shift assignment stays separate.', confirmLabel: 'Start move', reasonRequired: true,
+          fields: [
+            { name: 'workCenterCode', label: 'Destination work center', type: 'select', options: workCenterOptions(), required: true },
+            { name: 'startsOn', label: 'Starts on (site date)', type: 'date', value: today, required: true },
+            { name: 'estimatedEndOn', label: 'Estimated end (site date)', type: 'date', value: addDays(today, 14), required: true },
+          ] }, (v, reason) => command(`${base()}/moves`, v, reason), after);
+      }
+      case 'transfer': {
+        const worker = workers.find(person => person.personId === selected.personId);
+        const timeZone = siteTimeZone(worker);
+        const today = siteDate(new Date(), timeZone);
+        return formModal({ title: `Permanently transfer ${name}`, detail: `Changes the home work center from the effective site date. Past capacity and labor history stay in the original work center. Current home: ${worker?.homeWorkCenterCode ?? 'unknown'}.`, confirmLabel: 'Transfer', reasonRequired: true,
+          fields: [
+            { name: 'workCenterCode', label: 'New home work center', type: 'select', options: workCenterOptions(), required: true },
+            { name: 'effectiveFrom', label: 'Effective from (site date)', type: 'date', value: today, required: true },
+          ] }, (v, reason) => command(`${base()}/transfer`, v, reason), after);
+      }
       case 'badge': return formModal({ title: `Issue a badge to ${name}`, detail: 'The badge number is a secret; it is not shown again.', fields: [{ name: 'badge', label: 'Badge number', type: 'password', required: true }], confirmLabel: 'Issue', reasonRequired: true },
         (v, reason) => command(`/api/workforce/people/${selected.personId}/badge`, { badge: v.badge }, reason), after);
       case 'revoke-badge': return simple('Revoke badge', `${name}'s badge stops working at terminals.`, `/api/workforce/people/${selected.personId}/badge/revoke`);
@@ -154,6 +242,21 @@ export async function appendWorkforceAdmin(page, me) {
       case 'certify': return certify(null);
       default: return null;
     }
+  }
+
+  function changeMove(action, moveId) {
+    const move = (moves?.data ?? []).find(item => item.moveId === moveId);
+    if (!move) return;
+    const today = siteDate(new Date(), siteTimeZone(workers.find(person => person.personId === selected.personId)));
+    if (action === 'end') return simple(`End move ${moveId} early`, 'The worker returns to their home work center from today.', `/api/workforce/moves/${moveId}/end`);
+    const renew = action === 'renew';
+    const defaultEnd = renew ? addDays(today, 14) : addDays(move.endsOn, 7);
+    return formModal({ title: `${renew ? 'Renew' : 'Extend'} ${move.displayName}'s move`, detail: renew
+      ? `Starts a new move to ${move.toWorkCenter} from today; the days between moves remain at home.`
+      : `The move to ${move.toWorkCenter} remains active through its new inclusive end date.`,
+    confirmLabel: renew ? 'Renew' : 'Extend', reasonRequired: true,
+    fields: [{ name: 'newEndOn', label: 'New estimated end (site date)', type: 'date', value: defaultEnd, required: true }] },
+    (v, reason) => command(`/api/workforce/moves/${moveId}/${renew ? 'renew' : 'extend'}`, v, reason), after);
   }
 
   function certify(code) {

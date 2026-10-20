@@ -57,6 +57,23 @@ test('criteria list offers only the next lifecycle step for each revision', asyn
   assert.doesNotMatch(page.innerHTML, /data-crit-next="ACC-BRKT\/2"/, 'a new revision waits while revision 3 is open');
 });
 
+test('acceptance criteria repeaters serialize characteristics and exact document revisions', async t => {
+  const { page, calls } = await open(t, (path, body) => body ? response({ succeeded: true, message: 'Draft saved.' }) : path.endsWith('/acceptance/criteria') ? response([effective]) : null);
+  fire(page.querySelector('#new-criteria'), 'click');
+  const modal = page.ownerDocument.querySelector('.modal');
+  for (const [name, value] of Object.entries({ code: 'ACC-NEW', facilityCode: 'PLANT1', partNumber: 'BRKT', revision: 'C', title: 'Final visual and bore acceptance', minimumSample: '1', maximumRepresented: '50', method: 'Inspect every listed characteristic', approvalBasis: 'Owner approved the exact characteristics' })) modal.querySelector(`#f-${name}`).value = value;
+  modal.querySelector('#f-markings').value = 'None'; modal.querySelector('#f-operationSequence').value = '';
+  const characteristicsRepeater = modal.querySelector('#f-characteristics');
+  const characteristic = characteristicsRepeater.querySelector('[data-repeater-row]');
+  for (const [name, value] of Object.entries({ number: '1', name: 'Bore', kind: 'Variable', nominal: '10', lower: '9.98', upper: '10.02', unit: 'mm' })) characteristic.querySelector(`[data-repeater-column="${name}"]`).value = value;
+  const documents = modal.querySelector('#f-documents');
+  const documentRow = documents.querySelector('[data-repeater-row]'); documentRow.querySelector('[data-repeater-column="documentNumber"]').value = 'WI-9'; documentRow.querySelector('[data-repeater-column="revision"]').value = 'C';
+  modal.querySelector('#reason').value = 'Owner approved this controlled acceptance scope.'; fire(modal.querySelector('[data-ok]'), 'click'); await flush(); await flush();
+  const body = calls.find(call => call.body && call.path.endsWith('/acceptance/criteria'))?.body;
+  assert.deepEqual(body.content.characteristics, [{ number: 1, name: 'Bore', kind: 'Variable', nominal: 10, lower: 9.98, upper: 10.02, unit: 'mm' }]);
+  assert.deepEqual(body.content.documents, [{ documentNumber: 'WI-9', revision: 'C' }]);
+});
+
 test('history shows readable inspection and release lists and opens their record lookups', async t => {
   const inspection = { inspectionId: 41, version: 1, passed: true, quantity: 100, sampleQuantity: 2, criteriaCode: 'ACC-BRKT', criteriaRevision: 2, inspector: 'person:x', at: '2026-10-15T10:00:00Z', evidence: 'Sheet 7', results: [], subject: { key: { partNumber: 'BRKT', lotNumber: 'L9', locationCode: 'FG-1' }, revision: 'B' } };
   const release = { decisionId: 52, version: 1, inspectionIds: [41], subject: { partNumber: 'BRKT', lotNumber: 'L9', locationCode: 'FG-1' }, quantity: 100, approvedBy: 'person:y', approvedAt: '2026-10-15T11:00:00Z', basis: 'Independent approval' };
@@ -69,6 +86,22 @@ test('history shows readable inspection and release lists and opens their record
   fire(page.querySelector('[data-tab="history"]'), 'click'); await flush();
   fire(page.querySelector('[data-release-id="52"]'), 'click'); await flush();
   assert.ok(calls.some(call => call.path.endsWith('/product-releases/52')));
+});
+
+test('return cohort lookup is structured and prepares inspection with its exact subject and quantity', async t => {
+  const cohort = { cohortId: 31, version: 2, rmaId: 59, subject: { key: { partNumber: 'BRKT', lotNumber: 'RETURN-9', locationCode: 'RETURNS', returnCohortId: 31 }, revision: 'B' }, quantity: 4, preparedBy: 'person:returns-lead', preparedAt: '2026-10-15T10:00:00Z', consumedQuantity: 1 };
+  const { page } = await open(t, path => path.endsWith('/return-cohorts/31') ? response(cohort) : null);
+  fire(page.querySelector('[data-tab="lookup"]'), 'click');
+  page.querySelector('#lookup-kind').value = 'cohort'; page.querySelector('#lookup-id').value = '31';
+  fire(page.querySelector('#lookup-form'), 'submit'); await flush();
+  assert.match(page.innerHTML, /class="kv"/); assert.match(page.innerHTML, /Customer return \(RMA\)/);
+  assert.match(page.innerHTML, /BRKT lot RETURN-9 at RETURNS/); assert.match(page.innerHTML, /Inspect this return cohort/);
+  assert.doesNotMatch(page.innerHTML, /<pre/); assert.doesNotMatch(page.innerHTML, /"consumedQuantity"/);
+  fire(page.querySelector('#inspect-cohort'), 'click');
+  assert.equal(page.querySelector('[data-tab="inspect"]').className, 'on');
+  assert.equal(page.querySelector('#i-part').value, 'BRKT'); assert.equal(page.querySelector('#i-lot').value, 'RETURN-9');
+  assert.equal(page.querySelector('#i-loc').value, 'RETURNS'); assert.equal(page.querySelector('#i-cohort').value, 31);
+  assert.equal(page.querySelector('#i-qty').value, 4);
 });
 
 test('inspection is recorded against the exact subject and effective criteria version, then looked up', async t => {

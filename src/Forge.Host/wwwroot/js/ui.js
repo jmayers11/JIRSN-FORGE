@@ -8,6 +8,70 @@ export function esc(value) {
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+const enhancedTables = new WeakSet();
+
+/** Add a compact search field and sortable column headings to a data table. */
+export function enhanceTable(table, { filter = true } = {}) {
+  if (!table || enhancedTables.has(table)) return false;
+  const body = table.querySelector('tbody');
+  const head = table.querySelector('thead');
+  const headers = head ? [...head.querySelectorAll('th')] : [];
+  if (!body || headers.length < 2 || body.querySelectorAll('tr').length < 2) return false;
+  enhancedTables.add(table);
+
+  let filterInput = null;
+  if (filter) {
+    const tools = document.createElement('div');
+    tools.className = 'table-tools';
+    tools.innerHTML = '<label class="field"><span>Filter rows</span><input class="input" type="search" data-table-filter autocomplete="off" placeholder="Search this table"></label><span class="muted">Select a column heading to sort</span>';
+    table.parentElement?.insertBefore(tools, table);
+    filterInput = tools.querySelector('[data-table-filter]');
+  }
+  const rows = () => [...body.querySelectorAll('tr')];
+  filterInput?.addEventListener('input', () => {
+    const query = filterInput.value.trim().toLocaleLowerCase();
+    for (const row of rows()) row.hidden = !!query && !row.textContent.toLocaleLowerCase().includes(query);
+  });
+
+  headers.forEach((header, column) => {
+    header.tabIndex = 0;
+    header.title = 'Sort by ' + header.textContent.trim();
+    header.setAttribute('aria-sort', 'none');
+    const sort = () => {
+      const direction = header.getAttribute('aria-sort') === 'ascending' ? -1 : 1;
+      headers.forEach(item => item.setAttribute('aria-sort', 'none'));
+      header.setAttribute('aria-sort', direction === 1 ? 'ascending' : 'descending');
+      const indexed = rows().map((row, index) => ({ row, index, value: row.children[column]?.dataset.sortValue ?? row.children[column]?.textContent.trim() ?? '' }));
+      const values = indexed.map(item => item.value);
+      const numeric = values.length > 0 && values.every(value => /^#?\s*-?[\d,]+(?:\.\d+)?\s*$/.test(value));
+      const isoDates = values.length > 0 && values.every(value => /^\d{4}-\d{2}-\d{2}(?:[T ]|$)/.test(value));
+      const dateColumn = /date|when|time|received|expires|promised|due/i.test(header.textContent);
+      const dates = dateColumn && values.length > 0 && values.every(value => ['—', '-', ''].includes(value) || Number.isFinite(new Date(value).getTime()));
+      indexed.sort((a, b) => {
+        let compared;
+        if (numeric) compared = Number(a.value.replace(/[#,\s]/g, '')) - Number(b.value.replace(/[#,\s]/g, ''));
+        else if (isoDates || dates) {
+          const left = ['—', '-', ''].includes(a.value) ? Number.POSITIVE_INFINITY : new Date(a.value).getTime();
+          const right = ['—', '-', ''].includes(b.value) ? Number.POSITIVE_INFINITY : new Date(b.value).getTime();
+          compared = left - right;
+        }
+        else compared = a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: 'base' });
+        return (compared || a.index - b.index) * direction;
+      });
+      body.append(...indexed.map(item => item.row));
+    };
+    header.addEventListener('click', sort);
+    header.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); sort(); }
+    });
+  });
+  return true;
+}
+
+export function enhanceTables(root = document, options) {
+  return $$('.table', root).reduce((count, table) => count + Number(enhanceTable(table, options)), 0);
+}
+
 export function fmtNumber(n, digits = 1) {
   if (n == null || Number.isNaN(n)) return '—';
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
@@ -134,6 +198,66 @@ export function drawer(title, bodyHtml) {
   return { element: d.querySelector('.body'), close };
 }
 
+let workspaceTabId = 0;
+
+/** Move a page's direct content sections into accessible horizontal tabs by heading text. */
+export function tabifyPanels(root, definitions) {
+  const groups = definitions.map(definition => ({ ...definition, nodes: [] }));
+  const summaryNodes = [];
+  for (const child of [...root.children]) {
+    const isSummary = child.matches?.('.page-head, .object-summary, .notice') || child.tagName === 'A';
+    if (isSummary) { summaryNodes.push(child); continue; }
+    const heading = child.querySelector?.('h2')?.textContent?.toLowerCase() ?? '';
+    if (!heading) continue;
+    const group = groups.find(item => item.match.some(term => heading.includes(term.toLowerCase()))) ?? groups[0];
+    group.nodes.push(child);
+  }
+  const visibleGroups = groups.filter(group => group.nodes.length);
+  if (visibleGroups.length < 2) return null;
+  const id = `forge-workspace-${++workspaceTabId}`;
+  const shell = document.createElement('section'); shell.className = 'workspace-tabs';
+  const list = document.createElement('div'); list.className = 'workspace-tablist'; list.setAttribute('role', 'tablist');
+  const panels = document.createElement('div'); panels.className = 'workspace-panels';
+  for (const [index, group] of visibleGroups.entries()) {
+    const key = `${id}-${index}`;
+    const button = document.createElement('button'); button.className = 'workspace-tab'; button.type = 'button';
+    button.setAttribute('role', 'tab'); button.setAttribute('data-workspace-tab', key); button.setAttribute('aria-selected', String(index === 0));
+    button.setAttribute('aria-controls', `${key}-panel`); button.tabIndex = index === 0 ? 0 : -1; button.textContent = group.label;
+    list.append(button);
+    const panel = document.createElement('div'); panel.className = 'workspace-panel'; panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('id', `${key}-panel`); panel.setAttribute('data-workspace-panel', key); panel.setAttribute('aria-labelledby', key); panel.tabIndex = 0;
+    panel.hidden = index !== 0;
+    for (const node of group.nodes) panel.append(node);
+    panels.append(panel);
+  }
+  shell.append(list, panels);
+  root.append(shell);
+  wireWorkspaceTabs(shell);
+  return shell;
+}
+
+/** Bind tab controls already paired by data-workspace-tab and data-workspace-panel. */
+export function wireWorkspaceTabs(root) {
+  const buttons = $$('[data-workspace-tab]', root);
+  const panels = $$('[data-workspace-panel]', root);
+  if (!buttons.length || !panels.length) return;
+  const activate = button => {
+    for (const candidate of buttons) {
+      const active = candidate === button;
+      candidate.setAttribute('aria-selected', String(active)); candidate.tabIndex = active ? 0 : -1;
+    }
+    for (const panel of panels) panel.hidden = panel.dataset.workspacePanel !== button.dataset.workspaceTab;
+  };
+  for (const button of buttons) {
+    button.addEventListener('click', () => activate(button));
+    button.addEventListener('keydown', event => {
+      const index = buttons.indexOf(button);
+      const next = event.key === 'ArrowRight' ? (index + 1) % buttons.length : event.key === 'ArrowLeft' ? (index - 1 + buttons.length) % buttons.length : -1;
+      if (next >= 0) { event.preventDefault(); buttons[next].focus(); activate(buttons[next]); }
+    });
+  }
+}
+
 export function closeOverlays() {
   $$('.scrim, .drawer, .modal').forEach(e => e.remove());
 }
@@ -148,7 +272,6 @@ export function confirmWithReason({ title, detail, confirmLabel = 'Confirm', rea
     scrim.className = 'scrim';
     const m = document.createElement('div');
     m.className = 'modal';
-    m.setAttribute('role', 'dialog');
     m.innerHTML = `
       <h2>${esc(title)}</h2>
       ${detail ? `<div class="muted">${esc(detail)}</div>` : ''}
@@ -157,7 +280,12 @@ export function confirmWithReason({ title, detail, confirmLabel = 'Confirm', rea
         <textarea id="reason" class="input" rows="3"></textarea></div>
       <div class="notice bad hidden" data-error></div>
       <div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-ok>${esc(confirmLabel)}</button></div>`;
-    const close = value => { scrim.remove(); m.remove(); resolve(value); };
+    let closed = false, releaseFocus = () => {};
+    const close = value => {
+      if (closed) return;
+      closed = true;
+      scrim.remove(); m.remove(); releaseFocus(); resolve(value);
+    };
     scrim.onclick = () => close(null);
     m.querySelector('[data-cancel]').onclick = () => close(null);
     m.querySelector('[data-ok]').onclick = async () => {
@@ -177,7 +305,7 @@ export function confirmWithReason({ title, detail, confirmLabel = 'Confirm', rea
       }
     };
     document.body.append(scrim, m);
-    m.querySelector('#reason').focus();
+    releaseFocus = manageDialogFocus(m, () => close(null));
   });
 }
 

@@ -45,7 +45,7 @@ function openBrowserPrint(svgUrl) {
 // command path; source, adopted policy, scope, version and duty checks remain on the server.
 export async function mountLabelsPanel(element, { me, partNumber, lotNumber, facilityCode = null,
   isCurrent = () => true, printArtifact = openBrowserPrint }) {
-  let disposed = false, generation = 0, data = {}, selected = null, subject = null, subjectCode = null;
+  let disposed = false, generation = 0, data = {}, selected = null, subject = null, subjectCode = null, uncertainOutcome = false;
   const auth = { subject: session.subject, token: session.token }, dialogs = new Set(), blobs = new Set();
   const current = token => !disposed && element.isConnected && isCurrent() && token === generation && session.subject === auth.subject && session.token === auth.token;
   const closeDialogs = () => { for (const close of [...dialogs]) close(); };
@@ -53,9 +53,9 @@ export async function mountLabelsPanel(element, { me, partNumber, lotNumber, fac
   const observer = typeof MutationObserver === 'function' ? new MutationObserver(() => { if (!element.isConnected || !isCurrent()) dispose(); }) : null;
   observer?.observe(element.ownerDocument.body, { childList: true, subtree: true });
   const resource = item => ({ facilityId: item?.facilityCode ?? facilityCode, programId: item?.subject?.programId ?? null });
-  const allowed = (action, item = null) => canAction(me, PERMISSIONS[action], resource(item));
+  const allowed = (action, item = null) => !uncertainOutcome && canAction(me, PERMISSIONS[action], resource(item));
   const mine = actor => actor === `person:${me.personId}`;
-  const labelAllowed = (action, label) => selected?.label.labelId === label.labelId && (selected.allowedActions ?? []).includes(action);
+  const labelAllowed = (action, label) => !uncertainOutcome && selected?.label.labelId === label.labelId && (selected.allowedActions ?? []).includes(action);
   const canReconcileAttempt = (attempt, label) => allowed('print', label) && (['Requested', 'Uncertain'].includes(attempt.state) || (attempt.state === 'Confirmed' && attempt.observedPrinted === true && attempt.observedAttached === false));
 
   function modal(title, description, fields, confirmLabel, send, extraHtml = '', onRecorded = null) {
@@ -64,9 +64,13 @@ export async function mountLabelsPanel(element, { me, partNumber, lotNumber, fac
     scrim.className = 'scrim'; scrim.setAttribute('aria-hidden', 'true'); dialog.className = 'modal';
     dialog.innerHTML = `<h2>${esc(title)}</h2><div class="muted">${esc(description)}</div>${fields.map(fieldHtml).join('')}${extraHtml}${fieldHtml(reasonField)}
       <div class="notice bad hidden" data-label-error role="alert" aria-live="assertive"></div><div class="actions"><button class="btn" data-label-cancel>Cancel</button><button class="btn primary" data-label-confirm>${esc(confirmLabel)}</button></div>`;
-    let closed = false, busy = false, releaseFocus = () => {};
+    let closed = false, busy = false, uncertain = false, releaseFocus = () => {};
     const live = () => !closed && dialog.isConnected && current(token);
-    const close = () => { if (closed) return; closed = true; scrim.remove(); dialog.remove(); dialogs.delete(close); releaseFocus(); };
+    const close = () => {
+      if (closed) return;
+      closed = true; scrim.remove(); dialog.remove(); dialogs.delete(close); releaseFocus();
+      if (uncertain && current(generation)) { uncertainOutcome = true; render(); }
+    };
     dialogs.add(close); scrim.onclick = close; document.body.append(scrim, dialog);
     $('[data-label-cancel]', dialog).addEventListener('click', close);
     const button = $('[data-label-confirm]', dialog), error = $('[data-label-error]', dialog);
@@ -83,10 +87,12 @@ export async function mountLabelsPanel(element, { me, partNumber, lotNumber, fac
       } catch (failure) {
         if (!live()) return;
         if (isServiceUnavailable(failure) && (Number.isInteger(failure.status) || failure instanceof TypeError)) {
-          close(); toast('Forge could not confirm that change. Check the label record before retrying; no print or stock outcome is inferred.', true); return;
+          uncertain = true;
+          error.textContent = 'Forge could not confirm that change. Your entries are preserved. Close this dialog and refresh the label record before deciding whether to retry; no print or stock outcome is inferred.';
+          error.classList.remove('hidden'); return;
         }
         error.textContent = `${failure.message}${failure.status === 409 ? ' Refresh the record before another action.' : ''}`; error.classList.remove('hidden');
-      } finally { busy = false; if (live()) button.disabled = false; }
+      } finally { busy = false; if (live()) button.disabled = uncertain; }
     });
     releaseFocus = manageDialogFocus(dialog, close);
     return { dialog, live, close };
@@ -106,6 +112,7 @@ export async function mountLabelsPanel(element, { me, partNumber, lotNumber, fac
     if (!current(token)) return;
     const [labels, aliases, templates, policy] = await Promise.all([tryGet(`${API}/labels?subjectCode=${key(subjectCode)}`), tryGet(`${API}/aliases?subjectCode=${key(subjectCode)}`), tryGet(`${API}/templates`), facilityCode ? tryGet(`${API}/labels/config?subjectCode=${key(subjectCode)}&facilityCode=${key(facilityCode)}`) : Promise.resolve({})]);
     if (!current(token)) return;
+    uncertainOutcome = !!labels.error || !!aliases.error || !!templates.error || !!policy.error;
     data = { labels: labels.error ? labels : { data: labels.data.items, nextCursor: labels.data.nextCursor }, aliases: aliases.error ? aliases : { data: aliases.data.items, nextCursor: aliases.data.nextCursor }, templates: templates.error ? templates : { data: templates.data.items, nextCursor: templates.data.nextCursor }, policy };
     if (selected) {
       const detail = await tryGet(`${API}/labels/${key(selected.label.labelId)}`);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { qmsAuditPage, auditProgramActions, auditRunActions, capaActions, auditFormDefinition, auditFormData } from '../../src/Forge.Host/wwwroot/js/pages/qms-audit.js';
+import { qmsAuditPage, auditProgramActions, auditRunActions, capaActions, auditFormDefinition, auditFormData, evidenceLines, parsedRefs } from '../../src/Forge.Host/wwwroot/js/pages/qms-audit.js';
 import { session } from '../../src/Forge.Host/wwwroot/js/api.js';
 import { installBrowser, response, fire, flush, deferred } from './browser-harness.mjs';
 
@@ -111,7 +111,25 @@ test('delayed audit detail A cannot replace currently opened B', async t => {
   fire(h.page.querySelector('[data-open="' + a.id + '"]'), 'click'); await flush(); await h.open(b.id); waiting.resolve(response({ audit: a, findings: [] })); await flush();
   assert.match(h.page.innerHTML, new RegExp(b.id)); assert.equal(h.page.querySelector('[data-owner-action="Finding"]'), null); assert.equal(h.calls.filter(x => x.body).length, 0);
 });
-test('uncertain server outcome closes the proposal and requires owner refresh without automatic retry', async t => {
+test('uncertain server outcome preserves the proposal, blocks retry and requires owner refresh', async t => {
   const h = await harness(t, { route: (path, body) => body ? response({ code: 'service_unavailable', detail: 'Outcome unavailable' }, 503) : null }); await h.open(); fire(h.page.querySelector('[data-owner-action="Approve"]'), 'click'); const m = h.dialog(); fill(m, { note: 'Actual assessment', reason: 'Actual decision' }); submit(m); await flush();
-  assert.equal(m.isConnected, false); assert.equal(h.calls.filter(x => x.body).length, 1); assert.equal(h.page.querySelector('[data-owner-action="Approve"]'), null);
+  assert.equal(m.isConnected, true); assert.equal(m.querySelector('#f-note').value, 'Actual assessment'); assert.equal(m.querySelector('#f-reason').value, 'Actual decision');
+  assert.equal(m.querySelector('[data-confirm]').disabled, true); assert.match(m.querySelector('[data-error]').textContent, /entries are preserved/); assert.equal(h.calls.filter(x => x.body).length, 1);
+  fire(m.querySelector('[data-cancel]'), 'click'); assert.equal(h.page.querySelector('[data-owner-action="Approve"]'), null);
+  fire(h.page.querySelector('[data-refresh]'), 'click'); await flush(); await flush(); assert.ok(h.page.querySelector('[data-owner-action="Approve"]'));
+});
+
+test('audit criteria and checklist evidence use structured rows while preserving source parsers', () => {
+  const program = auditFormDefinition('Program', { content: { criteria: [{ code: 'C1', name: 'Traceability', requirements: [{ code: 'QMS-8.5', revision: 2 }], documents: [{ documentNumber: 'WI-10', revision: 'C' }] }] } });
+  const criteria = program.groups.find(group => group.name === 'criteria');
+  assert.equal(criteria.columns.find(field => field.name === 'requirements').type, 'repeater');
+  assert.equal(criteria.rows[0].requirements[0].code, 'QMS-8.5');
+  assert.equal(criteria.columns.find(field => field.name === 'documents').type, 'repeater');
+  const report = auditFormDefinition('Report', { content: { checklist: [{ code: 'Q1', question: 'Was the control followed?' }] } });
+  const references = report.groups.find(group => group.name === 'checklistAnswers').columns.find(field => field.name === 'evidenceReferences');
+  assert.equal(references.type, 'repeater');
+  const payload = auditFormData('Report', {}, { evidence: [], checklistAnswers: [{ checklistCode: 'Q1', evidenceReferences: 'Inventory | Lot | LOT-9 | 2 | EVT-4 | AUD-8' }] });
+  assert.deepEqual(payload.checklistAnswers[0].evidence, [{ context: 'Inventory', type: 'Lot', key: 'LOT-9', revision: '2', eventId: 'EVT-4', auditId: 'AUD-8' }]);
+  assert.deepEqual(parsedRefs('QMS-8.5 | 2'), [{ code: 'QMS-8.5', revision: 2 }]);
+  assert.deepEqual(evidenceLines('Inventory | Lot | LOT-9 | 2 | EVT-4 | AUD-8'), payload.checklistAnswers[0].evidence);
 });

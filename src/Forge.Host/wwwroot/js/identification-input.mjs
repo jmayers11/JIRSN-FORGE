@@ -75,7 +75,9 @@ export function mountIdentificationInput(element, { id, label, ...options }) {
     <div class="faint" id="${esc(id)}-status" data-identify-status role="status" aria-live="polite" aria-atomic="true">Optional. Resolve and review the subject before selecting it.</div></div>`;
   const input = element.querySelector('input'), resolveButton = element.querySelector('[data-identify-resolve]');
   const useButton = element.querySelector('[data-identify-use]'), status = element.querySelector('[data-identify-status]');
+  let keystrokeTimes = [], detectedMode = 'Manual', lastInputLength = 0;
   const stage = createIdentificationStage({ ...options, isCurrent: () => element.isConnected && (options.isCurrent?.() ?? true),
+    onSelect: resolved => options.onSelect?.(resolved, detectedMode),
     onChange: state => {
       resolveButton.disabled = state.busy;
       useButton.disabled = !state.resolved || state.busy || !!state.selected;
@@ -84,14 +86,30 @@ export function mountIdentificationInput(element, { id, label, ...options }) {
       options.onChange?.(state);
     } });
   const resolveCode = () => { if (input.value) void stage.resolve(input.value); };
-  const onKey = event => { if (event.key === 'Enter') { event.preventDefault(); resolveCode(); } };
-  const onInput = () => stage.clear();
+  Object.defineProperty(stage, 'lastInputMode', { get: () => detectedMode });
+  const onKey = event => {
+    if (event.key === 'Enter') { event.preventDefault(); resolveCode(); return; }
+    if (event.key.length !== 1) return;
+    if (input.value.length === 0 || input.value.length < lastInputLength) { keystrokeTimes = []; detectedMode = 'Manual'; }
+    const now = Date.now();
+    keystrokeTimes.push(now);
+    if (keystrokeTimes.length > 32) keystrokeTimes.shift();
+    if (keystrokeTimes.length >= 4) {
+      const span = keystrokeTimes.at(-1) - keystrokeTimes[0];
+      detectedMode = span / (keystrokeTimes.length - 1) <= 25 ? 'KeyboardWedge' : 'Manual';
+    }
+  };
+  const onInput = () => {
+    if (!input.value || input.value.length < lastInputLength) { keystrokeTimes = []; detectedMode = 'Manual'; }
+    lastInputLength = input.value.length;
+    stage.clear();
+  };
   const onUse = () => stage.select();
   input.addEventListener('keydown', onKey);
   input.addEventListener('input', onInput);
   resolveButton.addEventListener('click', resolveCode);
   useButton.addEventListener('click', onUse);
-  return { stage, dispose: () => {
+  return { stage, get detectedMode() { return detectedMode; }, dispose: () => {
     stage.dispose(); input.value = '';
     input.removeEventListener('keydown', onKey); input.removeEventListener('input', onInput);
     resolveButton.removeEventListener('click', resolveCode); useButton.removeEventListener('click', onUse);

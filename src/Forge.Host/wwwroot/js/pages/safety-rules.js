@@ -74,7 +74,16 @@ export async function safetyRulesPage(page, ctx) {
         { name: 'activityCodes', label: 'Activities (blank: all)', value: rule?.activityCodes?.join(', '), hint: 'Activity codes, comma separated.' },
         { name: 'minimumPhysicalPeople', label: 'Minimum people physically present', type: 'number', min: 0, required: true, value: rule?.minimumPhysicalPeople ?? 1 },
         { name: 'prohibitLoneWork', label: 'Lone work', type: 'check', text: 'Prohibit lone work', value: rule?.prohibitLoneWork },
-        { name: 'slots', label: 'Role slots (optional)', type: 'textarea', value: formatSlots(rule?.slots), hint: 'One per line: name | count | qualification codes | trainee may fill (yes/no).' },
+        { name: 'slots', label: 'Role slots (optional)', type: 'repeater', rowLabel: 'role slot', pluralRowLabel: 'role slots',
+          value: (rule?.slots ?? []).map(slot => ({ name: slot.name, count: slot.count, qualifications: slot.satisfiedBy.join(', '), traineeMayFill: slot.traineeMayFill ? 'yes' : 'no' })),
+          columns: [
+            { name: 'name', label: 'Slot', required: true },
+            { name: 'count', label: 'People', type: 'number', min: 1, required: true },
+            { name: 'qualifications', label: 'Qualifications', required: true },
+            { name: 'traineeMayFill', label: 'Trainee may fill', type: 'select', required: true, options: [['no', 'No'], ['yes', 'Yes']] },
+          ],
+          serialize: rows => rows.map(slot => `${slot.name} | ${slot.count} | ${slot.qualifications} | ${slot.traineeMayFill}`).join('\n'),
+          hint: 'Define a slot and its qualification requirements in each row.' },
       ], confirmLabel: 'Save draft', reasonRequired: true },
     (v, reason) => command(`${API}/drafts`, ruleBody(v), reason), reload);
   }
