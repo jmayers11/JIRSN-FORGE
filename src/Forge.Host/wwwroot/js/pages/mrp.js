@@ -1,7 +1,7 @@
 import { tryGet, command } from '../api.js';
 import { img } from '../icons.js';
-import { esc, $, $$, fmtDate, errorBlock, emptyBlock, drawer, confirmWithReason, toast } from '../ui.js';
-import { formModal, qty, canAction, plusDays } from '../forms.js';
+import { esc, $, $$, fmtDate, errorBlock, emptyBlock, drawer, confirmWithReason, toast, enhanceTables } from '../ui.js';
+import { formModal, qty, canAction, plusDays, csvImportModal } from '../forms.js';
 
 // Material Plan (spec §12-13): independent demand, item planning parameters and a deterministic MRP
 // whose every recommendation shows its arithmetic and the requirements it is pegged to.
@@ -20,12 +20,17 @@ export async function mrpPage(page, ctx) {
   const engineer = canAction(me, 'execution.orders.manage');
   const buyer = canAction(me, 'procurement.manage');
   let tab = ctx.query.get('tab') ?? 'planned';
+  let plannedFilter = 'all';
+  let itemFilter = 'all';
   const focus = ctx.query.get('part');
   let data = {};
 
   async function load() {
-    const [mrp, demand, items] = await Promise.all([tryGet('/api/planning/mrp'), tryGet('/api/planning/demand'), tryGet('/api/engineering/items')]);
-    data = { mrp, demand, items };
+    const [mrp, demand, items, suppliers, sources] = await Promise.all([
+      tryGet('/api/planning/mrp'), tryGet('/api/planning/demand'), tryGet('/api/engineering/items'),
+      tryGet('/api/procurement/suppliers'), tryGet('/api/procurement/approved-sources'),
+    ]);
+    data = { mrp, demand, items, suppliers, sources };
   }
   const reload = async () => { await load(); render(); };
   const out = () => data.mrp.data?.output;
@@ -45,10 +50,21 @@ export async function mrpPage(page, ctx) {
 
   function plannedTab() {
     if (data.mrp.error) return errorBlock(data.mrp.error, 'the material plan');
-    const list = out().plannedOrders;
+    const list = out().plannedOrders ?? [];
     if (!list.length) return emptyBlock('Nothing to order', 'Stock, open purchase orders and production orders cover every requirement and safety stock.');
-    return `<table class="table"><thead><tr><th>Release by</th><th>Need by</th><th>Part</th><th></th><th class="num">Quantity</th><th>Covers</th><th></th></tr></thead><tbody>
-      ${list.map((p, i) => `<tr>
+    const pastDueCount = list.filter(p => p.pastDue).length;
+    const makeCount = list.filter(p => p.makeBuy === 'Make').length;
+    const buyCount = list.filter(p => p.makeBuy === 'Buy').length;
+    const filters = [['all', `All (${list.length})`], ['pastDue', `Past due (${pastDueCount})`], ['Make', `Make (${makeCount})`], ['Buy', `Buy (${buyCount})`]];
+    const indexed = list.map((p, index) => ({ p, index })).filter(({ p }) =>
+      plannedFilter === 'pastDue' ? p.pastDue
+        : plannedFilter === 'Make' ? p.makeBuy === 'Make'
+          : plannedFilter === 'Buy' ? p.makeBuy === 'Buy' : true);
+    const chips = `<div class="mrp-filters" role="group" aria-label="Filter recommendations">${filters.map(([key, label]) =>
+      `<button class="mrp-filter ${plannedFilter === key ? 'on' : ''}" type="button" data-planned-filter="${key}" aria-pressed="${plannedFilter === key}">${esc(label)}</button>`).join('')}</div>`;
+    if (!indexed.length) return `${chips}${emptyBlock('No recommendations match', 'Choose another recommendation filter.')}`;
+    return `${chips}<table class="table"><thead><tr><th>Release by</th><th>Need by</th><th>Part</th><th></th><th class="num">Quantity</th><th>Covers</th><th></th></tr></thead><tbody>
+      ${indexed.map(({ p, index: i }) => `<tr>
         <td class="nowrap">${p.pastDue ? '<span class="pill bad">Past due</span> ' : ''}${esc(fmtDate(p.releaseDate))}</td><td class="nowrap">${esc(fmtDate(p.dueDate))}</td>
         <td><b>${esc(p.partNumber)}</b>${p.revision ? ` <span class="faint">rev ${esc(p.revision)}</span>` : ''}</td>
         <td><span class="pill ${p.makeBuy === 'Make' ? 'info' : 'none'}">${p.makeBuy === 'Make' ? 'Make' : 'Buy'}</span></td>
@@ -91,31 +107,68 @@ export async function mrpPage(page, ctx) {
     if (data.mrp.error) return errorBlock(data.mrp.error, 'the material plan');
     const list = out().exceptions;
     if (!list.length) return emptyBlock('No exceptions', 'Every receipt is on time for its need and the data is complete.');
-    return `<table class="table"><thead><tr><th>Part</th><th>What</th><th>Detail</th></tr></thead><tbody>
-      ${list.map(e => `<tr><td><b>${esc(e.partNumber)}</b></td><td><span class="pill ${['PastDueRelease', 'OverdueReceipt', 'BomLoop', 'NoRevision'].includes(e.kind) ? 'bad' : 'warn'}">${esc(EXCEPTION_LABEL[e.kind] ?? e.kind)}</span></td><td>${esc(e.detail)}</td></tr>`).join('')}
+    return `<table class="table"><thead><tr><th>Part</th><th>What</th><th>Detail</th><th>Action</th></tr></thead><tbody>
+      ${list.map(e => `<tr><td><b>${esc(e.partNumber)}</b></td><td><span class="pill ${['PastDueRelease', 'OverdueReceipt', 'BomLoop', 'NoRevision'].includes(e.kind) ? 'bad' : 'warn'}">${esc(EXCEPTION_LABEL[e.kind] ?? e.kind)}</span></td><td>${esc(e.detail)}</td><td class="nowrap">${exceptionActionHtml(e)}</td></tr>`).join('')}
       </tbody></table>`;
+  }
+
+  function exceptionActionHtml(e) {
+    if (['NoRevision', 'BomLoop', 'UnknownItem'].includes(e.kind)) {
+      return `<a class="btn small" href="#/engineering/${encodeURIComponent(e.partNumber)}">Open in Engineering</a>`;
+    }
+    if (['RescheduleIn', 'OverdueReceipt'].includes(e.kind)) {
+      return `<button class="btn small ghost" type="button" data-alts="${esc(e.partNumber)}">Alternates</button> <a class="btn small" href="#/procurement">Open POs</a>`;
+    }
+    if (e.kind === 'PastDueRelease') {
+      return `<button class="btn small primary" type="button" data-jump-part="${esc(e.partNumber)}">View recommendation</button>`;
+    }
+    return `<button class="btn small ghost" type="button" data-alts="${esc(e.partNumber)}">Alternates</button>`;
   }
 
   function itemsTab() {
     if (data.mrp.error) return errorBlock(data.mrp.error, 'the material plan');
-    const list = out().items;
+    const allItems = out().items ?? [];
+    const list = allItems.filter(i => {
+      const held = (i.inspection ?? 0) + (i.hold ?? 0) > 0;
+      const low = (i.buckets ?? []).some(b => (b.projectedAvailable ?? 0) < (i.safetyStock ?? 0)) || (i.available ?? 0) < (i.safetyStock ?? 0);
+      return itemFilter === 'low' ? low : itemFilter === 'held' ? held
+        : itemFilter === 'make' ? i.makeBuy === 'Make' : itemFilter === 'buy' ? i.makeBuy === 'Buy' : true;
+    });
     const canEdit = canAction(me, 'engineering.planning.manage');
-    if (!list.length) return emptyBlock('Nothing to plan yet', 'Items appear here once they have demand, stock, supply or safety stock.');
-    return `<table class="table"><thead><tr><th>Part</th><th>Level</th><th class="num">Available</th><th class="num">Insp./hold</th><th class="num">Safety stock</th><th>Lot policy</th><th class="num">Lead time</th><th class="num">Ends at</th><th></th></tr></thead><tbody>
+    if (!allItems.length) return emptyBlock('Nothing to plan yet', 'Items appear here once they have demand, stock, supply or safety stock.');
+    const filters = [['all', `All (${allItems.length})`], ['low', `Below safety stock (${allItems.filter(i => (i.buckets ?? []).some(b => (b.projectedAvailable ?? 0) < (i.safetyStock ?? 0)) || (i.available ?? 0) < (i.safetyStock ?? 0)).length})`],
+      ['held', `In inspection/hold (${allItems.filter(i => (i.inspection ?? 0) + (i.hold ?? 0) > 0).length})`], ['make', `Make (${allItems.filter(i => i.makeBuy === 'Make').length})`], ['buy', `Buy (${allItems.filter(i => i.makeBuy === 'Buy').length})`]];
+    const chips = `<div class="mrp-filters" role="group" aria-label="Filter planned items">${filters.map(([key, label]) =>
+      `<button class="mrp-filter ${itemFilter === key ? 'on' : ''}" type="button" data-item-filter="${key}" aria-pressed="${itemFilter === key}">${esc(label)}</button>`).join('')}</div>`;
+    if (!list.length) return `${chips}${emptyBlock('No items match', 'Choose another item filter.')}`;
+    return `${chips}<table class="table"><thead><tr><th>Part</th><th>Level</th><th class="num">Available</th><th>Insp./hold</th><th class="num">Safety stock</th><th>Lot policy</th><th class="num">Lead time</th><th>Horizon</th><th></th></tr></thead><tbody>
       ${list.map(i => `<tr class="click" data-item="${esc(i.partNumber)}">
         <td><b>${esc(i.partNumber)}</b> <span class="faint">${esc(i.makeBuy)}</span><br><span class="muted">${esc(i.description)}</span></td><td>${i.level}</td>
-        <td class="num">${qty(i.available)}</td><td class="num">${i.inspection + i.hold ? qty(i.inspection + i.hold) : '—'}</td><td class="num">${i.safetyStock ? qty(i.safetyStock) : '—'}</td>
+        <td class="num">${qty(i.available)}</td><td>${(i.inspection ?? 0) + (i.hold ?? 0) ? `<span class="pill warn" title="Stock in inspection and hold is excluded from nettable availability">${qty((i.inspection ?? 0) + (i.hold ?? 0))} in insp./hold</span>` : '—'}</td><td class="num">${i.safetyStock ? qty(i.safetyStock) : '—'}</td>
         <td>${esc(policyText(i))}</td><td class="num">${i.leadTimeDays} d</td>
-        <td class="num">${qty(i.buckets.at(-1)?.projectedAvailable ?? i.available)}</td>
+        <td><span class="num">${qty(i.buckets?.at(-1)?.projectedAvailable ?? i.available)}</span> ${horizonSparkHtml(i)}</td>
         <td>${canEdit ? `<button class="btn small" data-params="${esc(i.partNumber)}">Planning</button>` : ''}</td></tr>`).join('')}
       </tbody></table>
       ${canEdit ? '<div class="toolbar" style="margin-top:8px"><button class="btn small" data-params-any="1">Set planning for another part…</button></div>' : ''}`;
   }
 
+  function horizonSparkHtml(i) {
+    const buckets = (i.buckets ?? []).slice(0, 14);
+    if (!buckets.length) return '<span class="faint">—</span>';
+    const peak = Math.max(1, i.available ?? 0, i.safetyStock ?? 0, ...buckets.map(b => Math.max(0, b.projectedAvailable ?? 0)));
+    const bars = buckets.map(b => {
+      const projected = b.projectedAvailable ?? 0;
+      const tone = projected <= 0 && (b.gross > 0 || (i.safetyStock ?? 0) > 0) ? 'bad' : projected < (i.safetyStock ?? 0) ? 'warn' : '';
+      const height = Math.max(3, Math.min(14, Math.round((Math.max(0, projected) / peak) * 14)));
+      return `<span class="mrp-spark-bar ${tone}" style="height:${height}px" title="${esc(fmtDate(b.date))}: ${qty(projected)} ${esc(i.unitOfMeasure)}"></span>`;
+    }).join('');
+    return `<span class="mrp-spark" role="img" aria-label="Horizon balance trajectory for ${esc(i.partNumber)}">${bars}</span>`;
+  }
+
   function demandTab() {
     if (data.demand.error) return errorBlock(data.demand.error, 'demand');
     const list = data.demand.data;
-    return `${planner ? '<div class="toolbar"><button class="btn primary" data-add-demand="1">+ Demand</button></div>' : ''}
+    return `${planner ? '<div class="toolbar"><button class="btn" data-import-demand-csv>Import demand CSV</button><button class="btn primary" data-add-demand="1">+ Demand</button></div>' : ''}
       ${!list.length ? emptyBlock('No open demand', 'Record customer orders, forecasts and contract deliveries here; MRP plans to cover them.') : `
       <table class="table"><thead><tr><th>#</th><th>Part</th><th class="num">Qty</th><th>Need by</th><th>Priority</th><th>Kind</th><th>Customer / reference</th><th></th></tr></thead><tbody>
       ${list.map(d => `<tr><td>D${d.demandId}</td><td><b>${esc(d.partNumber)}</b></td><td class="num">${qty(d.quantity)}</td><td>${esc(fmtDate(d.needDate))}</td><td>${d.priority}</td>
@@ -133,15 +186,30 @@ export async function mrpPage(page, ctx) {
       </div>
       ${kpis()}
       <section class="panel">
-        <header><div class="seg">${[['planned', 'Recommendations'], ['substitutions', `Substitutions${out()?.substitutions?.length ? ` (${out().substitutions.length})` : ''}`], ['exceptions', 'Exceptions'], ['items', 'Items'], ['demand', 'Demand']].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
+        <header><div class="seg">${[
+          ['planned', `Recommendations${out()?.plannedOrders?.length ? ` (${out().plannedOrders.length})` : ''}`],
+          ['substitutions', `Substitutions${out()?.substitutions?.length ? ` (${out().substitutions.length})` : ''}`],
+          ['exceptions', `Exceptions${out()?.exceptions?.length ? ` (${out().exceptions.length})` : ''}`],
+          ['items', `Items${out()?.items?.length ? ` (${out().items.length})` : ''}`],
+          ['demand', `Demand${data.demand.data?.length ? ` (${data.demand.data.length})` : ''}`],
+        ].map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
         ${tab === 'exceptions' ? exceptionsTab() : tab === 'items' ? itemsTab() : tab === 'demand' ? demandTab() : tab === 'substitutions' ? substitutionsTab() : plannedTab()}
       </section>
       ${run ? `<div class="faint mono" style="font-size:11px">${esc(run.engineName)} v${esc(run.engineVersion)} · as of ${esc(fmtDate(run.output.today))} · input ${esc(run.inputFingerprint.slice(0, 12))} · output ${esc(run.outputFingerprint.slice(0, 12))} — the same inputs always give the same plan.</div>` : ''}`;
 
+    enhanceTables(page);
     $('#rerun', page)?.addEventListener('click', reload);
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
+    $$('[data-planned-filter]', page).forEach(b => b.addEventListener('click', () => { plannedFilter = b.dataset.plannedFilter; render(); }));
+    $$('[data-item-filter]', page).forEach(b => b.addEventListener('click', () => { itemFilter = b.dataset.itemFilter; render(); }));
     $$('[data-why]', page).forEach(b => b.addEventListener('click', () => why(out().plannedOrders[Number(b.dataset.why)])));
     $$('[data-alts]', page).forEach(b => b.addEventListener('click', () => alternates(b.dataset.alts)));
+    $$('[data-jump-part]', page).forEach(b => b.addEventListener('click', () => {
+      const part = b.dataset.jumpPart;
+      const planned = out().plannedOrders.find(p => p.partNumber === part && p.pastDue) ?? out().plannedOrders.find(p => p.partNumber === part);
+      tab = 'planned'; plannedFilter = 'all'; render();
+      if (planned) why(planned);
+    }));
     $$('[data-req]', page).forEach(b => b.addEventListener('click', async () => {
       const p = out().plannedOrders[Number(b.dataset.req)];
       const done = await confirmWithReason({ title: `Requisition for ${p.partNumber}`, detail: `${qty(p.quantity)} ${p.unitOfMeasure} by ${fmtDate(p.dueDate)}. Its source comes from what the recommendation covers: ${p.pegging.map(g => g.description).filter((v, j, a) => a.indexOf(v) === j).join('; ')}.`, confirmLabel: 'Raise requisition', reasonRequired: false },
@@ -154,6 +222,16 @@ export async function mrpPage(page, ctx) {
     $$('[data-params]', page).forEach(b => b.addEventListener('click', () => planning(b.dataset.params)));
     $$('[data-params-any]', page).forEach(b => b.addEventListener('click', () => planning(null)));
     $$('[data-add-demand]', page).forEach(b => b.addEventListener('click', addDemand));
+    $('[data-import-demand-csv]', page)?.addEventListener('click', () => csvImportModal({
+      title: 'Import MRP demand', detail: 'Each row adds one customer, forecast, contract, service or internal demand record. Forge validates and records every row separately.',
+      columns: [
+        { name: 'partNumber', label: 'Part number', required: true }, { name: 'quantity', label: 'Quantity', type: 'number', required: true, min: 0.000001 },
+        { name: 'needDate', label: 'Need date', type: 'date', required: true }, { name: 'priority', label: 'Priority', type: 'number', required: true, min: 1, max: 9 },
+        { name: 'kind', label: 'Demand kind', required: true, options: DEMAND_KINDS.map(([value]) => value) },
+        { name: 'customer', label: 'Customer' }, { name: 'reference', label: 'Reference' }, { name: 'sourceKey', label: 'Source key' },
+      ], sampleRows: [{ partNumber: 'FG-100', quantity: 25, needDate: plusDays(14), priority: 3, kind: 'CustomerOrder', customer: 'Example customer', reference: 'PO-1042', sourceKey: 'customer-order:PO-1042' }],
+      onRow: (row, reason) => command('/api/planning/demand', row, reason),
+    }, async () => { await reload(); }));
     $$('[data-resync]', page).forEach(b => b.addEventListener('click', async () => {
       const done = await confirmWithReason({ title: `Update demand from contract delivery ${b.dataset.resync}`, detail: 'The demand takes the contract delivery\'s current quantity and date, or is cancelled if the delivery was.', confirmLabel: 'Update', reasonRequired: false },
         reason => command(`/api/planning/demand/from-delivery/${b.dataset.resync}`, {}, reason));
@@ -166,15 +244,40 @@ export async function mrpPage(page, ctx) {
   }
 
   function bucketsTable(i) {
-    return `<table class="table"><thead><tr><th>Date</th><th class="num">Needed</th><th class="num">Arriving</th><th class="num">Planned</th><th class="num">Projected available</th></tr></thead><tbody>
-      ${i.buckets.map(b => `<tr><td>${esc(fmtDate(b.date))}</td><td class="num">${b.gross ? qty(b.gross) : ''}</td><td class="num">${b.scheduledReceipts ? qty(b.scheduledReceipts) : ''}</td>
-        <td class="num">${b.plannedReceipts ? `<b class="c-warn">${qty(b.plannedReceipts)}</b>` : ''}</td><td class="num ${b.projectedAvailable < i.safetyStock ? 'c-bad' : ''}">${qty(b.projectedAvailable)}</td></tr>`).join('')}
+    const buckets = i.buckets ?? [];
+    const peak = Math.max(1, i.available ?? 0, i.safetyStock ?? 0, ...buckets.map(b => Math.max(0, b.projectedAvailable ?? 0)));
+    return `<table class="table"><thead><tr><th>Date</th><th class="num">Needed</th><th class="num">Arriving</th><th class="num">Planned</th><th>Projected available</th></tr></thead><tbody>
+      ${buckets.map(b => {
+        const projected = b.projectedAvailable ?? 0;
+        const safety = i.safetyStock ?? 0;
+        const tone = projected <= 0 && (b.gross > 0 || safety > 0) ? 'bad' : projected < safety ? 'warn' : 'ok';
+        const width = Math.max(4, Math.min(100, Math.round((Math.max(0, projected) / peak) * 100)));
+        return `<tr><td>${esc(fmtDate(b.date))}</td><td class="num">${b.gross ? qty(b.gross) : ''}</td><td class="num">${b.scheduledReceipts ? qty(b.scheduledReceipts) : ''}</td>
+          <td class="num">${b.plannedReceipts ? `<b class="c-warn">${qty(b.plannedReceipts)}</b>` : ''}</td><td class="mrp-bal-cell"><div class="mrp-bal-value ${tone === 'bad' ? 'c-bad' : tone === 'warn' ? 'c-warn' : ''}">${qty(projected)}${projected < safety ? ` <span class="faint">(below ${qty(safety)})</span>` : ''}</div><div class="mrp-bal-bar" aria-hidden="true"><div class="mrp-bal-fill ${tone}" style="width:${width}%"></div></div></td></tr>`;
+      }).join('')}
       </tbody></table>`;
+  }
+
+  function nettingFormulaHtml(p, i) {
+    if (!i) return '';
+    const buckets = i.buckets ?? [];
+    const gross = buckets.reduce((sum, b) => sum + (b.gross ?? 0), 0);
+    const scheduled = buckets.reduce((sum, b) => sum + (b.scheduledReceipts ?? 0), 0);
+    const pegged = (p.pegging ?? []).reduce((sum, peg) => sum + (peg.quantity ?? 0), 0);
+    const locked = (i.inspection ?? 0) + (i.hold ?? 0);
+    return `<div class="mrp-formula" role="region" aria-label="MRP netting summary">
+      <div class="mrp-formula-step"><div class="k">Nettable stock</div><div class="v">${qty(i.available)} ${esc(i.unitOfMeasure)}</div><div class="faint">${locked ? `${qty(locked)} in inspection/hold excluded` : 'Ready now'}</div></div>
+      <div class="mrp-formula-step"><div class="k">Scheduled in</div><div class="v">+${qty(scheduled)}</div><div class="faint">${i.receipts?.length ?? 0} open receipt(s)</div></div>
+      <div class="mrp-formula-step"><div class="k">Gross need</div><div class="v">−${qty(gross)} ${esc(i.unitOfMeasure)}</div><div class="faint">${qty(pegged)} pegged to this recommendation · need by ${esc(fmtDate(p.dueDate))}</div></div>
+      <div class="mrp-formula-step"><div class="k">Safety stock threshold</div><div class="v">${qty(i.safetyStock ?? 0)} ${esc(i.unitOfMeasure)}</div><div class="faint">${esc(policyText(i))}</div></div>
+      <div class="mrp-formula-step highlight"><div class="k">Recommended ${esc(p.makeBuy)}</div><div class="v">${qty(p.quantity)} ${esc(p.unitOfMeasure)}</div><div class="faint">Release ${esc(fmtDate(p.releaseDate))}</div></div>
+    </div><div class="faint mrp-netting-note">Time-phased netting applies receipt dates, safety stock and the lot policy shown above; this summary is not a single-period arithmetic total.</div>`;
   }
 
   function why(p) {
     const i = itemPlan(p.partNumber);
     drawer(`Why ${qty(p.quantity)} ${p.unitOfMeasure} of ${p.partNumber}?`, `
+      ${nettingFormulaHtml(p, i)}
       <p>${esc(p.explanation)}</p>
       <h3 style="margin:0">What it covers</h3>
       <table class="table"><thead><tr><th>Requirement</th><th>Needed</th><th class="num">Qty</th></tr></thead><tbody>
@@ -214,19 +317,47 @@ export async function mrpPage(page, ctx) {
   }
 
   function addDemand() {
-    return formModal({
-      title: 'Record demand', confirmLabel: 'Record',
-      fields: [
-        { name: 'partNumber', label: 'Part', type: 'select', options: (data.items.data ?? []).map(x => [x.partNumber, `${x.partNumber} — ${x.description}`]), required: true },
-        { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true },
-        { name: 'needDate', label: 'Needed by', type: 'date', value: plusDays(14), required: true },
-        { name: 'priority', label: 'Priority (1 = highest)', type: 'number', min: 1, value: 5 },
-        { name: 'kind', label: 'Kind', type: 'select', options: DEMAND_KINDS.filter(([k]) => k !== 'ContractDelivery') },
-        { name: 'sourceKey', label: 'What it is for, as kind:key (required from Maintenance on)', placeholder: 'work-order:57' },
-        { name: 'customer', label: 'Customer (optional)' },
-        { name: 'reference', label: 'Reference — customer PO, contract line (optional)' },
-      ],
-    }, (v, reason) => command('/api/planning/demand', v, reason), reload);
+    return Promise.all([
+      tryGet('/api/maintenance/work-orders'), tryGet('/api/projects/'), tryGet('/api/resources/tools'),
+    ]).then(async ([workOrders, projects, tools]) => {
+      const sourceOptions = [];
+      for (const view of workOrders.data ?? []) {
+        const order = view.order ?? view;
+        if (['Closed', 'Cancelled'].includes(order.status)) continue;
+        const key = `work-order:${order.workOrderId}`;
+        sourceOptions.push([key, `${key} — ${order.title}${order.machineCode ? ` (${order.machineCode})` : ''}`]);
+      }
+      const openProjects = (projects.data ?? []).map(summary => summary.project ?? summary).filter(project => project.status === 'Approved');
+      const projectDetails = await Promise.all(openProjects.map(project => tryGet(`/api/projects/${encodeURIComponent(project.code)}`)));
+      for (const result of projectDetails) {
+        for (const line of result.data?.lines ?? []) {
+          if (line.status !== 'Active') continue;
+          const key = line.sourceKey ?? `project:${line.projectCode}/${line.lineNumber}`;
+          sourceOptions.push([key, `${key} — ${line.partNumber}${line.description ? ` · ${line.description}` : ''}`]);
+        }
+      }
+      for (const view of tools.data ?? []) {
+        const tool = view.tool ?? view;
+        if (tool.status === 'Retired') continue;
+        const key = `tool:${tool.code}`;
+        sourceOptions.push([key, `${key} — ${tool.description || tool.code}`]);
+      }
+      const distinctSources = [...new Map(sourceOptions.map(option => [option[0], option])).values()];
+      return formModal({
+        title: 'Record demand', confirmLabel: 'Record',
+        fields: [
+          { name: 'partNumber', label: 'Part', type: 'select', options: (data.items.data ?? []).map(x => [x.partNumber, `${x.partNumber} — ${x.description}`]), required: true },
+          { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true },
+          { name: 'needDate', label: 'Needed by', type: 'date', value: plusDays(14), required: true },
+          { name: 'priority', label: 'Priority (1 = highest)', type: 'number', min: 1, value: 5 },
+          { name: 'kind', label: 'Kind', type: 'select', options: DEMAND_KINDS.filter(([k]) => k !== 'ContractDelivery') },
+          { name: 'sourceKey', label: 'What it is for (kind:key)', type: 'lookup', allowCustom: true, options: distinctSources,
+            placeholder: 'Search records or type e.g. work-order:57', hint: 'Required for Maintenance and later demand kinds. Work orders, approved project lines and tools are listed when available.' },
+          { name: 'customer', label: 'Customer (optional)' },
+          { name: 'reference', label: 'Reference — customer PO, contract line (optional)' },
+        ],
+      }, (v, reason) => command('/api/planning/demand', v, reason), reload);
+    });
   }
 
   function changeDemand(id) {
@@ -248,14 +379,29 @@ export async function mrpPage(page, ctx) {
   }
 
   function draftPo(p) {
+    const activeSuppliers = (data.suppliers?.data ?? []).filter(supplier => supplier.status === 'Active');
+    const approvedCodes = new Set((data.sources?.data ?? []).filter(source => source.partNumber === p.partNumber).map(source => source.supplierCode));
+    const approvedFirst = activeSuppliers.filter(supplier => approvedCodes.has(supplier.code));
+    const remaining = approvedCodes.size ? [] : activeSuppliers;
+    const eligibleSuppliers = [...approvedFirst, ...remaining];
+    const supplierField = eligibleSuppliers.length
+      ? { name: 'supplier', label: 'Supplier', type: 'select', required: true, options: [
+        ...approvedFirst.map(s => [s.code, `★ ${s.name} (${s.code}) — Approved source`]),
+        ...remaining.map(s => [s.code, `${s.name} (${s.code})`]),
+      ], value: approvedFirst[0]?.code ?? remaining[0]?.code, hint: approvedFirst.length ? `Approved sources for ${p.partNumber} are listed first.` : 'No approved source is recorded for this part.' }
+      : { name: 'supplier', label: 'Supplier code or name', required: true, hint: approvedCodes.size
+        ? `No active approved supplier is available for ${p.partNumber}. Check the supplier master before drafting.`
+        : 'No active suppliers could be loaded. Enter a supplier code or name.' };
     return formModal({
       title: `Draft a purchase order for ${p.partNumber}`, detail: 'Created as a draft; a different person approves it before it counts as supply.', confirmLabel: 'Draft PO',
       fields: [
-        { name: 'supplier', label: 'Supplier', required: true },
+        supplierField,
         { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', value: p.quantity, required: true },
         { name: 'promisedDate', label: 'Promised date', type: 'date', value: p.dueDate, required: true },
+        { name: 'unitPrice', label: 'Unit price (optional)', type: 'number', min: 0, step: '0.01' },
+        { name: 'currency', label: 'Currency', type: 'select', value: 'USD', options: [['USD', 'USD'], ['EUR', 'EUR'], ['GBP', 'GBP'], ['CAD', 'CAD']] },
       ],
-    }, (v, reason) => command('/api/procurement/purchase-orders', { supplier: v.supplier, lines: [{ partNumber: p.partNumber, quantity: v.quantity, promisedDate: v.promisedDate }] }, reason),
+    }, (v, reason) => command('/api/procurement/purchase-orders', { supplier: v.supplier, lines: [{ partNumber: p.partNumber, quantity: v.quantity, promisedDate: v.promisedDate, unitPrice: v.unitPrice, currency: v.currency ?? 'USD' }] }, reason),
     async () => { location.hash = '#/procurement'; });
   }
 

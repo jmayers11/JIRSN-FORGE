@@ -8,6 +8,8 @@ import { workCentersPage } from './pages/workcenters.js';
 import { maintenancePage } from './pages/maintenance.js';
 import { timelinePage } from './pages/timeline.js';
 import { workforcePage } from './pages/workforce.js';
+import { workforceKanbanPage } from './pages/workforce-kanban.js';
+import { machineKanbanPage } from './pages/machine-kanban.js';
 import { settingsPage } from './pages/settings.js';
 import { shopFloorPage } from './pages/shopfloor.js';
 import { plantSetupPage } from './pages/plantsetup.js';
@@ -44,6 +46,9 @@ import { canAction } from './ui-authority.mjs';
 
 const NAV = [
   { route: 'home', label: 'Home', icon: 'dashboard', page: horizonPage },
+  { route: 'supervisor', label: 'Plant Overview', icon: 'dashboard', page: horizonPage },
+  { route: 'workforce-kanban', label: 'Workforce Kanban', icon: 'workforce', page: workforceKanbanPage },
+  { route: 'machine-kanban', label: 'Machine Readiness', icon: 'production', page: machineKanbanPage },
   { route: 'horizon', label: 'Horizon', icon: 'horizon', page: timelinePage },
   { route: 'programs', label: 'Programs', icon: 'trend', page: programsPage },
   { route: 'projects', label: 'Projects', icon: 'calendar', page: projectsPage },
@@ -81,6 +86,7 @@ const NAV = [
   { route: 'access', label: 'Access Control', icon: 'access', page: accessPage },
 ];
 const NAV_GROUPS = [
+  ['Supervisor', ['supervisor', 'workforce-kanban', 'machine-kanban']],
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
   ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'workforce', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'maintenance', 'shipping']],
   ['Quality', ['quality', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
@@ -89,6 +95,8 @@ const NAV_GROUPS = [
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
 
 const NAV_ACCESS = {
+  supervisor: ['workforce.supervise', 'workforce.manage'], 'workforce-kanban': ['workforce.supervise', 'workforce.manage'],
+  'machine-kanban': ['planning.readiness.read', 'maintenance.read', 'resources.read'],
   home: ['planning.readiness.read', 'planning.schedule.read', 'execution.orders.read', 'resources.read', 'quality.read', 'inventory.read'],
   horizon: ['planning.schedule.read', 'planning.readiness.read'], programs: ['programs.read', 'programs.manage'],
   projects: ['projects.read', 'projects.manage'], orders: ['execution.orders.read', 'execution.orders.manage'],

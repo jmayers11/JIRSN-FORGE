@@ -1,4 +1,4 @@
-import { tryGet } from '../api.js';
+import { tryGet, session } from '../api.js';
 import { icon, img, stagePhoto } from '../icons.js';
 import { esc, $, $$, fmtNumber, fmtTime, fmtDateTime, timeZone, errorBlock, emptyBlock, drawer } from '../ui.js';
 import { who } from '../people.js';
@@ -32,7 +32,7 @@ export async function horizonPage(page, ctx) {
     const now = Date.now();
     const win = WINDOWS[state.windowKey];
     const from = win.from(now), to = win.to(now);
-    const [resources, approved, proposed, constraints, downtime, capacity, orders, activeWork, attainment, activity, material] = await Promise.all([
+    const [resources, approved, proposed, constraints, downtime, capacity, orders, activeWork, attainment, activity, material, inbox] = await Promise.all([
       tryGet('/api/resources/'),
       tryGet('/api/planning/schedules/approved'),
       tryGet('/api/planning/schedules/proposed'),
@@ -44,10 +44,11 @@ export async function horizonPage(page, ctx) {
       tryGet(`/api/planning/attainment?from=${encodeURIComponent(iso(now - 24 * H))}&to=${encodeURIComponent(iso(now))}`),
       tryGet(`/api/shopfloor/activity?from=${encodeURIComponent(iso(now - 7 * 24 * H))}&to=${encodeURIComponent(iso(now))}`),
       tryGet('/api/planning/material'),
+      tryGet('/api/work-inbox'),
     ]);
     // Prefer the approved schedule; fall back to the latest proposal and say so.
     const schedule = approved.data ?? proposed.data ?? null;
-    data = { now, resources, approved, proposed, schedule, constraints, downtime, capacity, orders, activeWork, attainment, activity, material };
+    data = { now, resources, approved, proposed, schedule, constraints, downtime, capacity, orders, activeWork, attainment, activity, material, inbox };
     render();
   }
 
@@ -73,6 +74,7 @@ export async function horizonPage(page, ctx) {
       ${header()}
       ${mobileFocus(v)}
       <section class="panel flow-wrap" aria-label="Factory flow">${flow(centers, v)}</section>
+      ${roleActionBar()}
       <section class="kpis">${kpis(v)}</section>
       <section class="grid-3">
         <div class="panel">${wcTable(centers, v)}</div>
@@ -86,6 +88,25 @@ export async function horizonPage(page, ctx) {
     $$('[data-issue]', page).forEach(el => el.addEventListener('click', () => openIssue(v.issues[Number(el.dataset.issue)])));
   }
 
+  function roleActionBar() {
+    const actions = [];
+    const proposal = data.proposed.data;
+    const actor = session.subject ?? `person:${ctx.me.personId}`;
+    if (proposal && proposal.proposedBy !== actor && proposal.status === 'Proposed')
+      actions.push(['Proposed Schedule Awaiting Approval', '#/scheduling', 'info']);
+    const down = new Set((data.downtime.data ?? []).filter(record => !record.endsAt && new Date(record.startsAt).getTime() <= data.now).map(record => record.machineCode));
+    if (down.size) actions.push([`${down.size} Machine${down.size === 1 ? '' : 's'} Down`, '#/maintenance', 'bad']);
+    const openConstraints = (data.constraints.data ?? []).filter(record => ['Open', 'Investigating'].includes(record.status));
+    if (openConstraints.length) actions.push([`${openConstraints.length} Constraint${openConstraints.length === 1 ? '' : 's'} Open`, '#/scheduling', 'warn']);
+    const shortfalls = (data.material.data?.output ?? []).filter(record => record.state === 'Shortfall');
+    if (shortfalls.length) actions.push([`${shortfalls.length} Material Shortfall${shortfalls.length === 1 ? '' : 's'}`, '#/material-plan?tab=exceptions', 'bad']);
+    const approvals = data.inbox.data?.approvals ?? [];
+    const assignments = (data.inbox.data?.assignments ?? []).filter(record => !['Completed', 'Cancelled'].includes(record.status));
+    const due = approvals.length + assignments.length;
+    if (due) actions.push([`${due} Inbox Item${due === 1 ? '' : 's'} Due`, '#/my-work', 'info']);
+    return `<nav class="role-action-bar" aria-label="My shift action bar"><b>My shift</b>${actions.length ? actions.map(([label, href, tone]) => `<a class="role-action-chip ${tone}" href="${href}">${esc(label)} →</a>`).join('') : '<span class="muted">No immediate bottlenecks are recorded.</span>'}</nav>`;
+  }
+
   function header() {
     const res = data?.resources.data;
     const areas = res?.safetyAreas ?? [];
@@ -94,9 +115,10 @@ export async function horizonPage(page, ctx) {
     const date = now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: timeZone() });
     return `
       <div class="page-head">
-        <div><h1>Factory Horizon</h1><div class="sub">Live operational view. Past. Present. Future.</div></div>
+        <div><h1>${ctx.route === 'supervisor' ? 'Plant Overview' : 'Factory Horizon'}</h1><div class="sub">Live operational view. Past. Present. Future.</div></div>
         <div class="spacer"></div>
         <div class="head-controls">
+          ${ctx.route === 'supervisor' ? '<a class="btn primary" href="#/machine-kanban">Machine Readiness</a><a class="btn" href="#/workforce-kanban">Workforce Kanban / Staffing Planner</a><a class="btn" href="#/workforce">Report Callout</a><a class="btn" href="#/scheduling">Production Schedule</a>' : ''}
           <label for="view">View</label>
           <select class="select" id="view" style="width:auto;min-width:150px;padding:7px 10px">
             <option value="">Factory</option>

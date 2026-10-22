@@ -64,7 +64,7 @@ internal static class SlittingPlant
         public Task Assign(string subject, object assignment) => Ok(Engineer, $"/api/workforce/workers/{People[subject]}/assignment", assignment);
     }
 
-    public static async Task<Plant> BuildAsync(ForgeApp app)
+    public static async Task<Plant> BuildAsync(ForgeApp app, string timeZone = TestSite.TimeZone)
     {
         var plant = new Plant(app);
         await plant.Person("eng", "ManufacturingEngineer", "TrainingCoordinator", "SafetyEngineer", "Supervisor");
@@ -76,7 +76,7 @@ internal static class SlittingPlant
             await plant.Ok(e, "/api/competency/qualification-types", new { code, name, kind, validityDays = 365 });
         }
 
-        await plant.Ok(e, "/api/resources/sites", new { code = "PLANT1", name = "Plant 1" });
+        await plant.Ok(e, "/api/resources/sites", new { code = "PLANT1", name = "Plant 1", timeZone });
         foreach (var (area, wc) in new[] { ("SLITTING", "SLIT-WC"), ("PAINT", "PAINT-WC"), ("ASSEMBLY", "ASSY-WC") })
         {
             await plant.Ok(e, "/api/resources/safety-areas", new { code = area, name = area, parent = "PLANT1" });
@@ -135,9 +135,9 @@ internal static class SlittingPlant
     }
 
     /// <summary>The plant plus released engineering: COIL-AL (bought) and ROLL-100 (slit on A or B, then kitted).</summary>
-    public static async Task<(Plant Plant, HttpClient Planner)> BuildEngineeredAsync(ForgeApp app)
+    public static async Task<(Plant Plant, HttpClient Planner)> BuildEngineeredAsync(ForgeApp app, string timeZone = TestSite.TimeZone)
     {
-        var plant = await BuildAsync(app);
+        var plant = await BuildAsync(app, timeZone);
         var e = plant.Engineer;
         await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["approver"]}/roles", new { role = "EngineeringApprover", reason = "Release authority" });
         await plant.Person("planner", "Planner");

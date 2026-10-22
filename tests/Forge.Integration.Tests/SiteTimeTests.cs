@@ -29,7 +29,7 @@ public sealed class SiteTimeTests(PostgresFixture postgres)
         Assert.Equal(siteDay.AddDays(1), new DateOnly(evening.Year, evening.Month, evening.Day));
 
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync(), services => services.AddSingleton<TimeProvider>(new Clock(evening)));
-        var (plant, _) = await SlittingPlant.BuildEngineeredAsync(app);
+        var (plant, _) = await SlittingPlant.BuildEngineeredAsync(app, TestSite.NewYork);
         await plant.Person("site-qe", "QualityEngineer");
         var qe = plant.As("site-qe");
 

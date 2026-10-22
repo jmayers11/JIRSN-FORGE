@@ -68,7 +68,7 @@ public sealed class V41MaterialIdentificationTests(PostgresFixture postgres)
             await plant.Ok(plant.Engineer, $"/api/engineering/items/{part}/revisions", new { revision = "A" });
             await plant.Ok(plant.Approver, $"/api/engineering/items/{part}/revisions/A/release", new { reason = "Released scan subject configuration" });
         }
-        await plant.Ok(plant.Engineer, "/api/resources/sites", new { code = "PLANT2", name = "Another facility" });
+        await plant.Ok(plant.Engineer, "/api/resources/sites", new { code = "PLANT2", name = "Another facility", timeZone = TestSite.TimeZone });
         foreach (var (code, site) in new[] { ("IDENT-WH", "PLANT1"), ("IDENT-OTHER", "PLANT2") })
             await plant.Ok(stores, "/api/inventory/locations", new { code, siteCode = site, name = code, kind = "Stores" });
         await plant.Ok(stores, "/api/inventory/locations", new { code = "IDENT-SIDE", siteCode = "PLANT1", name = "Machine side", kind = "MachineSide", machineCode = "SLITTER-A" });

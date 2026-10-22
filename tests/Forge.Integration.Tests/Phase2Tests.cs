@@ -90,6 +90,40 @@ public sealed class Phase2Tests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task Reallocation_plan_preview_rechecks_cascading_moves_without_changing_assignments()
+    {
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        var plant = await SlittingPlant.BuildAsync(app);
+        var sarah = plant.People["sarah"];
+        var michael = plant.People["michael"];
+
+        var response = await plant.Engineer.PostAsJsonAsync("/api/readiness/reallocation-plan-preview", new
+        {
+            moves = new object[]
+            {
+                new { personId = sarah, workCenterCode = "ASSY-WC", activityCode = "ASSEMBLE", asTrainee = false },
+                new { personId = michael, unassign = true, asTrainee = false },
+            },
+        });
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"reallocation plan preview -> {(int)response.StatusCode}: {text}");
+        using var document = JsonDocument.Parse(text);
+        var output = document.RootElement.GetProperty("output");
+        var steps = output.GetProperty("steps");
+        Assert.Equal(2, steps.GetArrayLength());
+        Assert.Contains(steps[0].GetProperty("preview").GetProperty("impacts").EnumerateArray(), impact =>
+            impact.GetProperty("kind").GetString() == "WouldStop" && impact.GetProperty("work").GetProperty("machineCode").GetString() == "SLITTER-B");
+        Assert.Contains(steps[1].GetProperty("preview").GetProperty("before").EnumerateArray(), work =>
+            work.GetProperty("work").GetProperty("machineCode").GetString() == "SLITTER-B" && !work.GetProperty("executable").GetBoolean());
+        Assert.DoesNotContain(output.GetProperty("finalActiveWork").EnumerateArray(), work =>
+            work.GetProperty("work").GetProperty("machineCode").GetString() == "SLITTER-B");
+
+        // The analysis used successive in-memory snapshots; it did not change the live assignments or readiness.
+        var live = await Get(plant.Engineer, "/api/readiness/machines/SLITTER-B?activity=RUN_SLITTER");
+        Assert.True(live.GetProperty("output").GetProperty("executable").GetBoolean());
+    }
+
+    [Fact]
     public async Task Certification_and_safety_rules_enforce_separation_of_duties()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());

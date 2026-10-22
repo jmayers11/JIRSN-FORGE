@@ -141,6 +141,14 @@ public static class OperationsEndpoints
             ReadStore<ICompetencyLookup>(http, Permissions.CompetencyRead, async (l, ct) => await l.ListTypesAsync(ct)));
         api.MapGet("/people/{personId:guid}", (HttpContext http, Guid personId) =>
             ReadStore<ICompetencyLookup>(http, Permissions.CompetencyRead, async (l, ct) => await l.GetQualificationsAsync([new PersonId(personId)], ct)));
+        api.MapGet("/people/qualifications", (HttpContext http, Guid[]? personIds) =>
+            ReadStore<ICompetencyLookup>(http, Permissions.CompetencyRead, async (l, ct) =>
+            {
+                var ids = (personIds ?? []).Distinct().Take(501).Select(id => new PersonId(id)).ToArray();
+                if (ids.Length > 500)
+                    throw new Forge.Kernel.Commands.CommandRejectedException("too_many_people", "Read at most 500 people at a time.");
+                return await l.GetQualificationsAsync(ids, ct);
+            }));
 
         api.MapPost("/qualification-types", (HttpContext http, QualificationTypeRequest b, CompetencyService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DefineTypeAsync(new DefineQualificationType(b.Code, b.Name, b.Kind, b.ValidityDays), c, ct)));

@@ -11,12 +11,12 @@ using Forge.Resources.Contracts;
 namespace Forge.Procurement;
 
 /// <param name="RequisitionId">The open requisition this line buys for (V2.7); the line keeps its source.</param>
-public sealed record NewPurchaseLine(string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null);
+public sealed record NewPurchaseLine(string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null, decimal? UnitPrice = null, string? Currency = "USD");
 
 /// <param name="Supplier">The supplier's code (or its exact name) in the supplier master.</param>
 public sealed record CreatePurchaseOrder(string Supplier, IReadOnlyList<NewPurchaseLine> Lines);
 
-public sealed record AddPurchaseLine(long PoNumber, string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null);
+public sealed record AddPurchaseLine(long PoNumber, string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null, decimal? UnitPrice = null, string? Currency = "USD");
 
 public sealed record ApprovePurchaseOrder(long PoNumber,
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? QualityProcessCode=null,
@@ -114,9 +114,11 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             var lines = new List<PurchaseLineInfo>();
             foreach (var (line, index) in c.Lines.Select((l, i) => (l, i)))
             {
-                var valid = await ValidLineAsync(uow, index + 1, line.PartNumber, line.Quantity, line.PromisedDate, now, supplier.Code, ct);
+                var valid = await ValidLineAsync(uow, index + 1, line.PartNumber, line.Quantity, line.PromisedDate, now, supplier.Code, line.UnitPrice, line.Currency, ct);
                 lines.Add(await WithSourceAsync(uow, valid, line.RequisitionId, context, lines, supplier.Code, now, ct));
             }
+            if (lines.Select(line => line.Currency).Distinct(StringComparer.Ordinal).Count() > 1)
+                throw new CommandRejectedException("mixed_currency", "All lines on a purchase order must use the same currency.");
             if (!(await ResourcesForRequisitionsAsync(uow, null, lines.Select(line => line.RequisitionId), ct)).SequenceEqual(resources))
                 throw new CommandRejectedException("purchase_context_changed", "The purchase source context changed. Review the current requisitions before retrying.");
 
@@ -150,7 +152,9 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
                 throw new CommandRejectedException("not_draft", $"Purchase order {po.PoNumber} is {po.Status}; lines are added only to drafts.");
             }
 
-            var line = await ValidLineAsync(uow, po.Lines.Count == 0 ? 1 : po.Lines.Max(l => l.LineNumber) + 1, c.PartNumber, c.Quantity, c.PromisedDate, now, po.SupplierCode, ct);
+            var line = await ValidLineAsync(uow, po.Lines.Count == 0 ? 1 : po.Lines.Max(l => l.LineNumber) + 1, c.PartNumber, c.Quantity, c.PromisedDate, now, po.SupplierCode, c.UnitPrice, c.Currency, ct);
+            if (po.Lines.Any(existing => existing.Currency != line.Currency))
+                throw new CommandRejectedException("mixed_currency", $"PO {po.PoNumber} uses {po.Lines[0].Currency}; new lines must use the same currency.");
             line = await WithSourceAsync(uow, line, c.RequisitionId, context, [], po.SupplierCode, now, ct);
             await uow.Store<IProcurementStore>().InsertLineAsync(po.PoNumber, line, ct);
             if (line.RequisitionId is { } requisition)
@@ -328,9 +332,14 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             : throw new CommandRejectedException("line_cancelled", $"Line {lineNumber} is cancelled.");
     }
 
-    private static async Task<PurchaseLineInfo> ValidLineAsync(Kernel.Access.IKernelUnitOfWork uow, int lineNumber, string rawPart, decimal quantity, DateOnly promised, DateTimeOffset now, string? supplierCode, CancellationToken ct)
+    private static async Task<PurchaseLineInfo> ValidLineAsync(Kernel.Access.IKernelUnitOfWork uow, int lineNumber, string rawPart, decimal quantity, DateOnly promised, DateTimeOffset now, string? supplierCode, decimal? unitPrice, string? currency, CancellationToken ct)
     {
         var part = BusinessCode.Require(rawPart, "Part");
+        if (unitPrice is < 0 or > 100_000_000_000m)
+            throw new CommandRejectedException("invalid_unit_price", $"Line {lineNumber}: unit price must be zero or greater and within the supported range.");
+        var normalizedCurrency = string.IsNullOrWhiteSpace(currency) ? "USD" : currency.Trim().ToUpperInvariant();
+        if (normalizedCurrency is not ("USD" or "EUR" or "GBP" or "CAD"))
+            throw new CommandRejectedException("invalid_currency", $"Line {lineNumber}: choose USD, EUR, GBP or CAD.");
         if (quantity <= 0 || quantity > 100_000_000)
         {
             throw new CommandRejectedException("invalid_quantity", $"Line {lineNumber}: quantity must be above zero.");
@@ -361,7 +370,7 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             throw new CommandRejectedException("not_approved_source", $"Line {lineNumber}: {part} is bought only from its approved sources ({string.Join(", ", sources.Select(x => x.SupplierCode))}).");
         }
 
-        return new PurchaseLineInfo(lineNumber, part, quantity, item.UnitOfMeasure, promised, PurchaseLineStatus.Open);
+        return new PurchaseLineInfo(lineNumber, part, quantity, item.UnitOfMeasure, promised, PurchaseLineStatus.Open, UnitPrice: unitPrice, Currency: normalizedCurrency);
     }
 
     private async Task<CommandResult> ChangeAsync<TCommand>(
@@ -381,6 +390,8 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
         {
             var po = await read.Store<IProcurementLookup>().FindPurchaseOrderAsync(poNumber, ct);
             recordedResources = po is null ? [ResourceRef.Of(Entity, id)] : await ResourcesForPurchaseOrderAsync(read, po, ct);
+            if (commandType == nameof(ApprovePurchaseOrder) && po is not null)
+                recordedResources = ApprovalResources(recordedResources, po);
             if (command is AddPurchaseLine added)
             {
                 try
@@ -403,7 +414,9 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
             await uow.Store<IProcurementStore>().LockPurchaseOrderAsync(poNumber,ct);
             var po = await uow.Store<IProcurementLookup>().FindPurchaseOrderAsync(poNumber, ct)
                 ?? throw new CommandRejectedException("purchase_order_not_found", $"Purchase order {id} does not exist.");
-            if (!(await ResourcesForPurchaseOrderAsync(uow, po, ct)).SequenceEqual(recordedResources))
+            var currentResources = await ResourcesForPurchaseOrderAsync(uow, po, ct);
+            if (commandType == nameof(ApprovePurchaseOrder)) currentResources = ApprovalResources(currentResources, po);
+            if (!currentResources.SequenceEqual(recordedResources))
                 throw new CommandRejectedException("purchase_context_changed", "The purchase order's source context changed. Review its current requisitions and retry.");
             if (command is AddPurchaseLine added && !(await ResourcesForRequisitionsAsync(uow, id, [added.RequisitionId], ct)).SequenceEqual(proposedResources))
                 throw new CommandRejectedException("purchase_context_changed", "The proposed line's source context changed. Review its current requisition and retry.");
@@ -432,4 +445,13 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
 
     private static Task<IReadOnlyList<ResourceRef>> ResourcesForRequisitionsAsync(IKernelUnitOfWork uow, string? subjectId, IEnumerable<long?> requisitionIds, CancellationToken ct) =>
         PurchaseOrderAuthority.ResourcesForRequisitionsAsync(uow, subjectId, requisitionIds, ct);
+
+    private static IReadOnlyList<ResourceRef> ApprovalResources(IReadOnlyList<ResourceRef> resources, PurchaseOrderInfo po)
+    {
+        var currency = po.Lines.Count == 0 ? "USD" : po.Lines[0].Currency;
+        var openLines = po.Lines.Where(line => line.Status != PurchaseLineStatus.Cancelled).ToList();
+        decimal? amount = openLines.Any(line => line.UnitPrice is null) ? null
+            : openLines.Sum(line => line.Quantity * line.UnitPrice!.Value);
+        return resources.Select(resource => resource with { Amount = amount, Currency = currency }).ToArray();
+    }
 }

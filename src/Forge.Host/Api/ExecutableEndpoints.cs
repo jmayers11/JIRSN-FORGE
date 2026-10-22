@@ -11,6 +11,8 @@ public sealed record DocumentTrainingRequest(Guid PersonId, string DocumentNumbe
 
 public sealed record TrainingPolicyRequest(TrainingPolicy Policy, DocumentType[]? DocumentTypes, string? Reason);
 
+public sealed record ReallocationPlanRequest(ReallocationPlanProposal[] Moves);
+
 /// <summary>
 /// V3.9: executable capacity and presence. Every open operation answers "can this happen now, and why not?"; each
 /// worker's presence level; and training on controlled documents with the plant's policy for it.
@@ -29,6 +31,13 @@ internal static class ExecutableEndpoints
         {
             var principal = await PrincipalAsync(http);
             return principal is null ? NotRegistered() : Results.Ok(await s.EvaluatePresenceAsync(principal, workCenter, ct));
+        });
+        readiness.MapPost("/reallocation-plan-preview", async (HttpContext http, ReallocationPlanRequest request, ReadinessService s, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            return principal is null
+                ? NotRegistered()
+                : Results.Ok(await s.PreviewReallocationPlanAsync(principal, request.Moves, ct));
         });
 
         var training = app.MapGroup("/api/engineering/document-training").RequireAuthorization();

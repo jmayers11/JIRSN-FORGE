@@ -69,3 +69,15 @@ test('searchable lookups display human labels and submit only their selected ent
   modal.querySelector('#f-personId').value = 'someone@example.invalid';
   assert.throws(() => readFields(modal, [field]), /choose a listed value/);
 });
+
+test('searchable lookups can accept a custom source key when explicitly enabled', t => {
+  const browser = installBrowser(t), modal = browser.document.createElement('div');
+  const field = { name: 'sourceKey', label: 'Source', type: 'lookup', allowCustom: true,
+    options: [['work-order:57', 'work-order:57 — Replace bearings']] };
+  modal.innerHTML = fieldHtml(field); browser.document.body.append(modal);
+  const input = modal.querySelector('#f-sourceKey');
+  input.value = 'work-order:57 — Replace bearings';
+  assert.deepEqual(readFields(modal, [field]), { sourceKey: 'work-order:57' });
+  input.value = 'tool:GAUGE-4';
+  assert.deepEqual(readFields(modal, [field]), { sourceKey: 'tool:GAUGE-4' });
+});

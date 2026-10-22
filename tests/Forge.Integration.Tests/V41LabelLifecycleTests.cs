@@ -265,7 +265,7 @@ public sealed class V41LabelLifecycleTests(PostgresFixture postgres)
         await plant.Person("label-scoped","ScopedLabelFacility","ScopedLabelSourceRead");
         await plant.Ok(plant.Admin,$"/api/kernel/people/{plant.People["label-scoped"]}/programs",new{programId=program,reason="Actual source membership for scoped presentation actor"});
         printer=plant.As("label-scoped");
-        await plant.Ok(plant.Engineer,"/api/resources/sites",new{code="PLANT2",name="Another real facility"});
+        await plant.Ok(plant.Engineer,"/api/resources/sites",new{code="PLANT2",name="Another real facility",timeZone=TestSite.TimeZone});
         using(var outside=await plant.Try(printer,"/api/identification/labels",new{subjectCode=Subject(order),templateCode="ORDER-LABEL",templateVersion=1,symbology="DataMatrix",copies=1,facilityCode="PLANT2",reason="An actual source cannot override own action facility scope"}))Assert.Equal(HttpStatusCode.Forbidden,outside.StatusCode);
         var body=new{subjectCode=Subject(order),templateCode="ORDER-LABEL",templateVersion=1,symbology="DataMatrix",copies=1,facilityCode="PLANT1",reason="Explicit organization's same-issuer authorization policy"};
         const string key="exact-withdrawn-template";using var issued=await printer.CommandAsync("/api/identification/labels",body,key);Assert.Equal(HttpStatusCode.OK,issued.StatusCode);

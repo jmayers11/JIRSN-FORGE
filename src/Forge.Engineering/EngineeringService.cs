@@ -18,6 +18,8 @@ public sealed record CreateRevision(string PartNumber, string Revision);
 
 public sealed record AddBomLine(string PartNumber, string Revision, int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent);
 
+public sealed record UpdateBomLine(string PartNumber, string Revision, int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent);
+
 public sealed record RemoveBomLine(string PartNumber, string Revision, int LineNumber);
 
 public sealed record AddRoutingOperation(
@@ -36,6 +38,21 @@ public sealed record AddRoutingOperation(
     decimal? FamilySetupMinutes = null);
 
 public sealed record RemoveRoutingOperation(string PartNumber, string Revision, int Sequence);
+
+public sealed record UpdateRoutingOperation(
+    string PartNumber,
+    string Revision,
+    int Sequence,
+    string Description,
+    string WorkCenterCode,
+    string ActivityCode,
+    IReadOnlyList<string>? EligibleMachines,
+    IReadOnlyList<string>? RequiredQualifications,
+    decimal SetupMinutes,
+    decimal RunMinutesPerUnit,
+    int CrewSize,
+    string? SetupFamily = null,
+    decimal? FamilySetupMinutes = null);
 
 public sealed record ReleaseRevision(string PartNumber, string Revision, DateTimeOffset? EffectiveFrom);
 
@@ -87,9 +104,13 @@ public interface IEngineeringStore
 
     Task<bool> InsertBomLineAsync(string partNumber, string revision, BomLineInfo line, CancellationToken ct);
 
+    Task<bool> UpdateBomLineAsync(string partNumber, string revision, int lineNumber, BomLineInfo line, CancellationToken ct);
+
     Task<bool> DeleteBomLineAsync(string partNumber, string revision, int lineNumber, CancellationToken ct);
 
     Task<bool> InsertOperationAsync(string partNumber, string revision, RoutingOperationInfo operation, CancellationToken ct);
+
+    Task<bool> UpdateOperationAsync(string partNumber, string revision, int sequence, RoutingOperationInfo operation, CancellationToken ct);
 
     Task<bool> DeleteOperationAsync(string partNumber, string revision, int sequence, CancellationToken ct);
 
@@ -270,6 +291,42 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
         }, ct);
     }
 
+    public Task<CommandResult> UpdateBomLineAsync(UpdateBomLine c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var (part, rev) = (BusinessCode.Require(c.PartNumber, "Part"), RequireRevision(c.Revision));
+        return Draft(nameof(UpdateBomLine), part, rev, c, context, requireDraft: true, async (uow, _) =>
+        {
+            if (c.LineNumber is < 1 or > 9999 || c.QuantityPer <= 0 || c.ScrapPercent is < 0 or >= 100)
+            {
+                throw new CommandRejectedException("invalid_bom_line", "Line 1-9999, quantity above zero and scrap from 0 to under 100 percent.");
+            }
+
+            var component = BusinessCode.Require(c.ComponentPartNumber, "Component");
+            if (await uow.Store<IEngineeringLookup>().FindItemAsync(component, ct) is null)
+            {
+                throw new CommandRejectedException("unknown_component", $"Component {component} does not exist.");
+            }
+
+            var lookup = uow.Store<IEngineeringLookup>();
+            var oldLine = (await lookup.GetRevisionDetailAsync(part, rev, ct))?.Bom.SingleOrDefault(line => line.LineNumber == c.LineNumber)
+                ?? throw new CommandRejectedException("line_not_found", $"BOM line {c.LineNumber} does not exist.");
+            var edges = await uow.Store<IEngineeringStore>().ListBomEdgesAsync(ct);
+            if (component == part || Reaches(edges, component, part))
+            {
+                throw new CommandRejectedException("bom_loop", $"{component} already contains {part} somewhere in its structure; changing this line would create a loop.");
+            }
+
+            var updated = oldLine with { ComponentPartNumber = component, QuantityPer = c.QuantityPer, ScrapPercent = c.ScrapPercent };
+            if (!await uow.Store<IEngineeringStore>().UpdateBomLineAsync(part, rev, c.LineNumber, updated, ct))
+            {
+                throw new CommandRejectedException("line_not_found", $"BOM line {c.LineNumber} does not exist.");
+            }
+
+            return ("bom_line_updated", CanonicalJson.Serialize(oldLine), CanonicalJson.Serialize(updated));
+        }, ct);
+    }
+
     public Task<CommandResult> AddRoutingOperationAsync(AddRoutingOperation c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
@@ -350,6 +407,74 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
             }
 
             return ("operation_removed", CanonicalJson.Serialize(new { sequence = c.Sequence }), null);
+        }, ct);
+    }
+
+    public Task<CommandResult> UpdateRoutingOperationAsync(UpdateRoutingOperation c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var (part, rev) = (BusinessCode.Require(c.PartNumber, "Part"), RequireRevision(c.Revision));
+        return Draft(nameof(UpdateRoutingOperation), part, rev, c, context, requireDraft: true, async (uow, _) =>
+        {
+            if (c.Sequence is < 1 or > 9999 || c.SetupMinutes < 0 || c.RunMinutesPerUnit < 0 || c.CrewSize is < 1 or > 20)
+            {
+                throw new CommandRejectedException("invalid_operation", "Sequence 1-9999, non-negative times and a crew of 1-20.");
+            }
+
+            var description = BusinessCode.RequireName(c.Description, "Operation");
+            var workCenter = BusinessCode.Require(c.WorkCenterCode, "Work center");
+            var activity = BusinessCode.Require(c.ActivityCode, "Activity");
+            var machines = (c.EligibleMachines ?? []).Select(m => BusinessCode.Require(m, "Machine")).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+            var quals = (c.RequiredQualifications ?? []).Select(q => BusinessCode.Require(q, "Qualification")).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+            var resources = uow.Store<IResourcesLookup>();
+            if (await resources.FindWorkCenterAsync(workCenter, ct) is null)
+            {
+                throw new CommandRejectedException("unknown_work_center", $"Work center {workCenter} does not exist.");
+            }
+
+            foreach (var machineCode in machines)
+            {
+                var machine = await resources.FindMachineAsync(machineCode, ct);
+                if (machine is null || machine.WorkCenterCode != workCenter)
+                {
+                    throw new CommandRejectedException("invalid_machine", $"Machine {machineCode} is not in work center {workCenter}.");
+                }
+
+                if (await resources.FindMachineActivityAsync(machineCode, activity, ct) is null)
+                {
+                    throw new CommandRejectedException("activity_not_on_machine", $"{activity} is not defined for machine {machineCode}.");
+                }
+            }
+
+            if (machines.Count == 0 && !(await resources.ListWorkCenterActivitiesAsync(ct)).Any(a => a.WorkCenterCode == workCenter && a.ActivityCode == activity))
+            {
+                throw new CommandRejectedException("activity_not_at_work_center", $"{activity} is not an allowed activity at {workCenter}; name eligible machines or allow it at the work center.");
+            }
+
+            var competency = uow.Store<ICompetencyLookup>();
+            foreach (var qualification in quals)
+            {
+                if (!await competency.QualificationTypeExistsAsync(qualification, ct))
+                {
+                    throw new CommandRejectedException("unknown_qualification", $"Qualification type {qualification} does not exist.");
+                }
+            }
+
+            var family = string.IsNullOrWhiteSpace(c.SetupFamily) ? null : BusinessCode.Require(c.SetupFamily, "Set-up family");
+            if (family is null != c.FamilySetupMinutes is null || c.FamilySetupMinutes is < 0 || c.FamilySetupMinutes > c.SetupMinutes)
+            {
+                throw new CommandRejectedException("invalid_setup_family", "A set-up family needs its same-family set-up minutes, between 0 and the full set-up.");
+            }
+
+            var updated = new RoutingOperationInfo(c.Sequence, description, workCenter, activity, machines, quals, c.SetupMinutes, c.RunMinutesPerUnit, c.CrewSize, family, c.FamilySetupMinutes);
+            var oldOperation = (await uow.Store<IEngineeringLookup>().GetRevisionDetailAsync(part, rev, ct))?.Routing.SingleOrDefault(operation => operation.Sequence == c.Sequence)
+                ?? throw new CommandRejectedException("operation_not_found", $"Operation {c.Sequence} does not exist.");
+            if (!await uow.Store<IEngineeringStore>().UpdateOperationAsync(part, rev, c.Sequence, updated, ct))
+            {
+                throw new CommandRejectedException("operation_not_found", $"Operation {c.Sequence} does not exist.");
+            }
+
+            return ("routing_operation_updated", CanonicalJson.Serialize(oldOperation), CanonicalJson.Serialize(updated));
         }, ct);
     }
 

@@ -36,6 +36,15 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
+    public async Task<bool> UpdateBomLineAsync(string partNumber, string revision, int lineNumber, BomLineInfo line, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        await using var cmd = uow.Command(
+            "UPDATE engineering.bom_line SET component = $4, quantity_per = $5, scrap_percent = $6 WHERE part_number = $1 AND revision = $2 AND line_number = $3",
+            partNumber, revision, lineNumber, line.ComponentPartNumber, line.QuantityPer, line.ScrapPercent);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
     public async Task<bool> DeleteBomLineAsync(string partNumber, string revision, int lineNumber, CancellationToken ct)
     {
         await using var cmd = uow.Command("DELETE FROM engineering.bom_line WHERE part_number = $1 AND revision = $2 AND line_number = $3", partNumber, revision, lineNumber);
@@ -52,6 +61,23 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT DO NOTHING
             """,
             partNumber, revision, operation.Sequence, operation.Description, operation.WorkCenterCode, operation.ActivityCode,
+            TextArray(operation.EligibleMachines), TextArray(operation.RequiredQualifications), operation.SetupMinutes, operation.RunMinutesPerUnit, operation.CrewSize,
+            new NpgsqlParameter { Value = (object?)operation.SetupFamily ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text },
+            new NpgsqlParameter { Value = (object?)operation.FamilySetupMinutes ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric });
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<bool> UpdateOperationAsync(string partNumber, string revision, int sequence, RoutingOperationInfo operation, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        await using var cmd = uow.Command(
+            """
+            UPDATE engineering.routing_operation SET description = $4, work_center_code = $5, activity_code = $6,
+                eligible_machines = $7, required_qualifications = $8, setup_minutes = $9, run_minutes_per_unit = $10,
+                crew_size = $11, setup_family = $12, family_setup_minutes = $13
+            WHERE part_number = $1 AND revision = $2 AND sequence = $3
+            """,
+            partNumber, revision, sequence, operation.Description, operation.WorkCenterCode, operation.ActivityCode,
             TextArray(operation.EligibleMachines), TextArray(operation.RequiredQualifications), operation.SetupMinutes, operation.RunMinutesPerUnit, operation.CrewSize,
             new NpgsqlParameter { Value = (object?)operation.SetupFamily ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text },
             new NpgsqlParameter { Value = (object?)operation.FamilySetupMinutes ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric });

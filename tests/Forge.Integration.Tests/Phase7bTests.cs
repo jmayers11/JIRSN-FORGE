@@ -15,10 +15,8 @@ public sealed class Phase7bTests(PostgresFixture postgres)
 {
     private static string Day(int fromToday) => DateTime.UtcNow.AddDays(fromToday).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-    /// <summary>A date at the plant (the sample site is in New York), as maintenance due dates are.</summary>
-    private static string LocalDay(int fromToday) =>
-        NodaTime.Instant.FromDateTimeOffset(DateTimeOffset.UtcNow).InZone(NodaTime.DateTimeZoneProviders.Tzdb["America/New_York"]).Date.PlusDays(fromToday)
-            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    /// <summary>A date at the plant, as maintenance due dates are (see <see cref="TestSite"/>).</summary>
+    private static string LocalDay(int fromToday) => TestSite.Day(fromToday);
 
     private static async Task<JsonElement> Get(HttpClient client, string url)
     {

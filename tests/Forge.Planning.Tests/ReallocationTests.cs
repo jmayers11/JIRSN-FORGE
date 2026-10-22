@@ -7,6 +7,7 @@ namespace Forge.Planning.Tests;
 public class ReallocationTests
 {
     private readonly ReallocationImpactEngine engine = new();
+    private readonly ReallocationPlanEngine planEngine = new();
 
     // Spec §79: Sarah on Slitting support work, Michael running Slitter B, area rule satisfied.
     private static (TestFactory Factory, Guid Sarah, Guid Michael, Guid Jennifer, Guid Dana) Spec79()
@@ -113,5 +114,36 @@ public class ReallocationTests
         Assert.Equal(a.InputFingerprint, b.InputFingerprint);
         Assert.Equal(a.OutputFingerprint, b.OutputFingerprint);
         Assert.Equal(a.OutputFingerprint, c.OutputFingerprint);
+    }
+
+    [Fact]
+    public void A_cascading_plan_rechecks_the_next_move_against_the_previous_move_and_does_not_change_source()
+    {
+        var (f, sarah, michael, _, _) = Spec79();
+        var snapshot = f.Build();
+
+        var preview = planEngine.Evaluate(snapshot,
+        [
+            new ReallocationPlanMove(sarah, InAssembly()),
+            new ReallocationPlanMove(michael, null),
+        ], Now).Output;
+
+        Assert.Equal(2, preview.Steps.Count);
+        Assert.Contains(preview.Steps[0].Preview.Impacts, impact => impact.Kind == ImpactKind.WouldStop && impact.Work == SlitterWork("SLITTER-B"));
+        var secondMove = preview.Steps[1].Preview;
+        Assert.Equal(OnSlitter("SLITTER-B"), secondMove.Current);
+        Assert.Contains(secondMove.Before, result => result.Work == SlitterWork("SLITTER-B") && !result.Executable);
+        Assert.DoesNotContain(preview.FinalActiveWork, result => result.Work == SlitterWork("SLITTER-B"));
+        Assert.Equal(InSlitting(StageRoll), snapshot.Person(sarah)!.Assignment);
+        Assert.Equal(OnSlitter("SLITTER-B"), snapshot.Person(michael)!.Assignment);
+    }
+
+    [Fact]
+    public void A_cascading_plan_rejects_duplicate_people()
+    {
+        var (f, sarah, _, _, _) = Spec79();
+        var move = new ReallocationPlanMove(sarah, InAssembly());
+
+        Assert.Throws<ArgumentException>(() => planEngine.Evaluate(f.Build(), [move, move], Now));
     }
 }

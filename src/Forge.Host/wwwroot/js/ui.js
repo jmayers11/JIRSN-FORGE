@@ -10,22 +10,60 @@ export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const enhancedTables = new WeakSet();
 
+const csvField = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+
+/** Serialize the table's currently visible rows using RFC 4180 quoting. Action-only columns are omitted. */
+export function tableCsv(table) {
+  const headers = [...(table?.querySelector('thead')?.querySelectorAll('th') ?? [])];
+  const body = table?.querySelector('tbody');
+  if (!body || !headers.length) return '';
+  const rows = [...body.querySelectorAll('tr')].filter(row => !row.hidden && !row.classList.contains('hidden') && row.getAttribute('aria-hidden') !== 'true');
+  const cells = rows.map(row => [...row.children]);
+  const actionOnly = index => {
+    const header = headers[index];
+    if (!header?.textContent.trim()) return true;
+    const column = cells.map(row => row[index]).filter(Boolean);
+    return column.length > 0 && column.every(cell => {
+      const controls = [...cell.children];
+      return controls.length > 0 && controls.every(control => control.matches('button, a, input, select, textarea'))
+        && cell.textContent.replace(/\s+/g, '') === controls.map(control => control.textContent.replace(/\s+/g, '')).join('');
+    });
+  };
+  const indexes = headers.map((_, index) => index).filter(index => !actionOnly(index));
+  if (!indexes.length) return '';
+  const records = [indexes.map(index => csvField(headers[index].textContent.trim()))];
+  for (const row of cells) records.push(indexes.map(index => csvField(row[index]?.textContent.trim() ?? '')));
+  return records.map(record => record.join(',')).join('\r\n');
+}
+
 /** Add a compact search field and sortable column headings to a data table. */
 export function enhanceTable(table, { filter = true } = {}) {
   if (!table || enhancedTables.has(table)) return false;
   const body = table.querySelector('tbody');
   const head = table.querySelector('thead');
   const headers = head ? [...head.querySelectorAll('th')] : [];
-  if (!body || headers.length < 2 || body.querySelectorAll('tr').length < 2) return false;
+  const initialRows = body ? [...body.querySelectorAll('tr')] : [];
+  if (!body || !initialRows.length || !headers.length) return false;
   enhancedTables.add(table);
 
   let filterInput = null;
-  if (filter) {
+  const interactive = headers.length >= 2 && initialRows.length >= 2;
+  if (interactive || initialRows.length) {
     const tools = document.createElement('div');
     tools.className = 'table-tools';
-    tools.innerHTML = '<label class="field"><span>Filter rows</span><input class="input" type="search" data-table-filter autocomplete="off" placeholder="Search this table"></label><span class="muted">Select a column heading to sort</span>';
+    tools.innerHTML = `${interactive && filter ? '<label class="field"><span>Filter rows</span><input class="input" type="search" data-table-filter autocomplete="off" placeholder="Search this table"></label>' : '<span></span>'}${interactive ? '<span class="muted">Select a column heading to sort</span>' : ''}<button class="btn small ghost" type="button" data-table-export>Export CSV</button>`;
     table.parentElement?.insertBefore(tools, table);
     filterInput = tools.querySelector('[data-table-filter]');
+    tools.querySelector('[data-table-export]')?.addEventListener('click', () => {
+      const csv = tableCsv(table);
+      if (!csv) return;
+      const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `forge-export-${Date.now()}.csv`;
+      document.body.append(link); link.click();
+      setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+    });
   }
   const rows = () => [...body.querySelectorAll('tr')];
   filterInput?.addEventListener('input', () => {
@@ -33,7 +71,7 @@ export function enhanceTable(table, { filter = true } = {}) {
     for (const row of rows()) row.hidden = !!query && !row.textContent.toLocaleLowerCase().includes(query);
   });
 
-  headers.forEach((header, column) => {
+  if (interactive) headers.forEach((header, column) => {
     header.tabIndex = 0;
     header.title = 'Sort by ' + header.textContent.trim();
     header.setAttribute('aria-sort', 'none');
@@ -289,13 +327,25 @@ export function confirmWithReason({ title, detail, confirmLabel = 'Confirm', rea
     scrim.onclick = () => close(null);
     m.querySelector('[data-cancel]').onclick = () => close(null);
     m.querySelector('[data-ok]').onclick = async () => {
+      const ok = m.querySelector('[data-ok]');
+      if (ok.getAttribute('data-keep-open-done') === 'true') {
+        close({ message: ok.getAttribute('data-finish-message') ?? 'Done.' });
+        return;
+      }
       const reason = m.querySelector('#reason').value.trim();
       const err = m.querySelector('[data-error]');
       if (reasonRequired && !reason) { err.textContent = 'Give a reason; it is kept with the change.'; err.classList.remove('hidden'); return; }
-      const ok = m.querySelector('[data-ok]');
       ok.disabled = true;
       try {
-        close(await action(reason || undefined, m));
+        const result = await action(reason || undefined, m);
+        if (result?.keepOpen) {
+          ok.disabled = false;
+          ok.textContent = result.closeLabel ?? 'Done';
+          ok.setAttribute('data-keep-open-done', 'true');
+          ok.setAttribute('data-finish-message', result.message ?? '');
+          return;
+        }
+        close(result);
       } catch (e) {
         ok.disabled = false;
         const reasons = (e.reasons ?? []).map(r => `• ${r}`).join('\n');

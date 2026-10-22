@@ -129,11 +129,12 @@ export function readFields(m, fields) {
       out[f.name] = f.serialize ? f.serialize(rows) : rows;
     }
     else if (f.type === 'lookup') {
-      if (el.value.trim() === '') out[f.name] = null;
+      const raw = el.value.trim();
+      if (raw === '') out[f.name] = null;
       else {
-        const option = $$('option', $(`#f-${f.name}-list`, m)).find(item => item.value === el.value.trim());
-        if (!option) throw new Error(`${f.label}: choose a listed value.`);
-        out[f.name] = option.getAttribute('data-key');
+        const option = $$('option', $(`#f-${f.name}-list`, m)).find(item => item.value === raw || item.getAttribute('data-key') === raw);
+        if (!option && !f.allowCustom) throw new Error(`${f.label}: choose a listed value.`);
+        out[f.name] = option ? option.getAttribute('data-key') : raw;
       }
     }
     else if (f.type === 'days') out[f.name] = $$('input:checked', el).map(i => Number(i.value));
@@ -148,6 +149,157 @@ export function readFields(m, fields) {
     if (f.required && (out[f.name] == null || (Array.isArray(out[f.name]) && !out[f.name].length))) throw new Error(`${f.label} is required.`);
   }
   return out;
+}
+
+/** Parse RFC 4180 CSV and pasted tab-separated spreadsheet rows. */
+export function parseCsvText(text) {
+  const source = String(text ?? '').replace(/^\uFEFF/, '');
+  const firstLine = source.split(/\r?\n/, 1)[0] ?? '';
+  const delimiter = firstLine.includes('\t') && !firstLine.includes(',') ? '\t' : ',';
+  const rows = [], row = [];
+  let value = '', quoted = false;
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (quoted) {
+      if (char === '"' && source[i + 1] === '"') { value += '"'; i++; }
+      else if (char === '"') quoted = false;
+      else value += char;
+    } else if (char === '"' && value === '') quoted = true;
+    else if (char === delimiter) { row.push(value); value = ''; }
+    else if (char === '\n' || char === '\r') {
+      if (char === '\r' && source[i + 1] === '\n') i++;
+      row.push(value); value = '';
+      if (row.some(cell => cell.trim() !== '')) rows.push(row.splice(0)); else row.length = 0;
+    } else value += char;
+  }
+  row.push(value);
+  if (row.some(cell => cell.trim() !== '')) rows.push(row);
+  if (quoted) throw new Error('A quoted CSV field was not closed.');
+  return rows;
+}
+
+function csvQuote(value) { return `"${String(value ?? '').replace(/"/g, '""')}"`; }
+function downloadCsv(name, rows) {
+  const content = `\uFEFF${rows.map(row => row.map(csvQuote).join(',')).join('\r\n')}`;
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }));
+  link.download = name; document.body.append(link); link.click();
+  setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+}
+
+function csvPreview(text, columns) {
+  const records = parseCsvText(text);
+  if (records.length < 2) throw new Error('Add a header row and at least one data row.');
+  const headers = records[0].map(value => value.trim().toLowerCase());
+  const indexes = new Map(headers.map((value, index) => [value, index]));
+  const missing = columns.filter(column => !indexes.has(column.name.toLowerCase()));
+  if (missing.length) throw new Error(`Missing column${missing.length > 1 ? 's' : ''}: ${missing.map(column => column.name).join(', ')}.`);
+  return records.slice(1).map((record, index) => {
+    const value = {}, problems = [];
+    for (const column of columns) {
+      const raw = (record[indexes.get(column.name.toLowerCase())] ?? '').trim();
+      if (column.required && !raw) { problems.push(`${column.label ?? column.name} is required`); continue; }
+      if (!raw) { value[column.name] = null; continue; }
+      if (column.type === 'number') {
+        const number = Number(raw);
+        if (!Number.isFinite(number) || column.min != null && number < column.min || column.max != null && number > column.max)
+          problems.push(`${column.label ?? column.name} must be a number${column.min != null ? ` ≥ ${column.min}` : ''}${column.max != null ? ` ≤ ${column.max}` : ''}`);
+        else value[column.name] = number;
+      } else if (column.type === 'boolean') {
+        const normalized = raw.toLowerCase();
+        if (['true', 'yes', '1'].includes(normalized)) value[column.name] = true;
+        else if (['false', 'no', '0'].includes(normalized)) value[column.name] = false;
+        else problems.push(`${column.label ?? column.name} must be true or false`);
+      } else if (column.type === 'date') {
+        const parsed = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00Z`) : null;
+        if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw) problems.push(`${column.label ?? column.name} must use a valid YYYY-MM-DD date`);
+        else value[column.name] = raw;
+      } else {
+        const options = column.options?.map(option => String(Array.isArray(option) ? option[0] : option));
+        if (options?.length && !options.includes(raw)) problems.push(`${column.label ?? column.name} must be one of ${options.join(', ')}`);
+        else value[column.name] = raw;
+      }
+    }
+    return { number: index + 1, value, error: problems.join('; '), status: problems.length ? 'Invalid' : 'Ready' };
+  });
+}
+
+/** Preview, validate and sequentially submit a CSV import, retaining rejected-row details for review. */
+export async function csvImportModal({ title, detail, columns, sampleRows = [], onRow }, onDone) {
+  const headers = columns.map(column => column.name);
+  const examples = sampleRows.map(row => Array.isArray(row) ? row : columns.map(column => row[column.name] ?? ''));
+  let importSummary = null;
+  const pending = confirmWithReason({
+    title, detail, confirmLabel: 'Import valid rows', reasonRequired: true,
+    extraHtml: `<div class="csv-import">
+      <div class="toolbar"><button class="btn small" type="button" data-csv-template>Download CSV template</button><span class="muted">${columns.length} columns · ${columns.filter(column => column.required).length} required</span></div>
+      <div class="field"><label>Choose a CSV file</label><input class="input" type="file" accept=".csv,text/csv" data-csv-file></div>
+      <div class="field"><label for="csv-import-text">Paste CSV rows or tab-separated spreadsheet rows</label><textarea class="input mono" id="csv-import-text" rows="6" data-csv-text placeholder="${esc(headers.join(','))}"></textarea></div>
+      <div class="muted small" data-csv-status>Paste or choose a file to preview.</div>
+      <div class="table-wrap" data-csv-preview><div class="faint">No preview yet.</div></div>
+    </div>`,
+  }, async (reason, modal) => {
+    const ok = modal.querySelector('[data-ok]');
+    if (ok.getAttribute('data-keep-open-done') === 'true') return { message: 'CSV import completed.' };
+    const text = modal.querySelector('[data-csv-text]').value;
+    const rows = csvPreview(text, columns);
+    const ready = rows.filter(row => row.status === 'Ready');
+    if (!ready.length) throw new Error('There are no valid rows to import. Correct the preview errors and try again.');
+    let succeeded = 0;
+    const status = modal.querySelector('[data-csv-status]');
+    const paint = current => {
+      status.textContent = current;
+      modal.querySelector('[data-csv-preview]').innerHTML = `<table class="table"><thead><tr><th>CSV row</th><th>Status</th><th>Details</th></tr></thead><tbody>${rows.map(row => `<tr><td>${row.number}</td><td>${esc(row.status)}</td><td>${esc(row.error || (row.status === 'Imported' ? 'Imported' : 'Ready'))}</td></tr>`).join('')}</tbody></table>`;
+    };
+    paint(`Importing 0 / ${ready.length}…`);
+    for (const [index, row] of ready.entries()) {
+      status.textContent = `Importing ${index + 1} / ${ready.length}…`;
+      try { await onRow(row.value, reason); row.status = 'Imported'; succeeded++; }
+      catch (error) { row.status = 'Rejected'; row.error = error?.message ?? String(error); }
+      paint(`Importing ${index + 1} / ${ready.length}…`);
+    }
+    const rejected = rows.length - succeeded;
+    const message = `Imported ${succeeded} of ${rows.length} row(s); ${rejected} row(s) need attention.`;
+    status.textContent = message;
+    paint(message);
+    importSummary = { succeeded, rejected, total: rows.length };
+    modal.setAttribute('data-csv-summary', JSON.stringify(importSummary));
+    await onDone?.(importSummary);
+    return { keepOpen: true, closeLabel: 'Done', message };
+  });
+  const modal = [...document.querySelectorAll('.modal')].at(-1);
+  if (modal) {
+    const text = modal.querySelector('[data-csv-text]');
+    const preview = modal.querySelector('[data-csv-preview]');
+    const status = modal.querySelector('[data-csv-status]');
+    const paintPreview = () => {
+      if (!text.value.trim()) { status.textContent = 'Paste or choose a file to preview.'; preview.innerHTML = '<div class="faint">No preview yet.</div>'; return; }
+      try {
+        const rows = csvPreview(text.value, columns);
+        status.textContent = `${rows.filter(row => row.status === 'Ready').length} valid row(s), ${rows.filter(row => row.status === 'Invalid').length} row(s) with errors.`;
+        preview.innerHTML = `<table class="table"><thead><tr><th>CSV row</th><th>Status</th><th>Details</th></tr></thead><tbody>${rows.map(row => `<tr><td>${row.number}</td><td>${esc(row.status)}</td><td>${esc(row.error || 'Ready')}</td></tr>`).join('')}</tbody></table>`;
+      } catch (error) {
+        status.textContent = 'The CSV needs attention.';
+        preview.innerHTML = `<div class="notice bad">${esc(error.message)}</div>`;
+      }
+    };
+    text.addEventListener('input', paintPreview);
+    modal.querySelector('[data-csv-file]').addEventListener('change', async event => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try { text.value = await file.text(); paintPreview(); }
+      catch (error) { status.textContent = `Could not read file: ${error.message}`; }
+    });
+    modal.querySelector('[data-csv-template]').addEventListener('click', () => {
+      const name = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-template.csv`;
+      downloadCsv(name, [headers, ...examples]);
+    });
+  }
+  if (!pending) return null;
+  const summaryEl = modal?.getAttribute('data-csv-summary');
+  const summary = importSummary ?? (summaryEl ? JSON.parse(summaryEl) : null);
+  if (summary?.succeeded) toast(`Imported ${summary.succeeded} row(s).`);
+  return summary;
 }
 
 /**

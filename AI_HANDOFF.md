@@ -1,5 +1,180 @@
 # AI_HANDOFF.md
 
+## Codex: VNext Visual Plant Operations — Machine Readiness Kanban (2026-10-22, latest)
+
+Implemented a read-only first slice from `Forge_VNext_Visual_Plant_Operations_Kanban.md`.
+
+- Added `#/machine-kanban` under Supervisor navigation, linked from Plant Overview and Workforce Kanban. It uses
+  existing Forge resource, order-operation readiness, active-work, downtime, asset and maintenance work-order reads.
+  Workforce names and qualification details are requested/displayed only when their respective permissions allow it.
+- Machines are sorted into Blocked / Down, Attention, Ready and Unknown / Not verified lanes. Cards include reason
+  evidence, operation/order context, assigned staff and presence when permitted, overdue work, recorded outages,
+  source read time, filters, expandable details and links to existing order, work-center and maintenance workflows.
+- RED comes from recorded downtime, a restricted asset, failed assigned work or a scheduled-now operation that fails
+  readiness. YELLOW is overdue PM/inspection/calibration work or recorded planned downtime ahead. GREEN means an
+  eligible operation passes Forge readiness. Missing/failed readiness stays gray. Blockers are displayed together;
+  the UI has no status override or command.
+- The page states that no live telemetry source exists and that GREEN does not mean RUNNING. It shows the read time and
+  that source calls are separate, not a real-time/atomic snapshot. No PM warning horizon was invented. There is no
+  migration or API contract change.
+- Added [implementation matrix](docs/vnext-visual-kanban-implementation-matrix.md),
+  [supervisor quick-start](docs/vnext-machine-readiness-quick-start.md), and a Claude review checklist in the matrix.
+
+**Implemented / partial / deferred.** The read-only Machine Readiness view, signal derivation, accessible detail
+cards, work-center/signal/search filters and owner-module links are implemented. Factory Horizon already supplies
+plant overview and exceptions, but causal grouping/deduplication remains partial. Workforce Kanban still uses current
+assignments and browser-session drafts. Live machine telemetry, configurable approach thresholds, Nexus/time-clock
+integration, a causal exception graph, status event reconciliation, coordinated production/maintenance/material/
+quality/engineering/skills boards, persisted workforce roster/scenarios, atomic schedule commit and offline/concurrent
+commit handling remain deferred because the necessary source contracts or backend models are absent. This does not
+meet the VNext final acceptance criteria.
+
+**Checks.** `node --test tests/ui/*.test.mjs` passed 282/282. All 59 frontend JavaScript modules passed `node --check`.
+`dotnet build src/Forge.Host/Forge.Host.csproj --no-restore -p:BaseOutputPath=C:\Users\wrest\AppData\Local\Temp\ForgeVNextMachineBuild\ -v minimal` passed with 0 warnings and 0 errors. The separate temporary output was needed because the active Forge process holds its normal build files. `git diff --check` found no whitespace errors (Git reported its existing LF-to-CRLF notices). No PostgreSQL or live browser smoke was performed. No operational records were changed.
+
+**Claude review start.** Read `docs/vnext-visual-kanban-implementation-matrix.md`, then
+`src/Forge.Host/wwwroot/js/pages/machine-kanban.js` and `tests/ui/machine-kanban.test.mjs`. Challenge signal
+precedence, program/scope filtering, denied and failed reads, status claims, hidden employee detail, and whether
+maintenance and order blockers remain attributable to their source. Review the board as a read-only presentation
+layer; do not infer telemetry, clock-in or a running state from assignments.
+
+## Codex: Workforce Kanban and Plant Overview (2026-10-22, latest)
+
+Implemented a safe first slice from `Forge_Workforce_Kanban_Consolidated_Codex_Prompt.md`.
+
+- Added a supervisor Plant Overview entry by reusing Factory Horizon, with direct actions into Workforce Kanban,
+  the existing callout workflow, and Production Schedule.
+- Added `#/workforce-kanban`, gated in the UI to supervisors and workforce managers. It shows current Forge
+  workforce state, presence, shifts, qualifications, available work centers, current approved production operations,
+  readiness and maintenance downtime. The board labels current assignments as current state because Forge has no
+  approved effective-dated person-by-person weekly roster yet.
+- Supervisors can filter the board, stage a move with drag/drop or an accessible select control, explicitly choose
+  activity and machine as needed, save/reset a browser-session draft, and request a sequential safety preview. The
+  preview evaluates each move on successive copies of one server snapshot; an API integration test covers a cascade
+  that makes the slitter unsafe, verifies the next step sees that state, and confirms live readiness is unchanged.
+- “Model absence” opens the existing private planning scenario with the selected person prefilled. It does not record
+  attendance or leave. Added bulk qualification lookup for this board.
+- Added `docs/workforce-kanban-architecture.md` documenting the source-of-truth audit, data flow and invariants.
+
+**Important remaining gap.** This is not the complete prompt or final acceptance. Forge still has no versioned,
+effective-dated worker roster; multi-move scenarios persist only in browser `sessionStorage`; there is no whole-plan
+validation/approval/atomic commit, concurrency control or roster audit trail. Impact preview is a staffing readiness
+preview only; it does not claim to forecast MRP, due dates, cost or plant-wide scenarios. No schedule or attendance
+write was added. Continue with the versioned roster model and server-side private scenarios before implementing a
+commit path. Commit must reload current constraints, validate the complete schedule and apply all changes atomically.
+
+**Checks.** `node --test tests/ui/*.test.mjs` passed 278/278. Focused `ReallocationTests` passed 8/8. All 58
+frontend JavaScript modules passed `node --check`. Host and integration-test project builds passed with zero
+warnings/errors into temporary output directories because the live Forge process held the normal host output files
+open. The new real API test compiles, but was not executed: `FORGE_TEST_POSTGRES` is unset and the Docker engine is
+unavailable. The live host was not restarted, and no live database/browser smoke was performed.
+
+**Forge Analyst clear control.** The existing Clear questions button is present and clears prior answers, the
+operations brief, and the question field. Added a regression test proving that a response arriving after Clear cannot
+restore an in-flight question.
+
+**Claude review starting point.** Start at `docs/workforce-kanban-architecture.md`, then inspect
+`src/Forge.Host/wwwroot/js/pages/workforce-kanban.js`, `src/Forge.Planning/Engines/ReallocationPlanEngine.cs`,
+`src/Forge.Planning/ReadinessService.cs`, and the new integration/UI tests. Pay particular attention to the honest
+current-state labeling, workforce authorization scope, sequential snapshot semantics and the explicit absence of a
+commit route. Git could not create a feature branch because `.git` is read-only in this session; all pre-existing
+working-tree changes were preserved.
+
+## Codex: Sprint 7 Commercial Parity & Market Leadership (2026-10-20, latest)
+
+Implemented tasks 7.1–7.6 from `jirsn_forge_commercial_parity_roadmap_sprint7.md`.
+
+- Engineering now supports item creation, CSV onboarding for items and draft BOM lines, revision release/withdrawal
+  controls, and a recursive six-level BOM tree with cycle protection, extended quantities and lead-time rollups.
+- CSV import is available for Engineering items and draft BOMs, MRP demand and Procurement suppliers. The shared
+  table enhancer exports visible rows as RFC 4180 CSV and removes action-only columns.
+- The proposed-schedule Gantt supports 24-hour/3/7/14-day windows, status filters and keyboard-operable operation
+  bars. The dispatch drawer shows order/operation context and matching constraints, previews priority changes through
+  the existing read-only priority endpoint, confirms with a reason, and links to a prefilled scenario and order.
+  Recovery forms now use directory/resource/item choices instead of raw worker and work-center identifiers.
+- Settings has a hash-chain verification banner and searchable/exportable audit explorer. Factory Horizon includes
+  role-aware schedule, downtime, constraint, material-shortfall and inbox chips.
+- PO lines persist optional unit prices and currency; PO totals appear in Procurement. The backend attaches the
+  complete priced order value to the approval resource, so V3.15 thresholds are enforced by the server. Unpriced
+  POs have unknown value and cannot pass a configured monetary threshold; mixed-currency orders are rejected. The
+  additive migration is `src/Forge.Procurement/Infrastructure/Migrations/0006_purchase_order_pricing.sql`.
+- Reports includes an Accounting, Receiving & Grant Reconciliation feed with CSV and JSON exports. The attached
+  brief names `/api/shipping/shipments`; this repository exposes shipments at `/api/inventory/shipments`. The
+  action bar reads the available `/api/work-inbox` endpoint, and priority preview uses the existing
+  `/api/orders/{id}/priority-preview` route.
+
+**Checks.** `node --test tests/ui/*.test.mjs` passed **274/274**. `node --check` passed for all **57** frontend JS
+modules. `dotnet build src/Forge.Host/Forge.Host.csproj --no-restore -v minimal` passed with zero warnings/errors;
+the integration test project also compiled with zero warnings/errors. Focused UI coverage exercises CSV parsing,
+row-level import failures, visible-table export, valid make/buy class choices, the Gantt inspector and scenario
+prefill, and the accounting feed.
+
+**Database/live smoke gate.** The PO pricing threshold integration test was extended to check unknown prices, exact
+limit acceptance, over-limit rejection and persisted totals. I attempted the focused test, but fixture initialization
+failed before the test body because `FORGE_TEST_POSTGRES` is not configured and the Docker engine is unavailable.
+No live browser smoke was run, so the new migration has not been applied to a running local database in this session.
+Rerun that focused integration test and smoke the four import screens, audit explorer and proposed-schedule Gantt
+with the project's PostgreSQL fixture/seed data.
+
+## Codex: Sprint 6 MRP visual and planner UX polish (2026-10-20, latest)
+
+Implemented the user-supplied Sprint 6 brief in the Material Plan UI. Work is limited to `mrp.js`, `forms.js`,
+`forge.css`, focused UI tests, and these handoff notes; no C#, database, schema, or migration changes were made.
+
+- Recommendations now have All, Past due, Make and Buy filters, and all five MRP tabs show record counts. Filtered
+  recommendation controls keep their original result indexes. `enhanceTables(page)` adds shared row search and
+  sortable headings where a table has enough rows.
+- The Items tab has All, Below safety stock, In inspection/hold, Make and Buy filters; each row includes a 14-bucket
+  health spark-strip and an inspection/hold pill when stock is quarantined.
+- Why drawers show a five-card netting summary and time-phased projected-availability bars. The summary labels safety
+  stock as a threshold and explains that MRP applies date order and lot policy, so it does not misstate the plan as a
+  single-period arithmetic total.
+- Exceptions now link to Engineering, alternates and Procurement, or open the matching past-due recommendation's Why
+  drawer.
+- Draft PO supplier fields use active suppliers and prioritize active approved sources for the part. When the part
+  has approved-source restrictions, unrelated vendors are omitted. If supplier data is unavailable or no valid active
+  vendor is available, the form falls back to text entry with a hint.
+- Demand source lookup supports selected entity keys and custom `kind:key` values. It loads open maintenance work
+  orders, approved projects' active material lines, and non-retired tools when those APIs are available. Tool records
+  are served by `/api/resources/tools`; the Sprint 6 brief's `/api/tools` path does not exist in this project.
+
+**Checks.** `node --test tests/ui/*.test.mjs` passed **272/272**. `node --check` passed for all **57** frontend
+JavaScript files. `git diff --check` found no whitespace errors; Git printed its existing LF-to-CRLF working-copy
+notices. Added tests cover filters/index stability, tab counts/table search, summaries and balance tones, exception
+actions, approved supplier choice, demand source lookups and custom source keys.
+
+**Preview.** No Forge host or database-backed test was started for this frontend-only change, so live rendering against
+seeded records remains a manual smoke check at `#/material-plan` when the local host is available.
+
+## Codex: Engineering parent-part workspace (2026-10-20, latest)
+
+The owner approved a centralized Engineering view for parent parts, with the parent revision, BOM and operations
+together, and requested that engineering be able to add, remove and update the definition.
+
+- Added `#/engineering/structure` (Parent Parts) with searchable part selection and a dedicated part/revision
+  workspace. The workspace identifies the engineering revision separately from MRP's low-level planning code and
+  presents BOM and Operations tabs under one revision/status header.
+- Draft revisions allow BOM component add/edit/remove (part, quantity per, scrap) and routing operation
+  add/edit/remove. Each edit uses the existing audited Engineering command path and adds the editor to revision
+  contributors. Released revisions are visibly read-only; release authority and order snapshots remain unchanged.
+- Added atomic update commands and Postgres store operations for BOM lines and routing operations. No schema
+  migration was needed. Existing release validation, draft checks and separation of duties remain in force.
+- Entry points: Engineering > Parent Parts (`#/engineering/structure`), or the “Parent part workspace” button on
+  an Engineering item detail (`#/engineering/{partNumber}`). A part can be opened directly at
+  `#/engineering/structure/{partNumber}`.
+- Added three UI tests for the combined workspace, audited update payloads, released revision protection and index
+  search. Added a real API integration test covering persisted BOM/routing edits and rejection after release.
+
+**Checks.** `dotnet build src/Forge.Host/Forge.Host.csproj --no-restore -v minimal` succeeded with zero warnings or
+errors. `node --test tests/ui/*.test.mjs` passed **266/266**. All JavaScript modules passed `node --check`, and
+`git diff --check` reported no whitespace errors (only the repo's usual LF-to-CRLF notices).
+
+**Database gate.** The integration test project compiled, but the new database-backed test could not start because
+the PostgreSQL fixture requires Docker or `FORGE_TEST_POSTGRES`; Docker Desktop is unavailable in this session. The
+failure occurs during fixture initialization, before the test body. The focused real-PostgreSQL acceptance remains
+to run when the fixture connection is available. No preview host was started and no database, commit, or deployment
+was changed.
+
 ## Codex: production-order workspace and all-pages UI review (2026-10-19, latest)
 
 The owner asked for a UI pass across all pages and specifically requested a work-order header, Operations and Bill of

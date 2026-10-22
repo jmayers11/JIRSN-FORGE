@@ -49,7 +49,7 @@ public sealed class WorkerMoveTests(PostgresFixture postgres)
         var monday = new DateOnly(2026, 10, 5);
         var clock = new Clock(new DateTimeOffset(2026, 10, 5, 14, 0, 0, TimeSpan.Zero));
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync(), services => services.AddSingleton<TimeProvider>(clock));
-        var (plant, _) = await SlittingPlant.BuildEngineeredAsync(app);
+        var (plant, _) = await SlittingPlant.BuildEngineeredAsync(app, TestSite.NewYork);
         await plant.Person("sup", "Supervisor");
         var sup = plant.As("sup");
         var sarah = plant.People["sarah"];

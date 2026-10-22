@@ -98,17 +98,20 @@ export async function analystPage(page, ctx) {
   const s = status.data;
   const shifts = resources.data?.shifts ?? [];
   const initialQuestion = (ctx.query.get('q') ?? '').trim().slice(0, 500);
+  let questionText = initialQuestion;
   let narrate = false;
   let initialAsked = false;
   let directBrief = null, briefError = null, briefing = false;
+  let generation = 0;
 
   function render() {
     page.innerHTML = `
       <div class="page-head"><div><h1>Forge Analyst</h1><div class="sub">Ask about your operation in plain language. Forge works out what you mean, shows what it understood, and answers from its own records with your access. ${s.narration ? '' : 'No AI provider is configured: every answer is computed by Forge.'}</div></div></div>
       <section class="panel analyst-ask">
         <form id="ask" class="analyst-form">
-          <input class="input" id="q" value="${esc(initialQuestion)}" placeholder="e.g. Why is order 10001 late?" autocomplete="off" maxlength="500">
+          <input class="input" id="q" value="${esc(questionText)}" placeholder="e.g. Why is order 10001 late?" autocomplete="off" maxlength="500">
           <button class="btn primary" type="submit">Ask</button>
+          <button class="btn" id="clear-questions" type="button" title="Clear the questions, answers, and brief">Clear questions</button>
         </form>
         <div class="analyst-tools">
           <div class="chips">${s.suggestions.map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
@@ -123,6 +126,16 @@ export async function analystPage(page, ctx) {
       <div id="conversation">${history.map((h, n) => answerHtml(h, n)).reverse().join('')}</div>`;
 
     $('#ask', page).addEventListener('submit', e => { e.preventDefault(); ask($('#q', page).value); });
+    $('#clear-questions', page).addEventListener('click', () => {
+      generation++;
+      history.length = 0;
+      questionText = '';
+      directBrief = null;
+      briefError = null;
+      briefing = false;
+      render();
+      $('#q', page).focus();
+    });
     $$('[data-q]', page).forEach(b => b.addEventListener('click', () => ask(b.dataset.q)));
     $('#brief', page).addEventListener('click', () => brief($('#brief-shift', page).value));
     $('#narrate', page)?.addEventListener('change', e => { narrate = e.target.checked; });
@@ -133,6 +146,8 @@ export async function analystPage(page, ctx) {
   async function ask(question) {
     question = (question ?? '').trim();
     if (!question) return;
+    questionText = '';
+    const requestGeneration = generation;
     const pending = { question, answer: null };
     page.querySelector('#conversation').insertAdjacentHTML('afterbegin', `<div class="analyst-turn"><div class="analyst-q">${esc(question)}</div><div class="muted">Working it out…</div></div>`);
     try {
@@ -140,15 +155,17 @@ export async function analystPage(page, ctx) {
     } catch (error) {
       pending.error = error;
     }
+    if (requestGeneration !== generation || !page.isConnected) return;
     history.push(pending);
     render();
   }
 
   async function brief(shift) {
+    const requestGeneration = generation;
     briefing = true; directBrief = null; briefError = null; render();
     const query = shift ? `?shift=${encodeURIComponent(shift)}` : '';
     const result = await tryGet(`/api/analyst/brief${query}`);
-    if (!page.isConnected) return;
+    if (requestGeneration !== generation || !page.isConnected) return;
     briefing = false;
     if (result.error) briefError = result.error;
     else directBrief = result.data;

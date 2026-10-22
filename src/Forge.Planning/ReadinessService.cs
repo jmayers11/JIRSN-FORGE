@@ -15,6 +15,15 @@ using Forge.Workforce.Contracts;
 
 namespace Forge.Planning;
 
+public sealed record ReallocationPlanProposal(
+    Guid PersonId,
+    string? SafetyAreaCode,
+    string? WorkCenterCode,
+    string? MachineCode,
+    string? ActivityCode,
+    bool AsTrainee,
+    bool Unassign = false);
+
 /// <summary>
 /// Read-side entry point for Phase 2 planning: loads one consistent snapshot, runs the deterministic
 /// engines and returns their results with evidence and fingerprints. Nothing here writes data.
@@ -149,6 +158,49 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         return EngineRunner.Run(reallocation, snapshot, new ReallocationRequest(proposal.PersonId.Value, proposed), snapshot.AsOf);
     }
 
+    /// <summary>Previews a cascading worker move scenario against one copied Forge snapshot. Nothing is committed.</summary>
+    public async Task<EngineRun<ReallocationPlanResult>> PreviewReallocationPlanAsync(
+        ForgePrincipal principal,
+        IReadOnlyList<ReallocationPlanProposal> proposals,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        ArgumentNullException.ThrowIfNull(proposals);
+        Demand(principal);
+        if (proposals.Count is < 1 or > 100)
+            throw new CommandRejectedException("invalid_reallocation_plan", "A scenario must contain between 1 and 100 proposed moves.");
+        if (proposals.Select(proposal => proposal.PersonId).Distinct().Count() != proposals.Count)
+            throw new CommandRejectedException("duplicate_worker_move", "Each worker can appear only once in a scenario. Update that worker's proposed destination instead.");
+
+        await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
+        var snapshot = await LoadSnapshotAsync(uow, ct);
+        var resources = uow.Store<IResourcesLookup>();
+        var moves = new List<ReallocationPlanMove>(proposals.Count);
+        foreach (var proposal in proposals)
+        {
+            var worker = snapshot.Person(proposal.PersonId)
+                ?? throw new CommandRejectedException("worker_not_found", "A worker in the scenario is not registered or visible.");
+            var currentCenter = worker.Assignment?.WorkCenterCode ?? worker.HomeWorkCenterCode;
+            DemandWorkforceScope(principal, proposal.PersonId, currentCenter);
+            if (proposal.Unassign)
+            {
+                moves.Add(new ReallocationPlanMove(proposal.PersonId, null));
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(proposal.WorkCenterCode))
+                DemandWorkforceScope(principal, proposal.PersonId, proposal.WorkCenterCode);
+            if (string.IsNullOrWhiteSpace(proposal.ActivityCode))
+                throw new CommandRejectedException("activity_required", "Choose an activity for every proposed work-center assignment.");
+
+            var proposed = await WorkforceService.ResolveAssignmentAsync(resources,
+                new AssignWork(new PersonId(proposal.PersonId), proposal.SafetyAreaCode, proposal.WorkCenterCode, proposal.MachineCode, proposal.ActivityCode, proposal.AsTrainee), ct);
+            moves.Add(new ReallocationPlanMove(proposal.PersonId, proposed));
+        }
+
+        return EngineRunner.Run(new ReallocationPlanEngine(), snapshot, moves, snapshot.AsOf);
+    }
+
     public async Task<SiteSnapshot> LoadSnapshotAsync(CancellationToken ct)
     {
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
@@ -267,5 +319,13 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         {
             throw new ForgeAuthorizationException(decision);
         }
+    }
+
+    private void DemandWorkforceScope(ForgePrincipal principal, Guid personId, string? workCenterCode)
+    {
+        var resource = new ResourceRef("Worker", personId.ToString("D"), WorkCenterId: workCenterCode);
+        var decision = authorizer.Authorize(principal, Permissions.WorkforceSupervise, resource);
+        if (!decision.IsPermitted && !authorizer.Authorize(principal, Permissions.WorkforceManage, resource).IsPermitted)
+            throw new ForgeAuthorizationException(decision);
     }
 }

@@ -76,6 +76,7 @@ export async function reportsPage(page, ctx) {
       reportId = definition.reportId;
       params = { ...Object.fromEntries(FILTER_KEYS.map(k => [k, ''])), ...Object.fromEntries(Object.entries(definition.parameters).filter(([, v]) => v !== null)) };
     }
+    if (reportId === 'accounting-bridge') return accountingBridgeView(page, ctx, head);
     const entry = state.catalog.find(e => e.id === reportId);
     if (!entry) { page.innerHTML = head('catalog') + emptyBlock('Report not available', 'This report does not exist or your roles do not include what it reports on.'); return; }
     return runView(page, ctx, state, head, entry, params, definition);
@@ -87,7 +88,7 @@ export async function reportsPage(page, ctx) {
 
 function catalogView(page, state, head) {
   const byCategory = Object.groupBy ? Object.groupBy(state.catalog, e => e.category) : state.catalog.reduce((a, e) => ((a[e.category] ??= []).push(e), a), {});
-  page.innerHTML = head('catalog') + (!state.catalog.length
+  page.innerHTML = head('catalog') + `<section class="panel"><header><h2>Accounting & reconciliation</h2></header><div class="report-grid"><a class="report-card" href="#/reports?report=accounting-bridge"><b>Accounting, Receiving & Grant Reconciliation Feed</b><span>Inventory movements, PO receiving and customer shipments in one ledger. Export CSV for QuickBooks, Xero or Excel, or JSON for an integration.</span><small class="muted">Up to 500 inventory transactions · access-filtered source records</small></a></div></section>` + (!state.catalog.length
     ? emptyBlock('No reports for your roles', 'Each report needs read access to what it reports on.')
     : Object.entries(byCategory).map(([cat, list]) => `
       <section class="panel"><header><h2>${esc(cat)}</h2></header>
@@ -97,6 +98,47 @@ function catalogView(page, state, head) {
             <small class="muted">Up to ${e.maxDays} days · group by ${e.groupBy.map(g => esc(e.columns.find(c => c.key === g)?.title ?? g)).join(', ')}</small>
           </a>`).join('')}</div>
       </section>`).join(''));
+}
+
+async function accountingBridgeView(page, ctx, head) {
+  const [transactions, purchaseOrders, shipments] = await Promise.all([
+    tryGet('/api/inventory/transactions?take=500'), tryGet('/api/procurement/purchase-orders'), tryGet('/api/inventory/shipments?includeClosed=true'),
+  ]);
+  const poByNumber = new Map((purchaseOrders.data ?? []).map(po => [po.poNumber, po]));
+  const shipmentById = new Map((shipments.data ?? []).map(shipment => [shipment.shipmentId, shipment]));
+  const transactionRows = (transactions.data ?? []).map(transaction => {
+    const kind = String(transaction.kind ?? '');
+    const category = ['Receipt', 'ProductionReceipt', 'CustomerReturn', 'MaintenanceReturn', 'ProjectReturn', 'QualityRelease', 'Remnant', 'Byproduct'].includes(kind) ? 'Receipt'
+      : ['Issue', 'MaintenanceIssue', 'ProjectIssue'].includes(kind) ? 'Order Issue'
+        : kind === 'Scrap' ? 'Scrap' : kind === 'CycleCount' || kind === 'Adjustment' ? 'Cycle Count'
+          : kind === 'Shipment' ? 'Shipment' : kind;
+    const negative = ['Issue', 'MaintenanceIssue', 'ProjectIssue', 'Scrap', 'Shipment', 'ReturnToVendor'].includes(kind);
+    const signed = Number(transaction.quantity ?? 0) * (negative ? -1 : 1);
+    const po = transaction.poNumber ? poByNumber.get(transaction.poNumber) : null;
+    const shipment = transaction.shipmentId ? shipmentById.get(transaction.shipmentId) : null;
+    const refs = [transaction.poNumber ? `PO #${transaction.poNumber}${po?.supplier ? ` · ${po.supplier}` : ''}` : '', transaction.orderNumber ? `Order #${transaction.orderNumber}` : '', transaction.shipmentId ? `Shipment #${transaction.shipmentId}${shipment?.reference ? ` · ${shipment.reference}` : ''}` : ''].filter(Boolean);
+    return {
+      transactionId: `TXN-${transaction.transactionId}`, timestamp: transaction.at, journalCategory: category, partNumber: transaction.partNumber,
+      lotNumber: transaction.lotNumber ?? '', location: transaction.toLocation ?? transaction.fromLocation ?? '', signedQty: signed,
+      reference: refs.join(' / '), programGrantCode: transaction.projectCode ?? transaction.grantCode ?? '', actor: transaction.actor, auditReason: transaction.reason ?? '',
+    };
+  });
+  const rows = transactionRows.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+  const columns = [
+    ['transactionId', 'Transaction ID'], ['timestamp', 'Timestamp'], ['journalCategory', 'Journal Category'], ['partNumber', 'Part Number'], ['lotNumber', 'Lot Number'],
+    ['location', 'Location'], ['signedQty', 'Signed Qty'], ['reference', 'Reference'], ['programGrantCode', 'Program / Grant Code'], ['actor', 'Actor'], ['auditReason', 'Audit Reason'],
+  ];
+  const csvCell = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const download = (filename, content, type) => {
+    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([`\uFEFF${content}`], { type }));
+    link.download = filename; document.body.append(link); link.click(); setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+  };
+  page.innerHTML = head('catalog') + `<section class="panel"><header><div><h2>Accounting, Receiving & Grant Reconciliation Feed</h2><div class="muted">${rows.length} inventory transaction(s), with purchase order and shipment references from records visible to your account.</div></div><span class="spacer"></span><button class="btn small" id="bridge-csv" ${transactions.error ? 'disabled' : ''}>Export CSV</button><button class="btn small" id="bridge-json" ${transactions.error ? 'disabled' : ''}>Export JSON</button></header>
+    ${(transactions.error || purchaseOrders.error || shipments.error) ? `<div class="notice warn">Some sources are unavailable; the feed includes only records from successful source reads. ${[transactions, purchaseOrders, shipments].filter(result => result.error).map(result => esc(result.error.message)).join(' · ')}</div>` : ''}
+    ${transactions.error ? errorBlock(transactions.error, 'inventory transactions') : rows.length ? `<div class="table-wrap"><table class="table"><thead><tr>${columns.map(([, label]) => `<th>${esc(label)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${columns.map(([key]) => `<td>${key === 'timestamp' ? esc(fmtDateTime(row[key])) : key === 'signedQty' ? fmtNumber(row[key], 3) : esc(row[key])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : emptyBlock('No inventory movements', 'Receipts, issues, scrap, counts and shipments will appear here as they are recorded.')}
+    <p class="faint">Basis: the inventory transaction ledger. Signed quantities follow the movement direction; purchase orders and shipments provide reference labels. The export does not post or modify accounting records.</p></section>`;
+  $('#bridge-csv', page)?.addEventListener('click', () => download('forge-accounting-bridge.csv', [columns.map(([, label]) => csvCell(label)), ...rows.map(row => columns.map(([key]) => csvCell(row[key])))].map(row => row.join(',')).join('\r\n'), 'text/csv;charset=utf-8'));
+  $('#bridge-json', page)?.addEventListener('click', () => download('forge-accounting-bridge.json', JSON.stringify({ schema: 'jirsn-forge.accounting-bridge.v1', generatedAt: new Date().toISOString(), rows }, null, 2), 'application/json;charset=utf-8'));
 }
 
 function savedView(page, ctx, state, head) {

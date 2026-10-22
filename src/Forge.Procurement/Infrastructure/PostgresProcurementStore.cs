@@ -13,7 +13,7 @@ internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcur
         await command.ExecuteScalarAsync(ct);
     }
     private const string OrderSql = "SELECT po_number, supplier, status, created_by, created_at, approved_by, approved_at, supplier_code FROM procurement.purchase_order";
-    private const string LineSql = "SELECT po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status, requisition_id, source_kind, source_key, source_label FROM procurement.purchase_order_line";
+    private const string LineSql = "SELECT po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status, requisition_id, source_kind, source_key, source_label, unit_price, currency FROM procurement.purchase_order_line";
 
     private const string RequisitionSql =
         """
@@ -36,12 +36,13 @@ internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcur
         ArgumentNullException.ThrowIfNull(line);
         await using var cmd = uow.Command(
             """
-            INSERT INTO procurement.purchase_order_line (po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status, requisition_id, source_kind, source_key, source_label)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING
+            INSERT INTO procurement.purchase_order_line (po_number, line_number, part_number, quantity, unit_of_measure, promised_date, status, requisition_id, source_kind, source_key, source_label, unit_price, currency)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT DO NOTHING
             """,
             poNumber, line.LineNumber, line.PartNumber, line.Quantity, line.UnitOfMeasure, line.PromisedDate, line.Status.ToString(),
             new NpgsqlParameter { Value = (object?)line.RequisitionId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint },
-            Text(line.SourceKind?.ToString()), Text(line.SourceKey), Text(line.SourceLabel));
+            Text(line.SourceKind?.ToString()), Text(line.SourceKey), Text(line.SourceLabel),
+            new NpgsqlParameter { Value = (object?)line.UnitPrice ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric }, line.Currency);
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
@@ -206,7 +207,8 @@ internal sealed class PostgresProcurementStore(PostgresUnitOfWork uow) : IProcur
     private static (long PoNumber, PurchaseLineInfo Line) ReadLine(NpgsqlDataReader r) => (
         r.GetInt64(0),
         new PurchaseLineInfo(r.GetInt32(1), r.GetString(2), (r.GetDecimal(3) / 1.000000000000000000000000000000000m), r.GetString(4), r.GetFieldValue<DateOnly>(5), Enum.Parse<PurchaseLineStatus>(r.GetString(6)),
-            r.IsDBNull(7) ? null : r.GetInt64(7), r.IsDBNull(8) ? null : Enum.Parse<PurchaseSourceKind>(r.GetString(8)), r.IsDBNull(9) ? null : r.GetString(9), r.IsDBNull(10) ? null : r.GetString(10)));
+            r.IsDBNull(7) ? null : r.GetInt64(7), r.IsDBNull(8) ? null : Enum.Parse<PurchaseSourceKind>(r.GetString(8)), r.IsDBNull(9) ? null : r.GetString(9), r.IsDBNull(10) ? null : r.GetString(10),
+            r.IsDBNull(11) ? null : r.GetDecimal(11), r.GetString(12)));
 
     public async Task<long> InsertRequisitionAsync(RequisitionInfo q, CancellationToken ct)
     {

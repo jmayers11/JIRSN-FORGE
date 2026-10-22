@@ -1,7 +1,7 @@
 import { tryGet, command, upload, download } from '../api.js';
 import { who } from '../people.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, drawer, confirmWithReason } from '../ui.js';
-import { formModal, canAction, today } from '../forms.js';
+import { formModal, canAction, today, csvImportModal } from '../forms.js';
 import { historyButton } from '../history.js';
 import { appendAttachments, TYPE_LABEL, MARKING_LABEL, markings, markingPills, fileSize, fileUrl } from '../attachments.js';
 
@@ -12,7 +12,7 @@ import { appendAttachments, TYPE_LABEL, MARKING_LABEL, markings, markingPills, f
 export const CLASS_LABEL = {
   Unclassified: 'Unclassified', Make: 'Make', BuildToPrint: 'Build to print', Cots: 'COTS', RawMaterial: 'Raw material',
   StandardHardware: 'Standard hardware', Consumable: 'Consumable', Mro: 'MRO / spare', Tooling: 'Tooling',
-  Service: 'Service / special process', OtherControlled: 'Other controlled',
+  Service: 'Service / special process', OtherControlled: 'Other controlled', Packaging: 'Packaging',
 };
 const ALWAYS_BOUGHT = ['BuildToPrint', 'Cots', 'RawMaterial', 'StandardHardware', 'Consumable', 'Service'];
 const LIFECYCLE_LABEL = { Active: 'Active', NotRecommended: 'Not recommended for new designs', LastTimeBuy: 'Last-time buy', EndOfLife: 'End of life', Unknown: 'Unknown' };
@@ -22,6 +22,8 @@ const MPN_CLASSES = ['Cots', 'RawMaterial', 'StandardHardware', 'Consumable', 'M
 
 const classesFor = makeBuy => Object.entries(CLASS_LABEL)
   .filter(([k]) => k !== 'Unclassified' && (k === 'Make' ? makeBuy === 'Make' : makeBuy === 'Buy' || !ALWAYS_BOUGHT.includes(k)));
+const creationClassesFor = makeBuy => Object.entries(CLASS_LABEL)
+  .filter(([k]) => k === 'Unclassified' || (k === 'Make' ? makeBuy === 'Make' : makeBuy === 'Buy' || !ALWAYS_BOUGHT.includes(k)));
 
 export function routingOperationBody(v) {
   const sequence = Number(v.sequence), setupMinutes = Number(v.setupMinutes), runMinutesPerUnit = Number(v.runMinutesPerUnit), crewSize = Number(v.crewSize);
@@ -46,17 +48,19 @@ export async function engineeringPage(page, ctx) {
   const [first, second] = ctx.params;
   if (first === 'documents') return second ? documentDetail(page, ctx, decodeURIComponent(second)) : documentList(page, ctx);
   if (first === 'changes') return second ? changeDetail(page, ctx, decodeURIComponent(second)) : changeList(page, ctx);
+  if (first === 'structure') return parentStructurePage(page, ctx, second ? decodeURIComponent(second) : null);
   if (first === 'actions') return actionList(page, ctx);
   if (first === 'alternates') return alternateList(page, ctx);
   if (first === 'obsolescence') return obsolescenceList(page, ctx);
   return first ? itemDetail(page, ctx, decodeURIComponent(first)) : itemList(page, ctx);
 }
 
-const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['documents', 'Documents', '#/engineering/documents'], ['changes', 'Changes', '#/engineering/changes'], ['actions', 'Change actions', '#/engineering/actions'], ['alternates', 'Alternates', '#/engineering/alternates'], ['obsolescence', 'Obsolescence', '#/engineering/obsolescence']]
+const tabs = active => `<div class="seg" style="margin-bottom:12px">${[['items', 'Items', '#/engineering'], ['structure', 'Parent Parts', '#/engineering/structure'], ['documents', 'Documents', '#/engineering/documents'], ['changes', 'Changes', '#/engineering/changes'], ['actions', 'Change actions', '#/engineering/actions'], ['alternates', 'Alternates', '#/engineering/alternates'], ['obsolescence', 'Obsolescence', '#/engineering/obsolescence']]
   .map(([k, l, href]) => `<button class="${active === k ? 'on' : ''}" data-nav="${href}">${l}</button>`).join('')}</div>`;
 const wireTabs = page => $$('[data-nav]', page).forEach(b => b.addEventListener('click', () => { location.hash = b.dataset.nav; }));
 
 async function itemList(page, ctx) {
+  const engineer = canAction(ctx.me, 'engineering.manage');
   const filter = ctx.query.get('class') ?? '';
   const [items, mpns] = await Promise.all([tryGet('/api/engineering/items'), tryGet('/api/engineering/manufacturer-parts')]);
   if (items.error) { page.innerHTML = errorBlock(items.error, 'items'); return; }
@@ -67,7 +71,7 @@ async function itemList(page, ctx) {
   const list = filter ? all.filter(i => i.class === filter) : all;
   const cotsWithout = all.filter(i => i.class === 'Cots' && !approved.get(i.partNumber));
   page.innerHTML = `
-    <div class="page-head"><div><h1>Engineering</h1><div class="sub">Items and what they are. The class decides how an item is bought, documented, inspected and substituted.</div></div></div>
+    <div class="page-head"><div><h1>Engineering</h1><div class="sub">Items and what they are. The class decides how an item is bought, documented, inspected and substituted.</div></div><span class="spacer"></span>${engineer ? '<button class="btn" id="import-items-csv">Import items CSV</button><button class="btn primary" id="new-item">+ New item</button>' : ''}</div>
     ${tabs('items')}
     ${counts.Unclassified ? `<div class="notice warn">${counts.Unclassified} item(s) are unclassified. Forge does not guess: classify them so purchasing, documentation and substitution rules apply. <a href="#/engineering?class=Unclassified">Show them</a></div>` : ''}
     ${cotsWithout.length ? `<div class="notice bad">${cotsWithout.length} COTS item(s) have no approved manufacturer part, so they cannot be bought: ${cotsWithout.map(i => `<a href="#/engineering/${encodeURIComponent(i.partNumber)}">${esc(i.partNumber)}</a>`).join(', ')}.</div>` : ''}
@@ -82,6 +86,37 @@ async function itemList(page, ctx) {
       </tbody></table></div>`}
     </section>`;
   wireTabs(page);
+  $('#new-item', page)?.addEventListener('click', () => {
+    let partNumber = '';
+    formModal({ title: 'Create engineering item', detail: 'Defines a new part master record. Create and release a draft revision before scheduling production.', confirmLabel: 'Create item', reasonRequired: true,
+      fields: [
+        { name: 'partNumber', label: 'Part number', code: true, required: true, placeholder: 'ASSY-200' },
+        { name: 'description', label: 'Description', required: true },
+        { name: 'unitOfMeasure', label: 'Unit of measure', type: 'select', value: 'EA', required: true, options: [['EA', 'EA — Each'], ['KG', 'KG — Kilogram'], ['M', 'M — Meter'], ['L', 'L — Liter'], ['SET', 'SET — Kit / Set']] },
+        { name: 'makeBuy', label: 'Make or buy', type: 'select', value: 'Make', options: [['Make', 'Make (manufactured in-house)'], ['Buy', 'Buy (purchased from supplier)']], onChange: (element, modal) => {
+          const classSelect = $('#f-class', modal), current = classSelect.value;
+          const classes = creationClassesFor(element.value);
+          classSelect.innerHTML = classes.map(([value, label]) => `<option value="${esc(value)}" ${value === current ? 'selected' : ''}>${esc(label)}</option>`).join('');
+          if (!classes.some(([value]) => value === current)) classSelect.value = element.value === 'Make' ? 'Make' : 'Unclassified';
+        } },
+        { name: 'class', label: 'Engineering class', type: 'select', value: 'Make', options: creationClassesFor('Make') },
+        { name: 'leadTimeDays', label: 'Planning lead time (days)', type: 'number', value: 5, min: 0, max: 365, required: true },
+        { name: 'lotTracked', label: 'Track inventory by lot number', type: 'check', text: 'Track inventory by lot number', value: true },
+        { name: 'serialized', label: 'Track individual serial numbers', type: 'check', text: 'Track individual serial numbers', value: false },
+      ] }, (v, reason) => { partNumber = v.partNumber; return command('/api/engineering/items', { ...v, leadTimeDays: Number(v.leadTimeDays) }, reason); },
+    () => { location.hash = `#/engineering/${encodeURIComponent(partNumber)}`; });
+  });
+  $('#import-items-csv', page)?.addEventListener('click', () => csvImportModal({
+    title: 'Import engineering items', detail: 'Each row creates one item master. Existing part numbers are reported as rejected rows.',
+    columns: [
+      { name: 'partNumber', label: 'Part number', required: true }, { name: 'description', label: 'Description', required: true },
+      { name: 'unitOfMeasure', label: 'Unit of measure', required: true }, { name: 'makeBuy', label: 'Make or buy', required: true, options: ['Make', 'Buy'] },
+      { name: 'class', label: 'Engineering class', required: true, options: Object.keys(CLASS_LABEL) },
+      { name: 'leadTimeDays', label: 'Lead time days', type: 'number', required: true, min: 0, max: 365 },
+      { name: 'lotTracked', label: 'Lot tracked', type: 'boolean', required: true }, { name: 'serialized', label: 'Serialized', type: 'boolean', required: true },
+    ], sampleRows: [{ partNumber: 'ASSY-200', description: 'Manifold assembly', unitOfMeasure: 'EA', makeBuy: 'Make', class: 'Make', leadTimeDays: 5, lotTracked: true, serialized: false }],
+    onRow: (row, reason) => command('/api/engineering/items', row, reason),
+  }, () => itemList(page, ctx)));
   $('#class-filter', page).onchange = e => { location.hash = e.target.value ? `#/engineering?class=${e.target.value}` : '#/engineering'; };
   $$('[data-part]', page).forEach(r => r.addEventListener('click', () => { location.hash = `#/engineering/${encodeURIComponent(r.dataset.part)}`; }));
 }
@@ -102,7 +137,7 @@ async function itemDetail(page, ctx, partNumber) {
 
   page.innerHTML = `
     <div class="page-head"><div><a href="#/engineering" class="faint">← Items</a><h1>${esc(item.partNumber)} ${historyButton(item.partNumber, 'item')}</h1><div class="sub">${esc(item.description)} · ${esc(item.makeBuy)} · ${esc(item.unitOfMeasure)} · lead time ${item.leadTimeDays} days</div></div>
-      <div class="spacer"></div>${engineer ? '<button class="btn" id="classify">Classify</button>' : ''}</div>
+      <div class="spacer"></div>${engineer ? `<a class="btn primary" href="#/engineering/structure/${encodeURIComponent(item.partNumber)}">Parent part workspace</a><button class="btn" id="classify">Classify</button>` : ''}</div>
     <section class="panel"><header><h2>Class</h2></header>
       <p><span class="pill ${item.class === 'Unclassified' ? 'warn' : 'info'}">${esc(CLASS_LABEL[item.class] ?? item.class)}</span>
       ${item.class === 'Unclassified' ? ' Not classified yet. Forge applies no class-based rule to it and does not guess one.' : ''}
@@ -445,6 +480,298 @@ async function appendRoutingOperations(page, ctx, item) {
         reason => command(`${revisionUrl(selected)}/routing/${operationSequence}/remove`, {}, reason));
       if (result) await reload();
     }));
+  }
+
+  await render();
+}
+
+async function parentStructurePage(page, ctx, selectedPart) {
+  const { data: items, error: itemsError } = await tryGet('/api/engineering/items');
+  if (itemsError) { page.innerHTML = errorBlock(itemsError, 'items'); return; }
+  const allItems = items ?? [];
+  const manage = canAction(ctx.me, 'engineering.manage');
+  const itemByPart = new Map(allItems.map(item => [item.partNumber, item]));
+
+  if (!selectedPart) {
+    const candidates = allItems.slice().sort((a, b) => a.partNumber.localeCompare(b.partNumber));
+    page.innerHTML = `
+      <div class="page-head"><div><h1>Parent part workspace</h1><div class="sub">Choose a part to review its engineering revision, bill of materials and routing operations together.</div></div></div>
+      ${tabs('structure')}
+      <section class="panel"><header><div><h2>Parent parts</h2><div class="faint">Search by part number or description. The engineering revision shown in the workspace is separate from MRP’s low-level planning code.</div></div><span class="spacer"></span><span class="pill none">${candidates.length} parts</span></header>
+        <div class="field" style="max-width:460px"><label for="parent-search">Search parts</label><input class="input" id="parent-search" type="search" placeholder="Part number or description"></div>
+        ${candidates.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Part</th><th>Description</th><th>Make / buy</th><th>Unit</th><th></th></tr></thead><tbody id="parent-parts-rows"></tbody></table></div>` : emptyBlock('No parts yet', 'Create an Engineering item before defining its structure.')}
+      </section>`;
+    wireTabs(page);
+    const search = $('#parent-search', page);
+    const rows = $('#parent-parts-rows', page);
+    const renderRows = () => {
+      if (!rows) return;
+      const needle = (search?.value ?? '').trim().toLowerCase();
+      const filtered = candidates.filter(item => `${item.partNumber} ${item.description}`.toLowerCase().includes(needle));
+      rows.innerHTML = filtered.length ? filtered.map(item => `<tr><td><b>${esc(item.partNumber)}</b></td><td>${esc(item.description)}</td><td>${esc(item.makeBuy)}</td><td>${esc(item.unitOfMeasure)}</td><td><a class="btn small" href="#/engineering/structure/${encodeURIComponent(item.partNumber)}">Open</a></td></tr>`).join('')
+        : `<tr><td colspan="5">${emptyBlock('No matches', 'Try a different part number or description.')}</td></tr>`;
+    };
+    search?.addEventListener('input', renderRows);
+    renderRows();
+    return;
+  }
+
+  const item = itemByPart.get(selectedPart);
+  if (!item) {
+    page.innerHTML = `${tabs('structure')}<section class="panel">${emptyBlock('Part not found', `There is no part ${selectedPart}.`)}</section>`;
+    wireTabs(page);
+    return;
+  }
+
+  const encodedPart = encodeURIComponent(item.partNumber);
+  const [revisionResult, resourcesResult, qualificationsResult] = await Promise.all([
+    tryGet(`/api/engineering/items/${encodedPart}/revisions`),
+    manage ? tryGet('/api/resources/') : Promise.resolve({ data: null }),
+    manage ? tryGet('/api/competency/qualification-types') : Promise.resolve({ data: [] }),
+  ]);
+  if (revisionResult.error) { page.innerHTML = `${tabs('structure')}<section class="panel">${errorBlock(revisionResult.error, 'item revisions')}</section>`; wireTabs(page); return; }
+  const revisions = revisionResult.data ?? [];
+  const revisionFromQuery = ctx.query.get('revision');
+  let selectedRevision = revisions.some(revision => revision.revision === revisionFromQuery) ? revisionFromQuery
+    : revisions.find(revision => revision.status === 'Draft')?.revision ?? revisions.at(-1)?.revision ?? '';
+  let activeTab = ['operations', 'tree'].includes(ctx.query.get('tab')) ? ctx.query.get('tab') : 'bom';
+  const resources = resourcesResult.data;
+  const workCenters = resources?.workCenters ?? [];
+  const activities = resources?.activityTypes ?? [];
+  const qualifications = qualificationsResult.data ?? [];
+  const revisionUrl = revision => `/api/engineering/items/${encodedPart}/revisions/${encodeURIComponent(revision)}`;
+  let nextLine = 10;
+  let nextSequence = 10;
+  let renderSequence = 0;
+
+  async function reload(preferRevision = selectedRevision) {
+    const result = await tryGet(`/api/engineering/items/${encodedPart}/revisions`);
+    if (result.error) { page.innerHTML = `${tabs('structure')}<section class="panel">${errorBlock(result.error, 'item revisions')}</section>`; wireTabs(page); return; }
+    const updatedRevisions = result.data ?? [];
+    revisions.splice(0, revisions.length, ...updatedRevisions);
+    selectedRevision = revisions.some(revision => revision.revision === preferRevision) ? preferRevision
+      : revisions.find(revision => revision.status === 'Draft')?.revision ?? revisions.at(-1)?.revision ?? '';
+    await render();
+  }
+
+  function statusLabel(revision) {
+    if (!revision) return 'No revision';
+    if (revision.status === 'Draft') return 'Draft';
+    const from = revision.effectiveFrom ? fmtDate(revision.effectiveFrom) : 'date not set';
+    const to = revision.effectiveTo ? ` · ended ${fmtDate(revision.effectiveTo)}` : '';
+    return `Released · effective ${from}${to}`;
+  }
+
+  async function render() {
+    const sequence = ++renderSequence;
+    const revision = revisions.find(candidate => candidate.revision === selectedRevision) ?? null;
+    const detailResult = revision ? await tryGet(revisionUrl(selectedRevision)) : null;
+    if (sequence !== renderSequence) return;
+    const detail = detailResult?.data;
+    const isDraft = revision?.status === 'Draft';
+    const editable = manage && isDraft;
+    const bom = detail?.bom ?? [];
+    const operations = detail?.routing ?? [];
+    const treeHtml = activeTab === 'tree' ? await renderIndentedTree(bom) : '';
+    if (sequence !== renderSequence) return;
+    const revisionOptions = revisions.map(candidate => `<option value="${esc(candidate.revision)}" ${candidate.revision === selectedRevision ? 'selected' : ''}>Rev ${esc(candidate.revision)} · ${esc(candidate.status)}</option>`).join('');
+    nextLine = Math.min(9999, Math.max(0, ...bom.map(line => line.lineNumber)) + 10);
+    nextSequence = Math.min(9999, Math.max(0, ...operations.map(operation => operation.sequence)) + 10);
+    page.innerHTML = `
+      <div class="page-head"><div><a href="#/engineering/structure" class="faint">← Parent parts</a><h1>${esc(item.partNumber)} <span class="faint">·</span> ${esc(item.description)}</h1><div class="sub">${esc(item.makeBuy)} · ${esc(item.unitOfMeasure)} · Engineering structure and routing</div></div>
+        <div class="spacer"></div><a class="btn" href="#/engineering/${encodedPart}">Item details</a></div>
+      ${tabs('structure')}
+      <section class="panel structure-summary" aria-label="Parent part revision">
+        <header><div><h2>Parent part definition</h2><div class="faint">Changes apply to draft revisions only. Released revisions remain frozen, and released orders keep their captured definition.</div></div><span class="spacer"></span>
+          ${revisions.length ? `<label for="parent-revision">Engineering revision</label><select class="select" id="parent-revision">${revisionOptions}</select>` : '<span class="pill warn">No engineering revision</span>'}
+          ${manage && !revisions.some(candidate => candidate.status === 'Draft') ? '<button class="btn small primary" id="parent-new-revision">New draft revision</button>' : ''}
+          ${manage && !revisions.length ? '<button class="btn small primary" id="parent-first-revision">Create first revision</button>' : ''}
+          ${manage && isDraft ? '<button class="btn small primary" id="parent-release-revision">Release revision</button>' : ''}
+          ${manage && revision?.status === 'Released' ? '<button class="btn small danger" id="parent-withdraw-revision">Withdraw revision</button>' : ''}
+        </header>
+        ${revision ? `<div class="structure-revision-facts"><div><span>Part</span><b>${esc(item.partNumber)}</b></div><div><span>Engineering revision</span><b>${esc(revision.revision)}</b></div><div><span>Status</span><b><span class="pill ${isDraft ? 'warn' : 'ok'}">${esc(statusLabel(revision))}</span></b></div><div><span>Definition</span><b>${bom.length} BOM lines · ${operations.length} operations</b></div></div>` : `<div class="notice">Create the first draft revision to define this part’s bill of materials and operations.</div>`}
+      </section>
+      ${revision ? `<section class="panel" aria-label="Parent part structure">
+        <header><div class="seg" role="tablist" aria-label="Engineering definition">${[['bom', 'Bill of materials'], ['operations', 'Operations'], ['tree', 'Indented multi-level tree']].map(([key, label]) => `<button role="tab" aria-selected="${activeTab === key}" data-structure-tab="${key}" class="${activeTab === key ? 'on' : ''}">${label}</button>`).join('')}</div><span class="spacer"></span>
+          ${editable && activeTab === 'bom' ? '<button class="btn small" id="parent-import-bom">Import BOM CSV</button><button class="btn small primary" id="parent-add-component">Add component</button>' : ''}
+          ${editable && activeTab === 'operations' ? '<button class="btn small primary" id="parent-add-operation">Add operation</button>' : ''}
+        </header>
+        ${detailResult?.error ? errorBlock(detailResult.error, 'revision definition') : activeTab === 'bom' ? renderBomTable(bom, allItems, editable) : activeTab === 'tree' ? treeHtml : renderOperationsTable(operations, editable)}
+        ${!isDraft ? '<div class="faint" style="margin-top:10px">This released definition is read-only. Create a new draft revision to make changes.</div>' : ''}
+      </section>` : ''}
+      ${manage && !resourcesResult.data && resourcesResult.error ? `<section class="panel">${errorBlock(resourcesResult.error, 'plant resources')}</section>` : ''}`;
+    wireTabs(page);
+    $('#parent-revision', page)?.addEventListener('change', event => { selectedRevision = event.target.value; render(); });
+    $$('[data-structure-tab]', page).forEach(button => button.addEventListener('click', () => { activeTab = button.dataset.structureTab; render(); }));
+    $('#parent-new-revision', page)?.addEventListener('click', () => createRevision());
+    $('#parent-first-revision', page)?.addEventListener('click', () => createRevision());
+    $('#parent-release-revision', page)?.addEventListener('click', () => formModal({ title: `Release ${item.partNumber} revision ${selectedRevision}`, detail: 'Released engineering definitions are frozen and copied to new production orders. Another authorized engineer must approve your release.', confirmLabel: 'Release revision', reasonRequired: true,
+      fields: [{ name: 'effectiveFrom', label: 'Effective from (optional)', type: 'date', value: today() }] },
+    (values, reason) => command(`${revisionUrl(selectedRevision)}/release`, { effectiveFrom: values.effectiveFrom ? new Date(`${values.effectiveFrom}T00:00:00`).toISOString() : null }, reason), () => reload(selectedRevision)));
+    $('#parent-withdraw-revision', page)?.addEventListener('click', async () => {
+      const done = await confirmWithReason({ title: `Withdraw ${item.partNumber} revision ${selectedRevision}`, detail: 'The revision remains in history but is no longer effective for new work.', confirmLabel: 'Withdraw revision', reasonRequired: true },
+        reason => command(`${revisionUrl(selectedRevision)}/withdraw`, {}, reason));
+      if (done) { toast(done.message); await reload(selectedRevision); }
+    });
+    $('#parent-add-component', page)?.addEventListener('click', () => editBomLine(null));
+    $('#parent-import-bom', page)?.addEventListener('click', () => csvImportModal({
+      title: `Import BOM for ${item.partNumber} rev ${selectedRevision}`, detail: 'Rows are added sequentially to this draft revision. Keep line numbers unique; rejected rows stay visible in the preview.',
+      columns: [
+        { name: 'lineNumber', label: 'Line number', type: 'number', required: true, min: 1, max: 9999 },
+        { name: 'componentPartNumber', label: 'Component part', required: true },
+        { name: 'quantityPer', label: 'Quantity per', type: 'number', required: true, min: 0.000001 },
+        { name: 'scrapPercent', label: 'Scrap percent', type: 'number', required: true, min: 0, max: 99.99 },
+      ], sampleRows: [{ lineNumber: 10, componentPartNumber: allItems.find(candidate => candidate.partNumber !== item.partNumber)?.partNumber ?? 'MAT-100', quantityPer: 1, scrapPercent: 0 }],
+      onRow: (row, reason) => command(`${revisionUrl(selectedRevision)}/bom`, row, reason),
+    }, async () => render()));
+    $$('[data-bom-edit]', page).forEach(button => button.addEventListener('click', () => editBomLine(bom.find(line => line.lineNumber === Number(button.dataset.bomEdit)))));
+    $$('[data-bom-remove]', page).forEach(button => button.addEventListener('click', () => removeBomLine(Number(button.dataset.bomRemove))));
+    $('#parent-add-operation', page)?.addEventListener('click', () => editOperation(null));
+    $$('[data-operation-edit]', page).forEach(button => button.addEventListener('click', () => editOperation(operations.find(operation => operation.sequence === Number(button.dataset.operationEdit)))));
+    $$('[data-operation-remove]', page).forEach(button => button.addEventListener('click', () => removeOperation(Number(button.dataset.operationRemove))));
+  }
+
+  async function renderIndentedTree(rootLines) {
+    const revisionCache = new Map();
+    const lookup = itemByPart;
+    const revisionDetail = async part => {
+      if (!revisionCache.has(part)) revisionCache.set(part, (async () => {
+        const revisionsResult = await tryGet(`/api/engineering/items/${encodeURIComponent(part)}/revisions`);
+        if (revisionsResult.error) return null;
+        const childRevisions = revisionsResult.data ?? [];
+        const childRevision = childRevisions.find(candidate => candidate.status === 'Released') ?? childRevisions.find(candidate => candidate.status === 'Draft');
+        if (!childRevision) return null;
+        const detail = await tryGet(`/api/engineering/items/${encodeURIComponent(part)}/revisions/${encodeURIComponent(childRevision.revision)}`);
+        return detail.error ? null : detail.data;
+      })());
+      return revisionCache.get(part);
+    };
+    const lines = [];
+    async function expand(parentPart, children, parentQuantity, depth, path) {
+      for (const [index, line] of children.entries()) {
+        const child = lookup.get(line.componentPartNumber);
+        const qty = parentQuantity * Number(line.quantityPer ?? 0);
+        const connector = index === children.length - 1 ? '└─' : '├─';
+        const prefix = depth === 1 ? connector : `${'│  '.repeat(depth - 1)}${connector}`;
+        const repeated = path.has(line.componentPartNumber);
+        const capped = depth >= 6;
+        let descendants = [];
+        if (!repeated && !capped && child) descendants = (await revisionDetail(child.partNumber))?.bom ?? [];
+        let critical = Number(child?.leadTimeDays ?? 0);
+        if (!repeated && descendants.length) {
+          const childrenPaths = await Promise.all(descendants.map(async nested => {
+            if (path.has(nested.componentPartNumber) || nested.componentPartNumber === child.partNumber) return 0;
+            const next = lookup.get(nested.componentPartNumber);
+            if (!next || depth + 1 >= 6) return Number(next?.leadTimeDays ?? 0);
+            const nestedBom = (await revisionDetail(next.partNumber))?.bom ?? [];
+            return Number(next.leadTimeDays ?? 0) + await descendantsCritical(nestedBom, next.partNumber, new Set([...path, child.partNumber, next.partNumber]), depth + 2);
+          }));
+          critical += Math.max(0, ...childrenPaths);
+        }
+        const note = repeated ? 'Cycle guarded' : capped ? 'Expansion limit reached' : !child ? 'Item details unavailable' : '';
+        lines.push(`<tr><td class="mono">L${depth}</td><td><span class="bom-tree-connector">${esc(prefix)}</span> <a href="#/engineering/${encodeURIComponent(line.componentPartNumber)}"><b>${esc(line.componentPartNumber)}</b></a>${note ? `<div class="faint">${esc(note)}</div>` : ''}</td><td>${esc(child?.description ?? 'Part description unavailable')}</td><td>${child ? `<span class="pill ${child.makeBuy === 'Make' ? 'info' : 'none'}">${esc(child.makeBuy)}</span>` : '—'}</td><td class="num">${qty.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${esc(child?.unitOfMeasure ?? '')}</td><td class="num">${child?.leadTimeDays ?? '—'} days</td><td class="num"><b>${critical} days</b></td></tr>`);
+        if (descendants.length && !repeated && !capped && child) await expand(child.partNumber, descendants, qty, depth + 1, new Set([...path, line.componentPartNumber]));
+      }
+    }
+    async function descendantsCritical(children, parent, path, depth) {
+      if (depth > 6 || !children.length) return 0;
+      let longest = 0;
+      for (const line of children) {
+        if (path.has(line.componentPartNumber)) continue;
+        const child = lookup.get(line.componentPartNumber);
+        if (!child) continue;
+        const nested = depth >= 6 ? [] : (await revisionDetail(child.partNumber))?.bom ?? [];
+        longest = Math.max(longest, Number(child.leadTimeDays ?? 0) + await descendantsCritical(nested, child.partNumber, new Set([...path, line.componentPartNumber]), depth + 1));
+      }
+      return longest;
+    }
+    const rootCritical = Number(item.leadTimeDays ?? 0) + await descendantsCritical(rootLines, item.partNumber, new Set([item.partNumber]), 1);
+    await expand(item.partNumber, rootLines, 1, 1, new Set([item.partNumber]));
+    if (!lines.length) return emptyBlock('No components in this revision', 'Add BOM lines to show the multi-level engineering structure.');
+    return `<div class="notice info">Critical-path lead time for ${esc(item.partNumber)}: <b>${rootCritical} days</b>. Each subassembly expands through its latest released revision, or its draft when none is released; recursion stops at six levels and detects cycles.</div><div class="table-wrap"><table class="table"><thead><tr><th>Level</th><th>Component</th><th>Description</th><th>Make / buy</th><th class="num">Extended qty / parent</th><th class="num">Item lead time</th><th class="num">Critical path</th></tr></thead><tbody>${lines.join('')}</tbody></table></div>`;
+  }
+
+  function renderBomTable(lines, itemsList, editable) {
+    if (!lines.length) return emptyBlock('No components in this revision', editable ? 'Add the material and parts this parent consumes.' : 'No BOM lines were released for this revision.');
+    const lookup = new Map(itemsList.map(candidate => [candidate.partNumber, candidate]));
+    return `<div class="table-wrap"><table class="table"><thead><tr><th>Line</th><th>Component part</th><th>Description</th><th class="num">Qty per</th><th class="num">Scrap</th><th>Alternate policy</th>${editable ? '<th></th>' : ''}</tr></thead><tbody>
+      ${lines.map(line => `<tr><td>${line.lineNumber}</td><td><a href="#/engineering/${encodeURIComponent(line.componentPartNumber)}"><b>${esc(line.componentPartNumber)}</b></a></td><td>${esc(lookup.get(line.componentPartNumber)?.description ?? 'Part description unavailable')}</td><td class="num">${Number(line.quantityPer).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${esc(lookup.get(line.componentPartNumber)?.unitOfMeasure ?? '')}</td><td class="num">${Number(line.scrapPercent).toLocaleString(undefined, { maximumFractionDigits: 2 })}%</td><td>${esc(POLICY_LABEL[line.policy] ?? line.policy ?? 'Suggest')}</td>${editable ? `<td class="nowrap"><button class="btn small" data-bom-edit="${line.lineNumber}">Edit</button> <button class="btn small ghost" data-bom-remove="${line.lineNumber}">Remove</button></td>` : ''}</tr>`).join('')}
+      </tbody></table></div>`;
+  }
+
+  function renderOperationsTable(operations, editable) {
+    if (!operations.length) return emptyBlock('No operations in this revision', editable ? 'Add the manufacturing steps used to build this part.' : 'No routing operations were released for this revision.');
+    return `<div class="table-wrap"><table class="table"><thead><tr><th>Step</th><th>Operation</th><th>Work center / activity</th><th>Machines / qualifications</th><th>Set-up and run</th>${editable ? '<th></th>' : ''}</tr></thead><tbody>
+      ${operations.map(operation => `<tr><td>${operation.sequence}</td><td><b>${esc(operation.description)}</b></td><td>${esc(operation.workCenterCode)} · ${esc(operation.activityCode)}</td><td>${esc(operation.eligibleMachines?.join(', ') || 'Any allowed machine')}<div class="faint">${esc(operation.requiredQualifications?.join(', ') || 'No additional qualifications')}</div></td><td>${Number(operation.setupMinutes).toLocaleString()} min set-up${operation.setupFamily ? `<div class="faint">${esc(operation.setupFamily)} · ${Number(operation.familySetupMinutes).toLocaleString()} min same family</div>` : ''}<div class="faint">Run ${Number(operation.runMinutesPerUnit).toLocaleString()} min/unit · crew ${operation.crewSize}</div></td>${editable ? `<td class="nowrap"><button class="btn small" data-operation-edit="${operation.sequence}">Edit</button> <button class="btn small ghost" data-operation-remove="${operation.sequence}">Remove</button></td>` : ''}</tr>`).join('')}
+      </tbody></table></div>`;
+  }
+
+  function createRevision() {
+    let newRevision = '';
+    formModal({ title: `New revision of ${item.partNumber}`, detail: 'Create a draft to add, remove or update components and routing. A separate authorized person releases it.', reasonRequired: true, confirmLabel: 'Create revision',
+      fields: [{ name: 'revision', label: 'Revision code', code: true, required: true, placeholder: 'A, B, 1, 2…' }] },
+    (values, reason) => { newRevision = values.revision; return command(`/api/engineering/items/${encodedPart}/revisions`, values, reason); },
+    () => reload(newRevision));
+  }
+
+  function editBomLine(line) {
+    const fields = line ? [
+      { name: 'lineNumber', label: 'Line number', type: 'number', value: line.lineNumber, min: 1, max: 9999, readonly: true, required: true },
+      { name: 'componentPartNumber', label: 'Component part', type: 'select', value: line.componentPartNumber, options: allItems.filter(candidate => candidate.partNumber !== item.partNumber).map(candidate => [candidate.partNumber, `${candidate.partNumber} — ${candidate.description}`]), required: true },
+      { name: 'quantityPer', label: 'Quantity per parent', type: 'number', value: line.quantityPer, min: 0.000001, step: 'any', required: true },
+      { name: 'scrapPercent', label: 'Scrap percent', type: 'number', value: line.scrapPercent, min: 0, max: 99.99, step: '0.01', required: true },
+    ] : [
+      { name: 'lineNumber', label: 'Line number', type: 'number', value: nextLine, min: 1, max: 9999, required: true },
+      { name: 'componentPartNumber', label: 'Component part', type: 'select', options: allItems.filter(candidate => candidate.partNumber !== item.partNumber).map(candidate => [candidate.partNumber, `${candidate.partNumber} — ${candidate.description}`]), required: true },
+      { name: 'quantityPer', label: 'Quantity per parent', type: 'number', value: 1, min: 0.000001, step: 'any', required: true },
+      { name: 'scrapPercent', label: 'Scrap percent', type: 'number', value: 0, min: 0, max: 99.99, step: '0.01', required: true },
+    ];
+    formModal({ title: line ? `Update BOM line ${line.lineNumber}` : `Add component to ${item.partNumber}`, detail: line ? 'Update the component or usage in this draft revision. The change is recorded in the audit trail.' : 'The BOM line is part of this draft revision and will be copied to production orders at release.', reasonRequired: true, confirmLabel: line ? 'Update line' : 'Add component', fields },
+      (values, reason) => line
+        ? command(`${revisionUrl(selectedRevision)}/bom/${line.lineNumber}/update`, { componentPartNumber: values.componentPartNumber, quantityPer: values.quantityPer, scrapPercent: values.scrapPercent }, reason)
+        : command(`${revisionUrl(selectedRevision)}/bom`, values, reason),
+      () => render());
+  }
+
+  async function removeBomLine(lineNumber) {
+    const done = await confirmWithReason({ title: `Remove BOM line ${lineNumber}`, detail: 'The component is removed from this draft revision. Released revisions remain unchanged.', confirmLabel: 'Remove line', reasonRequired: true },
+      reason => command(`${revisionUrl(selectedRevision)}/bom/${lineNumber}/remove`, {}, reason));
+    if (done) await render();
+  }
+
+  function operationFields(operation) {
+    const centerOptions = workCenters.filter(center => center.active !== false).map(center => [center.code, `${center.name} (${center.code})`]);
+    const activityOptions = activities.filter(activity => activity.active !== false).map(activity => [activity.code, `${activity.name} (${activity.code})`]);
+    const withCurrent = (options, code) => code && !options.some(([value]) => value === code) ? [...options, [code, `${code} (current)`]] : options;
+    return [
+      { name: 'sequence', label: 'Operation sequence', type: 'number', value: operation?.sequence ?? nextSequence, min: 1, max: 9999, readonly: Boolean(operation), required: true },
+      { name: 'description', label: 'Operation', value: operation?.description ?? '', required: true, placeholder: 'Cut, wind, inspect…' },
+      { name: 'workCenterCode', label: 'Work center', type: 'select', value: operation?.workCenterCode, options: withCurrent(centerOptions, operation?.workCenterCode), required: true },
+      { name: 'activityCode', label: 'Activity', type: 'select', value: operation?.activityCode, options: withCurrent(activityOptions, operation?.activityCode), required: true },
+      { name: 'eligibleMachines', label: 'Eligible machines (optional)', type: 'textarea', value: operation?.eligibleMachines?.join(', ') ?? '', hint: 'Enter machine codes separated by commas or new lines.' },
+      { name: 'requiredQualifications', label: 'Additional qualifications (optional)', type: 'textarea', value: operation?.requiredQualifications?.join(', ') ?? '', hint: `Known qualifications: ${qualifications.map(qualification => qualification.code).join(', ') || 'none listed'}.` },
+      { name: 'setupMinutes', label: 'Full set-up minutes', type: 'number', value: operation?.setupMinutes ?? 0, min: 0, step: '0.01', required: true },
+      { name: 'runMinutesPerUnit', label: 'Run minutes per unit', type: 'number', value: operation?.runMinutesPerUnit ?? 0, min: 0, step: '0.01', required: true },
+      { name: 'crewSize', label: 'Crew size', type: 'number', value: operation?.crewSize ?? 1, min: 1, max: 20, required: true },
+      { name: 'setupFamily', label: 'Set-up family (optional)', code: true, value: operation?.setupFamily ?? '', placeholder: 'FIXTURE-42' },
+      { name: 'familySetupMinutes', label: 'Same-family set-up minutes', type: 'number', value: operation?.familySetupMinutes ?? '', min: 0, step: '0.01', hint: 'Required with a set-up family; must be no greater than full set-up.' },
+    ];
+  }
+
+  function editOperation(operation) {
+    if (!operation && (!workCenters.some(center => center.active !== false) || !activities.some(activity => activity.active !== false))) {
+      toast('Set up at least one active work center and activity before adding a routing operation.', true);
+      return;
+    }
+    formModal({ title: operation ? `Update operation ${operation.sequence}` : `Add operation to ${item.partNumber}`, detail: 'Eligible machines and extra qualifications are optional. Set-up family and same-family minutes must be entered together.', reasonRequired: true, confirmLabel: operation ? 'Update operation' : 'Add operation', fields: operationFields(operation) },
+      (values, reason) => command(operation ? `${revisionUrl(selectedRevision)}/routing/${operation.sequence}/update` : `${revisionUrl(selectedRevision)}/routing`, routingOperationBody(values), reason),
+      () => render());
+  }
+
+  async function removeOperation(sequence) {
+    const done = await confirmWithReason({ title: `Remove operation ${sequence}`, detail: 'The operation is removed from this draft revision. Released revisions remain unchanged.', confirmLabel: 'Remove operation', reasonRequired: true },
+      reason => command(`${revisionUrl(selectedRevision)}/routing/${sequence}/remove`, {}, reason));
+    if (done) await render();
   }
 
   await render();

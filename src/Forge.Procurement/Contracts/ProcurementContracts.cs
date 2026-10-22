@@ -33,7 +33,9 @@ public sealed record PurchaseLineInfo(
     long? RequisitionId = null,
     PurchaseSourceKind? SourceKind = null,
     string? SourceKey = null,
-    string? SourceLabel = null);
+    string? SourceLabel = null,
+    decimal? UnitPrice = null,
+    string Currency = "USD");
 
 /// <param name="Supplier">The supplier's name as written on the order.</param>
 /// <param name="SupplierCode">The supplier record the order is placed with.</param>

@@ -33,7 +33,7 @@ public sealed class QmsGovernanceTests(PostgresFixture postgres)
         }
         await Person("qms-author", Roles.QmsAuthor, Roles.QmsReviewer, Roles.QmsApprover, Roles.ManufacturingEngineer, Roles.ProgramManager);
         await Person("qms-reviewer", Roles.QmsReviewer, Roles.QmsApprover, Roles.DocumentController);
-        await plant.Ok(plant.As("qms-author"), "/api/resources/sites", new { code = "PLANT1", name = "Governed facility" });
+        await plant.Ok(plant.As("qms-author"), "/api/resources/sites", new { code = "PLANT1", name = "Governed facility", timeZone = TestSite.TimeZone });
         return plant;
     }
     private static QmsContent Process(Guid owner, string name = "Production", params QmsDocumentReference[] documents) => new(Process:
@@ -222,7 +222,7 @@ public sealed class QmsGovernanceTests(PostgresFixture postgres)
         var reviewer = plant.As("qms-reviewer");
         var programs = new List<Guid>();
         foreach (var suffix in new[] { "A", "B" }) programs.Add(Guid.Parse((await plant.Ok(author, "/api/programs/", new { code = "QMS-" + suffix, name = "Actual QMS program " + suffix })).GetProperty("entityId").GetString()!));
-        await plant.Ok(author, "/api/resources/sites", new { code = "PLANT2", name = "Another governed facility" });
+        await plant.Ok(author, "/api/resources/sites", new { code = "PLANT2", name = "Another governed facility", timeZone = TestSite.TimeZone });
         foreach (var person in new[] { plant.People["qms-author"], plant.People["qms-reviewer"] })
         foreach (var program in programs) await plant.Ok(plant.Admin, $"/api/kernel/people/{person}/programs", new { programId = program, reason = "Independent source membership" });
         const string role = "ScopedQmsGovernance";

@@ -77,37 +77,48 @@ public sealed class SourceContextAuthorizationTests(PostgresFixture postgres)
         var approver = plant.As("context-po-approver");
         await plant.Ok(buyer, "/api/procurement/suppliers", new { code = "CTX-SUPPLIER", name = "Context supplier" });
         var needDate = DateTime.UtcNow.AddDays(10).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        async Task<long> PurchaseAsync(params Guid[] programs)
+        async Task<long> PurchaseAsync(decimal? unitPrice, decimal quantity, params Guid[] programs)
         {
             var lines = new List<object>();
             foreach (var program in programs)
             {
-                var requisition = Id(await plant.Ok(buyer, "/api/procurement/requisitions", new { partNumber = "COIL-AL", quantity = 1m, needDate, sourceKind = "Internal", sourceKey = "internal:context-" + Guid.NewGuid().ToString("N"), sourceLabel = "Recorded program requirement", requiredRevision = "A", programId = program, reason = "Source-specific requirement" }));
-                lines.Add(new { partNumber = "COIL-AL", quantity = 1m, promisedDate = needDate, requisitionId = requisition });
+                var requisition = Id(await plant.Ok(buyer, "/api/procurement/requisitions", new { partNumber = "COIL-AL", quantity, needDate, sourceKind = "Internal", sourceKey = "internal:context-" + Guid.NewGuid().ToString("N"), sourceLabel = "Recorded program requirement", requiredRevision = "A", programId = program, reason = "Source-specific requirement" }));
+                lines.Add(new { partNumber = "COIL-AL", quantity, promisedDate = needDate, requisitionId = requisition, unitPrice, currency = "USD" });
             }
             return Id(await plant.Ok(buyer, "/api/procurement/purchase-orders", new { supplier = "CTX-SUPPLIER", lines, reason = "Purchase recorded requisitions" }));
         }
-        var poA = await PurchaseAsync(programA);
-        var poB = await PurchaseAsync(programB);
-        var poBoth = await PurchaseAsync(programA, programB);
+        var poA = await PurchaseAsync(null, 1m, programA);
+        var poB = await PurchaseAsync(null, 1m, programB);
+        var poBoth = await PurchaseAsync(null, 1m, programA, programB);
         Assert.Equal(HttpStatusCode.Forbidden, (await plant.Try(plant.As("context-po-outsider"), $"/api/procurement/purchase-orders/{poA}/approve", new { reason = "Global authority without program membership" })).StatusCode);
         await plant.Ok(approver, $"/api/procurement/purchase-orders/{poA}/approve", new { reason = "Approve within actual program A scope" });
         foreach (var po in new[] { poB, poBoth })
             Assert.Equal(HttpStatusCode.Forbidden, (await plant.Try(approver, $"/api/procurement/purchase-orders/{po}/approve", new { reason = "Program membership must not expand action scope" })).StatusCode);
 
-        var unknownPrice = await PurchaseAsync(programA);
+        var unknownPrice = await PurchaseAsync(null, 1m, programA);
+        var exactlyAtLimit = await PurchaseAsync(250m, 4m, programA);
+        var aboveLimit = await PurchaseAsync(250.01m, 4m, programA);
         await plant.Ok(plant.Admin, $"/api/kernel/approval-thresholds/{Permissions.PurchasingApprove}", new { maximumAmount = 1000m, currency = "USD", reason = "Monetary decisions need recorded money" });
         var refused = await plant.Try(approver, $"/api/procurement/purchase-orders/{unknownPrice}/approve", new { reason = "No amount or currency was recorded on the PO" });
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         Assert.Contains("threshold", await refused.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        var valuedOrders = await buyer.GetFromJsonAsync<JsonElement[]>("/api/procurement/purchase-orders");
+        var exactOrder = Assert.Single(valuedOrders ?? [], order => order.GetProperty("poNumber").GetInt64() == exactlyAtLimit);
+        Assert.Equal(1000m, exactOrder.GetProperty("totalAmount").GetDecimal());
+        Assert.Equal("USD", exactOrder.GetProperty("currency").GetString());
+        Assert.Equal(250m, exactOrder.GetProperty("lines")[0].GetProperty("unitPrice").GetDecimal());
+        await plant.Ok(approver, $"/api/procurement/purchase-orders/{exactlyAtLimit}/approve", new { reason = "The complete USD order value is exactly at the configured limit" });
+        var tooLarge = await plant.Try(approver, $"/api/procurement/purchase-orders/{aboveLimit}/approve", new { reason = "The complete USD order value exceeds the configured limit" });
+        Assert.Equal(HttpStatusCode.Forbidden, tooLarge.StatusCode);
+        Assert.Contains("threshold", await tooLarge.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
         await using var connection = new NpgsqlConnection(app.ConnectionString);
         await connection.OpenAsync();
         await using var states = new NpgsqlCommand("SELECT status FROM procurement.purchase_order WHERE po_number=ANY($1) ORDER BY po_number", connection);
-        states.Parameters.AddWithValue(new[] { poA, poB, poBoth, unknownPrice });
+        states.Parameters.AddWithValue(new[] { poA, poB, poBoth, unknownPrice, exactlyAtLimit, aboveLimit });
         await using var reader = await states.ExecuteReaderAsync();
         var statuses = new List<string>();
         while (await reader.ReadAsync()) statuses.Add(reader.GetString(0));
-        Assert.Equal(["Approved", "Draft", "Draft", "Draft"], statuses);
+        Assert.Equal(["Approved", "Draft", "Draft", "Draft", "Approved", "Draft"], statuses);
     }
 
     [Fact]

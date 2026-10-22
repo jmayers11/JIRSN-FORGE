@@ -85,19 +85,39 @@ const renderRecovery = (o, scenarioId, loading) => {
   return `<article class="card"><div class="card-head"><h4>${esc(o.title)}</h4><span class="pill ${o.feasible ? 'ok' : 'warn'}">${esc(status)}</span><span class="spacer"></span><button class="btn primary" data-evaluate-scenario="${esc(scenarioId)}" data-evaluate-option="${esc(o.id)}" ${loading ? 'disabled' : ''}>Evaluate option</button>${o.applyPath ? `<a class="btn" href="${esc(o.applyPath)}">Open workflow</a>` : ''}</div><p>${esc(o.feasibility)}</p><p class="muted small">Required permission: <code>${esc(o.requiredPermission)}</code></p>${lines('Consequences', o.consequences)}${lines('Required inputs', o.requiredInputs)}${lines('Current blockers', o.constraints)}${projections}${candidates}${authority}<details><summary>Source evidence</summary>${lines('Evidence', o.evidence)}</details></article>`;
 };
 
-export async function scenariosPage(root) {
+export async function scenariosPage(root, ctx = { query: new URLSearchParams() }) {
   let scenarios = [];
+  let directory = [];
+  let items = [];
+  let resources = {};
   let result = null;
   let loading = false;
-  const read = async () => { scenarios = await get('/api/planning/scenarios'); };
-  const field = (name, label, type = 'text', required = false, placeholder = '') => `<label class="field"><span>${label}</span><input class="input" name="${name}" type="${type}" ${required ? 'required' : ''} ${placeholder ? `placeholder="${placeholder}"` : ''}></label>`;
+  const read = async () => {
+    [scenarios, directory, items, resources] = await Promise.all([
+      get('/api/planning/scenarios'), get('/api/kernel/directory'), get('/api/engineering/items'), get('/api/resources/'),
+    ]);
+  };
+  const field = (name, label, type = 'text', required = false, placeholder = '', value = '') => `<label class="field"><span>${label}</span><input class="input" name="${name}" type="${type}" value="${esc(value)}" ${required ? 'required' : ''} ${placeholder ? `placeholder="${placeholder}"` : ''}></label>`;
+  const selectField = (name, label, records, value = '', required = false, blank = 'Choose…') => `<label class="field"><span>${label}</span><select class="input" name="${name}" ${required ? 'required' : ''}><option value="">${blank}</option>${records.map(([key, text]) => `<option value="${esc(key)}" ${String(value) === String(key) ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
   const render = () => {
+    const prefilled = {
+      orderNumber: ctx.query.get('order') ?? '', sequence: ctx.query.get('op') ?? '', workCenterCode: ctx.query.get('wc') ?? '',
+      kind: KINDS.includes(ctx.query.get('kind')) ? ctx.query.get('kind') : '', personId: ctx.query.get('personId') ?? '',
+      name: ctx.query.get('scenarioName') ?? '',
+      startsAt: ctx.query.get('startsAt') ?? '', durationHours: ctx.query.get('durationHours') ?? '',
+    };
+    const isGanttLaunch = !!(prefilled.orderNumber || prefilled.sequence || prefilled.workCenterCode);
+    const defaultStart = prefilled.kind === 'PersonUnavailable' ? localTime(new Date().toISOString()) : '';
     root.innerHTML = `<div class="page-head"><div><h1>Scenarios and recovery</h1><p class="muted">Save private what-if cases, compare them against today’s authorized material, capacity and schedule inputs, and review recovery actions. Running a scenario does not change the approved schedule or source records.</p></div></div>
       <section class="panel"><header><h2>New scenario</h2></header><form id="scenario-form" class="form-grid">
-        ${field('name', 'Private scenario name', 'text', true, 'e.g. Slitter outage next shift')}
-        <label class="field"><span>Change to test</span><select class="input" name="kind">${KINDS.map(k => `<option>${k}</option>`).join('')}</select></label>
-        ${field('machineCode', 'Machine code')}${field('personId', 'Person ID')}${field('orderNumber', 'Released order number', 'number')}${field('sequence', 'Operation sequence', 'number')}${field('priority', 'Proposed priority (1 highest)', 'number')}
-        ${field('workCenterCode', 'Work center code')}${field('activityCode', 'Activity code')}${field('startsAt', 'Starts at', 'datetime-local')}${field('durationHours', 'Hours (outage, overtime)', 'number')}${field('delayDays', 'Supplier delay days', 'number')}
+        ${field('name', 'Private scenario name', 'text', true, 'e.g. Slitter outage next shift', prefilled.name)}
+        <label class="field"><span>Change to test</span><select class="input" name="kind">${KINDS.map((kind, index) => `<option ${prefilled.kind ? kind === prefilled.kind ? 'selected' : '' : isGanttLaunch && kind === 'OperationMachine' || !isGanttLaunch && index === 0 ? 'selected' : ''}>${kind}</option>`).join('')}</select></label>
+        ${selectField('machineCode', 'Machine', (resources.machines ?? []).map(machine => [machine.code, `${machine.name ?? machine.code} · ${machine.code}`]))}
+        ${selectField('personId', 'Person', directory.map(person => [person.personId, `${person.displayName} · ${person.personId}`]), prefilled.personId)}
+        ${field('orderNumber', 'Released order number', 'number', false, '', prefilled.orderNumber)}${field('sequence', 'Operation sequence', 'number', false, '', prefilled.sequence)}${field('priority', 'Proposed priority (1 highest)', 'number')}
+        ${selectField('workCenterCode', 'Work center', (resources.workCenters ?? []).map(center => [center.code, `${center.name ?? center.code} · ${center.code}`]), prefilled.workCenterCode)}
+        ${selectField('activityCode', 'Activity', (resources.activityTypes ?? []).map(activity => [activity.code, `${activity.name ?? activity.code} · ${activity.code}`]))}
+        ${field('startsAt', 'Starts at', 'datetime-local', false, '', prefilled.startsAt || defaultStart)}${field('durationHours', 'Hours (outage, overtime)', 'number', false, '', prefilled.durationHours || (prefilled.kind === 'PersonUnavailable' ? '8' : ''))}${field('delayDays', 'Supplier delay days', 'number')}
         ${field('reason', 'Why save this scenario', 'text', true, 'Required for the audit record')}
         <div class="field"><span>&nbsp;</span><button class="btn primary" type="submit">Save private scenario</button></div>
       </form><p class="muted small">The selected change uses only its relevant fields. Person and order lookups are checked again using your current access when you run the scenario.</p></section>
@@ -105,7 +125,7 @@ export async function scenariosPage(root) {
         ${scenarios.length ? `<div class="stack">${scenarios.map(s => `<article class="card"><div class="card-head"><div><h3>${esc(s.name)}</h3><p class="muted">${esc(s.change.kind)} · created ${esc(fmtDateTime(s.createdAt))}${s.change.recoverySelections?.length ? ` · selected ${esc(RECOVERY_FORMS.find(f => f.id === s.change.recoverySelections[0].optionId)?.title ?? s.change.recoverySelections[0].optionId)}` : ''}</p></div><span class="spacer"></span><button class="btn primary" data-run="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Run preview</button><button class="btn danger" data-delete="${esc(s.scenarioId)}">Delete</button></div><div class="actions"><label class="field"><span>Recovery option</span><select class="input" data-option-picker="${esc(s.scenarioId)}"><option value="">Choose an option</option>${RECOVERY_FORMS.map(f => `<option value="${esc(f.id)}">${esc(f.title)}</option>`).join('')}</select></label><button class="btn" data-evaluate-scenario="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Evaluate option</button></div></article>`).join('')}</div>` : '<div class="empty">No private scenarios saved yet.</div>'}</section>
       ${result ? renderResult(result) : ''}`;
 
-    $('#refresh-scenarios', root)?.addEventListener('click', () => scenariosPage(root).catch(e => toast(e.message, true)));
+    $('#refresh-scenarios', root)?.addEventListener('click', () => scenariosPage(root, ctx).catch(e => toast(e.message, true)));
     $('#scenario-form', root)?.addEventListener('submit', saveScenario);
     $$('[data-run]', root).forEach(button => button.addEventListener('click', () => runScenario(button.dataset.run)));
     $$('[data-delete]', root).forEach(button => button.addEventListener('click', () => deleteScenario(button.dataset.delete)));
@@ -142,6 +162,7 @@ export async function scenariosPage(root) {
       let value = existing?.[field.name];
       if (value == null && field.name === 'orderNumber') value = orderNumber;
       if (value == null && field.name === 'sequence') value = scenario.change.sequence;
+      if (value == null && field.name === 'workCenterCode') value = scenario.change.workCenterCode;
       if (field.name === 'personIds') return [
         { type: 'html', html: '<div class="field"><b>Workers covering the shift</b><p class="muted small">Select the actual crew. Recorded qualifications, presence, availability and safety coverage decide feasibility.</p></div>' },
         ...workers.map((worker, index) => ({ name: `crew-${index}`, type: 'check', label: worker.name,
@@ -150,6 +171,12 @@ export async function scenariosPage(root) {
       ];
       if (field.name === 'personId') return [{ ...field, label: 'Alternate worker', type: 'lookup',
         options: workers.map(worker => [worker.personId, `${worker.name} · ${worker.personId} · ${worker.homeWorkCenter ?? worker.workCenter ?? 'No home work center'}`]), value }];
+      if (field.name === 'partNumber' || field.name === 'primaryPartNumber') return [{ ...field, label: field.name === 'partNumber' ? 'Stock part' : 'Primary component', type: 'lookup',
+        options: items.map(item => [item.partNumber, `${item.partNumber} — ${item.description}`]), value }];
+      if (field.name === 'workCenterCode') return [{ ...field, type: 'select', blank: field.required ? undefined : 'Choose a work center (optional)',
+        options: (resources.workCenters ?? []).filter(center => center.active !== false).map(center => [center.code, `${center.name ?? center.code} · ${center.code}`]), value }];
+      if (field.name === 'machineCode') return [{ ...field, type: 'select', blank: field.required ? undefined : 'Choose a machine (optional)',
+        options: (resources.machines ?? []).filter(machine => machine.active !== false).map(machine => [machine.code, `${machine.name ?? machine.code} · ${machine.code}`]), value }];
       if (Array.isArray(value)) value = value.join(', ');
       if (field.type === 'datetime-local') value = localTime(value);
       return [{ ...field, value }];

@@ -33,7 +33,7 @@ internal static class QmsPlanningScenario
             else
             {
                 plant=new(app);await plant.Person("eng",Roles.ManufacturingEngineer);await plant.Person("approver",Roles.DocumentController);
-                await plant.Ok(plant.Engineer,"/api/resources/sites",new{code="PLANT1",name="Actual planning example facility"});
+                await plant.Ok(plant.Engineer,"/api/resources/sites",new{code="PLANT1",name="Actual planning example facility",timeZone=TestSite.TimeZone});
             }
             foreach(var subject in new[]{"eng","approver"})
                 foreach(var role in new[]{Roles.QmsAuthor,Roles.QmsReviewer,Roles.QmsApprover,Roles.DocumentController})

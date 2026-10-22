@@ -17,10 +17,8 @@ public sealed class Phase8Tests(PostgresFixture postgres)
 {
     private const string Sarah = "B-SARAH-0001";
 
-    /// <summary>A date at the plant (the sample site is in New York): report periods are site dates.</summary>
-    private static string Day(int fromToday) =>
-        NodaTime.Instant.FromDateTimeOffset(DateTimeOffset.UtcNow).InZone(NodaTime.DateTimeZoneProviders.Tzdb["America/New_York"]).Date.PlusDays(fromToday)
-            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    /// <summary>A date at the plant: report periods are site dates (see <see cref="TestSite"/>).</summary>
+    private static string Day(int fromToday) => TestSite.Day(fromToday);
 
     private static async Task<JsonElement> Get(HttpClient client, string url)
     {

@@ -247,6 +247,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .seg button.on:hover { background: #9A3412; }
 .clock { text-align: right; color: #C9CDD3; font-size: 13px; }
 .clock small { display: block; color: var(--faint); font-size: 11px; }
+.structure-revision-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.structure-revision-facts > div { display: grid; gap: 4px; min-width: 0; padding: 10px 12px; background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 4px; }
+.structure-revision-facts > div > span { color: var(--muted); font-size: 12px; }
+.structure-revision-facts > div > b { overflow-wrap: anywhere; }
 
 /* ---------- Panels ---------- */
 .panel {
@@ -349,6 +353,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .table-tools .field { width: min(100%, 320px); gap: 4px; }
 .table-tools .input { min-height: 36px; }
 @media (max-width: 640px) { .table-tools { align-items: stretch; flex-direction: column; gap: 4px; } }
+.gantt-bar { cursor: pointer; transition: stroke .12s ease, filter .12s ease; }
+.gantt-bar:hover, .gantt-bar:focus { stroke: #F8FAFC; stroke-width: 2.5; filter: brightness(1.16); outline: none; }
+.bom-tree-connector { color: var(--muted); white-space: pre; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.po-total { display: flex; justify-content: flex-end; gap: 8px; align-items: baseline; margin-top: 10px; }
 .table td { padding: 7px 8px; border-bottom: 1px solid #222830; vertical-align: top; }
 .table tr.click { cursor: pointer; }
 .table tr.click:hover td { background: #1B2128; }
@@ -459,10 +467,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .mobile-only { display: block; }
   .page-head .clock { text-align: left; }
   .kv { grid-template-columns: 1fr; }
+  .structure-revision-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 520px) {
   .search input::placeholder { color: transparent; }
   .kpi .v { font-size: 22px; }
+  .structure-revision-facts { grid-template-columns: 1fr; }
 }
 
 /* ---------- Shop-floor terminal ---------- */
@@ -631,3 +641,182 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* V2.9: a status pill that opens its explanation */
 button.pill.linkish { cursor: pointer; border: 0; font: inherit; font-size: inherit; }
 button.pill.linkish:hover { text-decoration: underline; }
+
+/* MRP netting summary, horizon spark-strip and projected-balance bars */
+.mrp-formula { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; margin: 10px 0 8px; }
+.mrp-formula-step { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
+.mrp-formula-step.highlight { border-color: var(--red-tail); background: rgba(194, 65, 12, .14); }
+.mrp-formula-step .k { color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.mrp-formula-step .v { margin-top: 2px; color: var(--text); font: 700 16px/1.2 var(--font-display); }
+.mrp-netting-note { margin: 0 0 12px; }
+.mrp-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.mrp-filter { border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; background: var(--panel-2); color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; }
+.mrp-filter:hover, .mrp-filter.on { border-color: var(--forge-orange); color: var(--text); }
+.mrp-filter.on { background: rgba(194, 65, 12, .14); }
+.mrp-spark { display: inline-flex; align-items: flex-end; gap: 2px; height: 18px; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; background: #11161C; vertical-align: middle; }
+.mrp-spark-bar { width: 5px; min-height: 3px; border-radius: 1px; background: var(--ok); }
+.mrp-spark-bar.warn { background: var(--warn); }
+.mrp-spark-bar.bad { background: var(--bad); }
+.mrp-bal-cell { min-width: 150px; }
+.mrp-bal-value { text-align: right; font-variant-numeric: tabular-nums; }
+.mrp-bal-bar { height: 5px; margin-top: 3px; overflow: hidden; border-radius: 3px; background: #11161C; }
+.mrp-bal-fill { height: 100%; border-radius: 3px; background: var(--ok); }
+.mrp-bal-fill.warn { background: var(--warn); }
+.mrp-bal-fill.bad { background: var(--bad); }
+
+/* Sprint 7: My Shift Action Bar, Audit Trail Explorer & CSV Import Modal */
+.role-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.role-action-bar > b {
+  font: 700 11px var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.role-action-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+}
+.role-action-chip.bad { border-color: #B91C1C; background: rgba(185, 28, 28, .18); color: #FECACA; }
+.role-action-chip.warn { border-color: #D97706; background: rgba(217, 119, 6, .18); color: #FDE68A; }
+.role-action-chip.info { border-color: #2563EB; background: rgba(37, 99, 235, .18); color: #BFDBFE; }
+.role-action-chip:hover { border-color: var(--forge-orange); color: #FFF; }
+
+.audit-chain-status { margin-bottom: 12px; }
+.audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.audit-filters .field { margin: 0; min-width: 140px; flex: 1 1 140px; }
+.csv-import { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+
+/* Workforce Kanban and supervisor staffing scenario */
+.workforce-kanban-filters { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; align-items: end; }
+.workforce-kanban-filters .field { margin: 0; }
+.workforce-scenario-controls { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.workforce-scenario-controls .toolbar { margin: 0; }
+.workforce-board-panel { overflow: hidden; }
+.workforce-lanes { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(280px, 1fr); gap: 12px; overflow-x: auto; padding: 2px 2px 10px; align-items: start; }
+.workforce-lane { min-width: 0; min-height: 180px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); transition: border-color .12s, background .12s; }
+.workforce-lane.is-drop-target { border-color: var(--forge-orange); background: rgba(194, 65, 12, .12); }
+.workforce-lane > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.workforce-lane-cards { display: flex; flex-direction: column; gap: 8px; }
+.lane-metrics { display: flex; flex-wrap: wrap; gap: 5px 8px; margin: 0 0 8px; color: var(--muted); font-size: 11px; }
+.staff-card { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); cursor: grab; }
+.staff-card:focus-within, .staff-card:focus-visible { outline: 2px solid var(--forge-orange); outline-offset: 2px; }
+.staff-card.is-proposed { border: 2px solid var(--forge-orange); background: rgba(194, 65, 12, .08); }
+.staff-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.staff-card-status { margin-bottom: 7px; }
+.staff-card-actions { margin-top: 8px; }
+.staff-card-actions .btn, .staff-card-move-row .btn, .staff-card-editor .btn { min-height: 40px; }
+.staff-card-details { display: grid; gap: 4px; font-size: 12px; overflow-wrap: anywhere; }
+.staff-card-details > span > b { color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; margin-right: 3px; }
+.staff-card-move { display: grid; gap: 5px; margin-top: 9px; }
+.staff-card-move > label, .staff-card-editor > label { color: var(--muted); font-size: 11px; }
+.staff-card-move-row { display: flex; gap: 6px; }
+.staff-card-move-row .input { min-width: 0; flex: 1; }
+.staff-card-editor { display: grid; gap: 7px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.staff-card-editor .input { margin-top: 4px; }
+.workforce-preview-step { padding: 10px 0; border-top: 1px solid var(--line); }
+.workforce-preview-step h3 { margin: 0 0 4px; font-size: 14px; }
+.workforce-preview-step .evidence { margin-top: 6px; }
+.workforce-schedule-context { margin-top: 12px; }
+.workforce-board-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 12px 0; }
+@media (max-width: 850px) {
+  .workforce-board-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workforce-kanban-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .workforce-kanban-filters { grid-template-columns: 1fr; }
+  .workforce-scenario-controls { align-items: stretch; }
+  .workforce-scenario-controls .toolbar { width: 100%; }
+  .workforce-scenario-controls .toolbar .btn { flex: 1 1 auto; min-height: 44px; }
+  .workforce-lanes { grid-auto-columns: minmax(260px, 88vw); }
+  .staff-card-actions .btn, .staff-card-move-row .btn, .staff-card-editor .btn { min-height: 44px; }
+}
+
+/* VNext read-only Machine Readiness Kanban */
+.machine-board-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 12px 0; }
+.machine-board-kpis .kpi { border-top: 3px solid var(--line); }
+.machine-board-kpis .kpi.blocked { border-top-color: #B91C1C; }
+.machine-board-kpis .kpi.attention { border-top-color: #B45309; }
+.machine-board-kpis .kpi.ready { border-top-color: #15803D; }
+.machine-board-kpis .kpi.unknown { border-top-color: #6B7280; }
+.machine-board-filters { display: grid; grid-template-columns: minmax(170px, .8fr) minmax(150px, .7fr) minmax(220px, 1.5fr); gap: 12px; align-items: end; }
+.machine-board-filters .field { margin: 0; }
+.machine-board-meta { margin: 8px 2px 12px; color: var(--muted); font-size: 12px; }
+.machine-source-errors { border-left: 4px solid #B45309; }
+.machine-source-errors > div { margin-top: 6px; }
+.machine-kanban-host { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(270px, 1fr); gap: 12px; align-items: start; overflow-x: auto; padding: 2px 2px 12px; }
+.machine-lane { min-width: 0; min-height: 220px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
+.machine-lane > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.machine-lane > header h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
+.machine-lane-cards { display: grid; gap: 9px; }
+.machine-kanban-card { min-width: 0; padding: 11px; border: 1px solid var(--line); border-left: 4px solid #6B7280; border-radius: 8px; background: var(--panel); overflow-wrap: anywhere; }
+.machine-kanban-card.blocked { border-left-color: #B91C1C; }
+.machine-kanban-card.attention { border-left-color: #B45309; }
+.machine-kanban-card.ready { border-left-color: #15803D; }
+.machine-kanban-card.unknown { border-left-color: #6B7280; }
+.machine-kanban-card > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.machine-kanban-card h3 { margin: 2px 0 0; font-size: 15px; }
+.machine-code { color: var(--muted); font: 700 10px var(--font-display); letter-spacing: .06em; text-transform: uppercase; }
+.machine-status { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-align: right; }
+.machine-status.bad { color: #991B1B; }
+.machine-status.warn { color: #92400E; }
+.machine-status.ok { color: #166534; }
+.machine-status.none { color: var(--muted); }
+.machine-signal-dot { display: inline-grid; flex: 0 0 26px; width: 26px; height: 26px; place-items: center; border-radius: 50%; color: #FFF; font-size: 13px; font-weight: 800; line-height: 1; }
+.machine-signal-dot.blocked { background: #B91C1C; }
+.machine-signal-dot.attention { background: #B45309; }
+.machine-signal-dot.ready { background: #15803D; }
+.machine-signal-dot.unknown { background: #6B7280; }
+.machine-card-summary { margin: 9px 0; font-weight: 650; }
+.machine-card-facts { display: grid; gap: 7px; margin: 0; }
+.machine-card-facts > div { min-width: 0; }
+.machine-card-facts dt { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.machine-card-facts dd { margin: 1px 0 0; font-size: 12px; }
+.machine-staff-chip { display: inline-block; margin: 2px 4px 2px 0; padding: 3px 6px; border: 1px solid var(--line); border-radius: 99px; }
+.machine-blocker-list { margin: 9px 0; padding: 8px 8px 8px 24px; border-radius: 6px; background: rgba(185, 28, 28, .10); font-size: 12px; }
+.machine-blocker-list li + li { margin-top: 4px; }
+.machine-card-more { margin-top: 9px; border-top: 1px solid var(--line); font-size: 12px; }
+.machine-card-more summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--link, var(--forge-orange)); font-weight: 650; }
+.machine-card-more summary:focus-visible { outline: 2px solid var(--forge-orange); outline-offset: 2px; }
+.machine-card-detail-body { display: grid; gap: 9px; padding: 3px 0 8px; }
+.machine-card-detail-body ul { margin: 4px 0 0; padding-left: 18px; }
+.machine-card-detail-body li + li { margin-top: 4px; }
+.machine-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.machine-card-actions .btn { min-height: 44px; display: inline-flex; align-items: center; }
+.machine-board-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 12px; font-size: 12px; }
+.machine-board-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.machine-board-legend .machine-signal-dot { width: 20px; height: 20px; flex-basis: 20px; font-size: 10px; }
+@media (max-width: 900px) {
+  .machine-board-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .machine-board-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .machine-kanban-host { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .machine-board-filters, .machine-kanban-host { grid-template-columns: 1fr; }
+  .machine-card-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .machine-board-legend { align-items: flex-start; flex-direction: column; }
+}

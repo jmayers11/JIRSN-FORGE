@@ -3,7 +3,7 @@ import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, drawer, enhanceTables } from '../ui.js';
-import { formModal, qty, canAction, plusDays } from '../forms.js';
+import { formModal, qty, canAction, plusDays, csvImportModal } from '../forms.js';
 
 // Purchase orders (spec §48): a buyer drafts, someone else approves, and only approved open lines
 // count as supply for MRP and material readiness. Supplier date changes carry a reason.
@@ -75,25 +75,35 @@ export async function procurementPage(page, ctx) {
   function card(o) {
     const mine = o.createdBy === `person:${me.personId}`;
     const open = ['Draft', 'Approved'].includes(o.status);
+    const unpriced = (o.lines ?? []).filter(line => line.status !== 'Cancelled' && line.unitPrice == null).length;
+    const canApproveValue = canAction(me, 'procurement.approve', unpriced
+      ? { amount: null, currency: o.currency ?? 'USD' }
+      : { amount: Number(o.totalAmount ?? 0), currency: o.currency ?? 'USD' });
     return `<section class="panel">
       <header><h2>PO ${o.poNumber} · ${esc(o.supplier)}</h2><span class="pill ${STATUS_TONE[o.status]}">${esc(o.status)}</span><span class="spacer"></span>
-        ${o.status === 'Draft' && approver && !mine ? `<button class="btn primary small" data-approve="${o.poNumber}">Approve</button>` : ''}
+        ${o.status === 'Draft' && approver && !mine && canApproveValue ? `<button class="btn primary small" data-approve="${o.poNumber}">Approve</button>` : ''}
+        ${o.status === 'Draft' && approver && !mine && !canApproveValue ? '<span class="faint" title="Order exceeds your approval threshold or has unpriced lines">Approval authority or dollar limit not met</span>' : ''}
         ${o.status === 'Draft' && approver && mine ? '<span class="faint">You raised it — someone else approves</span>' : ''}
         ${o.status === 'Draft' && buyer ? `<button class="btn small" data-line="${o.poNumber}">+ Line</button> <button class="btn small ghost" data-cancel="${o.poNumber}">Cancel</button>` : ''}
         ${o.status === 'Approved' && buyer ? `<button class="btn small" data-close="${o.poNumber}">Close</button>` : ''}
         <button class="btn small ghost" data-docs-po="${o.poNumber}">Documents</button></header>
       <div class="faint" style="margin-bottom:6px">Raised by ${esc(who(o.createdBy))} ${esc(fmtDateTime(o.createdAt))}${o.approvedBy ? ` · approved by ${esc(who(o.approvedBy))} ${esc(fmtDateTime(o.approvedAt))}` : ''}</div>
-      <table class="table"><thead><tr><th>Line</th><th>Part</th><th class="num">Ordered</th><th class="num">Received</th><th class="num">Open</th><th>Promised</th><th></th></tr></thead><tbody>
+      <table class="table"><thead><tr><th>Line</th><th>Part</th><th class="num">Ordered</th><th class="num">Unit price</th><th class="num">Extended total</th><th class="num">Received</th><th class="num">Open</th><th>Promised</th><th></th></tr></thead><tbody>
         ${o.lines.map(l => {
           const overdue = o.status === 'Approved' && l.open > 0 && new Date(`${l.promisedDate}T23:59:59`) < new Date();
           return `<tr class="${l.status === 'Cancelled' ? 'retired' : ''}"><td>${l.lineNumber}</td><td><b>${esc(l.partNumber)}</b>${l.sourceKind ? `<div class="faint" title="${esc(l.sourceLabel)}">for ${esc(SOURCE_LABEL[l.sourceKind] ?? l.sourceKind)} ${esc(l.sourceKey)}</div>` : ''}</td>
-            <td class="num">${qty(l.quantity)} <span class="faint">${esc(l.unitOfMeasure)}</span></td><td class="num">${qty(l.received)}</td><td class="num">${o.status === 'Approved' ? qty(l.open) : '—'}</td>
+            <td class="num">${qty(l.quantity)} <span class="faint">${esc(l.unitOfMeasure)}</span></td><td class="num">${l.unitPrice == null ? '<span class="faint">Not priced</span>' : `${money(l.unitPrice, l.currency)} <span class="faint">${esc(l.currency)}</span>`}</td><td class="num">${l.unitPrice == null ? '—' : money(Number(l.quantity) * Number(l.unitPrice), l.currency)}</td><td class="num">${qty(l.received)}</td><td class="num">${o.status === 'Approved' ? qty(l.open) : '—'}</td>
             <td class="${overdue ? 'c-bad' : ''}">${esc(fmtDate(l.promisedDate))}${overdue ? ' · overdue' : ''}${l.status === 'Cancelled' ? ' <span class="pill bad">Cancelled</span>' : ''}</td>
             <td class="nowrap">${open && buyer && l.status === 'Open' ? `<button class="btn small" data-date="${o.poNumber}/${l.lineNumber}">New date</button> <button class="btn small ghost" data-cancel-line="${o.poNumber}/${l.lineNumber}">Cancel</button>` : ''}
               <button class="btn small ghost" data-why="${o.poNumber}/${l.lineNumber}" title="Why was this purchased, what arrived and where it went">Why?</button>
               ${o.status !== 'Draft' ? ` <button class="btn small ghost" data-package="${o.poNumber}/${l.lineNumber}" title="What this line was bought to when the order was approved">Package</button>` : ''}</td></tr>`;
         }).join('')}
-      </tbody></table></section>`;
+      </tbody></table><div class="po-total"><b>PO total:</b> ${money(o.totalAmount ?? 0, o.currency ?? 'USD')}${unpriced ? ` <span class="faint">· ${unpriced} line(s) unpriced; threshold-limited approval is blocked</span>` : ''}</div></section>`;
+  }
+
+  function money(value, currency = 'USD') {
+    try { return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(Number(value ?? 0)); }
+    catch { return `${Number(value ?? 0).toFixed(2)} ${currency}`; }
   }
 
   function newPo() {
@@ -102,24 +112,32 @@ export async function procurementPage(page, ctx) {
       { name: `part${n}`, label: `Line ${n} part${n > 1 ? ' (optional)' : ''}`, type: 'select', options: parts, blank: n > 1 ? '—' : undefined, required: n === 1 },
       { name: `qty${n}`, label: `Line ${n} quantity`, type: 'number', min: 0, step: 'any' },
       { name: `date${n}`, label: `Line ${n} promised date`, type: 'date', value: plusDays(14) },
+      { name: `price${n}`, label: `Line ${n} unit price (optional)`, type: 'number', min: 0, step: '0.01' },
+      { name: `currency${n}`, label: `Line ${n} currency`, type: 'select', value: 'USD', options: [['USD', 'USD'], ['EUR', 'EUR'], ['GBP', 'GBP'], ['CAD', 'CAD']] },
     ]);
     return formModal({ title: 'New purchase order', detail: 'Saved as a draft. A purchasing manager other than you approves it.', confirmLabel: 'Draft purchase order',
       fields: [{ name: 'supplier', label: 'Supplier', type: 'select', options: supplierOptions(), required: true, hint: 'Only active suppliers in the supplier master. Add a supplier on the Suppliers tab.' }, ...lineFields] },
     (v, reason) => {
-      const lines = [1, 2, 3].filter(n => v[`part${n}`]).map(n => {
+      const selected = [1, 2, 3].filter(n => v[`part${n}`]);
+      if (new Set(selected.map(n => v[`currency${n}`] ?? 'USD')).size > 1) throw new Error('All lines on a purchase order must use the same currency.');
+      const lines = selected.map(n => {
         if (!v[`qty${n}`]) throw new Error(`Line ${n}: give a quantity.`);
-        return { partNumber: v[`part${n}`], quantity: v[`qty${n}`], promisedDate: v[`date${n}`] };
+        return { partNumber: v[`part${n}`], quantity: v[`qty${n}`], promisedDate: v[`date${n}`], unitPrice: v[`price${n}`], currency: v[`currency${n}`] ?? 'USD' };
       });
       return command('/api/procurement/purchase-orders', { supplier: v.supplier, lines }, reason);
     }, reload);
   }
 
   function addLine(po) {
+    const existing = (data.orders.data ?? []).find(order => order.poNumber === po);
+    const currency = existing?.currency ?? 'USD';
     return formModal({ title: `Add a line to PO ${po}`, confirmLabel: 'Add line',
       fields: [
         { name: 'partNumber', label: 'Part', type: 'select', options: buyParts(), required: true },
         { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true },
         { name: 'promisedDate', label: 'Promised date', type: 'date', value: plusDays(14), required: true },
+        { name: 'unitPrice', label: 'Unit price (optional)', type: 'number', min: 0, step: '0.01' },
+        { name: 'currency', label: 'Currency', type: 'select', value: currency, options: [[currency, currency]], hint: 'All PO lines use the same currency.' },
       ] }, (v, reason) => command(`/api/procurement/purchase-orders/${po}/lines`, v, reason), reload);
   }
 
@@ -245,6 +263,7 @@ export async function procurementPage(page, ctx) {
         <div><h1>Procurement</h1><div class="sub">The supplier master. New purchase orders name a supplier from this list; an item with approved sources is bought only from them.</div></div>
         <div class="spacer"></div>
         ${approver ? '<button class="btn" id="new-source">Approve a source</button>' : ''}
+        ${buyer ? '<button class="btn" id="import-suppliers-csv">Import suppliers CSV</button>' : ''}
         ${buyer ? '<button class="btn primary" id="new-supplier">New supplier</button>' : ''}
       </div>
       ${tabs()}
@@ -263,6 +282,12 @@ export async function procurementPage(page, ctx) {
       </tbody></table></div></section>`}`;
     enhanceTables(page);
     bindTabs();
+    $('#import-suppliers-csv', page)?.addEventListener('click', () => csvImportModal({
+      title: 'Import procurement suppliers', detail: 'Rows create supplier master records. Duplicate codes or names are reported inline and do not stop the rest of the import.',
+      columns: [{ name: 'code', label: 'Supplier code', required: true }, { name: 'name', label: 'Name', required: true }, { name: 'notes', label: 'Notes' }],
+      sampleRows: [{ code: 'ALCOA', name: 'Alcoa Manufacturing', notes: 'Primary metals supplier' }],
+      onRow: (row, reason) => command('/api/procurement/suppliers', row, reason),
+    }, async () => reload()));
     $('#new-supplier', page)?.addEventListener('click', () => formModal({ title: 'New supplier', confirmLabel: 'Add supplier',
       fields: [
         { name: 'code', label: 'Supplier code', code: true, required: true, placeholder: 'ALCOA' },

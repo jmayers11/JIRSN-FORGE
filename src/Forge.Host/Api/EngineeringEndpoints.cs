@@ -24,6 +24,8 @@ public sealed record RevisionRequest(string Revision, string? Reason);
 
 public sealed record BomLineRequest(int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, string? Reason);
 
+public sealed record UpdateBomLineRequest(string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, string? Reason);
+
 public sealed record OperationRequest(
     int Sequence,
     string Description,
@@ -78,10 +80,14 @@ public static class EngineeringEndpoints
             Command(http, b.Reason, c => s.CreateRevisionAsync(new CreateRevision(part, b.Revision), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/bom", (HttpContext http, string part, string rev, BomLineRequest b, EngineeringService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AddBomLineAsync(new AddBomLine(part, rev, b.LineNumber, b.ComponentPartNumber, b.QuantityPer, b.ScrapPercent), c, ct)));
+        eng.MapPost("/items/{part}/revisions/{rev}/bom/{line:int}/update", (HttpContext http, string part, string rev, int line, UpdateBomLineRequest b, EngineeringService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateBomLineAsync(new UpdateBomLine(part, rev, line, b.ComponentPartNumber, b.QuantityPer, b.ScrapPercent), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/bom/{line:int}/remove", (HttpContext http, string part, string rev, int line, ReasonRequest b, EngineeringService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RemoveBomLineAsync(new RemoveBomLine(part, rev, line), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/routing", (HttpContext http, string part, string rev, OperationRequest b, EngineeringService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AddRoutingOperationAsync(new AddRoutingOperation(part, rev, b.Sequence, b.Description, b.WorkCenterCode, b.ActivityCode, b.EligibleMachines, b.RequiredQualifications, b.SetupMinutes, b.RunMinutesPerUnit, b.CrewSize, b.SetupFamily, b.FamilySetupMinutes), c, ct)));
+        eng.MapPost("/items/{part}/revisions/{rev}/routing/{sequence:int}/update", (HttpContext http, string part, string rev, int sequence, OperationRequest b, EngineeringService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateRoutingOperationAsync(new UpdateRoutingOperation(part, rev, sequence, b.Description, b.WorkCenterCode, b.ActivityCode, b.EligibleMachines, b.RequiredQualifications, b.SetupMinutes, b.RunMinutesPerUnit, b.CrewSize, b.SetupFamily, b.FamilySetupMinutes), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/routing/{sequence:int}/remove", (HttpContext http, string part, string rev, int sequence, ReasonRequest b, EngineeringService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RemoveRoutingOperationAsync(new RemoveRoutingOperation(part, rev, sequence), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/release", (HttpContext http, string part, string rev, ReleaseRevisionRequest b, EngineeringService s, CancellationToken ct) =>

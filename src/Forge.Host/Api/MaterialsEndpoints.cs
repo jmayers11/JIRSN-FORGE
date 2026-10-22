@@ -86,11 +86,11 @@ public sealed record RequisitionRequest(string PartNumber, decimal Quantity, Dat
 
 public sealed record PlannedRequisitionRequest(string PlannedOrder, string? SupplierCode, string? RequiredRevision, string? Reason);
 
-public sealed record PurchaseLineRequest(string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null);
+public sealed record PurchaseLineRequest(string PartNumber, decimal Quantity, DateOnly PromisedDate, long? RequisitionId = null, decimal? UnitPrice = null, string? Currency = "USD");
 
 public sealed record PurchaseOrderRequest(string Supplier, PurchaseLineRequest[] Lines, string? Reason);
 
-public sealed record PurchaseLineAddRequest(string PartNumber, decimal Quantity, DateOnly PromisedDate, string? Reason, long? RequisitionId = null);
+public sealed record PurchaseLineAddRequest(string PartNumber, decimal Quantity, DateOnly PromisedDate, string? Reason, long? RequisitionId = null, decimal? UnitPrice = null, string? Currency = "USD");
 
 public sealed record PromisedDateRequest(DateOnly PromisedDate, string? Reason);
 
@@ -102,9 +102,9 @@ public sealed record DemandChangeRequest(decimal Quantity, DateOnly NeedDate, in
 public sealed record DemandView(long DemandId, string PartNumber, decimal Quantity, decimal Shipped, decimal Remaining, DateOnly NeedDate, int Priority, DemandKind Kind, string? Customer, string? Reference, Guid? ProgramId, DemandStatus Status, string CreatedBy, DateTimeOffset CreatedAt, long? DeliveryId = null, string? ContractNote = null, string? SourceKey = null);
 
 /// <summary>A purchase order line with what Inventory has received against it.</summary>
-public sealed record PurchaseLineView(int LineNumber, string PartNumber, decimal Quantity, string UnitOfMeasure, DateOnly PromisedDate, PurchaseLineStatus Status, decimal Received, decimal Open, long? RequisitionId = null, PurchaseSourceKind? SourceKind = null, string? SourceKey = null, string? SourceLabel = null);
+public sealed record PurchaseLineView(int LineNumber, string PartNumber, decimal Quantity, string UnitOfMeasure, DateOnly PromisedDate, PurchaseLineStatus Status, decimal Received, decimal Open, long? RequisitionId = null, PurchaseSourceKind? SourceKind = null, string? SourceKey = null, string? SourceLabel = null, decimal? UnitPrice = null, string Currency = "USD");
 
-public sealed record PurchaseOrderView(long PoNumber, string Supplier, PurchaseOrderStatus Status, string CreatedBy, DateTimeOffset CreatedAt, string? ApprovedBy, DateTimeOffset? ApprovedAt, IReadOnlyList<PurchaseLineView> Lines, string? SupplierCode = null);
+public sealed record PurchaseOrderView(long PoNumber, string Supplier, PurchaseOrderStatus Status, string CreatedBy, DateTimeOffset CreatedAt, string? ApprovedBy, DateTimeOffset? ApprovedAt, IReadOnlyList<PurchaseLineView> Lines, string? SupplierCode = null, decimal TotalAmount = 0m, string Currency = "USD");
 
 public sealed record SupplierRequest(string Code, string Name, string? Notes, string? Reason);
 
@@ -393,12 +393,15 @@ public static class MaterialsEndpoints
                 foreach (var po in await uow.Store<IProcurementLookup>().ListPurchaseOrdersAsync(ct))
                 {
                     if (!await CanReadPurchaseOrderAsync(uow, principal, authorizer, po, ct)) continue;
-                    visible.Add(new PurchaseOrderView(po.PoNumber, po.Supplier, po.Status, po.CreatedBy, po.CreatedAt, po.ApprovedBy, po.ApprovedAt, po.Lines.Select(l =>
+                    var lineViews = po.Lines.Select(l =>
                     {
                         var got = received.GetValueOrDefault((po.PoNumber, l.LineNumber));
                         var open = po.Status == PurchaseOrderStatus.Approved && l.Status == PurchaseLineStatus.Open ? Math.Max(0, l.Quantity - got) : 0;
-                        return new PurchaseLineView(l.LineNumber, l.PartNumber, l.Quantity, l.UnitOfMeasure, l.PromisedDate, l.Status, got, open, l.RequisitionId, l.SourceKind, l.SourceKey, l.SourceLabel);
-                    }).ToList(), po.SupplierCode));
+                        return new PurchaseLineView(l.LineNumber, l.PartNumber, l.Quantity, l.UnitOfMeasure, l.PromisedDate, l.Status, got, open, l.RequisitionId, l.SourceKind, l.SourceKey, l.SourceLabel, l.UnitPrice, l.Currency);
+                    }).ToList();
+                    var currency = po.Lines.Count == 0 ? "USD" : po.Lines[0].Currency;
+                    var total = po.Lines.Where(l => l.Status != PurchaseLineStatus.Cancelled).Sum(l => l.Quantity * (l.UnitPrice ?? 0m));
+                    visible.Add(new PurchaseOrderView(po.PoNumber, po.Supplier, po.Status, po.CreatedBy, po.CreatedAt, po.ApprovedBy, po.ApprovedAt, lineViews, po.SupplierCode, total, currency));
                 }
                 return Results.Ok(visible);
             });
@@ -467,9 +470,9 @@ public static class MaterialsEndpoints
             Command(http, b.Reason, c => s.RemoveSourceAsync(new RemoveSource(part, code), c, ct)));
 
         api.MapPost("/purchase-orders", (HttpContext http, PurchaseOrderRequest b, PurchasingService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.CreateAsync(new CreatePurchaseOrder(b.Supplier, (b.Lines ?? []).Select(l => new NewPurchaseLine(l.PartNumber, l.Quantity, l.PromisedDate, l.RequisitionId)).ToList()), c, ct)));
+            Command(http, b.Reason, c => s.CreateAsync(new CreatePurchaseOrder(b.Supplier, (b.Lines ?? []).Select(l => new NewPurchaseLine(l.PartNumber, l.Quantity, l.PromisedDate, l.RequisitionId, l.UnitPrice, l.Currency)).ToList()), c, ct)));
         api.MapPost("/purchase-orders/{po:long}/lines", (HttpContext http, long po, PurchaseLineAddRequest b, PurchasingService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.AddLineAsync(new AddPurchaseLine(po, b.PartNumber, b.Quantity, b.PromisedDate, b.RequisitionId), c, ct)));
+            Command(http, b.Reason, c => s.AddLineAsync(new AddPurchaseLine(po, b.PartNumber, b.Quantity, b.PromisedDate, b.RequisitionId, b.UnitPrice, b.Currency), c, ct)));
         api.MapPost("/purchase-orders/{po:long}/approve", (HttpContext http, long po, QualifiedPurchaseApprovalRequest b, PurchasingService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ApproveAsync(new ApprovePurchaseOrder(po, b.QualityProcessCode, b.QualityWorkCenterCode), c, ct)))
             .WithMetadata(new StepUpRequiredAttribute());

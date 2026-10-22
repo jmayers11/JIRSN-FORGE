@@ -41,7 +41,7 @@ public sealed class QmsPresentationAccessTests(PostgresFixture postgres)
         await Person("qms-view-reviewer", Roles.QmsReviewer, Roles.QmsApprover, Roles.DocumentController);
         var author = plant.As("qms-view-author");
         var reviewer = plant.As("qms-view-reviewer");
-        await plant.Ok(author, "/api/resources/sites", new { code = "QMS-PLANT", name = "Actual governed facility" });
+        await plant.Ok(author, "/api/resources/sites", new { code = "QMS-PLANT", name = "Actual governed facility", timeZone = TestSite.TimeZone });
         const string role = "QmsPresentationReader";
         var permissions = new[] { Permissions.QmsRead, Permissions.EngineeringRead, Permissions.AuditRead, Permissions.NotificationsRead, Permissions.NotificationsAcknowledge };
         await plant.Ok(plant.Admin, "/api/kernel/roles", new { role, displayName = "Governance presentation reader", permissions, reason = "Scope real presentation access" });
