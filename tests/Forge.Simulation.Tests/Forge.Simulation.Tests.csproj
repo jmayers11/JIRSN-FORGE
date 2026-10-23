@@ -22,6 +22,7 @@
     <Compile Include="..\Forge.Integration.Tests\ForgeApp.cs" Link="Shared\ForgeApp.cs" />
     <Compile Include="..\Forge.Integration.Tests\PostgresFixture.cs" Link="Shared\PostgresFixture.cs" />
     <Compile Include="..\Forge.Integration.Tests\SlittingPlant.cs" Link="Shared\SlittingPlant.cs" />
+    <Compile Include="..\Forge.Integration.Tests\TestSite.cs" Link="Shared\TestSite.cs" />
     <Compile Include="..\Forge.Integration.Tests\QmsPolicyScenario.cs" Link="Shared\QmsPolicyScenario.cs" />
   </ItemGroup>
   <ItemGroup>
