@@ -1587,3 +1587,5 @@ Verification: broad UI suite 344/344; Planning suite 330/330; isolated Release h
 ## Sprint 10 regression-gate compilation repair — 2026-10-23
 
 The Sprint 9 simulation project links `SlittingPlant.cs` and other integration helpers but omitted their shared `TestSite.cs`; this caused compile failures before any scenario could start. Linked the helper into `Forge.Simulation.Tests.csproj`. The Release simulation project build now passes with 0 warnings and 0 errors. Docker Engine remains unavailable and `FORGE_TEST_POSTGRES` is unset, so this closes compilation only; no simulation or integration database scenario was executed and no WhiskerWorks seed or live preview was changed.
+
+Ran the database-independent attendance and operation-labor calculation cases from `Forge.Integration.Tests`; 8/8 passed. Updated the Sprint 10 handoff and implementation report with this result. This verifies pure calculation behavior only; it does not substitute for the pending isolated-database workflow and scenario replay.
