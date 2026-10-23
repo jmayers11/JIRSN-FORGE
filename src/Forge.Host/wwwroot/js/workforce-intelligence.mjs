@@ -197,17 +197,49 @@ export function buildWorkforceIntelligence(input = {}) {
     const end = isoTime(row.endsAt);
     return end !== null && end > now;
   });
+  const operationByOrder = new Map();
+  for (const operation of input.readiness ?? []) {
+    const operations = operationByOrder.get(operation.orderNumber) ?? [];
+    operations.push(operation);
+    operationByOrder.set(operation.orderNumber, operations);
+  }
+  for (const operations of operationByOrder.values()) operations.sort((a, b) => a.sequence - b.sequence);
+  const materialRecoveryAction = task => {
+    if (task.rejectedQuantity > 0 || ['DeliveryRejected', 'Rejected'].includes(task.status))
+      return 'Inventory Controller: review the rejected quantity and route it through the audited correction or replacement workflow.';
+    if (task.status === 'ApprovalNeeded') return 'Planner / Inventory: review the request and record the required approval.';
+    if (task.status === 'Requested') return 'Stockroom: allocate released stock, then pick and scan the material.';
+    if (task.status === 'Allocated') return 'Stockroom: pick and scan the allocated lot and bin.';
+    if (task.status === 'Picked') return 'Stockroom deliverer: scan the destination and dispatch the custody handoff.';
+    if (task.status === 'InTransit') return 'Floor receiver: independently acknowledge the delivered quantity; resolve any discrepancy through Inventory.';
+    return 'Review the canonical Inventory task for its next authorized action.';
+  };
   const materialDisruptions = (input.materialTasks ?? [])
-    .filter(task => task.orderNumber != null && ['ApprovalNeeded', 'Requested', 'Allocated', 'Picked', 'InTransit'].includes(task.status))
-    .filter(task => !input.workCenterCode || !task.workCenterCode || task.workCenterCode === input.workCenterCode)
-    .map(task => ({
-      severity: task.status === 'InTransit' ? 'urgent' : 'attention',
-      title: `WO ${task.orderNumber} · ${task.partNumber} material ${task.status === 'ApprovalNeeded' ? 'needs approval' : task.status === 'InTransit' ? task.rejectedQuantity > 0 ? 'has rejected quantity awaiting resolution' : 'awaits receipt' : 'awaits stockroom'}`,
-      detail: `${task.quantity} requested for ${task.toLocation}${task.receivedQuantity ? ` · ${task.receivedQuantity} accepted` : ''}${task.rejectedQuantity ? ` · ${task.rejectedQuantity} quarantined` : ''}${task.operationSequence == null ? '' : ` · operation ${task.operationSequence}`}. No staffing or safety gate is bypassed.`,
-      orderNumber: task.orderNumber,
-      sequence: task.operationSequence,
-      evidenceReferences: [`MaterialTask/${task.taskId}`, ...(task.operationSequence == null ? [] : [`OrderOperation/${task.orderNumber}/${task.operationSequence}`])],
-    }));
+    .filter(task => task.orderNumber != null && ['ApprovalNeeded', 'Requested', 'Allocated', 'Picked', 'InTransit', 'DeliveryRejected', 'Rejected'].includes(task.status))
+    .map(task => {
+      const operations = operationByOrder.get(task.orderNumber) ?? [];
+      const operation = task.operationSequence == null ? operations[0] : operations.find(row => row.sequence === task.operationSequence);
+      const workCenter = task.workCenterCode ?? operation?.workCenter;
+      const dueDate = operation?.dueDate ?? null;
+      const materialBlocked = operation?.executable === false && ['Material', 'PointOfUse'].includes(operation.primaryConstraint);
+      const otherBlocker = operation?.executable === false && !materialBlocked ? operation.primaryConstraint : null;
+      const statusPriority = task.rejectedQuantity > 0 || ['DeliveryRejected', 'Rejected'].includes(task.status) ? 0
+        : task.status === 'InTransit' ? 1 : task.status === 'ApprovalNeeded' ? 2
+          : task.status === 'Requested' ? 3 : task.status === 'Allocated' ? 4 : 5;
+      return {
+        severity: statusPriority <= 1 || materialBlocked ? 'urgent' : 'attention',
+        recoveryPriority: statusPriority,
+        dueDate,
+        title: `WO ${task.orderNumber} · ${task.partNumber} material ${task.status === 'ApprovalNeeded' ? 'needs approval' : task.status === 'InTransit' ? task.rejectedQuantity > 0 ? 'has rejected quantity awaiting resolution' : 'awaits receipt' : ['DeliveryRejected', 'Rejected'].includes(task.status) ? 'was rejected' : 'awaits stockroom'}`,
+        detail: `${task.quantity} requested for ${task.toLocation}${task.receivedQuantity ? ` · ${task.receivedQuantity} accepted` : ''}${task.rejectedQuantity ? ` · ${task.rejectedQuantity} quarantined` : ''}${task.operationSequence == null ? '' : ` · operation ${task.operationSequence}`}${dueDate ? ` · order due ${dueDate}` : ''}${materialBlocked ? ' · linked operation is currently blocked by material readiness' : otherBlocker ? ` · operation also has a ${otherBlocker} blocker` : ''}. Next: ${materialRecoveryAction(task)} This is a material workflow recommendation; it does not authorize a worker move or bypass any gate.`,
+        orderNumber: task.orderNumber,
+        sequence: task.operationSequence,
+        workCenter,
+        evidenceReferences: [`MaterialTask/${task.taskId}`, ...(task.operationSequence == null ? [] : [`OrderOperation/${task.orderNumber}/${task.operationSequence}`])],
+      };
+    })
+    .filter(task => !input.workCenterCode || !task.workCenter || task.workCenter === input.workCenterCode)
+    .sort((a, b) => a.recoveryPriority - b.recoveryPriority || (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31') || a.orderNumber - b.orderNumber);
   const suspectReports = (input.suspectReports ?? [])
     .filter(report => !report.ncrId)
     .filter(report => !input.workCenterCode || !report.workCenterCode || report.workCenterCode === input.workCenterCode)
@@ -264,7 +296,8 @@ export function buildWorkforceIntelligence(input = {}) {
     capabilityGaps,
     trainingRecommendations,
     blockers,
-    materialDisruptions: [...materialDisruptions, ...suspectReports].sort((a, b) => (a.severity === 'urgent' ? 0 : 1) - (b.severity === 'urgent' ? 0 : 1) || a.title.localeCompare(b.title)),
+    materialDisruptions: [...materialDisruptions, ...suspectReports].sort((a, b) => (a.severity === 'urgent' ? 0 : 1) - (b.severity === 'urgent' ? 0 : 1)
+      || (a.recoveryPriority ?? 99) - (b.recoveryPriority ?? 99) || (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31') || a.title.localeCompare(b.title)),
     upcomingAbsence,
     labor: operationLabor(input.activity, now),
     attendance,

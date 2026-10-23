@@ -85,6 +85,35 @@ test('material and suspect-scrap disruptions become source-linked workforce aler
   assert.match(summary.materialDisruptions.find(row => row.title.includes('Suspect report')).detail, /reported evidence, not an approved disposition/);
 });
 
+test('material recovery priorities use linked readiness and order due dates without proposing unsafe worker moves', () => {
+  const summary = buildWorkforceIntelligence({
+    now,
+    readiness: [
+      { orderNumber: 200, sequence: 20, dueDate: '2026-11-03', workCenter: 'WC-A', executable: false, primaryConstraint: 'Material', why: 'Point-of-use material is short.' },
+      { orderNumber: 201, sequence: 10, dueDate: '2026-10-27', workCenter: 'WC-B', executable: false, primaryConstraint: 'Workforce', why: 'No qualified operator.' },
+    ],
+    materialTasks: [
+      { taskId: 1, orderNumber: 200, operationSequence: 20, partNumber: 'PART-A', quantity: 6, toLocation: 'WC-A-STAGE', status: 'Requested' },
+      { taskId: 2, orderNumber: 201, operationSequence: 10, partNumber: 'PART-B', quantity: 3, toLocation: 'WC-B-STAGE', status: 'InTransit' },
+      { taskId: 3, orderNumber: 202, operationSequence: 10, partNumber: 'PART-C', quantity: 2, toLocation: 'WC-A-STAGE', status: 'InTransit', rejectedQuantity: 1 },
+    ],
+  });
+
+  assert.deepEqual(summary.materialDisruptions.map(row => row.orderNumber), [202, 201, 200]);
+  assert.match(summary.materialDisruptions[0].detail, /Inventory Controller: review the rejected quantity/);
+  assert.match(summary.materialDisruptions[1].detail, /order due 2026-10-27/);
+  assert.match(summary.materialDisruptions[2].detail, /currently blocked by material readiness/);
+  assert.match(summary.materialDisruptions[2].detail, /does not authorize a worker move/);
+  const centerA = buildWorkforceIntelligence({ now, workCenterCode: 'WC-A', readiness: [
+    { orderNumber: 200, sequence: 20, dueDate: '2026-11-03', workCenter: 'WC-A', executable: false, primaryConstraint: 'Material' },
+    { orderNumber: 201, sequence: 10, dueDate: '2026-10-27', workCenter: 'WC-B', executable: false, primaryConstraint: 'Workforce' },
+  ], materialTasks: [
+    { taskId: 1, orderNumber: 200, operationSequence: 20, partNumber: 'PART-A', quantity: 6, toLocation: 'WC-A-STAGE', status: 'Requested' },
+    { taskId: 2, orderNumber: 201, operationSequence: 10, partNumber: 'PART-B', quantity: 3, toLocation: 'WC-B-STAGE', status: 'InTransit' },
+  ] });
+  assert.deepEqual(centerA.materialDisruptions.map(row => row.orderNumber), [200]);
+});
+
 test('unreadable capability sources remain unknown rather than showing zero qualified workers', () => {
   const summary = buildWorkforceIntelligence({ now, workers, resources });
   assert.equal(summary.coverage, null);

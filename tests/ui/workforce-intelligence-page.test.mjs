@@ -25,7 +25,10 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
       { personId: 'worker-1', kind: 'ApprovedPto', startsAt: '2026-10-25T00:00:00Z', endsAt: '2026-10-26T00:00:00Z' },
     ]));
     if (path === '/api/readiness/operations') return Promise.resolve(response([
-      { orderNumber: 77, sequence: 10, workCenter: 'WC-A', executable: false, primaryConstraint: 'Workforce', why: 'No qualified operator.' },
+      { orderNumber: 77, sequence: 10, dueDate: '2026-10-27', workCenter: 'WC-A', executable: false, primaryConstraint: 'Workforce', why: 'No qualified operator.' },
+    ]));
+    if (path === '/api/inventory/tasks?open=true') return Promise.resolve(response([
+      { taskId: 55, orderNumber: 77, operationSequence: 10, partNumber: 'COMP-7', quantity: 4, toLocation: 'WC-A-STAGE', status: 'InTransit' },
     ]));
     if (path.startsWith('/api/shopfloor/activity?')) return Promise.resolve(response({ labor: [], reports: [], attendance: [] }));
     if (path.startsWith('/api/workforce/attendance-intelligence?')) {
@@ -43,6 +46,9 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   assert.match(page.innerHTML, /Current qualifications[\s\S]*?1/);
   assert.match(page.innerHTML, /expires in 2 days/);
   assert.match(page.innerHTML, /WO 77 · operation 10 is blocked by Workforce/);
+  assert.match(page.innerHTML, /order due 2026-10-27/);
+  assert.match(page.innerHTML, /Floor receiver: independently acknowledge the delivered quantity/);
+  assert.match(page.innerHTML, /operation also has a Workforce blocker/);
   assert.match(page.innerHTML, /Attendance reliability: On-time arrival: 96.36%/);
   assert.match(page.innerHTML, /Eligible arrivals:[\s\S]*?55/);
   assert.match(page.innerHTML, /Excluded:[\s\S]*?5/);
