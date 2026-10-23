@@ -1263,5 +1263,11 @@ button.pill.linkish:hover { text-decoration: underline; }
 .workforce-intelligence-review-item > div:first-child { display: grid; gap: 3px; }
 .workforce-intelligence-review-item > div:first-child span { color: var(--muted); font-size: 12px; }
 .workforce-intelligence-review-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+.workforce-intelligence-recovery { margin-top: 14px; }
+.workforce-intelligence-recovery-item { display: grid; gap: 8px; margin: 8px 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
+.workforce-intelligence-recovery-item > div:first-child, .workforce-intelligence-recovery-list li { display: grid; gap: 4px; }
+.workforce-intelligence-recovery-item span, .workforce-intelligence-recovery-list span { color: var(--muted); font-size: 12px; }
+.workforce-intelligence-recovery-list { display: grid; gap: 8px; margin: 0; padding-left: 24px; }
+.workforce-intelligence-recovery-list li { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .workforce-intelligence-correction { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 8px; }
 .workforce-intelligence-attendance-tools { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }

@@ -3,6 +3,7 @@ using Forge.Engineering.Contracts;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Planning;
+using Forge.Workforce;
 using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
@@ -12,6 +13,8 @@ public sealed record DocumentTrainingRequest(Guid PersonId, string DocumentNumbe
 public sealed record TrainingPolicyRequest(TrainingPolicy Policy, DocumentType[]? DocumentTypes, string? Reason);
 
 public sealed record ReallocationPlanRequest(ReallocationPlanProposal[] Moves);
+
+public sealed record WorkforceRecoveryPreviewRequest(string? SafetyAreaCode, string? WorkCenterCode, string? MachineCode, string ActivityCode);
 
 /// <summary>
 /// V3.9: executable capacity and presence. Every open operation answers "can this happen now, and why not?"; each
@@ -38,6 +41,15 @@ internal static class ExecutableEndpoints
             return principal is null
                 ? NotRegistered()
                 : Results.Ok(await s.PreviewReallocationPlanAsync(principal, request.Moves, ct));
+        });
+        readiness.MapPost("/workforce-recovery-preview", async (HttpContext http, WorkforceRecoveryPreviewRequest request, ReadinessService s, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            return principal is null
+                ? NotRegistered()
+                : Results.Ok(await s.RecommendWorkforceRecoveryAsync(principal,
+                    new AssignWork(new PersonId(Guid.Empty), request.SafetyAreaCode, request.WorkCenterCode,
+                        request.MachineCode, request.ActivityCode, false), ct));
         });
 
         var training = app.MapGroup("/api/engineering/document-training").RequireAuthorization();

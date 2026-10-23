@@ -158,6 +158,35 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         return EngineRunner.Run(reallocation, snapshot, new ReallocationRequest(proposal.PersonId.Value, proposed), snapshot.AsOf);
     }
 
+    /// <summary>Ranks currently present, visible workers for a machine/activity gap without writing assignments.</summary>
+    public async Task<EngineRun<WorkforceRecoveryResult>> RecommendWorkforceRecoveryAsync(
+        ForgePrincipal principal,
+        AssignWork targetRequest,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(targetRequest);
+        Demand(principal);
+        if (targetRequest.AsTrainee)
+            throw new CommandRejectedException("invalid_recovery_target", "A recovery target must represent independently authorized work.");
+
+        await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
+        var resources = uow.Store<IResourcesLookup>();
+        // Assignment resolution validates the target machine/activity against the canonical Resources model.
+        var targetAssignment = await WorkforceService.ResolveAssignmentAsync(resources,
+            targetRequest with { PersonId = new PersonId(Guid.Empty) }, ct);
+        var target = new WorkItem(targetAssignment.SafetyAreaCode, targetAssignment.WorkCenterCode,
+            targetAssignment.MachineCode, targetAssignment.ActivityCode);
+        var snapshot = await LoadSnapshotAsync(uow, ct);
+        var visibleCandidates = snapshot.People
+            .Where(person => CanSuperviseWorkforceScope(principal, person.PersonId, person.Assignment?.WorkCenterCode ?? person.HomeWorkCenterCode)
+                && CanSuperviseWorkforceScope(principal, person.PersonId, target.WorkCenterCode))
+            .Select(person => person.PersonId)
+            .ToHashSet();
+
+        return EngineRunner.Run(new WorkforceRecoveryEngine(), snapshot,
+            new WorkforceRecoveryRequest(target, visibleCandidates), snapshot.AsOf);
+    }
+
     /// <summary>Previews a cascading worker move scenario against one copied Forge snapshot. Nothing is committed.</summary>
     public async Task<EngineRun<ReallocationPlanResult>> PreviewReallocationPlanAsync(
         ForgePrincipal principal,
@@ -327,5 +356,12 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         var decision = authorizer.Authorize(principal, Permissions.WorkforceSupervise, resource);
         if (!decision.IsPermitted && !authorizer.Authorize(principal, Permissions.WorkforceManage, resource).IsPermitted)
             throw new ForgeAuthorizationException(decision);
+    }
+
+    private bool CanSuperviseWorkforceScope(ForgePrincipal principal, Guid personId, string? workCenterCode)
+    {
+        var resource = new ResourceRef("Worker", personId.ToString("D"), WorkCenterId: workCenterCode);
+        return authorizer.Authorize(principal, Permissions.WorkforceSupervise, resource).IsPermitted
+            || authorizer.Authorize(principal, Permissions.WorkforceManage, resource).IsPermitted;
     }
 }

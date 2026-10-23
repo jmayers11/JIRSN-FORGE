@@ -1,4 +1,4 @@
-import { tryGet, command } from '../api.js';
+import { tryGet, command, readPost } from '../api.js';
 import { esc, fmtNumber, errorBlock } from '../ui.js';
 import { buildWorkforceIntelligence, renderEvidenceReference } from '../workforce-intelligence.mjs';
 
@@ -124,6 +124,17 @@ function render(summary, sources, options, me) {
   const canReviewNominations = permissions.has('workforce.development.review');
   const canReadNominations = permissions.has('workforce.development.read');
   const canReadCompensation = permissions.has('workforce.compensation.read');
+  const canRecoverCoverage = permissions.has('planning.readiness.read')
+    && (permissions.has('workforce.supervise') || permissions.has('workforce.manage'));
+  const recoveryRows = canRecoverCoverage && coverageKnown && summary.capabilityGaps.length
+    ? summary.capabilityGaps.slice(0, 8).map(row => {
+      const machine = (sources.resources?.data?.machines ?? []).find(item => item.code === row.machineCode);
+      return `<article class="workforce-intelligence-recovery-item">
+        <div><b>${esc(row.machineCode)} · ${esc(row.activityCode)}</b><span>${esc(row.workCenterCode)} · ${esc(row.shiftName)} · ${esc(row.requiredQualifications.join(' or '))}${row.requiresMachineAuthorization ? ' · machine authorization required' : ''}</span></div>
+        <button class="btn small" type="button" data-wi-recovery data-safety-area="${escapeAttr(machine?.safetyAreaCode ?? '')}" data-work-center="${escapeAttr(row.workCenterCode)}" data-machine="${escapeAttr(row.machineCode)}" data-activity="${escapeAttr(row.activityCode)}">Find safe candidates</button>
+        <div data-wi-recovery-result aria-live="polite"></div></article>`;
+    }).join('')
+    : '';
   const allEvents = sources.pending?.data ?? [];
   const pendingEvents = allEvents.filter(item => item.reviewState === 'PendingReview' || item.reviewState === 'Disputed');
   const supersededEventIds = new Set(allEvents.map(item => item.supersedesEventId).filter(Boolean));
@@ -169,6 +180,7 @@ function render(summary, sources, options, me) {
         <section><h3>Daily action alerts <span class="badge ${issues.length ? 'orange' : 'gray'}">${issues.length}</span></h3>${alertRows}${materialSourcesKnown ? '' : '<p class="faint">Material task and suspect-report signals are unavailable to this account.</p>'}</section>
         <section><h3>Qualification review</h3>${expiringRows}<p class="faint workforce-intelligence-note">${fmtNumber(summary.qualificationCounts.inTraining)} record(s) are marked In Training. In Training does not grant independent authorization.</p>${trainingRecommendationRows ? `<h4>Human-reviewed training opportunities</h4><ul class="workforce-intelligence-list">${trainingRecommendationRows}</ul>` : ''}</section>
       </div>
+      ${recoveryRows ? `<section class="workforce-intelligence-recovery"><h3>Safe coverage options</h3><p class="faint">Ranked from current visible workers. The preview checks qualification, machine authorization, active source work, equipment/tooling, and safety composition; it does not commit assignments.</p>${recoveryRows}</section>` : ''}
       <details class="workforce-intelligence-evidence"><summary>Performance and attendance evidence</summary>
         <h3>Recorded operation labor · last 30 days</h3>${laborTable}
         <p class="faint workforce-intelligence-note">Target hours and efficiency are N/A until an approved operation labor standard and reviewed quantity basis exist. Downtime and training time stay visible; no employee score is inferred.</p>
@@ -261,7 +273,7 @@ export async function appendWorkforceIntelligence(page, me) {
   const shifts = resources?.shifts ?? [];
   const workCenters = resources?.workCenters ?? [];
   const workerNames = new Map((workers ?? []).map(worker => [worker.personId, worker.displayName]));
-  const sources = { workers: workersResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, workerNames };
+  const sources = { workers: workersResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, resources: resourcesResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, workerNames };
   page.innerHTML = render(buildWorkforceIntelligence({ ...inputs, ...current }), sources, { ...current, shifts, workCenters }, me) + page.innerHTML;
   page.addEventListener('change', async event => {
     const filter = event.target?.dataset?.wiFilter;
@@ -320,13 +332,31 @@ export async function appendWorkforceIntelligence(page, me) {
     }
   });
   page.addEventListener('click', async event => {
+    const recovery = event.target.closest('[data-wi-recovery]');
     const review = event.target.closest('[data-wi-review]');
     const correction = event.target.closest('[data-wi-correct]');
     const classification = event.target.closest('[data-wi-classify]');
     const nominationAdvance = event.target.closest('[data-wi-nom-advance]');
-    if (!review && !correction && !classification && !nominationAdvance) return;
+    if (!recovery && !review && !correction && !classification && !nominationAdvance) return;
     try {
-      if (nominationAdvance) {
+      if (recovery) {
+        const output = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-result]');
+        recovery.disabled = true;
+        if (output) output.innerHTML = '<p class="faint">Evaluating current source and target work…</p>';
+        const result = await readPost('/api/readiness/workforce-recovery-preview', {
+          safetyAreaCode: recovery.dataset.safetyArea || null,
+          workCenterCode: recovery.dataset.workCenter || null,
+          machineCode: recovery.dataset.machine || null,
+          activityCode: recovery.dataset.activity,
+        });
+        const summary = result.output;
+        if (!summary || !output) throw new Error('The recovery preview returned no result.');
+        output.innerHTML = summary.candidates?.length
+          ? `<ol class="workforce-intelligence-recovery-list">${summary.candidates.map(candidate => `<li><b>#${candidate.rank} · ${esc(candidate.personName)}</b><span>${candidate.requiresSourceBackfill ? 'Two-step plan' : 'Direct move'} · ${candidate.moves.map(move => `${esc(move.personName)} → ${esc(move.assignment.machineCode || move.assignment.workCenterCode || move.assignment.safetyAreaCode)} / ${esc(move.assignment.activityCode)}`).join(' · ')}</span>${candidate.sourceImpacts?.length ? `<span>Source impact: ${candidate.sourceImpacts.map(item => esc(item.detail)).join(' · ')}</span>` : '<span>No currently executable source work is disrupted.</span>'}<span>${candidate.evidence.map(esc).join(' ')}</span></li>`).join('')}</ol><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`
+          : `<p class="faint">No safe candidate found among ${fmtNumber(summary.evaluatedCandidates)} visible, currently present workers. ${summary.currentConstraint ? `Current target constraint: ${esc(summary.currentConstraint)}.` : ''}</p><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`;
+        recovery.disabled = false;
+        return;
+      } else if (nominationAdvance) {
         const id = nominationAdvance.dataset.wiNomAdvance;
         const status = page.querySelector(`[data-wi-nom-status="${CSS.escape(id)}"]`)?.value;
         const note = page.querySelector(`[data-wi-nom-note="${CSS.escape(id)}"]`)?.value?.trim();
@@ -358,6 +388,12 @@ export async function appendWorkforceIntelligence(page, me) {
       }
       window.location.reload();
     } catch (error) {
+      if (recovery) {
+        recovery.disabled = false;
+        const output = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-result]');
+        if (output) output.innerHTML = `<p class="notice warn">${esc(error?.message ?? 'The recovery preview could not be evaluated.')}</p>`;
+        return;
+      }
       const item = (review ?? correction ?? classification ?? nominationAdvance).closest('.workforce-intelligence-review-item');
       const alert = document.createElement('p');
       alert.className = 'notice warn';

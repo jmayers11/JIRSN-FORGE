@@ -62,3 +62,55 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   const yearRange = new URL(attendanceCalls[1], 'http://forge.local');
   assert.ok(new Date(yearRange.searchParams.get('to')).getTime() - new Date(yearRange.searchParams.get('from')).getTime() > 250 * 86_400_000);
 });
+
+test('supervisors can request a read-only ranked recovery preview for a machine capability gap', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div');
+  browser.document.body.append(page);
+  let recoveryRequest;
+  globalThis.fetch = (path, options = {}) => {
+    if (path === '/api/workforce/workers') return Promise.resolve(response([
+      { personId: 'worker-1', displayName: 'Ari Operator', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY', unavailability: null },
+    ]));
+    if (path === '/api/resources/') return Promise.resolve(response({
+      shifts: [{ code: 'DAY', name: 'Day Shift' }],
+      workCenters: [{ code: 'WC-A', name: 'Winding' }],
+      machines: [{ code: 'WD-01', workCenterCode: 'WC-A', safetyAreaCode: 'AREA-A' }],
+      machineActivities: [{ machineCode: 'WD-01', activityCode: 'WIND', operatorQualifications: ['WIND'], requiresMachineAuthorization: true }],
+      workCenterShifts: [{ workCenterCode: 'WC-A', shiftCode: 'DAY' }],
+    }));
+    if (path === '/api/competency/qualification-types') return Promise.resolve(response([{ code: 'WIND', name: 'Winding' }]));
+    if (path.startsWith('/api/competency/people/qualifications?')) return Promise.resolve(response([]));
+    if (path.startsWith('/api/competency/machine-authorizations?')) return Promise.resolve(response([]));
+    if (path === '/api/readiness/workforce-recovery-preview') {
+      recoveryRequest = JSON.parse(options.body);
+      return Promise.resolve(response({ output: {
+        evaluatedCandidates: 8,
+        currentConstraint: 'Workforce',
+        candidates: [{ rank: 1, personId: 'worker-2', personName: 'Morgan Trainer', requiresSourceBackfill: true,
+          moves: [
+            { personId: 'worker-3', personName: 'Taylor', assignment: { machineCode: 'WD-02', workCenterCode: 'WC-B', safetyAreaCode: 'AREA-B', activityCode: 'WIND' } },
+            { personId: 'worker-2', personName: 'Morgan Trainer', assignment: { machineCode: 'WD-01', workCenterCode: 'WC-A', safetyAreaCode: 'AREA-A', activityCode: 'WIND' } },
+          ],
+          sourceImpacts: [{ detail: 'WC-B would be unstaffed unless Taylor is moved first.' }],
+          evidence: ['Taylor covers the source before Morgan moves.'],
+        }],
+        limitations: ['Material and due-date effects are not evaluated.'],
+      } }));
+    }
+    return Promise.resolve(response([]));
+  };
+
+  await appendWorkforceIntelligence(page, { permissions: ['planning.readiness.read', 'workforce.supervise'] });
+  const button = page.querySelector('[data-wi-recovery]');
+  assert.ok(button);
+  assert.equal(button.dataset.safetyArea, 'AREA-A');
+  fire(button, 'click'); await flush(); await flush();
+
+  assert.deepEqual(recoveryRequest, { safetyAreaCode: 'AREA-A', workCenterCode: 'WC-A', machineCode: 'WD-01', activityCode: 'WIND' });
+  const result = page.querySelector('[data-wi-recovery-result]').innerHTML;
+  assert.match(result, /#1 · Morgan Trainer/);
+  assert.match(result, /Two-step plan/);
+  assert.match(result, /WC-B would be unstaffed unless Taylor is moved first/);
+  assert.match(result, /Material and due-date effects are not evaluated/);
+  assert.equal(button.disabled, false);
+});
