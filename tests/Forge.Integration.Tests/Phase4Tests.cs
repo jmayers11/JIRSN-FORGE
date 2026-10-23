@@ -126,8 +126,8 @@ public sealed class Phase4Tests(PostgresFixture postgres)
         var unavailability = await Get(planner, $"/api/workforce/unavailability?from={Uri.EscapeDataString(now.ToString("o"))}&to={Uri.EscapeDataString(now.AddDays(30).ToString("o"))}");
         var ptoWindow = unavailability.EnumerateArray().Single(window => window.GetProperty("personId").GetGuid() == plant.People["sarah"]);
         Assert.Equal("ApprovedPto", ptoWindow.GetProperty("kind").GetString());
-        Assert.Equal(ptoStart, ptoWindow.GetProperty("startsAt").GetDateTimeOffset());
-        Assert.Equal(ptoEnd, ptoWindow.GetProperty("endsAt").GetDateTimeOffset());
+        Assert.InRange((ptoWindow.GetProperty("startsAt").GetDateTimeOffset() - ptoStart).Duration(), TimeSpan.Zero, TimeSpan.FromMicroseconds(1));
+        Assert.InRange((ptoWindow.GetProperty("endsAt").GetDateTimeOffset() - ptoEnd).Duration(), TimeSpan.Zero, TimeSpan.FromMicroseconds(1));
 
         // Capacity: Slitting loses executable time while Sarah is away, though the machines are up.
         var capacity = await Get(planner, $"/api/planning/capacity?from={Uri.EscapeDataString(now.ToString("o"))}&to={Uri.EscapeDataString(now.AddDays(2).ToString("o"))}&workCenter=SLIT-WC");

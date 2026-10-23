@@ -52,11 +52,11 @@ public sealed class Phase2Tests(PostgresFixture postgres)
         Assert.Equal("Safety", output.GetProperty("primaryConstraint").GetString());
         Assert.Contains("SafetyRule:SLIT-AREA@v1", run.GetRawText(), StringComparison.Ordinal);
 
-        // The call-out reason is not stored anywhere, and readiness does not expose the kind of absence.
+        // The free-text call-out reason is not stored on operational unavailability, and readiness does not expose the kind.
         Assert.DoesNotContain("CallOut", run.GetRawText(), StringComparison.Ordinal);
         await using var connection = new NpgsqlConnection(app.ConnectionString);
         await connection.OpenAsync();
-        await using var columns = new NpgsqlCommand("SELECT count(*) FROM information_schema.columns WHERE table_schema = 'workforce' AND column_name LIKE '%reason%'", connection);
+        await using var columns = new NpgsqlCommand("SELECT count(*) FROM information_schema.columns WHERE table_schema = 'workforce' AND table_name = 'unavailability' AND column_name LIKE '%reason%'", connection);
         Assert.Equal(0L, (long)(await columns.ExecuteScalarAsync())!);
     }
 

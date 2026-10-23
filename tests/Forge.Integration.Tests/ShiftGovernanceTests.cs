@@ -17,7 +17,7 @@ public sealed class ShiftGovernanceTests(PostgresFixture postgres)
 
     private static DateTimeOffset ShiftFrom()
     {
-        var zone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(TestSite.TimeZone);
         var local = DateTime.SpecifyKind(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone).Date.AddDays(-1), DateTimeKind.Unspecified);
         return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, zone), TimeSpan.Zero);
     }
@@ -104,7 +104,7 @@ public sealed class ShiftGovernanceTests(PostgresFixture postgres)
         }));
         await plant.Ok(plant.Engineer, "/api/execution/shifts/checklist", new { workCenterCode = "SLIT-WC", code = "ROLL", description = "Account for the partially consumed roll", required = true, sortOrder = 1, active = true, reason = "Shift material checklist" });
         clock.UtcNow = until.AddMinutes(5);
-        var handoffId = Id(await plant.Ok(plant.Admin, "/api/execution/shifts/handoffs", new
+        var handoffId = Id(await plant.Ok(plant.Engineer, "/api/execution/shifts/handoffs", new
         {
             workCenterCode = "SLIT-WC", shiftCode = "ALL", shiftFrom = from, shiftUntil = until,
             context = "Spindle investigation and remaining master roll require follow-up.",
@@ -164,12 +164,12 @@ public sealed class ShiftGovernanceTests(PostgresFixture postgres)
             kind = "CallOut", startsAt = from.AddHours(4), endsAt = from.AddHours(5), reason = "PRIVATE REASON MUST NOT ENTER HANDOFF",
         });
 
-        var handoffId = Id(await plant.Ok(plant.Admin, "/api/execution/shifts/handoffs", new
+        var handoffId = Id(await plant.Ok(plant.Engineer, "/api/execution/shifts/handoffs", new
         {
             workCenterCode = "SLIT-WC", shiftCode = "ALL", shiftFrom = from, shiftUntil = until,
             context = "Review recorded worker availability", checklist = Array.Empty<object>(), reason = "Capture work-center continuity snapshot",
         }));
-        var facts = (await Get(plant.Admin, $"/api/execution/shifts/handoffs/{handoffId}"))
+        var facts = (await Get(plant.Engineer, $"/api/execution/shifts/handoffs/{handoffId}"))
             .GetProperty("handoff").GetProperty("facts");
         var fact = Assert.Single(facts.EnumerateArray(), item => item.GetProperty("kind").GetString() == "WorkerAvailability");
         Assert.Equal("CallOut", fact.GetProperty("status").GetString());

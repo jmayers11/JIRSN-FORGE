@@ -70,17 +70,27 @@ internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : I
     public async Task UpdateAsync(ResourceRecord record, DateTimeOffset at, string actor, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(record);
-        var sql = record.Kind switch
+        var command = record.Kind switch
         {
-            // Every statement receives the same ten parameters; each uses the ones that apply to its table.
-            "Site" => "UPDATE resources.site SET name = $2, time_zone = $5, updated_at = $7, updated_by = $8 WHERE code = $1",
-            "SafetyArea" => "UPDATE resources.safety_area SET name = $2, active = $4, updated_at = $7, updated_by = $8 WHERE code = $1",
-            "WorkCenter" => "UPDATE resources.work_center SET name = $2, safety_area_code = $3, active = $4, picture = $6, updated_at = $7, updated_by = $8, layout_x = $9, layout_y = $10, map_x = $11, map_y = $12 WHERE code = $1",
-            "Machine" => "UPDATE resources.machine SET name = $2, work_center_code = $3, active = $4, updated_at = $7, updated_by = $8 WHERE code = $1",
-            "ActivityType" => "UPDATE resources.activity_type SET name = $2, active = $4, description = $5, updated_at = $7, updated_by = $8 WHERE code = $1",
+            "Site" => uow.Command(
+                "UPDATE resources.site SET name = $2, time_zone = $3, updated_at = $4, updated_by = $5 WHERE code = $1",
+                record.Code, record.Name, Text(record.Detail), at, actor),
+            "SafetyArea" => uow.Command(
+                "UPDATE resources.safety_area SET name = $2, active = $3, updated_at = $4, updated_by = $5 WHERE code = $1",
+                record.Code, record.Name, record.Active, at, actor),
+            "WorkCenter" => uow.Command(
+                "UPDATE resources.work_center SET name = $2, safety_area_code = $3, active = $4, picture = $5, updated_at = $6, updated_by = $7, layout_x = $8, layout_y = $9, map_x = $10, map_y = $11 WHERE code = $1",
+                record.Code, record.Name, Text(record.Parent), record.Active, Text(record.Picture), at, actor,
+                record.LayoutX, record.LayoutY, record.MapX, record.MapY),
+            "Machine" => uow.Command(
+                "UPDATE resources.machine SET name = $2, work_center_code = $3, active = $4, updated_at = $5, updated_by = $6 WHERE code = $1",
+                record.Code, record.Name, Text(record.Parent), record.Active, at, actor),
+            "ActivityType" => uow.Command(
+                "UPDATE resources.activity_type SET name = $2, active = $3, description = $4, updated_at = $5, updated_by = $6 WHERE code = $1",
+                record.Code, record.Name, record.Active, Text(record.Detail), at, actor),
             _ => throw new ArgumentOutOfRangeException(nameof(record), record.Kind, "Unknown resource kind."),
         };
-        await using var cmd = uow.Command(sql, record.Code, record.Name, Text(record.Parent), record.Active, Text(record.Detail), Text(record.Picture), at, actor, record.LayoutX, record.LayoutY, record.MapX, record.MapY);
+        await using var cmd = command;
         if (await cmd.ExecuteNonQueryAsync(ct) != 1)
         {
             throw new InvalidOperationException($"{record.Kind} {record.Code} was not updated.");
