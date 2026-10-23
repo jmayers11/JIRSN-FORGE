@@ -1,11 +1,12 @@
 using Forge.Kernel.Postgres;
+using Forge.Competency.Contracts;
 using Forge.Resources.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 
 namespace Forge.Resources.Infrastructure;
 
-internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : IResourcesStore, IResourcesLookup
+internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : IResourcesStore, IResourcesLookup, ICompetencyMachineContext
 {
     public async Task<bool> InsertAsync(string kind, string code, string name, string? parent, string? description, DateTimeOffset at, string actor, CancellationToken ct)
     {
@@ -29,12 +30,13 @@ internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : I
         ArgumentNullException.ThrowIfNull(profile);
         await using var cmd = uow.Command(
             """
-            INSERT INTO resources.machine_activity (machine_code, activity_code, operator_qualifications, updated_at, updated_by)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO resources.machine_activity (machine_code, activity_code, operator_qualifications, requires_machine_authorization, updated_at, updated_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (machine_code, activity_code) DO UPDATE SET operator_qualifications = EXCLUDED.operator_qualifications,
+                requires_machine_authorization = EXCLUDED.requires_machine_authorization,
                 updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by
             """,
-            profile.MachineCode, profile.ActivityCode, TextArray(profile.OperatorQualifications), at, actor);
+            profile.MachineCode, profile.ActivityCode, TextArray(profile.OperatorQualifications), profile.RequiresMachineAuthorization, at, actor);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -51,16 +53,16 @@ internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : I
     {
         var sql = kind switch
         {
-            "Site" => "SELECT code, name, NULL, true, time_zone, NULL FROM resources.site WHERE code = $1",
-            "SafetyArea" => "SELECT code, name, site_code, active, NULL, NULL FROM resources.safety_area WHERE code = $1",
-            "WorkCenter" => "SELECT code, name, safety_area_code, active, NULL, picture FROM resources.work_center WHERE code = $1",
-            "Machine" => "SELECT code, name, work_center_code, active, NULL, NULL FROM resources.machine WHERE code = $1",
-            "ActivityType" => "SELECT code, name, NULL, active, description, NULL FROM resources.activity_type WHERE code = $1",
+            "Site" => "SELECT code, name, NULL, true, time_zone, NULL, NULL, NULL FROM resources.site WHERE code = $1",
+            "SafetyArea" => "SELECT code, name, site_code, active, NULL, NULL, NULL, NULL FROM resources.safety_area WHERE code = $1",
+            "WorkCenter" => "SELECT code, name, safety_area_code, active, NULL, picture, layout_x, layout_y, map_x, map_y FROM resources.work_center WHERE code = $1",
+            "Machine" => "SELECT code, name, work_center_code, active, NULL, NULL, NULL, NULL FROM resources.machine WHERE code = $1",
+            "ActivityType" => "SELECT code, name, NULL, active, description, NULL, NULL, NULL FROM resources.activity_type WHERE code = $1",
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown resource kind."),
         };
         return (await Read(
             sql,
-            r => new ResourceRecord(kind, r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetBoolean(3), r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5)),
+            r => new ResourceRecord(kind, r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetBoolean(3), r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetInt32(6), r.IsDBNull(7) ? null : r.GetInt32(7), r.FieldCount > 8 && !r.IsDBNull(8) ? r.GetInt32(8) : null, r.FieldCount > 9 && !r.IsDBNull(9) ? r.GetInt32(9) : null),
             ct,
             code)).SingleOrDefault();
     }
@@ -70,15 +72,15 @@ internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : I
         ArgumentNullException.ThrowIfNull(record);
         var sql = record.Kind switch
         {
-            // Every statement receives the same eight parameters; each uses the ones that apply to its table.
+            // Every statement receives the same ten parameters; each uses the ones that apply to its table.
             "Site" => "UPDATE resources.site SET name = $2, time_zone = $5, updated_at = $7, updated_by = $8 WHERE code = $1",
             "SafetyArea" => "UPDATE resources.safety_area SET name = $2, active = $4, updated_at = $7, updated_by = $8 WHERE code = $1",
-            "WorkCenter" => "UPDATE resources.work_center SET name = $2, safety_area_code = $3, active = $4, picture = $6, updated_at = $7, updated_by = $8 WHERE code = $1",
+            "WorkCenter" => "UPDATE resources.work_center SET name = $2, safety_area_code = $3, active = $4, picture = $6, updated_at = $7, updated_by = $8, layout_x = $9, layout_y = $10, map_x = $11, map_y = $12 WHERE code = $1",
             "Machine" => "UPDATE resources.machine SET name = $2, work_center_code = $3, active = $4, updated_at = $7, updated_by = $8 WHERE code = $1",
             "ActivityType" => "UPDATE resources.activity_type SET name = $2, active = $4, description = $5, updated_at = $7, updated_by = $8 WHERE code = $1",
             _ => throw new ArgumentOutOfRangeException(nameof(record), record.Kind, "Unknown resource kind."),
         };
-        await using var cmd = uow.Command(sql, record.Code, record.Name, Text(record.Parent), record.Active, Text(record.Detail), Text(record.Picture), at, actor);
+        await using var cmd = uow.Command(sql, record.Code, record.Name, Text(record.Parent), record.Active, Text(record.Detail), Text(record.Picture), at, actor, record.LayoutX, record.LayoutY, record.MapX, record.MapY);
         if (await cmd.ExecuteNonQueryAsync(ct) != 1)
         {
             throw new InvalidOperationException($"{record.Kind} {record.Code} was not updated.");
@@ -114,7 +116,25 @@ internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : I
         Read("SELECT work_center_code, activity_code FROM resources.work_center_activity ORDER BY work_center_code, activity_code", r => new WorkCenterActivityInfo(r.GetString(0), r.GetString(1)), ct);
 
     public Task<IReadOnlyList<SiteInfo>> ListSitesAsync(CancellationToken ct) =>
-        Read("SELECT code, name, time_zone FROM resources.site ORDER BY code", r => new SiteInfo(r.GetString(0), r.GetString(1), r.GetString(2)), ct);
+        Read("SELECT code, name, time_zone, plant_map_sha256 IS NOT NULL FROM resources.site ORDER BY code", r => new SiteInfo(r.GetString(0), r.GetString(1), r.GetString(2), r.GetBoolean(3)), ct);
+
+    public async Task<SiteMapImageInfo?> FindSiteMapAsync(string siteCode, CancellationToken ct) =>
+        (await Read("SELECT plant_map_sha256, plant_map_content_type FROM resources.site WHERE code = $1 AND plant_map_sha256 IS NOT NULL",
+            r => new SiteMapImageInfo(r.GetString(0), r.GetString(1)), ct, siteCode)).SingleOrDefault();
+
+    public async Task SetSiteMapAsync(string siteCode, string? sha256, string? contentType, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE resources.site SET plant_map_sha256 = $2, plant_map_content_type = $3, plant_map_updated_at = $4, plant_map_updated_by = $5 WHERE code = $1",
+            siteCode, Text(sha256), Text(contentType), at, actor);
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException($"Site {siteCode} was not updated.");
+    }
+
+    public async Task SetWorkCenterMapPositionAsync(string code, int mapX, int mapY, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE resources.work_center SET map_x = $2, map_y = $3, updated_at = $4, updated_by = $5 WHERE code = $1",
+            code, mapX, mapY, at, actor);
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException($"Work center {code} was not updated.");
+    }
 
     public async Task<string> SiteTimeZoneAsync(string? siteCode, CancellationToken ct)
     {
@@ -181,7 +201,7 @@ internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : I
         Read(ActivitySql + " ORDER BY code", ReadActivity, ct);
 
     public Task<IReadOnlyList<MachineActivityInfo>> ListMachineActivitiesAsync(CancellationToken ct) =>
-        Read("SELECT machine_code, activity_code, operator_qualifications FROM resources.machine_activity ORDER BY machine_code, activity_code", ReadMachineActivity, ct);
+        Read("SELECT machine_code, activity_code, operator_qualifications, requires_machine_authorization FROM resources.machine_activity ORDER BY machine_code, activity_code", ReadMachineActivity, ct);
 
     public async Task<SafetyAreaInfo?> FindSafetyAreaAsync(string code, CancellationToken ct) =>
         (await Read(AreaSql + " WHERE code = $1 AND active", ReadArea, ct, code)).SingleOrDefault();
@@ -197,18 +217,25 @@ internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : I
 
     public async Task<MachineActivityInfo?> FindMachineActivityAsync(string machineCode, string activityCode, CancellationToken ct) =>
         (await Read(
-            "SELECT machine_code, activity_code, operator_qualifications FROM resources.machine_activity WHERE machine_code = $1 AND activity_code = $2",
+            "SELECT machine_code, activity_code, operator_qualifications, requires_machine_authorization FROM resources.machine_activity WHERE machine_code = $1 AND activity_code = $2",
             ReadMachineActivity,
             ct,
             machineCode,
             activityCode)).SingleOrDefault();
+
+    public async Task<CompetencyMachineActivity?> FindCompetencyMachineActivityAsync(string machineCode, string activityCode, CancellationToken ct)
+    {
+        var profile = await FindMachineActivityAsync(machineCode, activityCode, ct);
+        return profile is null ? null : new CompetencyMachineActivity(profile.MachineCode, profile.ActivityCode,
+            profile.OperatorQualifications, profile.RequiresMachineAuthorization);
+    }
 
     private const string MachineSql =
         "SELECT m.code, m.work_center_code, w.safety_area_code, m.name, m.active FROM resources.machine m JOIN resources.work_center w ON w.code = m.work_center_code";
 
     private const string AreaSql = "SELECT code, site_code, name, active FROM resources.safety_area";
 
-    private const string WorkCenterSql = "SELECT code, safety_area_code, name, active, picture FROM resources.work_center";
+    private const string WorkCenterSql = "SELECT code, safety_area_code, name, active, picture, layout_x, layout_y, map_x, map_y FROM resources.work_center";
 
     private const string ActivitySql = "SELECT code, name, description, active FROM resources.activity_type";
 
@@ -216,11 +243,11 @@ internal sealed partial class PostgresResourcesStore(PostgresUnitOfWork uow) : I
 
     private static SafetyAreaInfo ReadArea(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetBoolean(3));
 
-    private static WorkCenterInfo ReadWorkCenter(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetBoolean(3), r.IsDBNull(4) ? null : r.GetString(4));
+    private static WorkCenterInfo ReadWorkCenter(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetBoolean(3), r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetInt32(5), r.IsDBNull(6) ? null : r.GetInt32(6), r.IsDBNull(7) ? null : r.GetInt32(7), r.IsDBNull(8) ? null : r.GetInt32(8));
 
     private static ActivityTypeInfo ReadActivity(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetBoolean(3));
 
-    private static MachineActivityInfo ReadMachineActivity(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetFieldValue<string[]>(2));
+    private static MachineActivityInfo ReadMachineActivity(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetFieldValue<string[]>(2), r.GetBoolean(3));
 
     private static NpgsqlParameter Text(string? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text };
 
@@ -248,6 +275,7 @@ public static class ResourcesRegistration
         services.AddForgeMigrations(typeof(ResourcesRegistration).Assembly, "resources");
         services.AddForgeStore<IResourcesStore>(uow => new PostgresResourcesStore(uow));
         services.AddForgeStore<IResourcesLookup>(uow => new PostgresResourcesStore(uow));
+        services.AddForgeStore<ICompetencyMachineContext>(uow => new PostgresResourcesStore(uow));
         services.AddSingleton<Contracts.SiteClock>();
         services.AddSingleton<Contracts.ISiteClock>(sp => sp.GetRequiredService<Contracts.SiteClock>());
         services.AddSingleton<SiteClockLoader>();

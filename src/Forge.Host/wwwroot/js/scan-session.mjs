@@ -196,7 +196,7 @@ export async function mountScanSession(element, { operationCode, operatorPersonI
     }
   }
 
-  const dispose = () => { if (disposed) return; void invalidate('Terminal work context ended'); disposed = true; generation++; clearTimeout(expiry); clearCapture(); widget?.dispose(); widget = null; observer?.disconnect(); };
+  const dispose = ({ invalidateServerSession = true } = {}) => { if (disposed) return; if (invalidateServerSession) void invalidate('Terminal work context ended'); else { generation++; verified = false; view = null; clearPreview(); notify(); } disposed = true; generation++; clearTimeout(expiry); clearCapture(); widget?.dispose(); widget = null; observer?.disconnect(); };
   const observer = typeof MutationObserver === 'function' ? new MutationObserver(() => { if (!element.isConnected || !isCurrent() || auth.subject !== signIn.subject || auth.token !== signIn.token) dispose(); }) : null;
   observer?.observe(element.ownerDocument.body, { childList: true, subtree: true });
   const [metadata, scannerConfig, summary] = await Promise.all([tryGet(`${API}/config`), tryGet(`${API}/scanners/config`), tryGet(`${API}/scan-sessions/requirements?operationCode=${key(operationCode)}${machineCode ? `&machineCode=${key(machineCode)}` : ''}`)]);

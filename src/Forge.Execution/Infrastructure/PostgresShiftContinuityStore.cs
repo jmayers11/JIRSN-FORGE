@@ -10,6 +10,14 @@ namespace Forge.Execution.Infrastructure;
 internal sealed class PostgresShiftContinuityStore(PostgresUnitOfWork uow) : IShiftContinuityStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private const string ActionSelect = """
+        SELECT a.action_id, a.handoff_id, a.description, a.source_kind, a.source_reference, a.assignee, a.status, a.created_at, a.created_by,
+          a.acknowledged_at, a.acknowledged_by, a.in_progress_at, a.in_progress_by, a.completed_at, a.completed_by, a.program_id, a.due_at,
+          COALESCE(array_agg(d.blocked_by_action_id ORDER BY d.blocked_by_action_id) FILTER (WHERE d.blocked_by_action_id IS NOT NULL), ARRAY[]::bigint[]),
+          a.completion_evidence
+        FROM execution.shift_handoff_action a
+        LEFT JOIN execution.shift_handoff_action_dependency d ON d.action_id=a.action_id
+        """;
 
     public Task<IReadOnlyList<ShiftChecklistItem>> ListChecklistAsync(string workCenter, CancellationToken ct) => Read(
         "SELECT code, description, required, sort_order, active FROM execution.shift_checklist_item WHERE work_center_code = $1 ORDER BY sort_order, code",
@@ -60,20 +68,28 @@ internal sealed class PostgresShiftContinuityStore(PostgresUnitOfWork uow) : ISh
         "SELECT handoff_id, person_id, acknowledged_at, note FROM execution.shift_handoff_ack WHERE handoff_id=$1 ORDER BY acknowledged_at, person_id",
         r => new ShiftAcknowledgment(r.GetInt64(0), r.GetGuid(1), r.GetFieldValue<DateTimeOffset>(2), S(r, 3)), ct, handoffId);
 
-    public async Task<long> InsertActionAsync(long handoffId, string description, string? sourceKind, string? sourceReference, Guid assignee, Guid? programId, DateTimeOffset at, string actor, CancellationToken ct)
+    public async Task<long> InsertActionAsync(long handoffId, string description, string? sourceKind, string? sourceReference, Guid assignee, Guid? programId,
+        DateTimeOffset? dueAt, IReadOnlyList<long> blockedByActionIds, DateTimeOffset at, string actor, CancellationToken ct)
     {
         await using var cmd = uow.Command("""
-            INSERT INTO execution.shift_handoff_action(handoff_id, description, source_kind, source_reference, assignee, program_id, status, created_at, created_by)
-            VALUES ($1,$2,$3,$4,$5,$6,'Assigned',$7,$8) RETURNING action_id
+            INSERT INTO execution.shift_handoff_action(handoff_id, description, source_kind, source_reference, assignee, program_id, status, created_at, created_by, due_at)
+            VALUES ($1,$2,$3,$4,$5,$6,'Assigned',$7,$8,$9) RETURNING action_id
             """, handoffId, description, Text(sourceKind), Text(sourceReference), assignee,
-            new NpgsqlParameter { Value = (object?)programId ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Uuid }, at, actor);
-        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+            new NpgsqlParameter { Value = (object?)programId ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Uuid }, at, actor,
+            new NpgsqlParameter { Value = (object?)dueAt ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.TimestampTz });
+        var actionId = (long)(await cmd.ExecuteScalarAsync(ct))!;
+        foreach (var blockedByActionId in blockedByActionIds)
+        {
+            await using var dependency = uow.Command("INSERT INTO execution.shift_handoff_action_dependency(action_id, blocked_by_action_id) VALUES ($1,$2)", actionId, blockedByActionId);
+            await dependency.ExecuteNonQueryAsync(ct);
+        }
+        return actionId;
     }
 
     public async Task<ShiftAction?> FindActionAsync(long actionId, CancellationToken ct) =>
-        (await Read("SELECT action_id, handoff_id, description, source_kind, source_reference, assignee, status, created_at, created_by, acknowledged_at, acknowledged_by, in_progress_at, in_progress_by, completed_at, completed_by, program_id FROM execution.shift_handoff_action WHERE action_id=$1", ReadAction, ct, actionId)).SingleOrDefault();
+        (await Read($"{ActionSelect} WHERE a.action_id=$1 GROUP BY a.action_id", ReadAction, ct, actionId)).SingleOrDefault();
 
-    public async Task<bool> UpdateActionStatusAsync(long actionId, ShiftActionStatus expected, ShiftActionStatus status, DateTimeOffset at, string actor, CancellationToken ct)
+    public async Task<bool> UpdateActionStatusAsync(long actionId, ShiftActionStatus expected, ShiftActionStatus status, string? completionEvidence, DateTimeOffset at, string actor, CancellationToken ct)
     {
         await using var cmd = uow.Command("""
             UPDATE execution.shift_handoff_action SET status=$3,
@@ -82,14 +98,15 @@ internal sealed class PostgresShiftContinuityStore(PostgresUnitOfWork uow) : ISh
               in_progress_at=CASE WHEN $3='InProgress' THEN $4 ELSE in_progress_at END,
               in_progress_by=CASE WHEN $3='InProgress' THEN $5 ELSE in_progress_by END,
               completed_at=CASE WHEN $3='Completed' THEN $4 ELSE completed_at END,
-              completed_by=CASE WHEN $3='Completed' THEN $5 ELSE completed_by END
+              completed_by=CASE WHEN $3='Completed' THEN $5 ELSE completed_by END,
+              completion_evidence=CASE WHEN $3='Completed' THEN $6 ELSE completion_evidence END
             WHERE action_id=$1 AND status=$2
-            """, actionId, expected.ToString(), status.ToString(), at, actor);
+            """, actionId, expected.ToString(), status.ToString(), at, actor, Text(completionEvidence));
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
     public Task<IReadOnlyList<ShiftAction>> ListActionsAsync(long handoffId, CancellationToken ct) => Read(
-        "SELECT action_id, handoff_id, description, source_kind, source_reference, assignee, status, created_at, created_by, acknowledged_at, acknowledged_by, in_progress_at, in_progress_by, completed_at, completed_by, program_id FROM execution.shift_handoff_action WHERE handoff_id=$1 ORDER BY action_id",
+        $"{ActionSelect} WHERE a.handoff_id=$1 GROUP BY a.action_id ORDER BY a.action_id",
         ReadAction, ct, handoffId);
 
     public async Task<long?> InsertCloseoutAsync(string workCenter, string shiftCode, DateTimeOffset from, DateTimeOffset until, DateTimeOffset at, string actor, ShiftCloseoutFacts facts, string? note, CancellationToken ct)
@@ -121,7 +138,8 @@ internal sealed class PostgresShiftContinuityStore(PostgresUnitOfWork uow) : ISh
         Parse<IReadOnlyList<ShiftChecklistEntry>>(r.GetString(11)), Parse<ShiftCloseoutFacts>(r.GetString(10)).Facts);
 
     private static ShiftAction ReadAction(NpgsqlDataReader r) => new(r.GetInt64(0), r.GetInt64(1), r.GetString(2), S(r, 3), S(r, 4), r.GetGuid(5),
-        Enum.Parse<ShiftActionStatus>(r.GetString(6)), r.GetFieldValue<DateTimeOffset>(7), r.GetString(8), N(r, 9), S(r, 10), N(r, 11), S(r, 12), N(r, 13), S(r, 14), r.IsDBNull(15) ? null : r.GetGuid(15));
+        Enum.Parse<ShiftActionStatus>(r.GetString(6)), r.GetFieldValue<DateTimeOffset>(7), r.GetString(8), N(r, 9), S(r, 10), N(r, 11), S(r, 12), N(r, 13), S(r, 14),
+        r.IsDBNull(15) ? null : r.GetGuid(15), N(r, 16), r.GetFieldValue<long[]>(17), S(r, 18));
     private static string? S(NpgsqlDataReader r, int index) => r.IsDBNull(index) ? null : r.GetString(index);
     private static DateTimeOffset? N(NpgsqlDataReader r, int index) => r.IsDBNull(index) ? null : r.GetFieldValue<DateTimeOffset>(index);
     private static NpgsqlParameter Text(string? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Text };

@@ -1,4 +1,5 @@
 using Forge.Kernel.Identity;
+using Forge.Kernel.Commands;
 using Forge.Kernel.Postgres;
 using Forge.Workforce.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -113,6 +114,20 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
         return (bool)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
+    public async Task<WorkerPhotoInfo?> FindWorkerPhotoAsync(Guid personId, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("SELECT photo_sha256, photo_content_type FROM workforce.worker WHERE person_id = $1 AND photo_sha256 IS NOT NULL", personId);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? new WorkerPhotoInfo(reader.GetString(0), reader.GetString(1)) : null;
+    }
+
+    public async Task SetWorkerPhotoAsync(PersonId person, string? sha256, string? contentType, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE workforce.worker SET photo_sha256 = $2, photo_content_type = $3, photo_updated_at = $4, photo_updated_by = $5 WHERE person_id = $1",
+            person.Value, Text(sha256), Text(contentType), at, actor);
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException($"Worker {person} was not updated.");
+    }
+
     public async Task<WorkAssignment?> FindAssignmentAsync(PersonId person, CancellationToken ct)
     {
         await using var cmd = uow.Command(
@@ -169,6 +184,21 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
         return previous is DBNull or null ? null : (string)previous;
     }
 
+    public async Task<string?> SetJobTitleAsync(PersonId person, string? jobTitle, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE workforce.worker w SET job_title = $2, updated_at = $3, updated_by = $4 FROM workforce.worker old WHERE old.person_id = w.person_id AND w.person_id = $1 AND w.job_title IS DISTINCT FROM $2 RETURNING old.job_title",
+            person.Value, Text(jobTitle), at, actor);
+        var previous = await cmd.ExecuteScalarAsync(ct);
+        if (previous is null)
+        {
+            if (!await WorkerExistsAsync(person.Value, ct))
+                throw new CommandRejectedException("worker_not_found", "This person is not a registered worker.");
+            return jobTitle;
+        }
+        return previous is DBNull ? null : (string)previous;
+    }
+
     public async Task<IReadOnlyList<UnavailabilityWindow>> ListUnavailabilityAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
     {
         var list = new List<UnavailabilityWindow>();
@@ -199,7 +229,7 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
             SELECT w.person_id, w.display_name, COALESCE(h.work_center, w.home_work_center), p.is_active,
                    pr.kind, pr.valid_until,
                    un.kind,
-                   a.safety_area_code, a.work_center_code, a.machine_code, a.activity_code, a.as_trainee, w.shift_code
+                   a.safety_area_code, a.work_center_code, a.machine_code, a.activity_code, a.as_trainee, w.shift_code, w.job_title, w.photo_sha256 IS NOT NULL
             FROM workforce.worker w
             JOIN kernel.person p ON p.person_id = w.person_id
             LEFT JOIN LATERAL (
@@ -233,7 +263,9 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
                 reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5),
                 reader.IsDBNull(6) ? null : Enum.Parse<UnavailabilityKind>(reader.GetString(6)),
                 reader.IsDBNull(7) ? null : ReadAssignment(reader, 7),
-                reader.IsDBNull(12) ? null : reader.GetString(12)));
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.GetBoolean(14)));
         }
 
         return states;
@@ -403,9 +435,13 @@ public static class WorkforceRegistration
         services.AddForgeStore<IWorkforceStore>(uow => new PostgresWorkforceStore(uow));
         services.AddForgeStore<IWorkforceLookup>(uow => new PostgresWorkforceStore(uow));
         services.AddForgeStore<IAttendanceStore>(uow => new PostgresWorkforceStore(uow));
+        services.AddForgeStore<IWorkforceDevelopmentStore>(uow => new PostgresWorkforceDevelopmentStore(uow));
+        services.AddSingleton<DevelopmentNominationService>();
+        services.AddForgeStore<IAttendanceReliabilityStore>(uow => new PostgresAttendanceReliabilityStore(uow));
         services.AddSingleton<IBadgePinVerifier, PostgresBadgePinVerifier>();
         services.AddSingleton<WorkforceService>();
         services.AddSingleton<AttendanceService>();
+        services.AddSingleton<AttendanceIntelligenceService>();
         return services;
     }
 }

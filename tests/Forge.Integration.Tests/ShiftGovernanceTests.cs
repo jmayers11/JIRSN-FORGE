@@ -104,7 +104,7 @@ public sealed class ShiftGovernanceTests(PostgresFixture postgres)
         }));
         await plant.Ok(plant.Engineer, "/api/execution/shifts/checklist", new { workCenterCode = "SLIT-WC", code = "ROLL", description = "Account for the partially consumed roll", required = true, sortOrder = 1, active = true, reason = "Shift material checklist" });
         clock.UtcNow = until.AddMinutes(5);
-        var handoffId = Id(await plant.Ok(plant.Engineer, "/api/execution/shifts/handoffs", new
+        var handoffId = Id(await plant.Ok(plant.Admin, "/api/execution/shifts/handoffs", new
         {
             workCenterCode = "SLIT-WC", shiftCode = "ALL", shiftFrom = from, shiftUntil = until,
             context = "Spindle investigation and remaining master roll require follow-up.",
@@ -143,6 +143,39 @@ public sealed class ShiftGovernanceTests(PostgresFixture postgres)
         Assert.Contains(closeoutFacts.EnumerateArray(), f => f.GetProperty("kind").GetString() == "QualityHold" && f.GetProperty("reference").GetString() == $"hold:{hold}");
         Assert.Contains(closeoutFacts.EnumerateArray(), f => f.GetProperty("kind").GetString() == "Checklist" && f.GetProperty("status").GetString() == "Open");
         Assert.Contains(closeoutFacts.EnumerateArray(), f => f.GetProperty("kind").GetString() == "ShiftAction" && f.GetProperty("status").GetString() == "Assigned");
+    }
+
+    [Fact]
+    public async Task Handoff_includes_recorded_unavailability_for_workers_assigned_to_its_work_center_without_the_private_reason()
+    {
+        var from = ShiftFrom();
+        var until = from.AddHours(24);
+        var clock = new ShiftClock(until.AddMinutes(5));
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync(), services => services.AddSingleton<TimeProvider>(clock));
+        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
+        await plant.Ok(plant.Engineer, "/api/resources/shifts", new { code = "ALL", siteCode = "PLANT1", name = "All day", start = "00:00:00", durationMinutes = 1440, days = new[] { 1, 2, 3, 4, 5, 6, 7 } });
+        await plant.Ok(plant.Engineer, "/api/resources/work-centers/SLIT-WC/shifts", new { shiftCode = "ALL" });
+
+        var workerId = await plant.Person("shift-absence-worker");
+        await plant.Ok(plant.Admin, $"/api/workforce/workers/{workerId}", new { homeWorkCenterCode = "SLIT-WC" });
+        await plant.Person("shift-absence-supervisor", "Supervisor");
+        await plant.Ok(plant.As("shift-absence-supervisor"), $"/api/workforce/workers/{workerId}/unavailability", new
+        {
+            kind = "CallOut", startsAt = from.AddHours(4), endsAt = from.AddHours(5), reason = "PRIVATE REASON MUST NOT ENTER HANDOFF",
+        });
+
+        var handoffId = Id(await plant.Ok(plant.Admin, "/api/execution/shifts/handoffs", new
+        {
+            workCenterCode = "SLIT-WC", shiftCode = "ALL", shiftFrom = from, shiftUntil = until,
+            context = "Review recorded worker availability", checklist = Array.Empty<object>(), reason = "Capture work-center continuity snapshot",
+        }));
+        var facts = (await Get(plant.Admin, $"/api/execution/shifts/handoffs/{handoffId}"))
+            .GetProperty("handoff").GetProperty("facts");
+        var fact = Assert.Single(facts.EnumerateArray(), item => item.GetProperty("kind").GetString() == "WorkerAvailability");
+        Assert.Equal("CallOut", fact.GetProperty("status").GetString());
+        Assert.Contains(workerId.ToString("D"), fact.GetProperty("reference").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("PRIVATE REASON", fact.GetProperty("summary").GetString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("PRIVATE REASON", facts.GetRawText(), StringComparison.Ordinal);
     }
 
     [Fact]

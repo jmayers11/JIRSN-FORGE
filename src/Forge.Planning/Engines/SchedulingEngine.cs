@@ -392,7 +392,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
                     continue;
                 }
 
-                var requirement = new WorkRequirement(op.WorkCenterCode, machine, op.ActivityCode, profile.OperatorQualifications, op.RequiredQualifications, op.CrewSize);
+                var requirement = new WorkRequirement(op.WorkCenterCode, machine, op.ActivityCode, profile.OperatorQualifications, op.RequiredQualifications, op.CrewSize, profile.RequiresMachineAuthorization);
                 options.Add(WithSetup(timeline, state, order, op, requirement, machine, minutes, earliest));
             }
         }

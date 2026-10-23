@@ -649,6 +649,10 @@ public interface IInventoryLookup
 
     Task<MaterialTask?> FindMaterialTaskAsync(long taskId, CancellationToken ct);
 
+    Task<MaterialTask?> FindMaterialTaskBySuspectReportAsync(long reportId, CancellationToken ct);
+
+    Task<IReadOnlyList<MaterialTaskCustodyEvent>> ListMaterialTaskCustodyEventsAsync(long taskId, CancellationToken ct);
+
     Task<IReadOnlyList<CycleCountProgram>> ListCountProgramsAsync(CancellationToken ct);
 
     /// <summary>The last count of every balance ever counted, with or without a variance (V3.4).</summary>

@@ -98,12 +98,42 @@ export async function upload(file) {
   return result.entityId;
 }
 
+/** Uploads a bounded plant map or worker photo; the server validates bytes, permissions and records the reason. */
+export async function uploadVisualImage(path, file, reason) {
+  if (!file) throw new Error('Choose an image.');
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Choose a PNG, JPEG or WebP image.');
+  if (file.size < 1 || file.size > 8 * 1024 * 1024) throw new Error('Images must be between 1 byte and 8 MiB.');
+  if (!reason?.trim()) throw new Error('Enter a reason for this image change.');
+  const h = { ...headers(false), 'Idempotency-Key': uuid(), 'X-Change-Reason': reason.trim(), 'Content-Type': file.type };
+  const result = await handle(await fetch(path, { method: 'POST', headers: h, body: file }));
+  for (const listener of commandListeners) { try { listener(); } catch { /* observers cannot change a command result */ } }
+  return result;
+}
+
+/** Clears a worker photo or restores the reference map with an audited reason. */
+export async function removeVisualImage(path, reason) {
+  if (!reason?.trim()) throw new Error('Enter a reason for this image change.');
+  const h = { ...headers(false), 'Idempotency-Key': uuid(), 'X-Change-Reason': reason.trim() };
+  const result = await handle(await fetch(path, { method: 'DELETE', headers: h }));
+  for (const listener of commandListeners) { try { listener(); } catch { /* observers cannot change a command result */ } }
+  return result;
+}
+
 /** Downloads a file the API serves (signed in), under the name the server gives it. */
 export async function download(path, fallbackName) {
   const { blob, name } = await fetchFile(path, fallbackName);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+/** Reads a protected image through a signed-in POST endpoint without putting credentials in its URL. */
+export async function fetchProtectedImage(path, body) {
+  const response = await fetch(path, { method: 'POST', headers: headers(true), body: JSON.stringify(body), cache: 'no-store' });
+  if (!response.ok) await handle(response);
+  const blob = await response.blob();
+  if (!blob.type.startsWith('image/')) throw new Error('The protected image endpoint returned a non-image response.');
+  return blob;
 }
 
 /** Reads a protected file into a Blob for an in-browser preview or print view. */

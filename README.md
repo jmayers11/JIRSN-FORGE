@@ -25,7 +25,7 @@ in section 31. Implemented scope now includes Phases 1–9, V2 and V3.1–V3.28:
 | --- | --- | --- |
 | Competency | `src/Forge.Competency` | Qualification types and prerequisites; training; certification (by a certifier who is not the person) with expiry |
 | Resources | `src/Forge.Resources` | Site → safety area → work center → machine; activity types; machine requirement profiles; activities allowed at a work center |
-| Workforce | `src/Forge.Workforce` | Workers, assignments (incl. trainee), expiring presence evidence, unavailability without reasons |
+| Workforce | `src/Forge.Workforce` | Workers, official job titles, assignments (incl. trainee), expiring presence evidence, unavailability without reasons |
 | Safety rules | `src/Forge.SafetyRules` | Versioned staffing rules: drafted by a safety engineer, put in force only by a different approver |
 | Planning | `src/Forge.Planning` | Engines only: personnel composition (bipartite matching), operation readiness, reallocation impact preview |
 
@@ -441,13 +441,26 @@ sites, safety areas, work centers (with a picture), machines, the kinds of work 
 machine or work center supports and who may run them, and shifts.
 
 - Codes are permanent business keys; names, pictures and placement can be edited. Every edit carries a reason.
+- Workforce Kanban opens on a 4-column staffing board (four rows show 16 work centers) and also offers an image-backed
+  plant map with employee photos, names, titles and on-site counts at each work center. The built-in floor image is a
+  reference layout; Facilities Managers, manufacturing engineers and security administrators can upload a site map,
+  move its center markers and save the full layout with an audited reason. This map editing uses the narrow
+  `resources.floor-map.manage` permission rather than granting full plant-setup access.
+- Worker photos are optional. Workforce administrators and Facilities Managers can add, replace or remove them in
+  Workforce → Manage people through the narrow `workforce.photos.manage` permission; facilities managers can also see
+  them on the Kanban through `workforce.read`. Only PNG, JPEG and WebP images up to 8 MiB are accepted, and protected
+  image reads are not publicly cached.
+- Official job titles are maintained by a workforce manager in Workforce → Manage people. Each title change needs a
+  reason and is audited. A person with no current presence appears in the collapsed "Not currently confirmed on site"
+  list. This is a view of Forge's presence and assignment records, not live physical-location tracking.
 - Nothing is deleted. Retired records stay in history, drop out of planning, and can be reactivated.
 - Forge refuses to retire, move or remove anything still used by an unfinished order, a live or draft
   routing, a worker's home work center or a current work assignment, and lists what is in the way.
 
 API: `POST /api/resources/{sites|safety-areas|work-centers|machines|activity-types}/{code}/edit`,
 `.../{code}/retire` and `.../{code}/reactivate`, `POST /api/resources/machines/{m}/activities/{a}/remove`,
-`/work-centers/{wc}/activities/{a}/remove` and `/work-centers/{wc}/shifts/{s}/remove`.
+`/work-centers/{wc}/activities/{a}/remove`, `/work-centers/{wc}/shifts/{s}/remove`, and audited
+`POST /api/resources/work-centers/layout` for the complete active floor map.
 `GET /api/resources/?includeRetired=true` includes retired records. See `docs/adr/0006-plant-setup.md`.
 
 Build rules enforced at compile time: nullable, warnings as errors, and a ban on `DateTime.Now`,

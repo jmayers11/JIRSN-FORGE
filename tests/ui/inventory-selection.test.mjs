@@ -8,6 +8,30 @@ test('inventory split and merge row text keeps the existing quantity payload par
   assert.deepEqual(parseInventoryShares('lot-a 2.5, lot-b 4'), [{ lotNumber: 'LOT-A', quantity: 2.5 }, { lotNumber: 'LOT-B', quantity: 4 }]);
 });
 
+test('inventory custody history shows append-only dispatch, exception and receiver evidence', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div'); browser.document.body.append(page);
+  const task = { taskId: 31, kind: 'Stage', orderNumber: 1042, partNumber: 'COMP-1', quantity: 8, status: 'InTransit',
+    fromLocation: 'STORES', toLocation: 'SLIT-STAGE', transitLocation: 'TRANSIT', requestedBy: 'person:picker', requestedAt: '2026-10-23T09:00:00Z' };
+  globalThis.fetch = path => {
+    if (path === '/api/inventory/tasks?open=true') return Promise.resolve(response([task]));
+    if (path === '/api/inventory/tasks/31/custody') return Promise.resolve(response([
+      { eventId: 1, kind: 'DispatchedToTransit', recordedAt: '2026-10-23T10:00:00Z', recordedBy: 'person:picker', locationCode: 'TRANSIT', transactionId: 901, authenticationMethod: 'ForgeSession', reason: null },
+      { eventId: 2, kind: 'ExceptionRecorded', recordedAt: '2026-10-23T10:05:00Z', recordedBy: 'person:receiver', locationCode: 'TRANSIT', transactionId: null, authenticationMethod: 'BadgePin', reason: '<script>unexpected count</script>' },
+    ]));
+    if (path === '/api/resources/') return Promise.resolve(response({ sites: [], workCenters: [], machines: [] }));
+    return Promise.resolve(response([]));
+  };
+  const controller = await inventoryPage(page, { me: { personId: 'viewer', permissions: ['inventory.read'] }, query: new URLSearchParams('tab=tasks'), params: [], refreshBell() {} });
+  t.after(controller.dispose);
+  fire(page.querySelector('[data-task-custody="31"]'), 'click'); await flush(); await flush();
+  const trail = browser.document.querySelector('.drawer .body');
+  assert.match(trail.innerHTML, /Dispatched to transit/);
+  assert.match(trail.innerHTML, /Exception reported/);
+  assert.match(trail.innerHTML, /BadgePin/);
+  assert.match(trail.innerHTML, /&lt;script&gt;unexpected count&lt;\/script&gt;/);
+  assert.doesNotMatch(trail.innerHTML, /<script>unexpected count/);
+});
+
 test('inventory lot selection shows ranked eligible and excluded candidates without reserving stock', async t => {
   const browser = installBrowser(t), calls = [], page = browser.document.createElement('div'); browser.document.body.append(page);
   const before = { subject: session.subject, token: session.token }; session.subject = 'inventory-selection-user'; session.token = null; t.after(() => Object.assign(session, before));

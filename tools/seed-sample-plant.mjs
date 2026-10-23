@@ -26,6 +26,76 @@ const post = (who, path, body = {}) => call(who, 'POST', path, body);
 const get = (who, path) => call(who, 'GET', path);
 const step = s => console.log(`- ${s}`);
 
+async function seedWorkforceVisuals() {
+  const [plant, workers, directory] = await Promise.all([
+    get(adminSubject, '/api/resources/'), get(adminSubject, '/api/workforce/workers'), get(adminSubject, '/api/kernel/people'),
+  ]);
+  const sampleTitles = new Map([
+    ['sarah', 'Slitter Operator'], ['marcus', 'Slitter Operator'], ['jennifer', 'Paint Technician'],
+    ['luis', 'Laser Operator'], ['dana', 'Assembly Technician'], ['priya', 'Quality Inspector'],
+    ['omar', 'Material Handler'], ['kelly', 'Shipping Associate'],
+  ]);
+  const peopleBySubject = new Map(directory.map(person => [person.idpSubject, person.personId ?? person.id]));
+  if (!peopleBySubject.has('eng')) return;
+  for (const [subject, title] of sampleTitles) {
+    const personId = peopleBySubject.get(subject);
+    const worker = workers.find(candidate => candidate.personId === personId);
+    if (worker && worker.jobTitle !== title) await post('eng', `/api/workforce/workers/${personId}/job-title`, { jobTitle: title, reason: 'Sample workforce title for floor preview' });
+  }
+
+  const active = (plant.workCenters ?? []).filter(center => center.active !== false);
+  if (!active.length) return;
+  if (active.some(center => !Number.isInteger(center.layoutX) || !Number.isInteger(center.layoutY))) {
+    const positions = new Map(), occupiedByArea = new Map(), nextRows = new Map();
+    for (const center of active) {
+      const valid = Number.isInteger(center.layoutX) && center.layoutX >= 0 && center.layoutX <= 3
+        && Number.isInteger(center.layoutY) && center.layoutY >= 0 && center.layoutY <= 99;
+      const occupied = occupiedByArea.get(center.safetyAreaCode) ?? new Set();
+      occupiedByArea.set(center.safetyAreaCode, occupied);
+      const key = `${center.layoutX}:${center.layoutY}`;
+      if (valid && !occupied.has(key)) { positions.set(center.code, { layoutX: center.layoutX, layoutY: center.layoutY }); occupied.add(key); }
+    }
+    const placements = active.map(center => {
+      if (positions.has(center.code)) return { code: center.code, ...positions.get(center.code) };
+      const occupied = occupiedByArea.get(center.safetyAreaCode) ?? new Set();
+      occupiedByArea.set(center.safetyAreaCode, occupied);
+      let row = nextRows.get(center.safetyAreaCode) ?? 0, layoutX, layoutY;
+      do { layoutX = row % 4; layoutY = Math.floor(row / 4); row++; } while (occupied.has(`${layoutX}:${layoutY}`));
+      nextRows.set(center.safetyAreaCode, row);
+      occupied.add(`${layoutX}:${layoutY}`);
+      return { code: center.code, layoutX, layoutY };
+    });
+    await post('eng', '/api/resources/work-centers/layout', { placements, reason: 'Seed compact workforce board positions for sample plant' });
+  }
+  if (active.some(center => !Number.isInteger(center.mapX) || !Number.isInteger(center.mapY))) {
+    const fallback = center => {
+      const name = `${center.code} ${center.name}`.toLowerCase();
+      if (/receiv|raw/.test(name)) return [100, 120];
+      if (/slit/.test(name)) return [350, 230];
+      if (/wind|paint/.test(name)) return [700, 180];
+      if (/warehouse|kit|stag/.test(name)) return [120, 510];
+      if (/assembl|fabric|fab/.test(name)) return [350, 570];
+      if (/inspect|quality|qc/.test(name)) return [560, 570];
+      if (/maint/.test(name)) return [740, 570];
+      if (/tool/.test(name)) return [875, 570];
+      if (/ship/.test(name)) return [100, 850];
+      if (/office/.test(name)) return [600, 850];
+      return null;
+    };
+    const used = new Set();
+    const placements = active.map((center, index) => {
+      let [mapX, mapY] = Number.isInteger(center.mapX) && Number.isInteger(center.mapY) ? [center.mapX, center.mapY] : (fallback(center) ?? [null, null]);
+      if (mapX == null || used.has(`${mapX}:${mapY}`)) {
+        let slot = index;
+        do { mapX = 125 + (slot % 4) * 250; mapY = 160 + Math.floor(slot / 4) * 220; slot++; } while (used.has(`${mapX}:${mapY}`));
+      }
+      used.add(`${mapX}:${mapY}`);
+      return { code: center.code, mapX, mapY };
+    });
+    await post('eng', '/api/resources/work-centers/map-layout', { placements, reason: 'Seed sample plant floor-map positions' });
+  }
+}
+
 async function upload(subject, name, text) {
   const r = await fetch(base + '/api/engineering/document-files', {
     method: 'POST',
@@ -48,6 +118,7 @@ async function person(subject, displayName, ...roles) {
 async function main() {
   try { await fetch(`${base}/health/ready`); } catch { throw new Error(`Forge is not running at ${base}. Start run-forge.cmd first.`); }
   const existing = (await get(adminSubject, '/api/kernel/people')).map(p => p.idpSubject);
+  await seedWorkforceVisuals();
   if (existing.includes('eng')) {
     // An earlier sample plant: add only what is new (Phase 6 materials), once.
     if (existing.includes('pm')) {
@@ -264,17 +335,18 @@ async function main() {
   for (const [, wc] of stages) await post('eng', `/api/resources/work-centers/${wc}/shifts`, { shiftCode: 'ALL' });
 
   step('Workers: trained by the engineer, certified by the approver, on shift');
-  const workers = [['sarah', 'Sarah Lopez', 'SLIT-WC', ['SLIT-II', 'FIRST-AID'], { machineCode: 'SLITTER-A', activityCode: 'RUN_SLITTER' }],
-    ['marcus', 'Marcus Reed', 'SLIT-WC', ['SLIT-II'], { machineCode: 'SLITTER-B', activityCode: 'RUN_SLITTER' }],
-    ['jennifer', 'Jennifer Wu', 'PAINT-WC', ['PAINT-I', 'FIRST-AID'], { machineCode: 'PAINT-BOOTH', activityCode: 'PAINT' }],
-    ['luis', 'Luis Ortega', 'FAB-WC', ['LASER-I', 'MATL-I'], { machineCode: 'LASER-1', activityCode: 'LASER_CUT' }],
-    ['dana', 'Dana Kim', 'ASSY-WC', ['ASSY-I', 'SHIP-I'], { workCenterCode: 'ASSY-WC', activityCode: 'ASSEMBLE' }],
-    ['priya', 'Priya Shah', 'INSP-WC', ['INSP-I', 'SHIP-I', 'MATL-I'], { machineCode: 'CMM-1', activityCode: 'INSPECT' }],
-    ['omar', 'Omar Haddad', 'RAW-WC', ['MATL-I'], { workCenterCode: 'RAW-WC', activityCode: 'RECEIVE' }],
-    ['kelly', 'Kelly Brooks', 'SHIP-WC', ['SHIP-I', 'MATL-I'], { workCenterCode: 'SHIP-WC', activityCode: 'SHIP' }]];
-  for (const [subject, name, home, quals, assignment] of workers) {
+  const workers = [['sarah', 'Sarah Lopez', 'SLIT-WC', ['SLIT-II', 'FIRST-AID'], { machineCode: 'SLITTER-A', activityCode: 'RUN_SLITTER' }, 'Slitter Operator'],
+    ['marcus', 'Marcus Reed', 'SLIT-WC', ['SLIT-II'], { machineCode: 'SLITTER-B', activityCode: 'RUN_SLITTER' }, 'Slitter Operator'],
+    ['jennifer', 'Jennifer Wu', 'PAINT-WC', ['PAINT-I', 'FIRST-AID'], { machineCode: 'PAINT-BOOTH', activityCode: 'PAINT' }, 'Paint Technician'],
+    ['luis', 'Luis Ortega', 'FAB-WC', ['LASER-I', 'MATL-I'], { machineCode: 'LASER-1', activityCode: 'LASER_CUT' }, 'Laser Operator'],
+    ['dana', 'Dana Kim', 'ASSY-WC', ['ASSY-I', 'SHIP-I'], { workCenterCode: 'ASSY-WC', activityCode: 'ASSEMBLE' }, 'Assembly Technician'],
+    ['priya', 'Priya Shah', 'INSP-WC', ['INSP-I', 'SHIP-I', 'MATL-I'], { machineCode: 'CMM-1', activityCode: 'INSPECT' }, 'Quality Inspector'],
+    ['omar', 'Omar Haddad', 'RAW-WC', ['MATL-I'], { workCenterCode: 'RAW-WC', activityCode: 'RECEIVE' }, 'Material Handler'],
+    ['kelly', 'Kelly Brooks', 'SHIP-WC', ['SHIP-I', 'MATL-I'], { workCenterCode: 'SHIP-WC', activityCode: 'SHIP' }, 'Shipping Associate']];
+  for (const [subject, name, home, quals, assignment, title] of workers) {
     const id = await person(subject, name);
     await post('eng', `/api/workforce/workers/${id}`, { homeWorkCenterCode: home });
+    await post('eng', `/api/workforce/workers/${id}/job-title`, { jobTitle: title });
     for (const code of quals) {
       await post('eng', `/api/competency/people/${id}/training`, { code });
       await post('approver', `/api/competency/people/${id}/certifications`, { code, evidence: 'Practical assessment on file', reason: 'Assessment passed' });
@@ -283,6 +355,7 @@ async function main() {
     await post('eng', `/api/workforce/workers/${id}/shift`, { shiftCode: 'ALL' });
     await post('eng', `/api/workforce/workers/${id}/assignment`, { ...assignment, reason: 'Shift start' });
   }
+  await seedWorkforceVisuals();
 
   step('Parts, BOM and routing through all seven work centers; released by the approver');
   await post('eng', '/api/engineering/items', { partNumber: 'COIL-AL', description: 'Aluminum coil', unitOfMeasure: 'KG', makeBuy: 'Buy', leadTimeDays: 14 });

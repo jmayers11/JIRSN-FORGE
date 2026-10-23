@@ -174,7 +174,7 @@ public sealed class ScanCommandParticipant(ScanSessionAuthority sessionAuthority
             || task.OrderNumber != session.OrderNumber || task.OrderNumber is null || task.LotNumber is null
             || task.FromLocation is null
             || command is PickMaterial && task.Status is not (MaterialTaskStatus.Allocated or MaterialTaskStatus.Picked)
-            || command is DeliverMaterial && task.Status is not (MaterialTaskStatus.Picked or MaterialTaskStatus.Delivered))
+            || command is DeliverMaterial && task.Status is not (MaterialTaskStatus.Picked or MaterialTaskStatus.InTransit or MaterialTaskStatus.Delivered))
             throw new CommandRejectedException("scan_material_task_mismatch", "The session must match an active, exact-lot task for its actual order and operation.");
 
         var (active, currentPolicy, currentFacts) = await sessionAuthority.RequireActiveAsync(uow, context,

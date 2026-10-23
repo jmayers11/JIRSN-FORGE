@@ -1,5 +1,6 @@
 using Forge.Execution;
 using Forge.Execution.Contracts;
+using Forge.Engineering.Contracts;
 using Forge.Kernel.Access;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Identity;
@@ -8,6 +9,10 @@ using Forge.Planning;
 using Forge.Planning.Engines;
 using Forge.Workforce;
 using Forge.Workforce.Contracts;
+using Forge.Inventory;
+using Forge.Inventory.Contracts;
+using Forge.Quality;
+using Forge.Quality.Contracts;
 using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
@@ -19,6 +24,11 @@ public sealed record PinRequest(string Badge, string? CurrentPin, string NewPin)
 public sealed record StartRequest(string Badge, long OrderNumber, int Sequence, string? MachineCode, string? TrainerBadge, string? ToolCode = null);
 
 public sealed record ReportRequest(string Badge, long OrderNumber, int Sequence, decimal Good, decimal Scrap, string? ScrapReason, bool Complete, string? ScrapReasonCode = null);
+
+public sealed record OperatorMaterialRequest(string Badge, long OrderNumber, int Sequence, string PartNumber, decimal Quantity, string ToLocation, string? Reason, bool AllowNonBomMaterial = false);
+
+public sealed record SuspectScrapRequest(string Badge, SuspectReportKind Kind, long OrderNumber, int Sequence, string PartNumber, decimal Quantity,
+    string ReasonCode, string Description, string? LotNumber, string? SerialNumber, string? Reason);
 
 public sealed record EvaluateRequest(string TrainerBadge, string Pin, TrainingEvaluation Evaluation, string? Notes);
 
@@ -37,6 +47,28 @@ internal static class ShopFloorEndpoints
 
         api.MapPost("/identify", (HttpContext http, BadgeRequest b, TimeProvider time, CancellationToken _) =>
             Read(http, Permissions.ShopFloorRead, principal => IdentifyAsync(http, principal, b, time)));
+
+        // Kiosk portrait lookup is badge-scoped so ShopFloorTerminal does not need broad workforce.read access.
+        api.MapPost("/worker-photo", async (HttpContext http, BadgeRequest b, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            var authorizer = http.RequestServices.GetRequiredService<IForgeAuthorizer>();
+            var decision = authorizer.Authorize(principal, Permissions.ShopFloorRead, ResourceRef.Of(Permissions.ShopFloorRead));
+            if (!decision.IsPermitted) throw new ForgeAuthorizationException(decision);
+            if (!TrySecret(b.Badge, out var badge)) return BadBadge();
+
+            await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(ct);
+            var holder = await uow.Store<IWorkforceLookup>().FindBadgeHolderAsync(badge.Reveal(), ct);
+            if (holder is null || !holder.IsWorker) return Results.NotFound();
+            var photo = await uow.Store<IWorkforceLookup>().FindWorkerPhotoAsync(holder.PersonId, ct);
+            if (photo is null) return Results.NotFound();
+            var bytes = await uow.Store<IDocumentLookup>().ReadFileAsync(photo.Sha256, ct);
+            if (bytes is null) return Results.NotFound();
+            http.Response.Headers.CacheControl = "private, no-store";
+            http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            return Results.File(bytes, photo.ContentType);
+        });
 
         api.MapPost("/clock-in", (HttpContext http, BadgeRequest b, AttendanceService s, CancellationToken ct) =>
             TrySecret(b.Badge, out var badge) ? Command(http, b.Reason, null, CommandSource.Terminal, c => s.ClockInAsync(new ClockIn(badge), c, ct)) : Task.FromResult(BadBadge()));
@@ -85,6 +117,77 @@ internal static class ShopFloorEndpoints
                 ? Command(http, null, null, CommandSource.Terminal, c => s.ReportAsync(new ReportProduction(badge, b.OrderNumber, b.Sequence, b.Good, b.Scrap, b.ScrapReason, b.Complete, b.ScrapReasonCode), c, ct))
                 : Task.FromResult(BadBadge()));
 
+        api.MapPost("/suspect-scrap", async (HttpContext http, SuspectScrapRequest b, QualityService quality, IForgeAuthorizer authorizer,
+            IKernelUnitOfWorkFactory uows, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            var decision = authorizer.Authorize(principal, Permissions.QualityReportSuspect, ResourceRef.Of(Permissions.QualityReportSuspect));
+            if (!decision.IsPermitted) throw new ForgeAuthorizationException(decision);
+            if (!TrySecret(b.Badge, out var badge)) return BadBadge();
+            Guid reporterPersonId;
+            await using (var uow = await uows.BeginSnapshotAsync(ct))
+            {
+                var holder = await uow.Store<IWorkforceLookup>().FindBadgeHolderAsync(badge.Reveal(), ct);
+                if (holder is not { IsWorker: true })
+                    return Results.Problem(title: "Worker badge required", detail: "Scan the active employee badge identified at this terminal.", statusCode: StatusCodes.Status403Forbidden);
+                reporterPersonId = holder.PersonId;
+            }
+            return await Command(http, b.Reason, null, CommandSource.Terminal,
+                c => quality.ReportSuspectScrapAsync(new ReportSuspectScrap(b.Kind, reporterPersonId, b.OrderNumber, b.Sequence, b.PartNumber,
+                    b.Quantity, b.ReasonCode, b.Description, b.LotNumber, b.SerialNumber), c, ct));
+        });
+
+        api.MapGet("/material-request-locations/{orderNumber:long}/{sequence:int}", (HttpContext http, long orderNumber, int sequence, CancellationToken _) =>
+            Read(http, Permissions.ShopFloorRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var order = await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, http.RequestAborted);
+                if (order is null || order.ProgramId is { } program && !principal.Programs.Contains(new ProgramId(program)))
+                    throw new CommandRejectedException("order_not_found", $"Order {orderNumber} does not exist.");
+                var operation = order.Operations.SingleOrDefault(candidate => candidate.Sequence == sequence)
+                    ?? throw new CommandRejectedException("operation_not_found", $"Order {orderNumber} has no operation {sequence}.");
+                return (await uow.Store<IInventoryLookup>().ListLocationsAsync(http.RequestAborted))
+                    .Where(location => location.Active && location.InCompanyCustody && location.WorkCenterCode == operation.WorkCenterCode
+                        && (location.Kind is LocationKind.Staging or LocationKind.Production
+                            || location.Kind == LocationKind.MachineSide && location.PointOfUse))
+                    .OrderBy(location => location.Kind == LocationKind.Staging ? 0 : 1).ThenBy(location => location.Code, StringComparer.Ordinal)
+                    .Select(location => new { location.Code, location.Name, location.Kind, location.WorkCenterCode }).ToArray();
+            }));
+
+        api.MapGet("/material-requests/{orderNumber:long}", (HttpContext http, long orderNumber, CancellationToken _) =>
+            Read(http, Permissions.ShopFloorRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var order = await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, http.RequestAborted);
+                if (order is null || order.ProgramId is { } program && !principal.Programs.Contains(new ProgramId(program)))
+                    throw new CommandRejectedException("order_not_found", $"Order {orderNumber} does not exist.");
+                return (await uow.Store<IInventoryLookup>().ListMaterialTasksAsync(false, orderNumber, http.RequestAborted))
+                    .Select(task => new { task.TaskId, task.PartNumber, task.Quantity, task.PickedQuantity, task.Status, task.OperationSequence, task.ToLocation, task.RequestedAt, task.RequesterPersonId, task.SourceSuspectReportId, task.IsNonBom, task.ReviewNote })
+                    .ToArray();
+            }));
+
+        api.MapPost("/material-request", async (HttpContext http, OperatorMaterialRequest b, InventoryService inventory, IForgeAuthorizer authorizer,
+            IKernelUnitOfWorkFactory uows, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            var decision = authorizer.Authorize(principal, Permissions.InventoryMaterialRequest, ResourceRef.Of(Permissions.InventoryMaterialRequest));
+            if (!decision.IsPermitted) throw new ForgeAuthorizationException(decision);
+            if (!TrySecret(b.Badge, out var badge)) return BadBadge();
+            Guid requesterPersonId;
+            await using (var uow = await uows.BeginSnapshotAsync(ct))
+            {
+                var holder = await uow.Store<IWorkforceLookup>().FindBadgeHolderAsync(badge.Reveal(), ct);
+                if (holder is not { IsWorker: true })
+                    return Results.Problem(title: "Worker badge required", detail: "Use the active employee badge already identified at this terminal.", statusCode: StatusCodes.Status403Forbidden);
+                requesterPersonId = holder.PersonId;
+            }
+            return await Command(http, b.Reason, null, CommandSource.Terminal, c => inventory.RequestMaterialAsync(
+                new RequestMaterial(MaterialTaskKind.Stage, b.OrderNumber, b.PartNumber, b.Quantity, b.ToLocation,
+                    OperationSequence: b.Sequence, OperatorInitiated: true, RequesterPersonId: requesterPersonId, AllowNonBomMaterial: b.AllowNonBomMaterial), c, ct));
+        });
+
         api.MapPost("/training/{sessionId:long}/evaluate", (HttpContext http, long sessionId, EvaluateRequest b, ShopFloorService s, CancellationToken ct) =>
             TrySecret(b.TrainerBadge, out var badge) && TrySecret(b.Pin, out var pin)
                 ? Command(http, b.Notes, null, CommandSource.Terminal, c => s.EvaluateTrainingAsync(new EvaluateTraining(badge, pin, sessionId, b.Evaluation, b.Notes), c, ct))
@@ -115,7 +218,7 @@ internal static class ShopFloorEndpoints
                 };
             }));
 
-        app.MapGet("/api/orders/{orderNumber:long}/shopfloor", (HttpContext http, long orderNumber, CancellationToken _) =>
+        app.MapGet("/api/orders/{orderNumber:long}/shopfloor", (HttpContext http, long orderNumber, TimeProvider time, CancellationToken _) =>
             Read(http, Permissions.OrdersRead, async principal =>
             {
                 await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
@@ -126,11 +229,19 @@ internal static class ShopFloorEndpoints
                     throw new CommandRejectedException("order_not_found", $"Order {orderNumber} does not exist.");
                 }
 
+                var labor = await exec.ListLaborAsync(DateTimeOffset.MinValue, DateTimeOffset.MaxValue, orderNumber, http.RequestAborted);
+                var reports = await exec.ListReportsAsync(DateTimeOffset.MinValue, DateTimeOffset.MaxValue, orderNumber, http.RequestAborted);
                 return new
                 {
-                    labor = await exec.ListLaborAsync(DateTimeOffset.MinValue, DateTimeOffset.MaxValue, orderNumber, http.RequestAborted),
-                    reports = await exec.ListReportsAsync(DateTimeOffset.MinValue, DateTimeOffset.MaxValue, orderNumber, http.RequestAborted),
+                    orderNumber = order.OrderNumber,
+                    order.PartNumber,
+                    order.Revision,
+                    order.Quantity,
+                    materials = order.Materials,
+                    labor,
+                    reports,
                     training = await exec.ListTrainingSessionsAsync(DateTimeOffset.MinValue, DateTimeOffset.MaxValue, orderNumber, http.RequestAborted),
+                    laborMetrics = ProductionLaborMetrics.Calculate(order, labor, reports, time.GetUtcNow()),
                 };
             })).RequireAuthorization();
 

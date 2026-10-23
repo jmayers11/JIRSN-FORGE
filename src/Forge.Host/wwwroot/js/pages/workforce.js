@@ -3,6 +3,7 @@ import { esc, fmtNumber, errorBlock, emptyBlock } from '../ui.js';
 import { roleTitle } from '../app.js';
 import { appendPresence, appendDocumentTraining } from '../executable.js';
 import { appendWorkforceAdmin } from './workforce-admin.js';
+import { appendWorkforceIntelligence } from './workforce-intelligence.js';
 
 export async function workforcePage(page, ctx) {
   const now = Date.now();
@@ -31,9 +32,10 @@ export async function workforcePage(page, ctx) {
       ${people.data.map(p => `<tr><td>${esc(p.displayName)}</td><td class="mono">${esc(p.idpSubject)}</td><td>${esc(p.roles.map(roleTitle).join(', ') || '—')}</td><td>${p.isActive ? '<span class="pill ok">Active</span>' : '<span class="pill none">Inactive</span>'}</td></tr>`).join('')}
       </tbody></table>`}
     </section>`;
+  await appendWorkforceIntelligence(page, ctx.me);
   // V3.9: presence levels, and training on controlled documents.
   await appendPresence(page);
   await appendDocumentTraining(page, ctx.me);
   // Worker, presence, badge and qualification commands.
-  await appendWorkforceAdmin(page, ctx.me);
+  await appendWorkforceAdmin(page, ctx.me, ctx.query.get('personId'));
 }

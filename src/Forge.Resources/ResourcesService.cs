@@ -32,7 +32,7 @@ public sealed record CreateMachine(string Code, string WorkCenterCode, string Na
 
 public sealed record DefineActivityType(string Code, string Name, string? Description);
 
-public sealed record SetMachineActivity(string MachineCode, string ActivityCode, IReadOnlyList<string> OperatorQualifications);
+public sealed record SetMachineActivity(string MachineCode, string ActivityCode, IReadOnlyList<string> OperatorQualifications, bool RequiresMachineAuthorization = false);
 
 public sealed record AllowWorkCenterActivity(string WorkCenterCode, string ActivityCode);
 
@@ -50,7 +50,7 @@ public sealed record ResourceDefined(string Kind, string Code, string Name, stri
     public static int SchemaVersion => 1;
 }
 
-public sealed record MachineRequirementChanged(string MachineCode, string ActivityCode, IReadOnlyList<string> OperatorQualifications) : IDomainEvent
+public sealed record MachineRequirementChanged(string MachineCode, string ActivityCode, IReadOnlyList<string> OperatorQualifications, bool RequiresMachineAuthorization = false) : IDomainEvent
 {
     public static string EventType => nameof(MachineRequirementChanged);
 
@@ -64,6 +64,15 @@ public sealed record UpdateSafetyArea(string Code, string Name);
 
 /// <summary>Renames a work center, moves it to another safety area of the same site, or changes its picture.</summary>
 public sealed record UpdateWorkCenter(string Code, string Name, string SafetyAreaCode, string? Picture);
+
+/// <summary>A work center's cell in the configurable plant floor map.</summary>
+public sealed record WorkCenterPlacement(string Code, int LayoutX, int LayoutY);
+
+public sealed record UpdateWorkCenterLayouts(IReadOnlyList<WorkCenterPlacement> Placements);
+
+public sealed record WorkCenterMapPlacement(string Code, int MapX, int MapY);
+
+public sealed record UpdateWorkCenterMapLayout(IReadOnlyList<WorkCenterMapPlacement> Placements);
 
 /// <summary>Renames a machine or moves it to another work center.</summary>
 public sealed record UpdateMachine(string Code, string Name, string WorkCenterCode);
@@ -80,7 +89,7 @@ public sealed record RemoveWorkCenterActivity(string WorkCenterCode, string Acti
 public sealed record UnassignWorkCenterShift(string WorkCenterCode, string ShiftCode);
 
 /// <summary>Any resource record as stored. Parent is the site, safety area or work center; Detail is a site's time zone or an activity's description.</summary>
-public sealed record ResourceRecord(string Kind, string Code, string Name, string? Parent, bool Active, string? Detail, string? Picture);
+public sealed record ResourceRecord(string Kind, string Code, string Name, string? Parent, bool Active, string? Detail, string? Picture, int? LayoutX = null, int? LayoutY = null, int? MapX = null, int? MapY = null);
 
 public sealed record ResourceChanged(string Kind, string Code, string Change) : IDomainEvent
 {
@@ -102,6 +111,8 @@ public interface IResourcesStore
     Task<bool> DeleteWorkCenterShiftAsync(WorkCenterShiftInfo link, CancellationToken ct);
 
     Task SetWorkCenterPictureAsync(string code, string? picture, CancellationToken ct);
+    Task SetSiteMapAsync(string siteCode, string? sha256, string? contentType, DateTimeOffset at, string actor, CancellationToken ct);
+    Task SetWorkCenterMapPositionAsync(string code, int mapX, int mapY, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task<bool> InsertAsync(string kind, string code, string name, string? parent, string? description, DateTimeOffset at, string actor, CancellationToken ct);
 
@@ -332,12 +343,12 @@ public sealed class ResourcesService(CommandPipeline pipeline, Contracts.SiteClo
             }
 
             var previous = await lookup.FindMachineActivityAsync(machine, activity, ct);
-            var profile = new MachineActivityInfo(machine, activity, qualifications);
+            var profile = new MachineActivityInfo(machine, activity, qualifications, c.RequiresMachineAuthorization);
             await uow.Store<IResourcesStore>().UpsertMachineActivityAsync(profile, now, context.Actor, ct);
             var id = $"{machine}:{activity}";
             return new CommandOutcome(
                 CommandResult.Ok(id, $"{activity} on {machine} requires one of: {string.Join(", ", qualifications)}."),
-                [pipeline.Event(new MachineRequirementChanged(machine, activity, qualifications), context, SourceContext, "Machine", machine)],
+                [pipeline.Event(new MachineRequirementChanged(machine, activity, qualifications, c.RequiresMachineAuthorization), context, SourceContext, "Machine", machine)],
                 new AuditChange("MachineActivity", id, previous is null ? null : CanonicalJson.Serialize(previous), CanonicalJson.Serialize(profile)));
         }, ct);
     }
@@ -418,6 +429,124 @@ public sealed class ResourcesService(CommandPipeline pipeline, Contracts.SiteClo
 
             return current with { Name = BusinessCode.RequireName(c.Name, "Work center"), Parent = area, Picture = picture };
         }, ct);
+    }
+
+    /// <summary>Persists a complete floor layout in one audited command so positions remain unique.</summary>
+    public Task<CommandResult> UpdateWorkCenterLayoutsAsync(UpdateWorkCenterLayouts c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var placements = c.Placements?.ToArray() ?? [];
+        if (placements.Length == 0 || placements.Length > 1000 || placements.Any(p => p is null))
+            throw new CommandRejectedException("invalid_layout", "A floor layout must contain each active work center once.");
+        foreach (var placement in placements) _ = BusinessCode.Require(placement.Code, "Work center");
+        if (placements.Select(p => p.Code).Distinct(StringComparer.OrdinalIgnoreCase).Count() != placements.Length)
+            throw new CommandRejectedException("invalid_layout", "A floor layout must contain each active work center once.");
+        if (placements.Any(p => p.LayoutX is < 0 or > 3 || p.LayoutY is < 0 or > 99))
+            throw new CommandRejectedException("invalid_layout", "Floor positions use columns 0–3 and rows 0–99.");
+
+        var spec = new CommandSpec(SourceContext, nameof(UpdateWorkCenterLayouts), Permissions.ResourcesManage, ResourceRef.Of("WorkCenter", placements[0].Code), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var currentCenters = await uow.Store<IResourcesLookup>().ListWorkCentersAsync(ct);
+            var active = currentCenters.Where(w => w.Active).ToDictionary(w => w.Code, StringComparer.OrdinalIgnoreCase);
+            var requested = placements.ToDictionary(p => p.Code, StringComparer.OrdinalIgnoreCase);
+            if (requested.Count != active.Count || active.Keys.Any(code => !requested.ContainsKey(code)) || requested.Keys.Any(code => !active.ContainsKey(code)))
+                throw new CommandRejectedException("invalid_layout", "Refresh the plant map and submit every active work center exactly once.");
+
+            var collisions = placements.GroupBy(p => active[p.Code].SafetyAreaCode + ":" + p.LayoutX + ":" + p.LayoutY, StringComparer.OrdinalIgnoreCase).FirstOrDefault(group => group.Count() > 1);
+            if (collisions is not null)
+                throw new CommandRejectedException("layout_collision", "Two work centers cannot occupy the same floor cell in one safety area.");
+
+            var store = uow.Store<IResourcesStore>();
+            var oldPositions = new List<object>();
+            var newPositions = new List<WorkCenterPlacement>();
+            var events = new List<Forge.Kernel.Events.EventEnvelope>();
+            foreach (var placement in placements.OrderBy(p => p.Code, StringComparer.Ordinal))
+            {
+                var center = active[placement.Code];
+                oldPositions.Add(new { code = center.Code, layoutX = center.LayoutX, layoutY = center.LayoutY });
+                newPositions.Add(placement);
+                if (center.LayoutX == placement.LayoutX && center.LayoutY == placement.LayoutY) continue;
+
+                var record = await store.FindAnyAsync("WorkCenter", center.Code, ct)
+                    ?? throw new CommandRejectedException("work_center_not_found", $"Work center {center.Code} no longer exists.");
+                await store.UpdateAsync(record with { LayoutX = placement.LayoutX, LayoutY = placement.LayoutY }, now, context.Actor, ct);
+                events.Add(pipeline.Event(new ResourceChanged("WorkCenter", center.Code, "LayoutChanged"), context, SourceContext, "WorkCenter", center.Code));
+            }
+
+            if (events.Count == 0)
+                return CommandOutcome.NoChange(CommandResult.NoChange("Plant", "Floor layout unchanged."));
+
+            return new CommandOutcome(
+                CommandResult.Ok("Plant", $"Floor layout saved for {events.Count} work center{(events.Count == 1 ? string.Empty : "s")}.") ,
+                events,
+                new AuditChange("WorkCenterLayout", "Plant", CanonicalJson.Serialize(oldPositions), CanonicalJson.Serialize(newPositions)));
+        }, ct, authority: async (uow, _) =>
+        {
+            var active = (await uow.Store<IResourcesLookup>().ListWorkCentersAsync(ct)).Where(w => w.Active).ToList();
+            var resources = active.Select(w => ResourceRef.Of("WorkCenter", w.Code)).ToArray();
+            var primary = resources.FirstOrDefault() ?? ResourceRef.Of("WorkCenter", placements[0].Code);
+            return new CommandAuthority(primary, AdditionalResources: resources.Skip(1).ToArray());
+        });
+    }
+
+    /// <summary>Moves work-center markers over the site's plant image in one audited command.</summary>
+    public Task<CommandResult> UpdateWorkCenterMapLayoutAsync(UpdateWorkCenterMapLayout c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var placements = c.Placements?.ToArray() ?? [];
+        if (placements.Length == 0 || placements.Length > 1000 || placements.Any(p => p is null)
+            || placements.Any(p => p.MapX is < 0 or > 1000 || p.MapY is < 0 or > 1000)
+            || placements.Select(p => p.Code).Distinct(StringComparer.OrdinalIgnoreCase).Count() != placements.Length)
+            throw new CommandRejectedException("invalid_map_layout", "Map positions must contain unique work-center codes with coordinates from 0 to 1000.");
+        foreach (var placement in placements) _ = BusinessCode.Require(placement.Code, "Work center");
+
+        var spec = new CommandSpec(SourceContext, nameof(UpdateWorkCenterMapLayout), Permissions.ResourcesFloorMapManage,
+            ResourceRef.Of("WorkCenter", placements[0].Code), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var lookup = uow.Store<IResourcesLookup>();
+            var active = (await lookup.ListWorkCentersAsync(ct)).Where(w => w.Active).ToDictionary(w => w.Code, StringComparer.OrdinalIgnoreCase);
+            var requested = placements.ToDictionary(p => p.Code, StringComparer.OrdinalIgnoreCase);
+            if (requested.Count != active.Count || active.Keys.Any(code => !requested.ContainsKey(code)) || requested.Keys.Any(code => !active.ContainsKey(code)))
+                throw new CommandRejectedException("invalid_map_layout", "Refresh the plant map and submit every active work center exactly once.");
+
+            var areas = (await lookup.ListSafetyAreasAsync(ct)).ToDictionary(a => a.Code, StringComparer.OrdinalIgnoreCase);
+            var sites = (await lookup.ListSitesAsync(ct)).ToDictionary(s => s.Code, StringComparer.OrdinalIgnoreCase);
+            var collisions = placements.GroupBy(p =>
+            {
+                var area = areas[active[p.Code].SafetyAreaCode];
+                return $"{sites[area.SiteCode].Code}:{p.MapX}:{p.MapY}";
+            }, StringComparer.OrdinalIgnoreCase).FirstOrDefault(group => group.Count() > 1);
+            if (collisions is not null)
+                throw new CommandRejectedException("map_layout_collision", "Two work centers cannot occupy the exact same marker position on one site map.");
+
+            var store = uow.Store<IResourcesStore>();
+            var oldPositions = new List<object>();
+            var newPositions = new List<WorkCenterMapPlacement>();
+            var events = new List<Forge.Kernel.Events.EventEnvelope>();
+            foreach (var position in placements.OrderBy(p => p.Code, StringComparer.Ordinal))
+            {
+                var center = active[position.Code];
+                oldPositions.Add(new { code = center.Code, mapX = center.MapX, mapY = center.MapY });
+                newPositions.Add(position);
+                if (center.MapX == position.MapX && center.MapY == position.MapY) continue;
+                await store.SetWorkCenterMapPositionAsync(center.Code, position.MapX, position.MapY, now, context.Actor, ct);
+                events.Add(pipeline.Event(new ResourceChanged("WorkCenter", center.Code, "MapPositionChanged"), context, SourceContext, "WorkCenter", center.Code));
+            }
+
+            if (events.Count == 0) return CommandOutcome.NoChange(CommandResult.NoChange("Plant", "Plant-map positions unchanged."));
+            return new CommandOutcome(
+                CommandResult.Ok("Plant", $"Map positions saved for {events.Count} work center{(events.Count == 1 ? string.Empty : "s")}."),
+                events,
+                new AuditChange("WorkCenterMapLayout", "Plant", CanonicalJson.Serialize(oldPositions), CanonicalJson.Serialize(newPositions)));
+        }, ct, authority: async (uow, _) =>
+        {
+            var active = (await uow.Store<IResourcesLookup>().ListWorkCentersAsync(ct)).Where(w => w.Active).ToList();
+            var resources = active.Select(w => ResourceRef.Of("WorkCenter", w.Code)).ToArray();
+            var primary = resources.FirstOrDefault() ?? ResourceRef.Of("WorkCenter", placements[0].Code);
+            return new CommandAuthority(primary, AdditionalResources: resources.Skip(1).ToArray());
+        });
     }
 
     public Task<CommandResult> UpdateMachineAsync(UpdateMachine c, CommandContext context, CancellationToken ct)

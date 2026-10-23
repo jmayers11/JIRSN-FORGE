@@ -179,6 +179,14 @@ class Element extends Events {
       select.value = option ? option.getAttribute('value') ?? option.textContent : '';
     }
   }
+  set outerHTML(html) {
+    if (!this.parentElement) return;
+    const parent = this.parentElement, reference = this;
+    const replacement = this.ownerDocument.createElement('div');
+    replacement.innerHTML = String(html);
+    for (const child of [...replacement.children]) parent.insertBefore(child, reference);
+    reference.remove();
+  }
   get hidden() { return this.attributes.has('hidden'); }
   set hidden(value) { if (value) this.setAttribute('hidden', ''); else this.attributes.delete('hidden'); }
 }

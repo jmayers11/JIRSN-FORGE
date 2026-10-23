@@ -58,18 +58,29 @@ test('machine board reads Forge sources, exposes evidence and filters by signal'
   assert.ok(calls.includes('/api/readiness/operations'));
   assert.ok(calls.some(path => path.startsWith('/api/maintenance/downtime?from=')));
   assert.match(page.innerHTML, /Machine Readiness/);
-  assert.match(page.innerHTML, /Readiness is not telemetry/);
   assert.match(page.innerHTML, /Hydraulic Press/);
-  assert.match(page.innerHTML, /Eligible open operation passes readiness/);
-  assert.match(page.innerHTML, /No recorded downtime/);
-  assert.match(page.innerHTML, /#\/orders\/501/);
-  assert.match(page.innerHTML, /separate reads, not a real-time or atomic snapshot/);
+  const cardStart = page.innerHTML.indexOf('<details class="machine-kanban-card ready"');
+  const cardEnd = page.innerHTML.indexOf('</details>', cardStart);
+  const cardHtml = page.innerHTML.slice(cardStart, cardEnd);
+  const summary = cardHtml.slice(0, cardHtml.indexOf('</summary>'));
+  assert.match(summary, /Hydraulic Press/);
+  assert.match(summary, /Press Shop \(PRESS\)/);
+  assert.doesNotMatch(summary, /PRESS-ASSET|Eligible open operation|Order #|Readiness/);
+  assert.match(cardHtml, /Eligible open operation passes readiness/);
+  assert.match(cardHtml, /No recorded downtime/);
+  assert.match(cardHtml, /#\/orders\/501/);
+  assert.doesNotMatch(cardHtml.match(/^<details[^>]*>/)?.[0] ?? '', /\bopen\b/);
+  assert.match(page.innerHTML, /<details class="panel machine-board-legend"><summary>About readiness signals/);
+  assert.match(page.innerHTML, /<section class="kpis machine-board-kpis" aria-label="Machine readiness counts"/);
+  assert.match(page.innerHTML, /class="kpi ready"><div class="k">Ready<\/div><div class="v">1<\/div>/);
+  assert.match(page.innerHTML, /<header><h2 id="machine-lane-ready"[^]*?<span class="pill ok">1<\/span><\/header>/);
 
   const signal = page.querySelector('#machine-signal');
   signal.value = 'unknown';
   fire(signal, 'change');
   assert.match(page.innerHTML, /No machines in this signal group/);
   assert.doesNotMatch(page.innerHTML, /Hydraulic Press/);
+  assert.match(page.innerHTML, /class="kpi ready"><div class="k">Ready<\/div><div class="v">0<\/div>/, 'KPI counts follow active filters');
 });
 
 test('missing readiness data cannot produce a Ready machine card', async t => {

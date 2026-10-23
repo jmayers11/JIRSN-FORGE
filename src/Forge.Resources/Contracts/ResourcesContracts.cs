@@ -1,7 +1,8 @@
 namespace Forge.Resources.Contracts;
 
 /// <summary>A plant. Shift times are local to its IANA time zone.</summary>
-public sealed record SiteInfo(string Code, string Name, string TimeZone = "America/New_York");
+public sealed record SiteInfo(string Code, string Name, string TimeZone = "America/New_York", bool HasCustomMap = false);
+public sealed record SiteMapImageInfo(string Sha256, string ContentType);
 
 /// <summary>
 /// A recurring shift: starts at <see cref="Start"/> local time on each listed ISO weekday
@@ -22,7 +23,7 @@ public sealed record SafetyAreaInfo(string Code, string SiteCode, string Name, b
 /// A place where a kind of work is done: slitting, bonding, winding, kitting. <see cref="Picture"/> is the
 /// photo shown for it (one of <see cref="WorkCenterPictures.All"/>); null means "choose from the name".
 /// </summary>
-public sealed record WorkCenterInfo(string Code, string SafetyAreaCode, string Name, bool Active = true, string? Picture = null);
+public sealed record WorkCenterInfo(string Code, string SafetyAreaCode, string Name, bool Active = true, string? Picture = null, int? LayoutX = null, int? LayoutY = null, int? MapX = null, int? MapY = null);
 
 public sealed record MachineInfo(string Code, string WorkCenterCode, string SafetyAreaCode, string Name, bool Active = true);
 
@@ -39,7 +40,7 @@ public static class WorkCenterPictures
 /// Part of a machine's requirement profile: this activity can be performed on the machine by a person
 /// holding any one of the operator qualifications.
 /// </summary>
-public sealed record MachineActivityInfo(string MachineCode, string ActivityCode, IReadOnlyList<string> OperatorQualifications);
+public sealed record MachineActivityInfo(string MachineCode, string ActivityCode, IReadOnlyList<string> OperatorQualifications, bool RequiresMachineAuthorization = false);
 
 /// <summary>An activity that may be performed at a work center without a machine (staging, kitting, cleaning).</summary>
 public sealed record WorkCenterActivityInfo(string WorkCenterCode, string ActivityCode);
@@ -67,6 +68,7 @@ public interface IResourcesLookup
     Task<WorkCenterInfo?> FindRecordedWorkCenterAsync(string code, CancellationToken ct);
     Task<SafetyAreaInfo?> FindRecordedSafetyAreaAsync(string code, CancellationToken ct);
     Task<IReadOnlyList<SiteInfo>> ListSitesAsync(CancellationToken ct);
+    Task<SiteMapImageInfo?> FindSiteMapAsync(string siteCode, CancellationToken ct);
 
     /// <summary>A site's IANA time zone; the home site's (the first created) when the code is null or unknown; the default when there is no site (ADR 0057 §1).</summary>
     Task<string> SiteTimeZoneAsync(string? siteCode, CancellationToken ct);

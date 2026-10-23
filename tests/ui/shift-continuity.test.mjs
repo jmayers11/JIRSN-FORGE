@@ -8,7 +8,7 @@ const resources = { workCenters: [{ code: 'CUT', name: 'Cutting', safetyAreaCode
 const handoff = { handoffId: 42, shiftCode: 'DAY', workCenterCode: 'CUT', shiftFrom: '2026-10-18T07:00:00Z', shiftUntil: '2026-10-18T15:00:00Z', reviewedAt: '2026-10-18T15:10:00Z', createdBy: 'person:outgoing', context: 'Tool change completed', snapshot: { asOf: '2026-10-18T15:00:00Z', production: { reportCount: 0, goodQuantity: 0, scrapQuantity: 0, openOperations: 0 }, unknowns: [] }, facts: [], checklist: [] };
 const detail = { handoff, acknowledgments: [{ personId: 'incoming-id', acknowledgedAt: '2026-10-18T15:15:00Z' }], };
 
-async function harness(t, { directory = [{ personId: 'incoming-id', displayName: 'Incoming Operator' }], denyDirectory = false } = {}) {
+async function harness(t, { directory = [{ personId: 'incoming-id', displayName: 'Incoming Operator' }], denyDirectory = false, actionList = [] } = {}) {
   const browser = installBrowser(t), page = browser.document.createElement('div'); browser.document.body.append(page);
   const previous = { subject: session.subject, token: session.token }; session.subject = 'shift-continuity-test'; session.token = null; t.after(() => Object.assign(session, previous));
   const calls = [];
@@ -19,7 +19,7 @@ async function harness(t, { directory = [{ personId: 'incoming-id', displayName:
     if (path.includes('/handoffs?')) return Promise.resolve(response([handoff]));
     if (path === '/api/execution/shifts/closeouts?workCenter=CUT&limit=30' || path === '/api/execution/shifts/checklist?workCenter=CUT') return Promise.resolve(response([]));
     if (path === '/api/execution/shifts/handoffs/42') return Promise.resolve(response(detail));
-    if (path === '/api/execution/shifts/handoffs/42/actions') return Promise.resolve(response([]));
+    if (path === '/api/execution/shifts/handoffs/42/actions') return Promise.resolve(response(actionList));
     return Promise.resolve(response({ message: 'Recorded.' }));
   };
   const controller = await shiftContinuityPage(page, { me: { personId: 'supervisor-id', permissions: ['workforce.supervise', 'execution.shopfloor.record'] } });
@@ -40,4 +40,19 @@ test('shift action assignment falls back to person ID text input when directory 
   const h = await harness(t, { denyDirectory: true }); await h.open();
   assert.equal(h.page.querySelector('[name="assignee"]').tagName, 'input');
   assert.equal(h.page.querySelector('[name="assignee"]').getAttribute('placeholder'), 'Assignee person ID');
+});
+
+test('recovery action board shows due dates and completion evidence and marks unresolved dependencies blocked', async t => {
+  const h = await harness(t, { actionList: [
+    { actionId: 1, handoffId: 42, description: 'Inspect guard', assignee: 'incoming-id', status: 'Completed', createdAt: '2026-10-18T15:20:00Z', completedAt: '2026-10-18T15:30:00Z', completionEvidence: 'Guard inspection QI-22 passed.' },
+    { actionId: 2, handoffId: 42, description: 'Repair interlock', assignee: 'incoming-id', status: 'InProgress', createdAt: '2026-10-18T15:21:00Z', dueAt: '2026-10-19T15:00:00Z', blockedByActionIds: [1] },
+    { actionId: 3, handoffId: 42, description: 'Verify return to service', assignee: 'incoming-id', status: 'Acknowledged', createdAt: '2026-10-18T15:22:00Z', blockedByActionIds: [2] },
+  ] });
+  await h.open();
+  const box = h.page.querySelector('#handoff-detail');
+  assert.match(box.textContent, /Recovery action board/);
+  assert.match(box.textContent, /Guard inspection QI-22 passed/);
+  assert.match(box.textContent, /Blocked · #2/);
+  assert.ok(box.querySelector('[data-action-next="2"]'));
+  assert.equal(box.querySelector('[data-action-next="3"]'), null);
 });

@@ -222,7 +222,7 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
 
         if (op.EligibleMachines.Count == 0)
         {
-            yield return Candidate(snapshot, request, op, workCenter.SafetyAreaCode, null, [], asOf);
+            yield return Candidate(snapshot, request, op, workCenter.SafetyAreaCode, null, [], false, asOf);
             yield break;
         }
 
@@ -240,11 +240,11 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
                 continue;
             }
 
-            yield return Candidate(snapshot, request, op, workCenter.SafetyAreaCode, machineCode, profile.OperatorQualifications, asOf);
+            yield return Candidate(snapshot, request, op, workCenter.SafetyAreaCode, machineCode, profile.OperatorQualifications, profile.RequiresMachineAuthorization, asOf);
         }
     }
 
-    private OperationCandidate Candidate(SiteSnapshot snapshot, OrderReadinessRequest request, OrderOperationInfo op, string area, string? machine, IReadOnlyList<string> operatorQualifications, DateTimeOffset asOf)
+    private OperationCandidate Candidate(SiteSnapshot snapshot, OrderReadinessRequest request, OrderOperationInfo op, string area, string? machine, IReadOnlyList<string> operatorQualifications, bool requiresMachineAuthorization, DateTimeOffset asOf)
     {
         var dimensions = new List<ReadinessDimension>();
         if (op.Status != OperationStatus.Complete)
@@ -254,7 +254,7 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
 
         if (machine is not null)
         {
-            dimensions.Add(new ReadinessDimension("RequirementProfile", EvidenceOutcome.Pass, $"{op.ActivityCode} on {machine} requires one of {string.Join(", ", operatorQualifications)}."));
+            dimensions.Add(new ReadinessDimension("RequirementProfile", EvidenceOutcome.Pass, $"{op.ActivityCode} on {machine} requires one of {string.Join(", ", operatorQualifications)}{(requiresMachineAuthorization ? " and a current machine-specific authorization" : string.Empty)}."));
             var equipment = OperationReadinessEngine.EquipmentCheck(snapshot, machine, asOf);
             dimensions.Add(new ReadinessDimension("Equipment", equipment.Outcome, equipment.Detail));
         }
@@ -267,8 +267,10 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
         // Candidates: present, not a trainee, in this safety area or not yet assigned anywhere.
         var qualified = snapshot.People
             .Where(p => p.CountsAsPresent && p.Assignment?.AsTrainee != true && (p.Assignment is null || p.Assignment.SafetyAreaCode == area))
-            .Where(p => operatorQualifications.Count == 0 || operatorQualifications.Any(p.Holds))
-            .Where(p => op.RequiredQualifications.All(p.Holds))
+            .Where(p => operatorQualifications.Count == 0 || operatorQualifications.Any(code => p.HoldsAt(code, asOf)))
+            .Where(p => !requiresMachineAuthorization || (machine is not null && operatorQualifications.Any(code => p.HoldsAt(code, asOf)
+                && p.AuthorizedForMachineAt(machine, op.ActivityCode, code, asOf))))
+            .Where(p => op.RequiredQualifications.All(code => p.HoldsAt(code, asOf)))
             .OrderBy(p => p.PersonId)
             .ToList();
         var requirement = string.Join(" and ", new[]

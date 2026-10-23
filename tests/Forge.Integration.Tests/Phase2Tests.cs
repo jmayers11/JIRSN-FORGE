@@ -192,4 +192,117 @@ public sealed class Phase2Tests(PostgresFixture postgres)
         var denied = await app.As("dana").GetAsync("/api/readiness/active-work");
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
     }
+
+    [Fact]
+    public async Task Specialized_assignment_requires_a_current_qualification_or_present_trainer_before_commit()
+    {
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        var plant = await SlittingPlant.BuildAsync(app);
+        await plant.Ok(plant.Engineer, "/api/competency/qualification-types", new
+        {
+            code = "SLIT-TRAINER", name = "Authorized slitting trainer", kind = "Trainer", validityDays = 365,
+        });
+        await plant.Ok(plant.Engineer, "/api/competency/qualification-types/SLIT-TRAINER/prerequisites", new
+        {
+            prerequisiteCode = "SLIT-II", reason = "Trainer must hold current slitting qualification",
+        });
+
+        var trainee = await plant.Person("slitting-trainee");
+        await plant.Ok(plant.Engineer, $"/api/workforce/workers/{trainee}", new { homeWorkCenterCode = "SLIT-WC" });
+        await plant.Ok(plant.Engineer, $"/api/workforce/workers/{trainee}/presence", new { kind = "SupervisorConfirmed" });
+        await plant.Ok(plant.Engineer, $"/api/competency/people/{trainee}/training", new { code = "SLIT-II" });
+
+        var independent = await plant.Try(plant.Engineer, $"/api/workforce/workers/{trainee}/assignment", new
+        {
+            machineCode = "SLITTER-A", activityCode = "RUN_SLITTER", asTrainee = false, reason = "Reject unauthorized independent assignment",
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, independent.StatusCode);
+        Assert.Contains("qualification_required", await independent.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        var noTrainer = await plant.Try(plant.Engineer, $"/api/workforce/workers/{trainee}/assignment", new
+        {
+            machineCode = "SLITTER-A", activityCode = "RUN_SLITTER", asTrainee = true, reason = "Require trainer before supervised assignment",
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, noTrainer.StatusCode);
+        Assert.Contains("qualified_trainer_required", await noTrainer.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        await plant.Ok(plant.Engineer, $"/api/competency/people/{plant.People["sarah"]}/training", new { code = "SLIT-TRAINER" });
+        await plant.Ok(plant.Approver, $"/api/competency/people/{plant.People["sarah"]}/certifications", new
+        {
+            code = "SLIT-TRAINER", evidence = "Fictional trainer qualification assessment", reason = "Trainer approval recorded",
+        });
+        await plant.Assign("sarah", new { machineCode = "SLITTER-A", activityCode = "RUN_SLITTER", reason = "Place the qualified trainer at the work area" });
+        await plant.Ok(plant.Engineer, $"/api/workforce/workers/{trainee}/assignment", new
+        {
+            machineCode = "SLITTER-A", activityCode = "RUN_SLITTER", asTrainee = true, reason = "Assign under current on-site trainer coverage",
+        });
+
+        var workers = await plant.Engineer.GetFromJsonAsync<JsonElement[]>("/api/workforce/workers");
+        Assert.Equal("SLITTER-A", workers!.Single(worker => worker.GetProperty("personId").GetGuid() == trainee)
+            .GetProperty("assignment").GetProperty("machineCode").GetString());
+    }
+
+    [Fact]
+    public async Task Cnc_setup_assignment_requires_toolpath_and_one_current_mill_or_lathe_authorization()
+    {
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        var plant = await SlittingPlant.BuildAsync(app);
+        foreach (var (code, name) in new[] { ("CNC_MILL", "CNC mill"), ("CNC_LATHE", "CNC lathe"), ("CNC_SETUP", "CNC setup") })
+            await plant.Ok(plant.Engineer, "/api/resources/activity-types", new { code, name });
+        await plant.Ok(plant.Engineer, "/api/resources/safety-areas", new { code = "CNC", name = "CNC", parent = "PLANT1" });
+        await plant.Ok(plant.Engineer, "/api/resources/work-centers", new { code = "CNC-WC", name = "CNC", parent = "CNC" });
+        foreach (var machine in new[] { ("CNC-01", "CNC_MILL", "QUAL-CNC-MILL"), ("CNC-02", "CNC_SETUP", "QUAL-CNC-SETUP"), ("CNC-03", "CNC_LATHE", "QUAL-CNC-LATHE") })
+        {
+            await plant.Ok(plant.Engineer, "/api/resources/machines", new { code = machine.Item1, name = machine.Item1, parent = "CNC-WC" });
+        }
+        foreach (var (code, kind) in new[]
+        {
+            ("QUAL-SITE-SAFE", "Safety"), ("QUAL-CNC-MILL", "Machine"), ("QUAL-CNC-LATHE", "Machine"),
+            ("QUAL-CNC-TOOLPATH", "SpecialProcess"), ("QUAL-CNC-SETUP", "SpecialProcess"),
+        })
+            await plant.Ok(plant.Engineer, "/api/competency/qualification-types", new { code, name = code, kind, validityDays = 365 });
+        foreach (var machine in new[] { ("CNC-01", "CNC_MILL", "QUAL-CNC-MILL"), ("CNC-02", "CNC_SETUP", "QUAL-CNC-SETUP"), ("CNC-03", "CNC_LATHE", "QUAL-CNC-LATHE") })
+            await plant.Ok(plant.Engineer, $"/api/resources/machines/{machine.Item1}/activities", new { activityCode = machine.Item2, operatorQualifications = new[] { machine.Item3 } });
+        await plant.Ok(plant.Engineer, "/api/competency/qualification-types/QUAL-CNC-MILL/prerequisites", new { prerequisiteCode = "QUAL-SITE-SAFE" });
+        await plant.Ok(plant.Engineer, "/api/competency/qualification-types/QUAL-CNC-LATHE/prerequisites", new { prerequisiteCode = "QUAL-SITE-SAFE" });
+        await plant.Ok(plant.Engineer, "/api/competency/qualification-types/QUAL-CNC-TOOLPATH/prerequisites", new { prerequisiteCode = "QUAL-SITE-SAFE" });
+        await plant.Ok(plant.Engineer, "/api/competency/qualification-types/QUAL-CNC-SETUP/prerequisites", new { prerequisiteCode = "QUAL-CNC-TOOLPATH" });
+        await plant.Ok(plant.Engineer, "/api/competency/qualification-types/QUAL-CNC-SETUP/prerequisite-alternatives", new
+        {
+            groupCode = "MILL-OR-LATHE", name = "Mill or lathe authorization", prerequisiteCodes = new[] { "QUAL-CNC-MILL", "QUAL-CNC-LATHE" },
+        });
+
+        var operatorId = await plant.Person("cnc-mill-operator");
+        await plant.Ok(plant.Engineer, $"/api/workforce/workers/{operatorId}", new { homeWorkCenterCode = "CNC-WC" });
+        await plant.Ok(plant.Engineer, $"/api/workforce/workers/{operatorId}/presence", new { kind = "SupervisorConfirmed" });
+        foreach (var code in new[] { "QUAL-SITE-SAFE", "QUAL-CNC-MILL" })
+        {
+            await plant.Ok(plant.Engineer, $"/api/competency/people/{operatorId}/training", new { code });
+            await plant.Ok(plant.Approver, $"/api/competency/people/{operatorId}/certifications", new { code, evidence = "Fictional setup qualification assessment", reason = "Approval recorded" });
+        }
+
+        var wrongMachine = await plant.Try(plant.Engineer, $"/api/workforce/workers/{operatorId}/assignment", new
+        {
+            machineCode = "CNC-03", activityCode = "CNC_LATHE", reason = "Mill qualification does not authorize lathe operation",
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, wrongMachine.StatusCode);
+        Assert.Contains("qualification_required", await wrongMachine.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        var missingSetup = await plant.Try(plant.Engineer, $"/api/workforce/workers/{operatorId}/assignment", new
+        {
+            machineCode = "CNC-02", activityCode = "CNC_SETUP", reason = "Toolpath and setup authorization are not recorded",
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, missingSetup.StatusCode);
+        Assert.Contains("qualification_required", await missingSetup.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        foreach (var code in new[] { "QUAL-CNC-TOOLPATH", "QUAL-CNC-SETUP" })
+        {
+            await plant.Ok(plant.Engineer, $"/api/competency/people/{operatorId}/training", new { code });
+            await plant.Ok(plant.Approver, $"/api/competency/people/{operatorId}/certifications", new { code, evidence = "Fictional setup qualification assessment", reason = "Approval recorded" });
+        }
+        await plant.Ok(plant.Engineer, $"/api/workforce/workers/{operatorId}/assignment", new
+        {
+            machineCode = "CNC-02", activityCode = "CNC_SETUP", reason = "Mill authorization plus toolpath verification qualifies this setup lead",
+        });
+    }
 }

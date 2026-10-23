@@ -27,10 +27,15 @@ internal static class SnapshotLoader
         var workforce = uow.Store<IWorkforceLookup>();
         var workers = await workforce.GetWorkerStatesAsync(at, ct);
         var qualifications = await uow.Store<ICompetencyLookup>().GetQualificationsAsync(workers.Select(w => new PersonId(w.PersonId)).ToList(), ct);
+        var machineAuthorizations = await uow.Store<ICompetencyLookup>().GetMachineAuthorizationsAsync(workers.Select(w => new PersonId(w.PersonId)).ToList(), ct);
         var valid = qualifications
             .Where(q => q.IsValidAt(at))
             .GroupBy(q => q.PersonId)
             .ToDictionary(g => g.Key, g => g.OrderBy(q => q.Code, StringComparer.Ordinal).ToList());
+        var validMachineAuthorizations = machineAuthorizations.Where(record => record.IsValidAt(at))
+            .GroupBy(record => record.PersonId)
+            .ToDictionary(group => group.Key, group => group.GroupBy(record => $"{record.MachineCode}|{record.ActivityCode}|{record.QualificationCode}", StringComparer.Ordinal)
+                .ToDictionary(records => records.Key, records => records.Select(record => record.ExpiresAt).OrderByDescending(expiry => expiry ?? DateTimeOffset.MaxValue).First(), StringComparer.Ordinal));
 
         // V3.9: training on controlled documents, and who has open direct labor (active on an operation).
         var trained = (await uow.Store<IDocumentTrainingLookup>().ListTrainingAsync(workers.Select(w => w.PersonId).ToList(), ct))
@@ -59,6 +64,9 @@ internal static class SnapshotLoader
                     WorkCenterPeriods = periods[w.PersonId].ToList(),
                     ShiftCode = w.ShiftCode,
                     QualificationExpiry = held.ToDictionary(q => q.Code, q => q.ExpiresAt, StringComparer.Ordinal),
+                    MachineAuthorizationExpiry = validMachineAuthorizations.TryGetValue(w.PersonId, out var authorizations)
+                        ? authorizations
+                        : new Dictionary<string, DateTimeOffset?>(StringComparer.Ordinal),
                     TrainedDocuments = trained.TryGetValue(w.PersonId, out var docs) ? docs : new HashSet<string>(StringComparer.Ordinal),
                     ActiveOperation = labor.TryGetValue(w.PersonId, out var l) ? $"{l.OrderNumber}/{l.Sequence}" : null,
                 };

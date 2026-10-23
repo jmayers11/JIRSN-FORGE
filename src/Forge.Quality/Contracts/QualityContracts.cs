@@ -106,6 +106,26 @@ public sealed record NcrInfo(
     string? ClosureNote,
     DateTimeOffset? ClosedAt);
 
+/// <summary>Operator-reported suspected scrap or quality concern. This is evidence only; it is not an NCR disposition or inventory transaction.</summary>
+public enum SuspectReportKind { Scrap, QualityIssue }
+
+public sealed record SuspectScrapReport(
+    long ReportId,
+    SuspectReportKind Kind,
+    long OrderNumber,
+    int Sequence,
+    string PartNumber,
+    string? Revision,
+    string? LotNumber,
+    string? SerialNumber,
+    decimal Quantity,
+    string? MachineCode,
+    Guid ReporterPersonId,
+    string ReasonCode,
+    string Description,
+    DateTimeOffset ReportedAt,
+    long? NcrId = null);
+
 public enum CapaStatus
 {
     Open,
@@ -172,11 +192,21 @@ public interface IQualityLookup
 
     Task<NcrInfo?> FindNcrAsync(long ncrId, CancellationToken ct);
 
+    Task<SuspectScrapReport?> FindSuspectScrapReportAsync(long reportId, CancellationToken ct);
+
+    Task<IReadOnlyList<SuspectScrapReport>> ListSuspectScrapReportsAsync(long? orderNumber, CancellationToken ct);
+
     Task<IReadOnlyList<CapaInfo>> ListCapasAsync(bool includeVerified, CancellationToken ct);
 
 
     /// <summary>Inspection points of the order's part, operations with a passing inspection, and NCRs not yet dispositioned.</summary>
     Task<OrderQuality> GetOrderQualityAsync(long orderNumber, string partNumber, CancellationToken ct);
+}
+
+public interface ISuspectScrapReportStore
+{
+    Task<long> InsertSuspectScrapReportAsync(SuspectScrapReport report, CancellationToken ct);
+    Task<bool> LinkSuspectScrapReportNcrAsync(long reportId, long ncrId, CancellationToken ct);
 }
 
 public enum ReworkKind

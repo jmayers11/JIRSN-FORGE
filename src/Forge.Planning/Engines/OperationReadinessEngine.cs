@@ -1,4 +1,5 @@
 using Forge.Kernel.Engines;
+using Forge.Resources.Contracts;
 
 namespace Forge.Planning.Engines;
 
@@ -87,7 +88,7 @@ public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, R
                 Add("Equipment", EquipmentCheck(snapshot, machineCode, asOf));
                 var tooling = ExecutableChecks.Tooling(snapshot, machineCode, parameters.ActivityCode, asOf);
                 Add("Tooling", new EvidenceNode("Tooling", tooling.Outcome, tooling.Detail));
-                Add("Workforce", WorkforceCheck(snapshot, parameters, profile.OperatorQualifications));
+                Add("Workforce", WorkforceCheck(snapshot, parameters, profile));
             }
         }
         else
@@ -126,13 +127,16 @@ public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, R
             root);
     }
 
-    private static EvidenceNode WorkforceCheck(SiteSnapshot snapshot, WorkItem work, IReadOnlyList<string> operatorQualifications)
+    private static EvidenceNode WorkforceCheck(SiteSnapshot snapshot, WorkItem work, MachineActivityInfo profile)
     {
+        var operatorQualifications = profile.OperatorQualifications;
         var onMachine = snapshot.People
             .Where(p => p.CountsAsPresent && p.Assignment is { } a && a.MachineCode == work.MachineCode && a.ActivityCode == work.ActivityCode)
             .OrderBy(p => p.PersonId)
             .ToList();
-        var qualified = onMachine.Where(p => p.Assignment!.AsTrainee == false && operatorQualifications.Any(p.Holds)).ToList();
+        var qualified = onMachine.Where(p => p.Assignment!.AsTrainee == false && operatorQualifications.Any(code => p.HoldsAt(code, snapshot.AsOf))
+            && (!profile.RequiresMachineAuthorization || operatorQualifications.Any(code => p.HoldsAt(code, snapshot.AsOf)
+                && p.AuthorizedForMachineAt(work.MachineCode!, work.ActivityCode, code, snapshot.AsOf)))).ToList();
         var inputs = new SortedDictionary<string, string>(StringComparer.Ordinal)
         {
             ["assigned"] = string.Join(",", onMachine.Select(p => p.Name)),
@@ -144,9 +148,16 @@ public sealed class OperationReadinessEngine : IEngine<SiteSnapshot, WorkItem, R
             return new EvidenceNode("Workforce", EvidenceOutcome.Pass, $"Qualified operator present and assigned: {string.Join(", ", qualified.Select(p => p.Name))}.") { Inputs = inputs };
         }
 
-        var reasons = onMachine.Select(p => p.Assignment!.AsTrainee ? $"{p.Name} is assigned as a trainee" : $"{p.Name} holds none of {string.Join(", ", operatorQualifications)}");
+        var reasons = onMachine.Select(p => p.Assignment!.AsTrainee ? $"{p.Name} is assigned as a trainee"
+            : !operatorQualifications.Any(code => p.HoldsAt(code, snapshot.AsOf)) ? $"{p.Name} holds none of {string.Join(", ", operatorQualifications)}"
+            : profile.RequiresMachineAuthorization && !operatorQualifications.Any(code => p.HoldsAt(code, snapshot.AsOf)
+                && p.AuthorizedForMachineAt(work.MachineCode!, work.ActivityCode, code, snapshot.AsOf))
+                ? $"{p.Name} lacks current authorization for {work.MachineCode} {work.ActivityCode}"
+                : string.Empty);
         var candidates = snapshot.PresentInArea(work.SafetyAreaCode)
-            .Where(p => !onMachine.Contains(p) && p.Assignment?.AsTrainee != true && operatorQualifications.Any(p.Holds))
+            .Where(p => !onMachine.Contains(p) && p.Assignment?.AsTrainee != true && operatorQualifications.Any(code => p.HoldsAt(code, snapshot.AsOf))
+                && (!profile.RequiresMachineAuthorization || operatorQualifications.Any(code => p.HoldsAt(code, snapshot.AsOf)
+                    && p.AuthorizedForMachineAt(work.MachineCode!, work.ActivityCode, code, snapshot.AsOf))))
             .Select(p => p.Name)
             .ToList();
         var detail = onMachine.Count == 0

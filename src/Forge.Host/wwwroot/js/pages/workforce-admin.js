@@ -1,5 +1,5 @@
-import { tryGet, command, readPost } from '../api.js';
-import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock } from '../ui.js';
+import { tryGet, command, readPost, removeVisualImage, uploadVisualImage } from '../api.js';
+import { esc, $, $$, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast } from '../ui.js';
 import { formModal, canAction } from '../forms.js';
 
 // Workforce administration (V3.9 commands that had no screen): register a worker at a home work center, set their
@@ -24,6 +24,7 @@ export function personActions(me) {
 
 export function personActionsForWorker(me, worker, personId = me?.personId) {
   const actions = personActions(me);
+  if (worker && canAction(me, 'workforce.manage')) actions.push(['job-title', 'Set official title']);
   if (!worker?.isActive) return actions;
   if (canAction(me, 'workforce.supervise')) actions.push(['move', 'Temporary move']);
   if (canAction(me, 'workforce.manage') && personId !== me?.personId) actions.push(['transfer', 'Permanent transfer']);
@@ -54,7 +55,7 @@ export function assignmentBody(v) {
   return { safetyAreaCode: v.safetyAreaCode, workCenterCode: v.workCenterCode, machineCode: v.machineCode, activityCode: v.activityCode, asTrainee: !!v.asTrainee };
 }
 
-export async function appendWorkforceAdmin(page, me) {
+export async function appendWorkforceAdmin(page, me, initialPersonId = null) {
   const section = document.createElement('section');
   section.className = 'panel';
   section.setAttribute('aria-label', 'Manage people');
@@ -103,6 +104,7 @@ export async function appendWorkforceAdmin(page, me) {
       <div class="toolbar"><label for="wf-person">Person</label><select class="select" id="wf-person"><option value="">— choose —</option>
         ${list.map(p => `<option value="${p.personId}" ${selected?.personId === p.personId ? 'selected' : ''}>${esc(p.displayName)}</option>`).join('')}</select></div>
       ${selected ? `<div class="actions">${actions.map(([a, text]) => `<button class="btn small" data-wf="${a}">${esc(text)}</button>`).join('')}</div>
+        ${worker ? workerPhotoEditor(worker) : ''}
         ${worker ? movementHistory(worker) : ''}
         ${canAction(me, 'readiness.read') ? `<section class="panel" aria-label="Assignment impact preview">
           <h3>Assignment impact preview</h3><p class="muted">Compare active work before and after a proposed assignment. This preview never changes the assignment.</p>
@@ -128,6 +130,24 @@ export async function appendWorkforceAdmin(page, me) {
     $('#prerequisite', section)?.addEventListener('click', prerequisite);
     $('[data-reallocation-preview]', section)?.addEventListener('click', previewAssignment);
     $$('[data-wf]', section).forEach(b => b.addEventListener('click', () => run(b.dataset.wf)));
+    $('#wf-photo-file', section)?.addEventListener('change', async event => {
+      const file = event.target.files?.[0];
+      if (!file || !selected) return;
+      const personId = selected.personId;
+      try {
+        const result = await confirmWithReason({ title: `Upload photo for ${selected.displayName}`, detail: 'The photo is visible to people who can read the workforce board. Use a clear, current headshot.', confirmLabel: 'Upload photo', reasonRequired: true }, reason => uploadVisualImage(`/api/workforce/workers/${encodeURIComponent(personId)}/photo`, file, reason));
+        if (result) await after();
+      } catch (error) { toast(error.message || 'Photo upload failed.', true); }
+      finally { event.target.value = ''; }
+    });
+    $('[data-remove-worker-photo]', section)?.addEventListener('click', async () => {
+      if (!selected) return;
+      const personId = selected.personId;
+      try {
+        const result = await confirmWithReason({ title: `Remove photo for ${selected.displayName}`, detail: 'The worker will show initials on the Kanban.', confirmLabel: 'Remove photo', reasonRequired: true }, reason => removeVisualImage(`/api/workforce/workers/${encodeURIComponent(personId)}/photo`, reason));
+        if (result) await after();
+      } catch (error) { toast(error.message || 'Photo removal failed.', true); }
+    });
     $$('[data-move-action]', section).forEach(b => b.addEventListener('click', () => changeMove(b.dataset.moveAction, Number(b.dataset.moveId))));
     $$('[data-qual]', section).forEach(b => b.addEventListener('click', () => b.dataset.qual === 'certify' ? certify(b.dataset.code) : qualification(b.dataset.qual, b.dataset.code)));
   }
@@ -146,6 +166,11 @@ export async function appendWorkforceAdmin(page, me) {
         ${transferRows.map(transfer => `<tr><td>${esc(transfer.fromWorkCenter)}</td><td>${esc(transfer.workCenter)}</td><td>${esc(transfer.effectiveFrom)}</td><td>${esc(fmtDateTime(transfer.recordedAt))} · ${esc(transfer.recordedBy)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="muted" style="margin-top:8px">No permanent transfers recorded.</div>'}
       <div class="faint" style="margin-top:8px">Each change requires a reason and is recorded in the audit history. Temporary-move reminders and returns are handled automatically.</div>
     </section>`;
+  }
+
+  function workerPhotoEditor(worker) {
+    if (!canAction(me, 'workforce.photos.manage')) return '';
+    return `<section class="workforce-photo-editor" aria-label="Worker photo"><div><b>Worker photo</b><div class="muted small">${worker.hasPhoto ? 'A profile photo is shown on the plant floor.' : 'No photo yet; the floor board shows initials.'}</div></div><div class="workforce-photo-actions"><label class="btn small">${worker.hasPhoto ? 'Replace photo' : 'Add photo'}<input id="wf-photo-file" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Choose a worker photo"></label>${worker.hasPhoto ? '<button class="btn small" type="button" data-remove-worker-photo>Remove photo</button>' : ''}</div></section>`;
   }
 
   const typeName = code => (types.data ?? []).find(t => t.code === code)?.name ?? code;
@@ -199,6 +224,12 @@ export async function appendWorkforceAdmin(page, me) {
         (v, reason) => command(base(), v, reason), after);
       case 'shift': return formModal({ title: `Set ${name}'s shift`, fields: [{ name: 'shiftCode', label: 'Shift (blank: none)', code: true, list: codes('shifts') }], confirmLabel: 'Save', reasonRequired: true },
         (v, reason) => command(`${base()}/shift`, { shiftCode: v.shiftCode }, reason), after);
+      case 'job-title': {
+        const worker = workers.find(person => person.personId === selected.personId);
+        return formModal({ title: `Set ${name}'s official title`, detail: 'This title is displayed beneath their name on the Workforce Kanban. Leave it blank to clear it.',
+          fields: [{ name: 'jobTitle', label: 'Official title', value: worker?.jobTitle ?? '', placeholder: 'Production Operator' }], confirmLabel: 'Save title', reasonRequired: true },
+        (v, reason) => command(`${base()}/job-title`, { jobTitle: v.jobTitle || null }, reason), after);
+      }
       case 'assign': return formModal({ title: `Assign work to ${name}`, detail: 'Readiness checks the assignment against qualifications and safety rules.',
         fields: [{ name: 'safetyAreaCode', label: 'Safety area', code: true, list: codes('safetyAreas') }, { name: 'workCenterCode', label: 'Work center', code: true, list: codes('workCenters') },
           { name: 'machineCode', label: 'Machine', code: true, list: codes('machines') }, { name: 'activityCode', label: 'Activity', code: true, required: true, list: codes('activityTypes') },
@@ -279,6 +310,11 @@ export async function appendWorkforceAdmin(page, me) {
     (v, reason) => command(`/api/competency/qualification-types/${encodeURIComponent(v.code)}/prerequisites`, { prerequisiteCode: v.prerequisiteCode }, reason), async () => { types = await tryGet('/api/competency/qualification-types'); render(); });
   }
 
-  render();
+  if (initialPersonId && (people.data ?? []).some(person => person.personId === initialPersonId)) {
+    await select(initialPersonId);
+    section.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  } else {
+    render();
+  }
   return section;
 }

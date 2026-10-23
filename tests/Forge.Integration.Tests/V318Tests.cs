@@ -90,7 +90,7 @@ public sealed class V318Tests(PostgresFixture postgres)
         await plant.Ok(reviewer, $"/api/execution/shifts/handoffs/{handoffId}/actions", new
         {
             description = "Inspect the slitter guard before the next run", sourceKind = "Machine", sourceReference = "SLITTER-A",
-            assignee = plant.People["sarah"], reason = "Assign the shift follow-up",
+            assignee = plant.People["sarah"], dueAt = Until.AddHours(2), reason = "Assign the shift follow-up",
         });
         await plant.Ok(plant.Admin, $"/api/kernel/people/{plant.People["sarah"]}/roles", new { role = "ShopFloorTerminal", reason = "Enable assigned shift action" });
         var action = (await reviewer.GetFromJsonAsync<JsonElement[]>($"/api/execution/shifts/handoffs/{handoffId}/actions"))!.Single();
@@ -101,16 +101,36 @@ public sealed class V318Tests(PostgresFixture postgres)
         await plant.Ok(incoming, $"/api/execution/shifts/handoffs/{handoffId}/acknowledge", new { note = "Received; checking the work center", reason = "Incoming shift acknowledgment" });
         var actionsBefore = await plant.Engineer.GetFromJsonAsync<JsonElement[]>($"/api/execution/shifts/handoffs/{handoffId}/actions");
         Assert.Equal("Assigned", Assert.Single(actionsBefore!).GetProperty("status").GetString()); // acknowledgment never completes assigned work
+        var dependentResult = await plant.Ok(reviewer, $"/api/execution/shifts/handoffs/{handoffId}/actions", new
+        {
+            description = "Verify the guard repair before production resumes", sourceKind = "Machine", sourceReference = "SLITTER-A",
+            assignee = plant.People["sarah"], blockedByActionIds = new[] { actionId }, reason = "Record the follow-up dependency",
+        });
+        var dependentId = long.Parse(dependentResult.GetProperty("entityId").GetString()!, CultureInfo.InvariantCulture);
+        await plant.Ok(plant.As("sarah"), $"/api/execution/shifts/actions/{dependentId}/status",
+            new { expected = "Assigned", status = "Acknowledged", reason = "Acknowledge dependent recovery action" });
+        var blocked = await plant.Try(plant.As("sarah"), $"/api/execution/shifts/actions/{dependentId}/status",
+            new { expected = "Acknowledged", status = "InProgress", reason = "Try starting before prerequisite" });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, blocked.StatusCode);
+        Assert.Contains("action_dependencies_open", await blocked.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         foreach (var (before, after) in new[] { ("Assigned", "Acknowledged"), ("Acknowledged", "InProgress"), ("InProgress", "Completed") })
         {
             var response = await plant.As("sarah").CommandAsync($"/api/execution/shifts/actions/{actionId}/status",
-                new { expected = before, status = after, reason = $"Action {after}" }, $"v318-action-{after}");
+                new { expected = before, status = after, evidence = after == "Completed" ? "Guard inspected and interlock response confirmed against the machine checklist." : null, reason = $"Action {after}" }, $"v318-action-{after}");
             Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         }
 
         var actionAfter = (await reviewer.GetFromJsonAsync<JsonElement[]>($"/api/execution/shifts/handoffs/{handoffId}/actions"))!.Single();
         Assert.Equal("Completed", actionAfter.GetProperty("status").GetString());
         Assert.True(actionAfter.GetProperty("completedAt").GetDateTimeOffset() >= actionAfter.GetProperty("acknowledgedAt").GetDateTimeOffset());
+        Assert.Equal(Until.AddHours(2), actionAfter.GetProperty("dueAt").GetDateTimeOffset());
+        Assert.Contains("interlock response confirmed", actionAfter.GetProperty("completionEvidence").GetString(), StringComparison.Ordinal);
+        var dependentAction = (await reviewer.GetFromJsonAsync<JsonElement[]>($"/api/execution/shifts/handoffs/{handoffId}/actions"))!.Single(action => action.GetProperty("actionId").GetInt64() == dependentId);
+        Assert.Equal(actionId, dependentAction.GetProperty("blockedByActionIds")[0].GetInt64());
+        await plant.Ok(plant.As("sarah"), $"/api/execution/shifts/actions/{dependentId}/status",
+            new { expected = "Acknowledged", status = "InProgress", reason = "Start after prerequisite completed" });
+        await plant.Ok(plant.As("sarah"), $"/api/execution/shifts/actions/{dependentId}/status",
+            new { expected = "InProgress", status = "Completed", evidence = "Prerequisite action #" + actionId + " is complete; verification passed.", reason = "Complete dependent action with evidence" });
         await plant.Ok(reviewer, $"/api/execution/shifts/handoffs/{handoffId}/actions", new
         {
             description = "Carry the open spindle inspection to the next shift", sourceKind = (string?)null, sourceReference = (string?)null,

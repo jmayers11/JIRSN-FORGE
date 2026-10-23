@@ -59,6 +59,8 @@ test('worker moves and transfers use the separate audited commands and site date
   assert.match(movementPanel.innerHTML, /Moves and transfers/);
   assert.ok(personActionsForWorker(me, worker, personId).some(([action]) => action === 'move'));
   assert.ok(personActionsForWorker(me, worker, personId).some(([action]) => action === 'transfer'));
+  assert.ok(personActionsForWorker({ permissions: ['workforce.manage'] }, worker, personId).some(([action]) => action === 'job-title'));
+  assert.ok(!personActionsForWorker({ permissions: ['workforce.supervise'] }, worker, personId).some(([action]) => action === 'job-title'), 'official titles are editable only by workforce managers');
   assert.ok(!personActionsForWorker({ ...me, personId }, worker, personId).some(([action]) => action === 'transfer'), 'a person cannot transfer themselves');
 
   fire(page.querySelector('[data-wf="move"]'), 'click');

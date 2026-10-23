@@ -95,7 +95,7 @@ const NAV_GROUPS = [
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
 
 const NAV_ACCESS = {
-  supervisor: ['workforce.supervise', 'workforce.manage'], 'workforce-kanban': ['workforce.supervise', 'workforce.manage'],
+  supervisor: ['workforce.supervise', 'workforce.manage'], 'workforce-kanban': ['workforce.supervise', 'workforce.manage', 'resources.floor-map.manage'],
   'machine-kanban': ['planning.readiness.read', 'maintenance.read', 'resources.read'],
   home: ['planning.readiness.read', 'planning.schedule.read', 'execution.orders.read', 'resources.read', 'quality.read', 'inventory.read'],
   horizon: ['planning.schedule.read', 'planning.readiness.read'], programs: ['programs.read', 'programs.manage'],
@@ -122,7 +122,7 @@ export { roleTitle };
 
 // Brand artwork is cut from the JIRSN Forge identity sheet (img/brand); replace those files to update it everywhere.
 const brand = () => `<div class="brand"><img class="lockup" src="/img/brand/forge-logo-primary.png" alt="JIRSN Forge"></div>`;
-const loginBrand = () => `<div class="brand"><img class="login-lockup" src="/img/brand/login-lockup.jpg" alt="JIRSN Forge"></div>`;
+const loginBrand = () => `<div class="login-brand-head"><img class="login-hawk-mark" src="/img/brand/forge-logo-icon.png" alt=""><span class="word"><small>JIRSN</small><b>FORGE</b></span></div>`;
 
 // ---------------------------------------------------------------- sign-in
 
@@ -133,31 +133,45 @@ function renderLogin(message) {
   if (mode === 'Development') {
     form = `
       <form class="field" id="login-form" autocomplete="on" style="gap:12px">
-        <input class="input" id="employee" name="username" placeholder="Sign-in name (e.g. planner or kiosk)" autocomplete="username" required>
-        <button class="btn primary big" type="submit">Sign In</button>
+        <label for="employee">Role or username</label>
+        <input class="input" id="employee" name="username" placeholder="e.g. planner or kiosk" autocomplete="username" required>
+        <button class="btn primary big" type="submit">Sign in to Forge</button>
       </form>
-      <div class="notice warn">Development sign-in: Forge trusts the sign-in name typed here and asks for no password.
-        Badge numbers are not sign-ins: sign in as <b>kiosk</b>, open Shop Floor, and scan the badge there.
-        It works only on a development build. In production, people sign in through your company identity provider.</div>`;
+      <button class="btn ghost big login-kiosk-launch" id="quick-kiosk-launch" type="button">Launch Operator Kiosk →</button>
+      <div class="notice warn">Development sign-in trusts the name entered and asks for no password. Badge numbers are scanned on the Shop Floor screen after signing in as <b>kiosk</b>. Use this sign-in only with fictional or sample records.</div>`;
   } else if (mode === 'Oidc' && session.config.authority && session.config.clientId) {
-    form = `<button class="btn primary big" id="oidc">Sign In</button>
+    form = `<button class="btn primary big" id="oidc">Sign in with your organization</button>
       <div class="notice">You will sign in with your company account, then return here.</div>`;
   } else {
     form = `<div class="notice bad">Sign-in is not configured on this server. Set Forge:Authentication:Authority and Forge:Authentication:ClientId, or run the development build.</div>`;
   }
   app.innerHTML = `
-    <div class="login">
-      <img class="login-hero" src="/img/brand/hero-banner.jpg" alt="JIRSN Forge — Plan. Synchronize. Produce. Deliver.">
-      <div class="login-card">
-        ${loginBrand()}
-        ${message ? `<div class="notice bad">${esc(message)}</div>` : ''}
-        ${form}
-        <div class="faint" style="text-align:center;font-size:12px">Need help? Ask your Forge security administrator.</div>
+    <main class="login">
+      <div class="login-split">
+        <section class="login-showcase" aria-label="JIRSN manufacturing suite">
+          <img class="login-hawk-feature" src="/img/brand/bg-hero-hawk.jpg" alt="The original JIRSN redtail hawk artwork">
+          ${mode === 'Development' ? '<div class="login-demo-badge" role="note">FICTIONAL / SAMPLE DATA · DEVELOPMENT ENVIRONMENT</div>' : ''}
+          <div class="login-showcase-copy"><span class="eyebrow">JIRSN MANUFACTURING SUITE</span><h1>Plan. Synchronize.<br>Produce. Deliver.</h1>
+            <p>One connected workspace for manufacturing planning, execution, quality and traceability.</p></div>
+          <div class="login-suite-pills" aria-label="JIRSN products"><span>Forge · MRP / MES / QMS</span><span>Nexus · Identity</span><span>Sentinel · Audit</span></div>
+        </section>
+        <section class="login-card" aria-labelledby="login-heading">
+          ${loginBrand()}
+          <h2 id="login-heading">Manufacturing operations sign-in</h2>
+          ${message ? `<div class="notice bad" role="alert">${esc(message)}</div>` : ''}
+          ${form}
+          <div class="faint login-help">Need help? Ask your Forge security administrator.</div>
+        </section>
       </div>
-    </div>`;
+    </main>`;
   $('#login-form')?.addEventListener('submit', async e => {
     e.preventDefault();
     signInDevelopment($('#employee').value);
+    await start();
+  });
+  $('#quick-kiosk-launch')?.addEventListener('click', async () => {
+    signInDevelopment('kiosk');
+    location.hash = '#/shop-floor';
     await start();
   });
   $('#oidc')?.addEventListener('click', () => beginOidcSignIn().catch(err => renderLogin(err.message)));

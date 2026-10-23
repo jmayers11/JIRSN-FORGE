@@ -10,8 +10,9 @@ public sealed record ShiftChecklistRequest(string WorkCenterCode, string Code, s
 public sealed record ShiftHandoffRequest(string WorkCenterCode, string ShiftCode, DateTimeOffset ShiftFrom, DateTimeOffset ShiftUntil, string? Context, IReadOnlyList<ShiftChecklistResponse>? Checklist, string? Reason);
 public sealed record ShiftReasonRequest(string? Reason);
 public sealed record ShiftAcknowledgeRequest(string? Note, string? Reason);
-public sealed record ShiftActionRequest(string Description, string? SourceKind, string? SourceReference, Guid Assignee, string? Reason);
-public sealed record ShiftActionStatusRequest(ShiftActionStatus Expected, ShiftActionStatus Status, string? Reason);
+public sealed record ShiftActionRequest(string Description, string? SourceKind, string? SourceReference, Guid Assignee, string? Reason,
+    DateTimeOffset? DueAt = null, long[]? BlockedByActionIds = null);
+public sealed record ShiftActionStatusRequest(ShiftActionStatus Expected, ShiftActionStatus Status, string? Reason, string? Evidence = null);
 public sealed record ShiftCloseoutRequest(string WorkCenterCode, string ShiftCode, DateTimeOffset ShiftFrom, DateTimeOffset ShiftUntil, string? Note, string? Reason);
 
 internal static class ShiftContinuityEndpoints
@@ -50,9 +51,9 @@ internal static class ShiftContinuityEndpoints
             return principal is null ? NotRegistered() : Results.Ok(await service.ActionsAsync(id, principal, ct));
         });
         group.MapPost("/handoffs/{id:long}/actions", (HttpContext http, long id, ShiftActionRequest b, ShiftContinuityService service, CancellationToken ct) =>
-            Command(http, b.Reason, c => service.AssignActionAsync(new AssignShiftAction(id, b.Description, b.SourceKind, b.SourceReference, b.Assignee), c, ct)));
+            Command(http, b.Reason, c => service.AssignActionAsync(new AssignShiftAction(id, b.Description, b.SourceKind, b.SourceReference, b.Assignee, b.DueAt, b.BlockedByActionIds), c, ct)));
         group.MapPost("/actions/{id:long}/status", (HttpContext http, long id, ShiftActionStatusRequest b, ShiftContinuityService service, CancellationToken ct) =>
-            Command(http, b.Reason, c => service.TransitionActionAsync(new TransitionShiftAction(id, b.Expected, b.Status), c, ct)));
+            Command(http, b.Reason, c => service.TransitionActionAsync(new TransitionShiftAction(id, b.Expected, b.Status, b.Evidence), c, ct)));
         group.MapGet("/closeouts", async (HttpContext http, string? workCenter, int? limit, ShiftContinuityService service, CancellationToken ct) =>
         {
             var principal = await PrincipalAsync(http);

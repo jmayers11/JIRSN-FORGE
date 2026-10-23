@@ -7,6 +7,7 @@ using Forge.Kernel.Security;
 using Forge.Maintenance.Contracts;
 using Forge.Quality.Contracts;
 using Forge.Resources.Contracts;
+using Forge.Workforce.Contracts;
 
 namespace Forge.Planning;
 
@@ -88,6 +89,32 @@ public sealed class ShiftFactsProvider(IForgeAuthorizer authorizer, TimeProvider
                 facts.Add(new ShiftOperationalFact("Maintenance", $"work-order:{workOrder.WorkOrderId}", workOrder.Status.ToString(), $"{workOrder.MachineCode}: {workOrder.Title}"));
         }
         else unknowns.Add("Downtime and maintenance details were not included; maintenance access is required.");
+
+        if (Can(Permissions.WorkforceRead))
+        {
+            var resources = uow.Store<IResourcesLookup>();
+            var center = await resources.FindWorkCenterAsync(workCenter, ct);
+            var area = center is null ? null : await resources.FindSafetyAreaAsync(center.SafetyAreaCode, ct);
+            if (area is null)
+            {
+                unknowns.Add("Worker availability could not be associated with the work center's site and date.");
+            }
+            else
+            {
+                var shiftDate = SiteTime.DateAt(from, await resources.SiteTimeZoneAsync(area.SiteCode, ct));
+                var owners = (await uow.Store<IWorkforceLookup>().ListWorkCenterPeriodsAsync(ct))
+                    .Where(period => period.WorkCenterCode == workCenter && period.Covers(shiftDate))
+                    .Select(period => period.PersonId).ToHashSet();
+                var windows = await uow.Store<IWorkforceLookup>().ListUnavailabilityAsync(from, until, ct);
+                foreach (var window in windows.Where(window => owners.Contains(window.PersonId)
+                    && window.StartsAt < until && window.EndsAt > from))
+                {
+                    facts.Add(new ShiftOperationalFact("WorkerAvailability", $"worker:{window.PersonId:D}:unavailability:{window.StartsAt:O}", window.Kind.ToString(),
+                        $"Worker {window.PersonId:D} has recorded {window.Kind} unavailability overlapping this shift."));
+                }
+            }
+        }
+        else unknowns.Add("Recorded worker unavailability was not included; workforce access is required.");
 
         if (Can(Permissions.ToolsHandle) || Can(Permissions.ToolsManage))
         {

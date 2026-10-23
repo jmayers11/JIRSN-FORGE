@@ -192,6 +192,8 @@ public interface IInventoryStore
     /// <summary>Writes a task's new state; false when it was no longer in the expected status (someone else moved it).</summary>
     Task<bool> UpdateMaterialTaskAsync(MaterialTask task, MaterialTaskStatus expected, CancellationToken ct);
 
+    Task<long> InsertMaterialTaskCustodyEventAsync(MaterialTaskCustodyEvent custodyEvent, CancellationToken ct);
+
     Task<bool> InsertCountProgramAsync(CycleCountProgram program, CancellationToken ct);
 
     Task RetireCountProgramAsync(string programCode, string actor, DateTimeOffset at, CancellationToken ct);

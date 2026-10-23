@@ -123,6 +123,12 @@ public sealed class Phase4Tests(PostgresFixture postgres)
         await plant.Ok(plant.Engineer, $"/api/workforce/workers/{plant.People["sarah"]}/unavailability",
             new { kind = "ApprovedPto", startsAt = ptoStart, endsAt = ptoEnd, reason = "Approved PTO from HR" });
 
+        var unavailability = await Get(planner, $"/api/workforce/unavailability?from={Uri.EscapeDataString(now.ToString("o"))}&to={Uri.EscapeDataString(now.AddDays(30).ToString("o"))}");
+        var ptoWindow = unavailability.EnumerateArray().Single(window => window.GetProperty("personId").GetGuid() == plant.People["sarah"]);
+        Assert.Equal("ApprovedPto", ptoWindow.GetProperty("kind").GetString());
+        Assert.Equal(ptoStart, ptoWindow.GetProperty("startsAt").GetDateTimeOffset());
+        Assert.Equal(ptoEnd, ptoWindow.GetProperty("endsAt").GetDateTimeOffset());
+
         // Capacity: Slitting loses executable time while Sarah is away, though the machines are up.
         var capacity = await Get(planner, $"/api/planning/capacity?from={Uri.EscapeDataString(now.ToString("o"))}&to={Uri.EscapeDataString(now.AddDays(2).ToString("o"))}&workCenter=SLIT-WC");
         var slitterB = capacity.GetProperty("output").GetProperty("machines").EnumerateArray().Single(m => m.GetProperty("machineCode").GetString() == "SLITTER-B");

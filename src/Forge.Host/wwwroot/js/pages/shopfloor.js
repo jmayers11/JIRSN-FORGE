@@ -1,4 +1,4 @@
-import { command, get, tryGet } from '../api.js';
+import { command, fetchProtectedImage, get, tryGet } from '../api.js';
 import { img } from '../icons.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, relative, toast, emptyBlock, manageDialogFocus, liveRegion, drawer } from '../ui.js';
 import { who } from '../people.js';
@@ -8,6 +8,7 @@ import { mountScanSession, operationIdentificationCode } from '../scan-session.m
 import { formModal, canAction } from '../forms.js';
 import { attachmentsDrawer } from '../attachments.js';
 import { appendOrderReconciliation } from '../genealogy.js';
+import { clearDemoScannerOutage, readDemoScannerOutage, reconcileDemoLabel, saveDemoOutageDraft, simulateDemoOutage } from '../demo-scanner-outage.mjs';
 
 // The shop-floor terminal. A badge scanner types the badge and presses Enter (keyboard wedge); any
 // reader that does that works. The badge is held in memory only for this interaction and is
@@ -19,19 +20,56 @@ export async function shopFloorPage(page, ctx) {
   // V3.5: the plant's scrap reason codes come first; the fixed words remain for plants without codes.
   const scrapCodes = ((await tryGet('/api/execution/reason-codes')).data ?? []).filter(r => r.kind === 'Scrap' && r.active);
   const terminal = createTerminalSession();
+  let demoOutage = readDemoScannerOutage();
   const idleTimeoutSeconds = ctx.me.shopFloorIdleTimeoutSeconds;
   const idleMs = (Number.isInteger(idleTimeoutSeconds) && idleTimeoutSeconds >= 1 && idleTimeoutSeconds <= 3600 ? idleTimeoutSeconds : 60) * 1000;
   let idle = null;
   let idleCountdown = null;
   let idleSecondsRemaining = idleMs / 1000;
   let passOnLoadedFor = null;
+  let activeQtyField = 'good';
+  let kioskClockTimer = null;
   const dialogs = new Set();
   let workIdentification = null;
   let scanWork = null, scanContext = 0;
+  let operatorPhotoUrl = null, operatorPhotoPersonId = null, photoCheckedPersonId = null, photoRequest = 0;
 
-  function clearScanWork() {
+  function clearOperatorPhoto() {
+    photoRequest++;
+    if (operatorPhotoUrl) URL.revokeObjectURL(operatorPhotoUrl);
+    operatorPhotoUrl = null; operatorPhotoPersonId = null; photoCheckedPersonId = null;
+  }
+
+  async function loadOperatorPhoto(person, session) {
+    if (!person?.isWorker || photoCheckedPersonId === person.personId) return;
+    photoCheckedPersonId = person.personId;
+    const request = ++photoRequest;
+    try {
+      const blob = await fetchProtectedImage('/api/shopfloor/worker-photo', { badge: session.badge });
+      if (!terminal.isCurrent(session) || request !== photoRequest || terminal.person?.personId !== person.personId || page.isConnected === false) return;
+      operatorPhotoUrl = URL.createObjectURL(blob);
+      operatorPhotoPersonId = person.personId;
+      const avatar = $('.kiosk-operator-avatar', page);
+      if (avatar) {
+        const image = document.createElement('img');
+        image.className = 'kiosk-operator-avatar kiosk-operator-photo';
+        image.setAttribute('alt', `${person.displayName} employee photo`);
+        image.src = operatorPhotoUrl;
+        avatar.parentElement?.insertBefore(image, avatar);
+        avatar.remove();
+      }
+    } catch { /* The initials avatar remains when a photo is absent or unavailable. */ }
+  }
+
+  function clearScanWork({ invalidateServerSession = true } = {}) {
     scanContext++;
-    scanWork?.controller?.dispose(); scanWork?.element.remove(); scanWork = null;
+    scanWork?.controller?.dispose({ invalidateServerSession }); scanWork?.element.remove(); scanWork = null;
+  }
+
+  function notifyInput(input) {
+    const EventType = input.ownerDocument.defaultView?.Event;
+    if (EventType) input.dispatchEvent(new EventType('input', { bubbles: true }));
+    else input.dispatchEvent({ type: 'input', bubbles: true, target: input });
   }
 
   async function stageWork(work, session, machineCode = null) {
@@ -65,12 +103,15 @@ export async function shopFloorPage(page, ctx) {
 
   function closeDialogs() { for (const close of [...dialogs]) close(); }
 
-  function lockTerminal() {
+  function lockTerminal({ preserveScanSession = false } = {}) {
     clearTimeout(idle);
     clearTimeout(idleCountdown);
+    clearInterval(kioskClockTimer);
+    kioskClockTimer = null;
     idleCountdown = null;
     terminal.clear();
-    clearScanWork();
+    clearOperatorPhoto();
+    clearScanWork({ invalidateServerSession: !preserveScanSession });
     passOnLoadedFor = null;
     closeDialogs();
     render();
@@ -111,6 +152,66 @@ export async function shopFloorPage(page, ctx) {
     }).join('')}</div>`;
   }
 
+  function sharedQtyKeypad(remainingQty) {
+    const rem = Math.max(0, Number(remainingQty ?? 0));
+    const keys = ['7','8','9','4','5','6','1','2','3','0','.','Clear'];
+    return `<div class="kiosk-keypad-panel" role="group" aria-label="Touch quantity entry keypad">
+      <div class="kiosk-keypad-target-bar"><span class="muted small">Keypad target</span>
+        <button class="btn small primary" type="button" data-focus-qty="good" aria-pressed="true">Good quantity</button>
+        <button class="btn small ghost" type="button" data-focus-qty="scrap" aria-pressed="false">Scrap quantity</button>
+      </div>
+      <div class="kiosk-quick-chips" role="group" aria-label="Quick quantity increments">
+        <button class="btn small" type="button" data-qty-add="1">+1</button><button class="btn small" type="button" data-qty-add="5">+5</button>
+        <button class="btn small" type="button" data-qty-add="10">+10</button><button class="btn small" type="button" data-qty-add="25">+25</button>
+        <button class="btn small" type="button" data-qty-fill="${rem}" ${rem > 0 ? '' : 'disabled'}>Fill remaining (${fmtNumber(rem, 3)})</button>
+      </div>
+      <div class="touch-numpad kiosk-shared-keypad" data-numpad="good" aria-label="Quantity keypad">${keys.map(key => {
+        const value = key === 'Clear' ? 'clear' : key;
+        return `<button class="btn" type="button" data-numpad-target="good" data-numpad-key="${value}" aria-label="${key === 'Clear' ? 'Clear value' : key === '.' ? 'Decimal point' : `Enter ${key}`}">${key}</button>`;
+      }).join('')}</div>
+    </div>`;
+  }
+
+  function setActiveQtyField(field) {
+    if (!['good', 'scrap'].includes(field)) return;
+    activeQtyField = field;
+    const keypad = $('.kiosk-shared-keypad', page);
+    if (keypad) keypad.setAttribute('data-numpad', field);
+    $$('[data-numpad-target]', page).forEach(button => button.setAttribute('data-numpad-target', field));
+    $$('[data-focus-qty]', page).forEach(button => {
+      const active = button.dataset.focusQty === field;
+      button.classList.remove(active ? 'ghost' : 'primary');
+      button.classList.add(active ? 'primary' : 'ghost');
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
+
+  function wireSharedQtyControls() {
+    $$('[data-focus-qty]', page).forEach(button => button.addEventListener('click', () => {
+      setActiveQtyField(button.dataset.focusQty);
+      $(`#${activeQtyField}`, page)?.focus();
+    }));
+    $$('[data-qty-add]', page).forEach(button => button.addEventListener('click', () => {
+      const input = $(`#${activeQtyField}`, page);
+      if (!input || input.disabled) return;
+      input.value = String(Number(input.value || 0) + Number(button.dataset.qtyAdd));
+      notifyInput(input);
+    }));
+    $('[data-qty-fill]', page)?.addEventListener('click', () => {
+      const input = $(`#${activeQtyField}`, page);
+      if (!input || activeQtyField !== 'good' || input.disabled) return;
+      input.value = $('[data-qty-fill]', page).dataset.qtyFill;
+      notifyInput(input);
+    });
+    ['good', 'scrap'].forEach(field => $(`#${field}`, page)?.addEventListener('focus', () => setActiveQtyField(field)));
+    $$('[data-scrap-tile]', page).forEach(button => button.addEventListener('click', () => {
+      const select = $('#reason', page);
+      if (!select) return;
+      select.value = button.dataset.scrapTile;
+      $$('[data-scrap-tile]', page).forEach(tile => tile.setAttribute('aria-pressed', String(tile === button)));
+    }));
+  }
+
   function wireNumpads(root) {
     root.addEventListener('click', event => {
       const button = event.target.closest?.('[data-numpad-key]');
@@ -139,6 +240,64 @@ export async function shopFloorPage(page, ctx) {
     return true;
   }
 
+  function canReconcileDemoOutage() {
+    return (ctx.me.permissions ?? []).includes('workforce.supervise') && !!ctx.me.personId;
+  }
+
+  function renderDemoOutagePanel() {
+    if (!demoOutage) return '';
+    const scanner = demoOutage.scanner;
+    const label = demoOutage.label;
+    const canReconcile = canReconcileDemoOutage();
+    return `<section class="panel kiosk-demo-outage" aria-label="WhiskerWorks scanner outage rehearsal">
+      <header><div><h2>WW-P01 scanner / label outage rehearsal</h2><p class="muted small">FICTIONAL / SAMPLE DATA · browser session only</p></div><span class="spacer"></span><span class="pill warn">No live device or Forge command</span></header>
+      <p class="notice warn">This rehearsal stores its typed demo entries in this browser tab only. Simulated 503 actions make no source-changing Forge request and contact no scanner or printer; ordinary read-only kiosk data may still load. A terminal lock here is a local UI state.</p>
+      <div class="grid two">
+        <section class="card"><h3>Barcode staging</h3>
+          ${scanner.status === 'armed' ? `<label class="field"><span>Scanned reference</span><input class="input" data-s12-scanner-reference maxlength="240" value="${esc(scanner.draft.reference)}"></label><label class="field"><span>Operation / work context</span><input class="input" data-s12-scanner-operation maxlength="240" value="${esc(scanner.draft.operation)}"></label><button class="btn danger" data-s12-fail-scanner type="button">Simulate barcode staging 503</button>` : `<div class="notice bad" role="status">Simulated HTTP 503 · terminal fail-closed</div><dl><dt>Reference preserved</dt><dd>${esc(scanner.draft.reference)}</dd><dt>Operation preserved</dt><dd>${esc(scanner.draft.operation)}</dd><dt>Attempts</dt><dd>${scanner.attempts}</dd></dl>`}
+        </section>
+        <section class="card"><h3>Label print reconciliation</h3>
+          ${label.status === 'armed' ? `<label class="field"><span>Part number</span><input class="input" data-s12-label-part maxlength="240" value="${esc(label.draft.partNumber)}"></label><label class="field"><span>Quantity</span><input class="input" data-s12-label-quantity maxlength="240" value="${esc(label.draft.quantity)}"></label><label class="field"><span>Label contents</span><textarea class="input" data-s12-label-text maxlength="240">${esc(label.draft.labelText)}</textarea></label><button class="btn danger" data-s12-fail-label type="button">Simulate label printer timeout</button>`
+            : label.status === 'pending-reconciliation' ? `<div class="notice warn" role="status">PendingReconciliation · printer outcome is unknown; inspect the physical output before signing.</div><dl><dt>Part</dt><dd>${esc(label.draft.partNumber)}</dd><dt>Quantity</dt><dd>${esc(label.draft.quantity)}</dd><dt>Label contents</dt><dd>${esc(label.draft.labelText)}</dd><dt>Print attempts</dt><dd>${label.attempts}</dd></dl>${canReconcile ? `<label class="field"><span>Observed physical outcome</span><select class="select" data-s12-label-outcome><option value="">Choose after inspection</option><option value="printed">Label observed printed</option><option value="not-printed">No label observed</option></select></label><label class="field"><span>Observation note</span><input class="input" data-s12-label-reason maxlength="240" placeholder="What was physically checked?"></label><button class="btn primary" data-s12-reconcile-label type="button">Sign observation and reconcile</button>` : '<p class="notice">A supervisor with workforce supervision access must sign the physical observation.</p>'}`
+              : `<div class="notice ok" role="status">Reconciled · ${label.observedOutcome === 'printed' ? 'label observed printed' : 'no label observed'} by ${esc(label.observedBy)} at ${esc(fmtDateTime(label.observedAt))}</div><p>${esc(label.observationNote)}</p>`}
+        </section>
+      </div>
+      ${scanner.status === 'failed' && label.status === 'reconciled' && canReconcile ? '<button class="btn" data-s12-close type="button">Close completed local rehearsal</button>' : ''}
+    </section>`;
+  }
+
+  function wireDemoOutagePanel() {
+    if (!demoOutage) return;
+    const draft = area => area === 'scanner'
+      ? { reference: $('[data-s12-scanner-reference]', page)?.value, operation: $('[data-s12-scanner-operation]', page)?.value }
+      : { partNumber: $('[data-s12-label-part]', page)?.value, quantity: $('[data-s12-label-quantity]', page)?.value, labelText: $('[data-s12-label-text]', page)?.value };
+    const persist = area => {
+      try { demoOutage = saveDemoOutageDraft(globalThis.sessionStorage, area, draft(area)); }
+      catch (error) { toast(error.message, true); }
+    };
+    ['[data-s12-scanner-reference]', '[data-s12-scanner-operation]'].forEach(selector => $(selector, page)?.addEventListener('input', () => persist('scanner')));
+    ['[data-s12-label-part]', '[data-s12-label-quantity]', '[data-s12-label-text]'].forEach(selector => $(selector, page)?.addEventListener('input', () => persist('label')));
+    $('[data-s12-fail-scanner]', page)?.addEventListener('click', () => {
+      try { demoOutage = saveDemoOutageDraft(globalThis.sessionStorage, 'scanner', draft('scanner')); demoOutage = simulateDemoOutage(globalThis.sessionStorage, 'scanner'); lockTerminal({ preserveScanSession: true }); }
+      catch (error) { toast(error.message, true); }
+    });
+    $('[data-s12-fail-label]', page)?.addEventListener('click', () => {
+      try { demoOutage = saveDemoOutageDraft(globalThis.sessionStorage, 'label', draft('label')); demoOutage = simulateDemoOutage(globalThis.sessionStorage, 'label'); lockTerminal({ preserveScanSession: true }); }
+      catch (error) { toast(error.message, true); }
+    });
+    $('[data-s12-reconcile-label]', page)?.addEventListener('click', () => {
+      try {
+        demoOutage = reconcileDemoLabel(globalThis.sessionStorage, { outcome: $('[data-s12-label-outcome]', page)?.value,
+          signer: ctx.me.personId, reason: $('[data-s12-label-reason]', page)?.value });
+        toast('Demo label observation recorded in this browser session.'); render();
+      } catch (error) { toast(error.message, true); }
+    });
+    $('[data-s12-close]', page)?.addEventListener('click', () => {
+      try { clearDemoScannerOutage(globalThis.sessionStorage); demoOutage = null; render(); }
+      catch (error) { toast(error.message, true); }
+    });
+  }
+
   function scanBox(label, id = 'badge') {
     return `<form class="scan" data-scan="${id}">
       <label for="${id}">${esc(label)}</label>
@@ -150,7 +309,9 @@ export async function shopFloorPage(page, ctx) {
     const token = existingSession ?? terminal.beginIdentification(value);
     if (!terminal.isCurrent(token)) return;
     if (!existingSession) {
+      clearOperatorPhoto();
       closeDialogs();
+      activeQtyField = 'good';
       resetIdle();
       render();
     }
@@ -162,6 +323,7 @@ export async function shopFloorPage(page, ctx) {
       if (lockForOutage(e)) return;
       if (!terminal.isCurrent(token)) return;
       terminal.clear();
+      clearOperatorPhoto();
       toast(e.message, true);
     }
     render();
@@ -201,15 +363,40 @@ export async function shopFloorPage(page, ctx) {
 
   function render() {
     if (terminal.disposed) return;
+    clearInterval(kioskClockTimer);
+    kioskClockTimer = null;
     workIdentification?.dispose(); workIdentification = null;
     operatorStatus.textContent = terminal.person ? `Current operator: ${terminal.person.displayName}.` : 'Terminal locked. Scan your badge.';
     if (!terminal.person) {
-      page.innerHTML = `
-        <div class="page-head"><div><h1>Shop Floor</h1><div class="sub">Scan your badge to clock in, start work, report quantities or supervise training.</div></div></div>
-        <section class="panel kiosk-start">${img('operator', 'kiosk-ico')}${scanBox('Scan your badge')}
-          <div class="faint">A badge says who you are; what you do next is chosen here. Nothing is recorded until you press a button.</div></section>`;
+      page.innerHTML = `<section class="panel kiosk-attract-hud">
+        <div class="kiosk-attract-top"><div><span class="eyebrow">SHOP-FLOOR EXECUTION TERMINAL</span><h1>Scan operator badge to begin</h1>
+          <p class="muted">Scan your physical badge with the station wedge scanner, or type the badge and press Enter.</p></div>
+          <div class="kiosk-station-status"><time id="kiosk-site-clock" aria-label="Site time">${esc(fmtDateTime(new Date()))}</time>
+            <button class="kiosk-focus-pill is-armed" id="badge-focus-status" type="button" role="status" aria-live="polite">● Scanner armed — waiting for badge</button></div>
+        </div>
+        <div class="kiosk-badge-entry">${img('operator', 'kiosk-ico')}${scanBox('Employee badge barcode', 'badge')}</div>
+        <div class="kiosk-safety-reminder"><span class="pill info">Safety &amp; IPC gate active</span>
+          <span class="muted">Machine readiness, qualifications, safety staffing and controlled-work requirements are checked by Forge before work starts.</span></div>
+      </section>${renderDemoOutagePanel()}`;
       wireScan();
-      $('#badge', page)?.focus();
+      wireDemoOutagePanel();
+      const badgeInput = $('#badge', page);
+      const focusStatus = $('#badge-focus-status', page);
+      const updateScannerStatus = () => {
+        if (!focusStatus) return;
+        const armed = document.activeElement === badgeInput;
+        focusStatus.className = `kiosk-focus-pill ${armed ? 'is-armed' : 'is-blurred'}`;
+        focusStatus.textContent = armed ? '● Scanner armed — waiting for badge' : '▲ Tap here to arm barcode scanner';
+      };
+      badgeInput?.addEventListener('focus', updateScannerStatus);
+      badgeInput?.addEventListener('blur', updateScannerStatus);
+      focusStatus?.addEventListener('click', () => badgeInput?.focus());
+      badgeInput?.focus();
+      updateScannerStatus();
+      kioskClockTimer = setInterval(() => {
+        const clock = $('#kiosk-site-clock', page);
+        if (clock) clock.textContent = fmtDateTime(new Date());
+      }, 15000);
       return;
     }
 
@@ -218,7 +405,17 @@ export async function shopFloorPage(page, ctx) {
     const labor = p.labor;
     const clocked = p.clockedInSince;
     const myOp = labor ? p.queue.find(q => q.orderNumber === labor.orderNumber && q.operation.sequence === labor.sequence) : null;
+    const targetQty = Number(myOp?.orderQuantity ?? 0);
+    const goodSoFar = Number(myOp?.operation.goodQuantity ?? 0);
+    const scrapSoFar = Number(myOp?.operation.scrapQuantity ?? 0);
+    const remainingQty = Math.max(0, targetQty - goodSoFar);
+    const goodPct = targetQty > 0 ? Math.min(100, goodSoFar / targetQty * 100) : 0;
+    const scrapPct = targetQty > 0 ? Math.min(Math.max(0, 100 - goodPct), scrapSoFar / targetQty * 100) : 0;
     const awaiting = (p.training ?? []).filter(t => t.trainerId === p.personId && !t.evaluation);
+    const operatorInitials = p.displayName.split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
+    const operatorAvatar = operatorPhotoUrl && operatorPhotoPersonId === p.personId
+      ? `<img class="kiosk-operator-avatar kiosk-operator-photo" src="${esc(operatorPhotoUrl)}" alt="${esc(p.displayName)} employee photo">`
+      : `<div class="kiosk-operator-avatar" aria-hidden="true">${esc(operatorInitials)}</div>`;
     if (scanWork && (!terminal.isCurrent(scanWork.session) || (labor && (scanWork.work.orderNumber !== labor.orderNumber || scanWork.work.operation.sequence !== labor.sequence || scanWork.machineCode !== (labor.machineCode ?? null))))) clearScanWork();
     page.innerHTML = `
       <div class="page-head">
@@ -236,27 +433,37 @@ export async function shopFloorPage(page, ctx) {
         </div>
       </div>
       <div id="pass-on-banner"></div>
+      ${renderDemoOutagePanel()}
+      ${p.isWorker && !labor ? `<section class="panel kiosk-identified-operator" aria-label="Identified operator"><div class="kiosk-operator-strip">${operatorAvatar}<div><b>${esc(p.displayName)}</b><small>${p.homeWorkCenter ? `Home work center · ${esc(p.homeWorkCenter)}` : 'Worker identity confirmed'}</small></div><span class="spacer"></span><span class="pill info">Safety and qualification checks at start</span></div><p class="muted small">Forge checks current qualifications, machine readiness and required safety staffing before an operation starts.</p></section>` : ''}
       ${!p.isWorker ? emptyBlock('Not a registered worker', 'This badge belongs to someone who is not set up as a worker.') : ''}
       ${labor ? `
-      <section class="panel">
-        <header><h2>Now working: order #${labor.orderNumber} op ${labor.sequence}</h2><span class="spacer"></span>
+      <section class="panel kiosk-active-work">
+        <header><div><span class="eyebrow">ACTIVE PRODUCTION</span><h2>Order #${labor.orderNumber} · operation ${labor.sequence}</h2></div><span class="spacer"></span>
           <span class="pill ${labor.role === 'Operator' ? 'info' : 'warn'}">${esc(labor.role)}</span></header>
-        <div class="muted" style="margin-bottom:10px">${esc(myOp ? `${myOp.partNumber} · ${myOp.operation.description}` : '')} ${labor.machineCode ? `· ${esc(labor.machineCode)}` : ''} · started ${esc(fmtDateTime(labor.startedAt))}
-          ${myOp ? ` · ${fmtNumber(myOp.operation.goodQuantity, 3)} of ${fmtNumber(myOp.orderQuantity, 3)} good so far` : ''}</div>
+        <div class="kiosk-operator-strip">${operatorAvatar}<div><b>${esc(p.displayName)}</b><small>${esc(myOp ? `${myOp.partNumber} · ${myOp.operation.description}` : 'Work details unavailable')}${labor.machineCode ? ` · ${esc(labor.machineCode)}` : ''} · started ${esc(fmtDateTime(labor.startedAt))}</small></div></div>
+        ${myOp ? `<div class="kiosk-progress-strip" role="region" aria-label="Order completion progress">
+          <div class="kiosk-progress-bar" aria-hidden="true"><span class="kiosk-progress-good" style="width:${goodPct}%"></span><span class="kiosk-progress-scrap" style="width:${scrapPct}%"></span></div>
+          <div class="kiosk-metrics-row"><div class="kiosk-metric"><span class="k">Target</span><b class="v">${fmtNumber(targetQty, 3)}</b></div><div class="kiosk-metric ok"><span class="k">Good so far</span><b class="v">${fmtNumber(goodSoFar, 3)}</b></div><div class="kiosk-metric ${scrapSoFar > 0 ? 'warn' : ''}"><span class="k">Scrap so far</span><b class="v">${fmtNumber(scrapSoFar, 3)}</b></div><div class="kiosk-metric"><span class="k">Remaining</span><b class="v">${fmtNumber(remainingQty, 3)}</b></div></div>
+        </div>` : ''}
         ${labor.role === 'Trainer' ? '<div class="notice">You are supervising. The trainee reports quantities; stopping ends the session for both of you.</div>' : `
         <form class="report-form" id="report">
-          <div class="field"><label for="good">Good</label><input id="good" class="input big-num" type="number" inputmode="none" min="0" step="any" value="0">${numpad('good', true)}</div>
-          <div class="field"><label for="scrap">Scrap</label><input id="scrap" class="input big-num" type="number" inputmode="none" min="0" step="any" value="0">${numpad('scrap', true)}</div>
-          <div class="field"><label for="reason">Scrap reason</label>
-            <select id="reason" class="select"><option value="">—</option>${scrapCodes.map(r => `<option value="code:${esc(r.code)}">${esc(r.code)} — ${esc(r.description)}</option>`).join('')}${scrapCodes.length ? '' : SCRAP_REASONS.map(r => `<option>${esc(r)}</option>`).join('')}</select></div>
-          <label class="check"><input id="complete" type="checkbox"> Operation complete</label>
-          <button class="btn primary big" type="submit">Report</button>
+          <div class="kiosk-quantity-fields"><label class="field" for="good"><span>Good quantity</span><input id="good" class="input big-num" type="number" inputmode="none" min="0" step="any" value="0"></label>
+            <label class="field" for="scrap"><span>Scrap quantity</span><input id="scrap" class="input big-num" type="number" inputmode="none" min="0" step="any" value="0"></label>
+            <label class="check"><input id="complete" type="checkbox"> Operation complete</label><button class="btn primary big" type="submit">Report quantities</button></div>
+          <div class="field kiosk-scrap-reasons"><label for="reason">Scrap reason</label><div class="kiosk-scrap-tiles" role="group" aria-label="Scrap reason quick choices">
+            ${(scrapCodes.length ? scrapCodes.map(reason => ({ value: `code:${reason.code}`, label: `${reason.code} · ${reason.description}` })) : SCRAP_REASONS.map(reason => ({ value: reason, label: reason }))).map(reason => `<button class="btn small" type="button" data-scrap-tile="${esc(reason.value)}" aria-pressed="false">${esc(reason.label)}</button>`).join('')}
+          </div><select id="reason" class="select" aria-label="Scrap reason detail"><option value="">Choose a reason</option>${scrapCodes.map(reason => `<option value="code:${esc(reason.code)}">${esc(reason.code)} — ${esc(reason.description)}</option>`).join('')}${scrapCodes.length ? '' : SCRAP_REASONS.map(reason => `<option>${esc(reason)}</option>`).join('')}</select></div>
+          ${sharedQtyKeypad(remainingQty)}
         </form>`}
         <div class="shopfloor-actions" style="margin-top:12px"><button class="btn" data-stage-current-work>Stage current operation references</button>
+          ${canAction(ctx.me, 'inventory.material-request') ? '<button class="btn primary" id="request-parts" type="button">Request parts</button><button class="btn" id="material-request-status" type="button">View request status</button>' : ''}
+          ${canAction(ctx.me, 'inventory.material-request') ? '<button class="btn" id="request-additional-parts" type="button">Request additional part</button>' : ''}
+          ${canAction(ctx.me, 'quality.suspect.report') ? '<button class="btn danger" id="report-suspect-scrap" type="button">Report scrap</button><button class="btn" id="report-quality-issue" type="button">Report quality issue</button>' : ''}
           ${canAction(ctx.me, 'engineering.read') ? '<button class="btn" id="work-instructions" type="button">Work instructions &amp; drawings</button>' : '<button class="btn" type="button" disabled title="Engineering document access is required">Work instructions unavailable</button>'}
           ${canAction(ctx.me, 'inventory.read') ? '<button class="btn" id="material-reconciliation" type="button">Material &amp; remnants</button>' : '<button class="btn" type="button" disabled title="Inventory read access is required">Material view unavailable</button>'}
           ${canAction(ctx.me, 'quality.inspect') ? '<button class="btn danger" id="flag-ncr" type="button">Flag defect / NCR</button>' : ''}
           ${canAction(ctx.me, 'holds.place') ? '<button class="btn danger" id="quality-hold" type="button">Place quality hold</button>' : ''}
+          ${labor.machineCode && canAction(ctx.me, 'maintenance.downtime.report') ? `<button class="btn danger big" id="kiosk-machine-down" type="button">Report machine down · ${esc(labor.machineCode)}</button>` : ''}
           <button class="btn danger" id="stop">Stop work</button></div>
       </section>` : ''}
       ${awaiting.length ? `
@@ -269,17 +476,16 @@ export async function shopFloorPage(page, ctx) {
       ${p.isWorker && !labor ? `
       <section class="panel"><header><h2>Work you can start</h2><span class="spacer"></span><span class="muted">your work center, assignment and schedule</span></header>
         <div data-work-identification></div><div data-identified-work></div>
-        ${p.queue.length ? `<table class="table"><thead><tr><th>Order</th><th>Operation</th><th>Machine</th><th>Progress</th><th>Scheduled</th><th></th></tr></thead><tbody>
-        ${p.queue.map((q, i) => `<tr>
-          <td><b>#${q.orderNumber}</b><br><span class="muted">${esc(q.partNumber)} · due ${esc(fmtDate(q.dueDate))}</span></td>
-          <td>${q.operation.sequence} ${esc(q.operation.description)}<br><span class="muted">${esc(q.operation.workCenterCode)}</span></td>
-          <td>${q.operation.eligibleMachines.length > 1
-            ? `<select class="select" data-machine="${i}" aria-label="Machine for order ${q.orderNumber} operation ${q.operation.sequence}">${q.operation.eligibleMachines.map(m => `<option ${m === q.scheduledMachine ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>`
-            : esc(q.operation.eligibleMachines[0] ?? '—')}</td>
-          <td>${fmtNumber(q.operation.goodQuantity, 3)} / ${fmtNumber(q.orderQuantity, 3)}</td>
-          <td>${q.scheduledStart ? esc(fmtDateTime(q.scheduledStart)) : '<span class="faint">—</span>'}${q.scheduledForYou ? '<br><span class="pill info">Scheduled for you</span>' : ''}</td>
-          <td>${q.hold ? `<span class="pill bad">On hold</span><div class="faint" style="max-width:260px">${esc(q.hold)}</div>` : `<button class="btn" data-stage-work="${i}">Stage references</button> <button class="btn primary" data-start="${i}" ${clocked ? '' : 'disabled title="Clock in first"'}>Start</button>`}</td></tr>`).join('')}
-        </tbody></table>` : emptyBlock('Nothing to start', 'No released work at your work center, your assignment or in the schedule for you.')}
+        ${p.queue.length ? `<div class="kiosk-dispatch-grid" aria-label="Available jobs">${p.queue.map((q, i) => `<article class="kiosk-dispatch-card">
+          <div class="kiosk-dispatch-head"><div><span class="eyebrow">${q.scheduledForYou ? 'SCHEDULED FOR YOU' : 'AVAILABLE WORK'}</span><h3>Order #${q.orderNumber}</h3></div>${q.scheduledForYou ? '<span class="pill info">Scheduled for you</span>' : ''}</div>
+          <p class="muted"><b>${esc(q.partNumber)}</b> · due ${esc(fmtDate(q.dueDate))} · ${fmtNumber(q.operation.goodQuantity, 3)} / ${fmtNumber(q.orderQuantity, 3)} good</p>
+          <div class="kiosk-dispatch-operation"><b>Op ${q.operation.sequence} · ${esc(q.operation.description)}</b><span>${esc(q.operation.workCenterCode)}</span></div>
+          <div class="kiosk-dispatch-machine">${q.operation.eligibleMachines.length > 1
+            ? `<label class="field"><span>Choose a machine</span><select class="select big" data-machine="${i}" aria-label="Machine for order ${q.orderNumber} operation ${q.operation.sequence}">${q.operation.eligibleMachines.map(machine => `<option ${machine === q.scheduledMachine ? 'selected' : ''}>${esc(machine)}</option>`).join('')}</select></label>`
+            : `<span class="pill info">${esc(q.operation.eligibleMachines[0] ?? 'Machine selected by the operation')}</span>`}
+            ${q.scheduledStart ? `<span class="muted">Scheduled ${esc(fmtDateTime(q.scheduledStart))}</span>` : ''}</div>
+          ${q.hold ? `<div class="notice bad"><b>Cannot start · order hold</b><div>${esc(q.hold)}</div></div>` : `<div class="kiosk-dispatch-actions"><button class="btn" data-stage-work="${i}" type="button">Stage references</button><button class="btn primary big" data-start="${i}" type="button" ${clocked ? '' : 'disabled title="Clock in first"'}>Start operation</button></div>${!clocked ? '<div class="muted small">Clock in before starting this operation.</div>' : ''}`}
+        </article>`).join('')}</div>` : emptyBlock('Nothing to start', 'No released work at your work center, your assignment or in the schedule for you.')}
       </section>` : ''}`;
 
     $('#clock-in', page)?.addEventListener('click', () => act('/api/shopfloor/clock-in', { badge: session.badge }, null, false, session));
@@ -310,6 +516,14 @@ export async function shopFloorPage(page, ctx) {
       }, null, false, session);
     });
     wireNumpads(page);
+    wireSharedQtyControls();
+    $('#reason', page)?.addEventListener('change', event => $$('[data-scrap-tile]', page).forEach(tile => tile.setAttribute('aria-pressed', String(tile.dataset.scrapTile === event.target.value))));
+    $('#kiosk-machine-down', page)?.addEventListener('click', () => formModal({
+      title: `Report ${labor.machineCode} down`,
+      detail: 'This records an unplanned outage in Forge. Readiness will show the machine blocked until an authorized maintenance process restores it.',
+      confirmLabel: 'Report machine down', reasonRequired: true,
+      fields: [{ name: 'description', label: 'What happened?', type: 'textarea', required: true, placeholder: 'Describe the observed fault or stop condition' }],
+    }, (values, reason) => command(`/api/maintenance/machines/${encodeURIComponent(labor.machineCode)}/down`, { description: values.description }, reason), () => identify(session.badge, session)));
     $('#work-instructions', page)?.addEventListener('click', () => attachmentsDrawer(`Work instructions — order #${labor.orderNumber}`, {
       type: 'ProductionOrder', id: labor.orderNumber, me: ctx.me,
       note: 'Current controlled instructions and reference documents attached to this production order.',
@@ -320,6 +534,103 @@ export async function shopFloorPage(page, ctx) {
       await appendOrderReconciliation(element, labor.orderNumber, canAction(ctx.me, 'inventory.transact'));
       if (!element.children.length) element.innerHTML = emptyBlock('No material reconciliation yet', 'No material has been issued to this order, or the current record is not visible to your roles.');
     });
+    $('#request-parts', page)?.addEventListener('click', async () => {
+      try {
+        const [orderResponse, locationResponse] = await Promise.all([
+          get(`/api/orders/${labor.orderNumber}/shopfloor`),
+          get(`/api/shopfloor/material-request-locations/${labor.orderNumber}/${labor.sequence}`),
+        ]);
+        if (!terminal.isCurrent(session)) return;
+        const parts = [...new Map((orderResponse.materials ?? []).map(line => [line.componentPartNumber, line])).values()];
+        if (!parts.length) { toast('This released order has no BOM components available to request.', true); return; }
+        const locations = locationResponse ?? [];
+        if (!locations.length) { toast('No active staging or point-of-use location is configured at this operation’s work center.', true); return; }
+        const fields = [
+          { name: 'partNumber', label: 'BOM component', type: 'select', required: true, value: parts[0].componentPartNumber,
+            options: parts.map(line => [line.componentPartNumber, `${line.componentPartNumber}${line.componentRevision ? ` · rev ${line.componentRevision}` : ''} · ${fmtNumber(line.requiredQuantity, 3)} ${line.unitOfMeasure}`]) },
+          { name: 'quantity', label: `Quantity needed (${parts[0].unitOfMeasure})`, type: 'number', min: 0.000001, step: 'any', required: true, value: 1 },
+          { name: 'toLocation', label: 'Destination', type: 'select', required: true, value: locations[0].code,
+            options: locations.map(location => [location.code, `${location.name} · ${location.code}`]) },
+        ];
+        fields[0].onChange = (select, modal) => {
+          const selected = parts.find(line => line.componentPartNumber === select.value);
+          const label = modal.querySelector('label[for="f-quantity"]');
+          if (selected && label) label.textContent = `Quantity needed (${selected.unitOfMeasure})`;
+        };
+        const idempotencyKey = crypto.randomUUID();
+        await formModal({ title: `Request parts — order #${labor.orderNumber}, operation ${labor.sequence}`,
+          detail: `The request is linked to ${myOp?.operation?.workCenterCode ?? 'this operation'} and a BOM component. Stock is not deducted when a request is submitted. Give a reason for this operator-initiated request.`,
+          fields, confirmLabel: 'Submit part request', reasonRequired: true },
+        (values, reason) => command('/api/shopfloor/material-request', {
+          badge: session.badge, orderNumber: labor.orderNumber, sequence: labor.sequence,
+          partNumber: values.partNumber, quantity: values.quantity, toLocation: values.toLocation,
+        }, reason, { idempotencyKey }),
+        () => identify(session.badge, session));
+      } catch (error) { if (terminal.isCurrent(session) && !lockForOutage(error)) toast(error.message, true); }
+    });
+    $('#request-additional-parts', page)?.addEventListener('click', async () => {
+      try {
+        const response = await get(`/api/shopfloor/material-request-locations/${labor.orderNumber}/${labor.sequence}`);
+        if (!terminal.isCurrent(session)) return;
+        if (!response.length) { toast('No active staging or point-of-use location is configured at this operation’s work center.', true); return; }
+        const fields = [
+          { name: 'partNumber', label: 'Part number', required: true, code: true, maxLength: 80, placeholder: 'Scan or enter the part code' },
+          { name: 'quantity', label: 'Quantity', type: 'number', min: 0.000001, step: 'any', required: true, value: 1 },
+          { name: 'toLocation', label: 'Destination', type: 'select', required: true, value: response[0].code,
+            options: response.map(location => [location.code, `${location.name} · ${location.code}`]) },
+        ];
+        await formModal({ title: `Request additional part — order #${labor.orderNumber}, operation ${labor.sequence}`,
+          detail: 'The stockroom does not reserve material at request time. A part outside the released BOM, or beyond its remaining released quantity, stays in Approval Needed until a different authorized reviewer approves it.',
+          fields, confirmLabel: 'Submit for review', reasonRequired: true },
+        (values, reason) => command('/api/shopfloor/material-request', {
+          badge: session.badge, orderNumber: labor.orderNumber, sequence: labor.sequence,
+          partNumber: values.partNumber, quantity: values.quantity, toLocation: values.toLocation, allowNonBomMaterial: true,
+        }, reason, { idempotencyKey: crypto.randomUUID() }),
+        () => identify(session.badge, session));
+      } catch (error) { if (terminal.isCurrent(session) && !lockForOutage(error)) toast(error.message, true); }
+    });
+    $('#material-request-status', page)?.addEventListener('click', async () => {
+      try {
+        const requests = await get(`/api/shopfloor/material-requests/${labor.orderNumber}`);
+        if (!terminal.isCurrent(session)) return;
+        const rows = (requests ?? []).filter(request => request.operationSequence == null || request.operationSequence === labor.sequence);
+        const body = rows.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Request</th><th>Part</th><th>Quantity</th><th>Picked</th><th>Status</th><th>Destination</th><th>Source</th></tr></thead><tbody>${rows.map(request => `<tr><td>#${request.taskId}</td><td>${esc(request.partNumber)}${request.isNonBom ? '<div class="faint">Additional material</div>' : ''}</td><td>${fmtNumber(request.quantity, 3)}</td><td>${fmtNumber(request.pickedQuantity, 3)}</td><td><span class="pill ${request.status === 'Delivered' ? 'ok' : request.status === 'Cancelled' || request.status === 'Rejected' ? 'none' : 'warn'}">${request.status === 'ApprovalNeeded' ? 'Approval needed' : esc(request.status)}</span>${request.reviewNote ? `<div class="faint">${esc(request.reviewNote)}</div>` : ''}</td><td>${esc(request.toLocation)}</td><td>${request.sourceSuspectReportId ? `Suspect report #${request.sourceSuspectReportId}` : 'Operation request'}</td></tr>`).join('')}</tbody></table></div>`
+          : emptyBlock('No material requests for this operation', 'Operator requests and work-order staging tasks will appear here.');
+        drawer(`Material requests — order #${labor.orderNumber}, operation ${labor.sequence}`, body);
+      } catch (error) { if (terminal.isCurrent(session) && !lockForOutage(error)) toast(error.message, true); }
+    });
+    const reportSuspect = kind => async () => {
+      try {
+      const order = await get(`/api/orders/${labor.orderNumber}/shopfloor`);
+      if (!terminal.isCurrent(session)) return;
+      const outputPart = order.partNumber ?? myOp?.partNumber ?? '';
+      const partLines = [{ partNumber: outputPart, revision: order.revision, unitOfMeasure: 'order units' }, ...(order.materials ?? [])];
+      const parts = [...new Map(partLines.filter(line => line.partNumber || line.componentPartNumber)
+        .map(line => { const code = line.partNumber ?? line.componentPartNumber; return [code, { code, revision: line.revision ?? line.componentRevision }]; })).values()];
+      const reasonChoices = scrapCodes.map(reason => [`${reason.code}`, `${reason.code} · ${reason.description}`]);
+      const fields = [
+        { name: 'partNumber', label: 'Affected part', type: 'select', required: true, value: outputPart,
+          options: parts.map(part => [part.code, `${part.code}${part.revision ? ` · rev ${part.revision}` : ''}`]) },
+        { name: 'quantity', label: 'Suspect quantity', type: 'number', min: 0.000001, step: 'any', required: true, value: 1 },
+        { name: 'lotNumber', label: 'Lot / batch (if known)', maxLength: 80 },
+        { name: 'serialNumber', label: 'Serial number (if applicable)', maxLength: 100 },
+        ...(reasonChoices.length ? [{ name: 'reasonCode', label: 'Reason code', type: 'select', required: true, options: reasonChoices }] : [{ name: 'reasonCode', label: 'Reason code', required: true, maxLength: 80, placeholder: 'e.g. DIMENSIONAL' }]),
+        { name: 'description', label: 'What was observed', type: 'textarea', required: true },
+      ];
+      const idempotencyKey = crypto.randomUUID();
+      await formModal({ title: `${kind === 'Scrap' ? 'Report suspect scrap' : 'Report quality issue'} — order #${labor.orderNumber}, op ${labor.sequence}`,
+        detail: 'This records a suspected issue for Quality review. It does not approve scrap, change reported production quantities, quarantine stock, or post an inventory transaction.',
+        fields, confirmLabel: kind === 'Scrap' ? 'Report suspect scrap' : 'Report quality issue', reasonRequired: true },
+      (values, reason) => command('/api/shopfloor/suspect-scrap', {
+        badge: session.badge, kind, orderNumber: labor.orderNumber, sequence: labor.sequence, partNumber: values.partNumber,
+        quantity: values.quantity, reasonCode: values.reasonCode, description: values.description,
+        lotNumber: values.lotNumber, serialNumber: values.serialNumber,
+      }, reason, { idempotencyKey }),
+      () => identify(session.badge, session));
+      } catch (error) { if (terminal.isCurrent(session) && !lockForOutage(error)) toast(error.message, true); }
+    };
+    $('#report-suspect-scrap', page)?.addEventListener('click', reportSuspect('Scrap'));
+    $('#report-quality-issue', page)?.addEventListener('click', reportSuspect('QualityIssue'));
     $('#flag-ncr', page)?.addEventListener('click', () => formModal({
       title: `Flag a defect — order #${labor.orderNumber}, op ${labor.sequence}`,
       detail: 'Record the affected quantity and what was found. An NCR may place the order on hold until quality disposition.',
@@ -380,7 +691,9 @@ export async function shopFloorPage(page, ctx) {
         }));
       },
     });
+    loadOperatorPhoto(p, session);
     if (clocked) loadPassOn(session, p, myOp?.operation.workCenterCode ?? p.homeWorkCenter);
+    wireDemoOutagePanel();
   }
 
   async function loadPassOn(session, person, workCenterCode) {
@@ -556,7 +869,9 @@ export async function shopFloorPage(page, ctx) {
   return { dispose: () => {
     clearTimeout(idle);
     clearTimeout(idleCountdown);
+    clearInterval(kioskClockTimer);
     terminal.dispose();
+    clearOperatorPhoto();
     clearScanWork();
     workIdentification?.dispose(); workIdentification = null;
     closeDialogs();

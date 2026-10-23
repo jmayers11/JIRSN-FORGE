@@ -1,6 +1,6 @@
 import { tryGet, command } from '../api.js';
 import { esc, $, toast, errorBlock, fmtDateTime } from '../ui.js';
-import { canAction } from '../forms.js';
+import { canAction, formModal } from '../forms.js';
 import { who } from '../people.js';
 
 const enc = encodeURIComponent;
@@ -132,19 +132,36 @@ export async function shiftContinuityPage(page, ctx) {
         ${h.snapshot.unknowns?.length ? `<div class="notice warn">${h.snapshot.unknowns.map(esc).join('<br>')}</div>` : ''}
         <ul class="evidence">${h.facts.map(f => `<li><b>${esc(f.kind)}</b> · ${esc(f.summary)} <span class="muted">${esc(f.status)}</span></li>`).join('') || '<li class="muted">No visible source facts for this work center and shift.</li>'}</ul>
         <h3>Checklist</h3><ul class="evidence">${h.checklist.map(x => `<li>${esc(x.description)} — <b>${esc(x.state)}</b>${x.note ? ` · ${esc(x.note)}` : ''}</li>`).join('') || '<li class="muted">No checklist configured.</li>'}</ul>
-        <h3>Actions</h3>${actions.map(a => {
+        <h3>Recovery action board</h3>${actions.map(a => {
           const next = ({ Assigned: 'Acknowledged', Acknowledged: 'InProgress', InProgress: 'Completed' })[a.status];
+          const dependencies = actions.filter(candidate => (a.blockedByActionIds ?? []).includes(candidate.actionId));
+          const unresolved = dependencies.filter(dependency => dependency.status !== 'Completed');
           const allowed = next && ((a.assignee === ctx.me.personId && canRecord) || supervisor);
-          return `<div class="row"><span>${esc(a.description)}${a.sourceKind ? `<div class="muted">Linked ${esc(a.sourceKind)} ${esc(a.sourceReference)}</div>` : ''}</span><span class="spacer"></span><span class="pill ${a.status === 'Completed' ? 'ok' : 'warn'}">${esc(a.status)}</span>${allowed ? `<button class="btn small" data-action-next="${a.actionId}" data-status="${esc(a.status)}" data-next="${esc(next)}">Mark ${esc(next)}</button>` : ''}</div>`;
+          const blocked = (next === 'InProgress' || next === 'Completed') && unresolved.length > 0;
+          return `<article class="card"><div class="row"><b>${esc(a.description)}</b><span class="spacer"></span><span class="pill ${a.status === 'Completed' ? 'ok' : blocked ? 'bad' : 'warn'}">${esc(blocked ? `Blocked · ${unresolved.map(item => `#${item.actionId}`).join(', ')}` : a.status)}</span>${allowed && !blocked ? `<button class="btn small" data-action-next="${a.actionId}" data-status="${esc(a.status)}" data-next="${esc(next)}">Mark ${esc(next)}</button>` : ''}</div>
+            <div class="muted small">Assigned to ${esc(actorName(a.assignee))}${a.dueAt ? ` · due ${esc(fmtDateTime(a.dueAt))}` : ' · no due date'} · created ${esc(fmtDateTime(a.createdAt))}</div>
+            ${a.sourceKind ? `<div class="muted small">Linked ${esc(a.sourceKind)} ${esc(a.sourceReference)}</div>` : ''}
+            ${dependencies.length ? `<div class="muted small">Blocked by ${dependencies.map(item => `#${item.actionId} (${esc(item.status)})`).join(', ')}</div>` : ''}
+            ${a.completionEvidence ? `<div class="notice info"><b>Completion evidence</b><div>${esc(a.completionEvidence)}</div></div>` : ''}</article>`;
         }).join('') || '<div class="muted">No assigned actions.</div>'}
-        ${supervisor ? `<form data-action-form class="toolbar"><input name="description" class="input" placeholder="Action to follow up" required><input name="sourceKind" class="input" placeholder="Source: Order, Machine, WorkOrder or Tool"><input name="sourceReference" class="input" placeholder="Source record ID or code">${assigneeControl}<button class="btn" type="submit">Assign action</button></form>` : ''}
+        ${supervisor ? `<form data-action-form class="toolbar"><input name="description" class="input" placeholder="Recovery action" required><input name="sourceKind" class="input" placeholder="Source: Order, Machine, WorkOrder or Tool"><input name="sourceReference" class="input" placeholder="Source record ID or code"><label class="field"><span>Due</span><input name="dueAt" class="input" type="datetime-local"></label><label class="field"><span>Blocked by existing action</span><select name="blockedByActionIds" class="select" multiple size="${Math.min(Math.max(actions.length, 2), 5)}">${actions.filter(action => action.status !== 'Completed').map(action => `<option value="${action.actionId}">#${action.actionId} · ${esc(action.description)}</option>`).join('')}</select></label>${assigneeControl}<button class="btn" type="submit">Assign action</button></form>` : ''}
         <h3>Incoming shift acknowledgments</h3><div>${details.acknowledgments.map(a => `<span class="pill ok">${esc(actorName(a.personId))} · ${esc(fmtDateTime(a.acknowledgedAt))}</span>`).join(' ') || '<span class="muted">No acknowledgment recorded.</span>'}</div></section>`;
       box.querySelector('[data-review]')?.addEventListener('click', async () => { try { await command(`/api/execution/shifts/handoffs/${id}/review`, {}, 'Reviewed shift handoff'); toast('Handoff reviewed.'); await render(); await openHandoff(id); } catch (e) { toast(e.message); } });
       box.querySelector('[data-ack]')?.addEventListener('click', async () => { try { await command(`/api/execution/shifts/handoffs/${id}/acknowledge`, { note: 'Received by incoming shift' }, 'Incoming shift received handoff'); toast('Receipt acknowledged. Actions remain independently tracked.'); await render(); await openHandoff(id); } catch (e) { toast(e.message); } });
-      box.querySelector('[data-action-form]')?.addEventListener('submit', async e => { e.preventDefault(); const f = new FormData(e.currentTarget); try { await command(`/api/execution/shifts/handoffs/${id}/actions`, { description: f.get('description'), sourceKind: f.get('sourceKind') || null, sourceReference: f.get('sourceReference') || null, assignee: f.get('assignee') }, 'Assign shift follow-up'); toast('Action assigned.'); await openHandoff(id); } catch (error) { toast(error.message); } });
+      box.querySelector('[data-action-form]')?.addEventListener('submit', async e => { e.preventDefault(); const f = new FormData(e.currentTarget); try { await command(`/api/execution/shifts/handoffs/${id}/actions`, {
+        description: f.get('description'), sourceKind: f.get('sourceKind') || null, sourceReference: f.get('sourceReference') || null, assignee: f.get('assignee'),
+        dueAt: f.get('dueAt') ? zonedIso(f.get('dueAt'), zone) : null, blockedByActionIds: f.getAll('blockedByActionIds').map(Number),
+      }, 'Assign shift recovery action'); toast('Recovery action assigned.'); await openHandoff(id); } catch (error) { toast(error.message); } });
       box.querySelectorAll('[data-action-next]').forEach(button => button.addEventListener('click', async () => {
         const actionId = Number(button.dataset.actionNext);
-        try { await command(`/api/execution/shifts/actions/${actionId}/status`, { expected: button.dataset.status, status: button.dataset.next }, `Shift action ${button.dataset.next}`); toast(`Action marked ${button.dataset.next}.`); await openHandoff(id); }
+        if (button.dataset.next === 'Completed') {
+          formModal({ title: `Complete recovery action #${actionId}`, detail: 'Record what was done and the evidence that supports closure. This evidence is stored with the audited action record.', confirmLabel: 'Complete action', reasonRequired: true,
+            fields: [{ name: 'evidence', label: 'Completion evidence', type: 'textarea', required: true, hint: 'Describe the result and any source record, measurement, or verification reference.' }] },
+          (values, reason) => command(`/api/execution/shifts/actions/${actionId}/status`, { expected: button.dataset.status, status: button.dataset.next, evidence: values.evidence }, reason),
+          async () => { toast('Recovery action completed with evidence.'); await openHandoff(id); });
+          return;
+        }
+        try { await command(`/api/execution/shifts/actions/${actionId}/status`, { expected: button.dataset.status, status: button.dataset.next }, `Recovery action ${button.dataset.next}`); toast(`Action marked ${button.dataset.next}.`); await openHandoff(id); }
         catch (error) { toast(error.message); }
       }));
     } catch (error) { toast(error.message); }

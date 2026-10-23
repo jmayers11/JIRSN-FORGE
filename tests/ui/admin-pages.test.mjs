@@ -133,3 +133,13 @@ test('managing a person certifies a qualification with evidence and suspends a h
   fire(section.querySelector('[data-qual="suspensions"]'), 'click'); await submit({});
   assert.deepEqual(calls.find(c => c.body && c.path.endsWith('/suspensions')).body, { code: 'WELD', reason: 'Requested by plant manager' });
 });
+
+test('workforce profile deep link selects the requested employee on load', async t => {
+  const { page } = wire(t, path => path.endsWith('/kernel/directory') ? response([pat])
+    : path.endsWith('/qualification-types') ? response([])
+    : path.endsWith(`/competency/people/${pat.personId}`) ? response([])
+    : path.endsWith('/api/resources/') ? response({ workCenters: [] }) : null);
+  const section = await appendWorkforceAdmin(page, { personId: ana.personId, permissions: ['workforce.supervise'] }, pat.personId);
+  assert.equal(section.querySelector('#wf-person').value, pat.personId);
+  assert.match(section.innerHTML, /Pat Planner/);
+});

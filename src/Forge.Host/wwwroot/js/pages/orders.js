@@ -257,6 +257,7 @@ async function orderDetail(page, ctx, number) {
         </tbody></table>` : emptyBlock('Not released yet', 'Operations and materials are copied from the routing and BOM when the order is released.')}
     </section>
       <section class="panel"><header><h2>Bill of materials</h2><span class="spacer"></span><span class="muted">Component revisions and quantities copied at release</span></header>
+        ${o.status === 'Released' && o.materials?.length && canAction(me, 'inventory.material-request') ? '<button class="btn small primary" id="stage-remaining-materials" style="margin-bottom:10px">Request remaining BOM materials</button>' : ''}
         ${o.materials?.length ? `<table class="table"><thead><tr><th>Line</th><th>Component</th><th>Rev</th><th>Required</th></tr></thead><tbody>
         ${o.materials.map(m => `<tr><td>${m.lineNumber}</td><td>${esc(m.componentPartNumber)}</td><td>${esc(m.componentRevision ?? '—')}</td><td>${fmtNumber(m.requiredQuantity, 3)} ${esc(m.unitOfMeasure)}</td></tr>`).join('')}
         </tbody></table>${materialStatus(o, material, issues)}` : emptyBlock('No materials yet', 'Copied from the BOM at release.')}
@@ -280,7 +281,7 @@ async function orderDetail(page, ctx, number) {
   }
 
   const floor = await tryGet(`/api/orders/${number}/shopfloor`);
-  if (floor.data && (floor.data.labor.length || floor.data.reports.length || floor.data.training.length)) {
+  if (floor.data && (floor.data.labor.length || floor.data.reports.length || floor.data.training.length || floor.data.laborMetrics?.length)) {
     const f = floor.data;
     const section = document.createElement('section');
     section.className = 'grid-2';
@@ -296,6 +297,16 @@ async function orderDetail(page, ctx, number) {
         ${f.training.map(t => `<div class="notice" style="margin-top:8px">Supervised training, op ${t.sequence}: ${esc(who('person:' + t.traineeId))} under ${esc(who('person:' + t.trainerId))} for ${esc(t.qualifications.join(', '))} — ${t.evaluation ? `evaluated <b>${esc(t.evaluation)}</b>${t.evaluationNotes ? `: ${esc(t.evaluationNotes)}` : ''}` : t.endedAt ? 'awaiting the trainer\'s evaluation' : 'in progress'}. No qualification is granted by a session.</div>`).join('')}
       </div>`;
     page.append(section);
+    if (f.laborMetrics?.length) {
+      const metrics = document.createElement('section');
+      metrics.className = 'panel';
+      metrics.innerHTML = `<header><h2>Operation target vs actual labor</h2><span class="spacer"></span><span class="muted">Released routing targets and recorded person-hours</span></header>
+        <div class="table-wrap"><table class="table orders-labor-metrics"><thead><tr><th>Operation</th><th>Planned setup / run</th><th>Crew</th><th>Recorded operator</th><th>Training</th><th>Reported good / scrap</th><th>Earned standard / efficiency</th><th>Completed variance</th></tr></thead><tbody>
+        ${f.laborMetrics.map(metric => `<tr><td>${metric.sequence} · ${esc(metric.workCenterCode)}</td><td>${metric.plannedSetupLaborHours == null || metric.plannedRunLaborHours == null ? 'N/A' : `${fmtNumber(metric.plannedSetupLaborHours)} / ${fmtNumber(metric.plannedRunLaborHours)} h`}<div class="faint">${metric.plannedTotalLaborHours == null ? 'Routing setup target unavailable' : `${fmtNumber(metric.plannedTotalLaborHours)} h total`}</div></td><td>${metric.crewSize}</td><td>${fmtNumber(metric.recordedOperatorHours)} h</td><td>${fmtNumber(metric.recordedTrainingHours)} h</td><td>${fmtNumber(metric.reportedGoodQuantity, 3)} / ${fmtNumber(metric.reportedScrapQuantity, 3)}</td><td><span class="pill none">N/A</span><div class="faint">${esc(metric.earnedStandardStatus)}</div></td><td>${metric.completedScheduleVarianceHours == null ? '<span class="pill none">N/A</span>' : `${fmtNumber(metric.completedScheduleVarianceHours)} h`}<div class="faint">${esc(metric.varianceContext)}</div></td></tr>`).join('')}
+        </tbody></table></div>
+        <p class="faint workforce-intelligence-note">Reported good quantity is not quality acceptance. Efficiency remains N/A until approved accepted-output evidence is linked to each operation. Actual time is shown by recorded role; setup/run phase coding and downtime/material-wait allocation remain open.</p>`;
+      page.append(metrics);
+    }
   }
 
   if (o.programId) await appendOrderCommitment(page, o, ctx);
@@ -313,7 +324,7 @@ async function orderDetail(page, ctx, number) {
     { label: 'Summary', match: ['readiness now', 'drop-dead dates', 'contract commitment'] },
     { label: 'Operations', match: ['operations'] },
     { label: 'Bill of materials', match: ['bill of materials'] },
-    { label: 'Execution', match: ['direct labor', 'reports and training', 'quantity states'] },
+    { label: 'Execution', match: ['direct labor', 'reports and training', 'target vs actual labor', 'quantity states'] },
     { label: 'Material', match: ['as built and genealogy', 'material to the machine', 'what became of the material'] },
     { label: 'Quality', match: ['quality', 'holds'] },
     { label: 'Documents', match: ['applicable documentation', 'documentation'] },
@@ -331,6 +342,25 @@ async function orderDetail(page, ctx, number) {
       reason => command(`/api/orders/${number}/${act}`, {}, reason));
     if (done) { toast(`Order #${number}: ${b.textContent.toLowerCase()} recorded.`); await orderDetail(page, ctx, number); }
   }));
+  $('#stage-remaining-materials', page)?.addEventListener('click', async () => {
+    try {
+      const response = await tryGet('/api/inventory/locations');
+      if (response.error) throw new Error(response.error.message);
+      const centers = new Set((o.operations ?? []).map(operation => operation.workCenterCode));
+      const locations = (response.data ?? []).filter(location => location.active && location.inCompanyCustody
+        && (location.kind === 'Staging' || location.kind === 'Production' || location.kind === 'MachineSide' && location.pointOfUse)
+        && (!location.workCenterCode || centers.has(location.workCenterCode)));
+      if (!locations.length) throw new Error('No active staging or point-of-use destination is configured at this order’s work centers.');
+      const result = await formModal({
+        title: `Stage remaining BOM demand — order #${o.orderNumber}`,
+        detail: 'Forge compares the released BOM with recorded issues and existing material tasks, then creates tasks only for uncovered demand. Submitting tasks does not deduct stock; the stockroom allocates, picks, dispatches, and confirms receipt separately.',
+        confirmLabel: 'Create staging tasks', reasonRequired: true,
+        fields: [{ name: 'toLocation', label: 'Destination', type: 'select', required: true, value: locations[0].code,
+          options: locations.map(location => [location.code, `${location.name} · ${location.code}`]) }],
+      }, (values, reason) => command(`/api/inventory/orders/${o.orderNumber}/stage-shortages`, values, reason));
+      if (result) { toast(result.message ?? 'Material tasks created.'); await orderDetail(page, ctx, number); }
+    } catch (error) { toast(error.message, true); }
+  });
   $('#change-priority', page)?.addEventListener('click', () => changePriority(number, o, page, ctx));
 }
 

@@ -1,6 +1,7 @@
 using Forge.Competency;
 using Forge.Competency.Contracts;
 using Forge.Kernel.Identity;
+using Forge.Kernel.Access;
 using Forge.Kernel.Security;
 using Forge.Planning;
 using Forge.Resources;
@@ -18,23 +19,51 @@ public sealed record CodeNameRequest(string Code, string Name, string? Parent, s
 /// <summary>Edits a plant record. Parent moves a work center (safety area) or machine (work center).</summary>
 public sealed record ResourceEditRequest(string Name, string? Parent, string? Description, string? TimeZone, string? Picture, string? Reason);
 
-public sealed record MachineActivityRequest(string ActivityCode, string[] OperatorQualifications, string? Reason);
+public sealed record MachineActivityRequest(string ActivityCode, string[] OperatorQualifications, string? Reason, bool RequiresMachineAuthorization = false);
 
 public sealed record WorkCenterActivityRequest(string ActivityCode, string? Reason);
 
 public sealed record QualificationTypeRequest(string Code, string Name, QualificationKind Kind, int? ValidityDays, string? Reason);
 
 public sealed record PrerequisiteRequest(string PrerequisiteCode, string? Reason);
+public sealed record PrerequisiteAlternativesRequest(string GroupCode, string Name, IReadOnlyList<string> PrerequisiteCodes, string? Reason);
+
+public sealed record CourseCompletionRequest(string CourseCode, string CourseVersion, DateTimeOffset? ExpiresAt, string Evidence, string? Reason);
+public sealed record PracticalAssessmentRequest(string QualificationCode, string MachineCode, string ActivityCode, bool Passed, string AssessmentVersion, string Evidence, string? Restrictions, string? Reason);
+public sealed record MachineAuthorizationRequest(string MachineCode, string ActivityCode, string QualificationCode, Guid AssessmentId, DateTimeOffset? ExpiresAt, string Evidence, string? Restrictions, bool IndependentOperationAllowed, string? Reason);
+public sealed record MachineAuthorizationStatusRequest(MachineAuthorizationStatus Status, string? Reason);
 
 public sealed record PersonQualificationRequest(string Code, string? Evidence, string? Reason);
 
 public sealed record WorkerRequest(string HomeWorkCenterCode, string? Reason);
+
+public sealed record WorkerJobTitleRequest(string? JobTitle, string? Reason);
+
+public sealed record WorkCenterLayoutsRequest(IReadOnlyList<WorkCenterPlacement> Placements, string? Reason);
+
+public sealed record WorkCenterMapLayoutRequest(IReadOnlyList<WorkCenterMapPlacement> Placements, string? Reason);
 
 public sealed record AssignmentRequest(string? SafetyAreaCode, string? WorkCenterCode, string? MachineCode, string ActivityCode, bool AsTrainee, string? Reason);
 
 public sealed record PresenceRequest(PresenceKind Kind, DateTimeOffset? ValidUntil, string? Reason);
 
 public sealed record UnavailabilityRequest(UnavailabilityKind Kind, DateTimeOffset StartsAt, DateTimeOffset EndsAt, string? Reason);
+
+public sealed record AttendancePolicyRequest(string PolicyCode, int Revision, DateTimeOffset EffectiveFrom, DateTimeOffset? EffectiveThrough,
+    int GraceMinutes, bool IncludeCallOutsInArrivalDenominator, string? Reason);
+
+public sealed record GenerateAttendanceScheduleRequest(DateTimeOffset From, DateTimeOffset Through, string? Reason);
+
+public sealed record AttendanceClassificationRequest(AttendanceEventKind Kind, DateTimeOffset? ObservedAt, string? ReasonCode, string? Reason);
+
+public sealed record AttendanceEventReviewRequest(AttendanceEventReviewState Decision, string? ReasonCode, string? Reason);
+
+public sealed record AttendanceEventCorrectionRequest(AttendanceEventKind Kind, DateTimeOffset? ObservedAt, string? ReasonCode, string? Reason);
+
+public sealed record DevelopmentNominationRequest(Guid PersonId, DevelopmentNominationKind Kind, string Pathway, string Rationale,
+    string ExpectedPlantBenefit, IReadOnlyList<string> EvidenceReferences, decimal? EstimatedTrainingHours, decimal? EstimatedCost, string? Currency, string? Reason);
+
+public sealed record DevelopmentNominationAdvanceRequest(DevelopmentNominationStatus Status, string Note, string? Reason);
 
 /// <summary>A temporary move (ADR 0057 §5): the estimated end date is required.</summary>
 public sealed record TemporaryMoveRequest(string WorkCenterCode, DateOnly StartsOn, DateOnly EstimatedEndOn, string? Reason);
@@ -103,7 +132,7 @@ public static class OperationsEndpoints
         api.MapPost("/activity-types", (HttpContext http, CodeNameRequest b, ResourcesService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DefineActivityTypeAsync(new DefineActivityType(b.Code, b.Name, b.Description), c, ct)));
         api.MapPost("/machines/{machine}/activities", (HttpContext http, string machine, MachineActivityRequest b, ResourcesService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.SetMachineActivityAsync(new SetMachineActivity(machine, b.ActivityCode, b.OperatorQualifications), c, ct)));
+            Command(http, b.Reason, c => s.SetMachineActivityAsync(new SetMachineActivity(machine, b.ActivityCode, b.OperatorQualifications, b.RequiresMachineAuthorization), c, ct)));
         api.MapPost("/work-centers/{workCenter}/activities", (HttpContext http, string workCenter, WorkCenterActivityRequest b, ResourcesService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AllowWorkCenterActivityAsync(new AllowWorkCenterActivity(workCenter, b.ActivityCode), c, ct)));
 
@@ -114,6 +143,10 @@ public static class OperationsEndpoints
             Command(http, b.Reason, c => s.UpdateSafetyAreaAsync(new UpdateSafetyArea(code, b.Name), c, ct)));
         api.MapPost("/work-centers/{code}/edit", (HttpContext http, string code, ResourceEditRequest b, ResourcesService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.UpdateWorkCenterAsync(new UpdateWorkCenter(code, b.Name, b.Parent ?? string.Empty, b.Picture), c, ct)));
+        api.MapPost("/work-centers/layout", (HttpContext http, WorkCenterLayoutsRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateWorkCenterLayoutsAsync(new UpdateWorkCenterLayouts(b.Placements), c, ct)));
+        api.MapPost("/work-centers/map-layout", (HttpContext http, WorkCenterMapLayoutRequest b, ResourcesService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.UpdateWorkCenterMapLayoutAsync(new UpdateWorkCenterMapLayout(b.Placements), c, ct)));
         api.MapPost("/machines/{code}/edit", (HttpContext http, string code, ResourceEditRequest b, ResourcesService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.UpdateMachineAsync(new UpdateMachine(code, b.Name, b.Parent ?? string.Empty), c, ct)));
         api.MapPost("/activity-types/{code}/edit", (HttpContext http, string code, ResourceEditRequest b, ResourcesService s, CancellationToken ct) =>
@@ -149,11 +182,37 @@ public static class OperationsEndpoints
                     throw new Forge.Kernel.Commands.CommandRejectedException("too_many_people", "Read at most 500 people at a time.");
                 return await l.GetQualificationsAsync(ids, ct);
             }));
+        api.MapGet("/machine-authorizations", (HttpContext http, Guid[]? personIds) =>
+            ReadStore<ICompetencyLookup>(http, Permissions.CompetencyRead, async (l, ct) =>
+            {
+                var ids = (personIds ?? []).Distinct().Take(501).Select(id => new PersonId(id)).ToArray();
+                if (ids.Length > 500)
+                    throw new Forge.Kernel.Commands.CommandRejectedException("too_many_people", "Read at most 500 people at a time.");
+                return await l.GetMachineAuthorizationsAsync(ids, ct);
+            }));
+        api.MapGet("/training-course-completions", (HttpContext http, Guid[]? personIds) =>
+            ReadStore<ICompetencyLookup>(http, Permissions.CompetencyRead, async (l, ct) =>
+            {
+                var ids = (personIds ?? []).Distinct().Take(501).Select(id => new PersonId(id)).ToArray();
+                if (ids.Length > 500)
+                    throw new Forge.Kernel.Commands.CommandRejectedException("too_many_people", "Read at most 500 people at a time.");
+                return await l.GetTrainingCourseCompletionsAsync(ids, ct);
+            }));
+        api.MapGet("/practical-assessments", (HttpContext http, Guid[]? personIds) =>
+            ReadStore<ICompetencyLookup>(http, Permissions.CompetencyRead, async (l, ct) =>
+            {
+                var ids = (personIds ?? []).Distinct().Take(501).Select(id => new PersonId(id)).ToArray();
+                if (ids.Length > 500)
+                    throw new Forge.Kernel.Commands.CommandRejectedException("too_many_people", "Read at most 500 people at a time.");
+                return await l.GetPracticalAssessmentsAsync(ids, ct);
+            }));
 
         api.MapPost("/qualification-types", (HttpContext http, QualificationTypeRequest b, CompetencyService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DefineTypeAsync(new DefineQualificationType(b.Code, b.Name, b.Kind, b.ValidityDays), c, ct)));
         api.MapPost("/qualification-types/{code}/prerequisites", (HttpContext http, string code, PrerequisiteRequest b, CompetencyService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AddPrerequisiteAsync(new AddPrerequisite(code, b.PrerequisiteCode), c, ct)));
+        api.MapPost("/qualification-types/{code}/prerequisite-alternatives", (HttpContext http, string code, PrerequisiteAlternativesRequest b, CompetencyService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.DefinePrerequisiteAlternativesAsync(new DefinePrerequisiteAlternatives(code, b.GroupCode, b.Name, b.PrerequisiteCodes), c, ct)));
         api.MapPost("/people/{personId:guid}/training", (HttpContext http, Guid personId, PersonQualificationRequest b, CompetencyService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.StartTrainingAsync(new StartTraining(new PersonId(personId), b.Code), c, ct)));
         api.MapPost("/people/{personId:guid}/certifications", (HttpContext http, Guid personId, PersonQualificationRequest b, CompetencyService s, CancellationToken ct) =>
@@ -162,12 +221,22 @@ public static class OperationsEndpoints
             Command(http, b.Reason, c => s.SuspendAsync(new SuspendQualification(new PersonId(personId), b.Code), c, ct)));
         api.MapPost("/people/{personId:guid}/revocations", (HttpContext http, Guid personId, PersonQualificationRequest b, CompetencyService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RevokeAsync(new RevokeQualification(new PersonId(personId), b.Code), c, ct)));
+        api.MapPost("/people/{personId:guid}/training-course-completions", (HttpContext http, Guid personId, CourseCompletionRequest b, CompetencyService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RecordTrainingCourseCompletionAsync(new RecordTrainingCourseCompletion(new PersonId(personId), b.CourseCode, b.CourseVersion, b.ExpiresAt, b.Evidence), c, ct)));
+        api.MapPost("/people/{personId:guid}/practical-assessments", (HttpContext http, Guid personId, PracticalAssessmentRequest b, CompetencyService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RecordPracticalAssessmentAsync(new RecordPracticalAssessment(new PersonId(personId), b.QualificationCode, b.MachineCode, b.ActivityCode, b.Passed, b.AssessmentVersion, b.Evidence, b.Restrictions), c, ct)));
+        api.MapPost("/people/{personId:guid}/machine-authorizations", (HttpContext http, Guid personId, MachineAuthorizationRequest b, CompetencyService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AuthorizeMachineOperationAsync(new AuthorizeMachineOperation(new PersonId(personId), b.MachineCode, b.ActivityCode, b.QualificationCode, b.AssessmentId, b.ExpiresAt, b.Evidence, b.Restrictions, b.IndependentOperationAllowed), c, ct)));
+        api.MapPost("/people/{personId:guid}/machine-authorizations/{machine}/{activity}/{qualification}/status", (HttpContext http, Guid personId, string machine, string activity, string qualification, MachineAuthorizationStatusRequest b, CompetencyService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ChangeMachineAuthorizationAsync(new ChangeMachineAuthorization(new PersonId(personId), machine, activity, qualification, b.Status), c, ct)));
     }
 
     private static void MapWorkforce(RouteGroupBuilder api)
     {
         api.MapPost("/workers/{personId:guid}", (HttpContext http, Guid personId, WorkerRequest b, WorkforceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RegisterWorkerAsync(new RegisterWorker(new PersonId(personId), b.HomeWorkCenterCode), c, ct)));
+        api.MapPost("/workers/{personId:guid}/job-title", (HttpContext http, Guid personId, WorkerJobTitleRequest b, WorkforceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SetWorkerJobTitleAsync(new SetWorkerJobTitle(new PersonId(personId), b.JobTitle), c, ct)));
         api.MapPost("/workers/{personId:guid}/assignment", (HttpContext http, Guid personId, AssignmentRequest b, WorkforceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AssignWorkAsync(new AssignWork(new PersonId(personId), b.SafetyAreaCode, b.WorkCenterCode, b.MachineCode, b.ActivityCode, b.AsTrainee), c, ct)));
         api.MapPost("/workers/{personId:guid}/assignment/end", (HttpContext http, Guid personId, ReasonRequest b, WorkforceService s, CancellationToken ct) =>
@@ -182,6 +251,88 @@ public static class OperationsEndpoints
         // ADR 0057 §5: temporary moves (with an estimated end, extended or renewed) and transfers are separate actions.
         api.MapGet("/workers", (HttpContext http, TimeProvider time, CancellationToken _) =>
             ReadStore<IWorkforceLookup>(http, Permissions.WorkforceRead, async (l, ct) => await l.GetWorkerStatesAsync(time.GetUtcNow(), ct)));
+        api.MapGet("/unavailability", async (HttpContext http, DateTimeOffset? from, DateTimeOffset? to, TimeProvider time, CancellationToken _) =>
+        {
+            var startsAt = from ?? time.GetUtcNow();
+            var endsAt = to ?? startsAt.AddDays(30);
+            if (endsAt <= startsAt || endsAt - startsAt > TimeSpan.FromDays(90))
+                return Results.BadRequest(new { error = "invalid_date_range", message = "Choose an end time after the start, within a 90-day window." });
+            return await ReadStore<IWorkforceLookup>(http, Permissions.WorkforceRead, async (l, ct) => await l.ListUnavailabilityAsync(startsAt, endsAt, ct));
+        });
+        api.MapGet("/attendance-intelligence", async (HttpContext http, DateTimeOffset? from, DateTimeOffset? to, TimeProvider time, CancellationToken _) =>
+        {
+            var endsAt = to ?? time.GetUtcNow();
+            var startsAt = from ?? endsAt.AddDays(-90);
+            if (endsAt <= startsAt || endsAt - startsAt > TimeSpan.FromDays(366))
+                return Results.BadRequest(new { error = "invalid_date_range", message = "Choose a period up to one year long." });
+            return await ReadStore<IAttendanceReliabilityStore>(http, Permissions.AttendanceIntelligenceRead, async (store, ct) =>
+            {
+                var opportunities = await store.ListAttendanceOpportunitiesAsync(startsAt, endsAt, ct);
+                var events = await store.ListAttendanceIntelligenceEventsAsync(startsAt, endsAt, ct);
+                var policies = await store.ListAttendancePoliciesAsync(ct);
+                return AttendanceReliabilityCalculator.Calculate(opportunities, events, policies, startsAt, endsAt, time.GetUtcNow());
+            });
+        });
+        api.MapGet("/attendance-policies", (HttpContext http, CancellationToken _) =>
+            ReadStore<IAttendanceReliabilityStore>(http, Permissions.AttendancePolicyManage,
+                async (store, ct) => await store.ListAttendancePoliciesAsync(ct)));
+        api.MapGet("/attendance-opportunities", async (HttpContext http, DateTimeOffset? from, DateTimeOffset? to, TimeProvider time, CancellationToken _) =>
+        {
+            var startsAt = from ?? time.GetUtcNow();
+            var endsAt = to ?? startsAt.AddDays(14);
+            if (endsAt <= startsAt || endsAt - startsAt > TimeSpan.FromDays(90))
+                return Results.BadRequest(new { error = "invalid_date_range", message = "Choose a schedule period up to 90 days long." });
+            return await ReadStore<IAttendanceReliabilityStore>(http, Permissions.AttendanceScheduleManage,
+                async (store, ct) => await store.ListAttendanceOpportunitiesAsync(startsAt, endsAt, ct));
+        });
+        api.MapGet("/attendance-intelligence/events", async (HttpContext http, DateTimeOffset? from, DateTimeOffset? to, TimeProvider time, CancellationToken _) =>
+        {
+            var endsAt = to ?? time.GetUtcNow().AddDays(1);
+            var startsAt = from ?? endsAt.AddDays(-30);
+            if (endsAt <= startsAt || endsAt - startsAt > TimeSpan.FromDays(366))
+                return Results.BadRequest(new { error = "invalid_date_range", message = "Choose an event period up to one year long." });
+            return await ReadStore<IAttendanceReliabilityStore>(http, Permissions.AttendanceClassificationReview, async (store, ct) =>
+                (await store.ListAttendanceIntelligenceEventsAsync(startsAt, endsAt, ct))
+                    .Select(item => new { item.EventId, item.PersonId, item.OpportunityId, item.Kind, item.ObservedAt, item.ReviewState, item.Source, item.RecordedAt, item.RecordedBy, item.SupersedesEventId })
+                    .ToArray());
+        });
+        api.MapPost("/attendance-schedule/generate", (HttpContext http, GenerateAttendanceScheduleRequest b, AttendanceScheduleService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.GenerateAsync(new GenerateAttendanceSchedule(b.From, b.Through), c, ct)));
+        api.MapPost("/attendance-policies", (HttpContext http, AttendancePolicyRequest b, AttendanceIntelligenceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SetPolicyAsync(new SetAttendancePolicy(new AttendancePolicyVersion(b.PolicyCode, b.Revision, b.EffectiveFrom, b.EffectiveThrough,
+                b.GraceMinutes, b.IncludeCallOutsInArrivalDenominator)), c, ct)));
+        api.MapPost("/attendance-opportunities/{opportunityId:guid}/classifications", (HttpContext http, Guid opportunityId, AttendanceClassificationRequest b, AttendanceIntelligenceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RecordClassificationAsync(new RecordAttendanceClassification(opportunityId, b.Kind, b.ObservedAt, b.ReasonCode), c, ct)));
+        api.MapPost("/attendance-intelligence/events/{eventId:guid}/review", (HttpContext http, Guid eventId, AttendanceEventReviewRequest b, AttendanceIntelligenceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReviewEventAsync(new ReviewAttendanceIntelligenceEvent(eventId, b.Decision, b.ReasonCode), c, ct)));
+        api.MapPost("/attendance-intelligence/events/{eventId:guid}/correction", (HttpContext http, Guid eventId, AttendanceEventCorrectionRequest b, AttendanceIntelligenceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CorrectEventAsync(new CorrectAttendanceIntelligenceEvent(eventId, b.Kind, b.ObservedAt, b.ReasonCode), c, ct)));
+        api.MapGet("/development-nominations", async (HttpContext http, Guid? personId, CancellationToken _) =>
+            ReadStore<IWorkforceDevelopmentStore>(http, Permissions.WorkforceNominationRead, async (store, ct) =>
+            {
+                var nominations = await store.ListNominationsAsync(personId, ct);
+                var principal = await PrincipalAsync(http);
+                return principal?.HasPermission(Permissions.WorkforceCompensationRead) == true
+                    ? nominations
+                    : nominations.Where(item => item.Kind != DevelopmentNominationKind.CompensationConsideration).ToArray();
+            }));
+        api.MapGet("/development-nominations/{nominationId:guid}/events", (HttpContext http, Guid nominationId, CancellationToken _) =>
+            ReadStore<IWorkforceDevelopmentStore>(http, Permissions.WorkforceNominationRead, async (store, ct) =>
+            {
+                var nomination = await store.FindNominationAsync(nominationId, ct);
+                if (nomination is null) return Array.Empty<DevelopmentNominationEvent>();
+                var principal = await PrincipalAsync(http);
+                if (nomination.Kind == DevelopmentNominationKind.CompensationConsideration && principal?.HasPermission(Permissions.WorkforceCompensationRead) != true)
+                    throw new ForgeAuthorizationException(http.RequestServices.GetRequiredService<IForgeAuthorizer>()
+                        .Authorize(principal!, Permissions.WorkforceCompensationRead, ResourceRef.Of("DevelopmentNomination", nominationId.ToString("D"))));
+                return await store.ListNominationEventsAsync(nominationId, ct);
+            }));
+        api.MapPost("/development-nominations", (HttpContext http, DevelopmentNominationRequest b, DevelopmentNominationService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CreateAsync(new CreateDevelopmentNomination(b.PersonId, b.Kind, b.Pathway, b.Rationale,
+                b.ExpectedPlantBenefit, b.EvidenceReferences, b.EstimatedTrainingHours, b.EstimatedCost, b.Currency), c, ct)));
+        api.MapPost("/development-nominations/{nominationId:guid}/advance", (HttpContext http, Guid nominationId, DevelopmentNominationAdvanceRequest b,
+            DevelopmentNominationService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.AdvanceAsync(new AdvanceDevelopmentNomination(nominationId, b.Status, b.Note), c, ct)));
         api.MapGet("/moves", (HttpContext http, Guid? personId, bool? includeClosed, CancellationToken _) =>
             ReadStore<IWorkforceLookup>(http, Permissions.WorkforceRead, async (l, ct) => await l.ListTemporaryMovesAsync(personId, includeClosed ?? false, ct)));
         api.MapPost("/workers/{personId:guid}/moves", (HttpContext http, Guid personId, TemporaryMoveRequest b, WorkforceService s, CancellationToken ct) =>

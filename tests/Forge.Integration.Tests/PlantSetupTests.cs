@@ -42,6 +42,7 @@ public sealed class PlantSetupTests(PostgresFixture postgres)
         await plant.Ok(e, "/api/resources/safety-areas", new { code = "BONDING", name = "Bonding hall", parent = "WEST" });
         await plant.Ok(e, "/api/resources/safety-areas", new { code = "WINDING", name = "Winding", parent = "WEST" });
         await plant.Ok(e, "/api/resources/work-centers", new { code = "BOND-WC", name = "Bonding", parent = "BONDING", picture = "plain" });
+        await plant.Ok(e, "/api/resources/work-centers", new { code = "BOND-WC-2", name = "Bonding bench", parent = "BONDING" });
         await plant.Ok(e, "/api/resources/work-centers", new { code = "WIND-WC", name = "Winders", parent = "WINDING" });
         await plant.Ok(e, "/api/resources/activity-types", new { code = "BOND", name = "Bond panels" });
         await plant.Ok(e, "/api/resources/machines", new { code = "LAM-1", name = "Laminator", parent = "BOND-WC" });
@@ -56,6 +57,22 @@ public sealed class PlantSetupTests(PostgresFixture postgres)
         Assert.Contains("reason", noReason.Body, StringComparison.OrdinalIgnoreCase);
         var planner = await Try(plant, plant.As("planner"), "/api/resources/work-centers/BOND-WC/edit", new { name = "Mine", parent = "BONDING", reason = "x" });
         Assert.Equal(HttpStatusCode.Forbidden, planner.Status);
+
+        var layoutNoReason = await Try(plant, e, "/api/resources/work-centers/layout", new { placements = new[] { new { code = "BOND-WC", layoutX = 0, layoutY = 0 }, new { code = "BOND-WC-2", layoutX = 1, layoutY = 0 }, new { code = "WIND-WC", layoutX = 0, layoutY = 0 } } });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, layoutNoReason.Status);
+        var layoutForbidden = await Try(plant, plant.As("planner"), "/api/resources/work-centers/layout", new { placements = new[] { new { code = "BOND-WC", layoutX = 0, layoutY = 0 }, new { code = "BOND-WC-2", layoutX = 1, layoutY = 0 }, new { code = "WIND-WC", layoutX = 0, layoutY = 0 } }, reason = "Rearrange floor" });
+        Assert.Equal(HttpStatusCode.Forbidden, layoutForbidden.Status);
+        var layoutCollision = await Try(plant, e, "/api/resources/work-centers/layout", new { placements = new[] { new { code = "BOND-WC", layoutX = 0, layoutY = 0 }, new { code = "BOND-WC-2", layoutX = 0, layoutY = 0 }, new { code = "WIND-WC", layoutX = 0, layoutY = 0 } }, reason = "Test duplicate position" });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, layoutCollision.Status);
+        await plant.Ok(e, "/api/resources/work-centers/layout", new { placements = new[] { new { code = "BOND-WC", layoutX = 0, layoutY = 0 }, new { code = "BOND-WC-2", layoutX = 1, layoutY = 0 }, new { code = "WIND-WC", layoutX = 0, layoutY = 0 } }, reason = "Match the floor map to the bonding hall" });
+
+        var operatorId = await plant.Person("operator");
+        await plant.Ok(e, $"/api/workforce/workers/{operatorId}", new { homeWorkCenterCode = "BOND-WC" });
+        var titleForbidden = await Try(plant, plant.As("planner"), $"/api/workforce/workers/{operatorId}/job-title", new { jobTitle = "Bonding Operator", reason = "Set role" });
+        Assert.Equal(HttpStatusCode.Forbidden, titleForbidden.Status);
+        var titleNoReason = await Try(plant, e, $"/api/workforce/workers/{operatorId}/job-title", new { jobTitle = "Bonding Operator" });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, titleNoReason.Status);
+        await plant.Ok(e, $"/api/workforce/workers/{operatorId}/job-title", new { jobTitle = "Bonding Operator", reason = "HR confirmed official title" });
 
         await plant.Ok(e, "/api/resources/sites/WEST/edit", new { name = "West campus", timeZone = "America/Denver", reason = "Renamed site" });
         await plant.Ok(e, "/api/resources/work-centers/BOND-WC/edit", new { name = "Bonding line", parent = "BONDING", picture = "assembly", reason = "Clearer name" });
@@ -74,8 +91,12 @@ public sealed class PlantSetupTests(PostgresFixture postgres)
         Assert.Equal("West campus", Find(r, "sites", "WEST").GetProperty("name").GetString());
         Assert.Equal("America/Denver", Find(r, "sites", "WEST").GetProperty("timeZone").GetString());
         Assert.Equal("assembly", Find(r, "workCenters", "BOND-WC").GetProperty("picture").GetString());
+        Assert.Equal(0, Find(r, "workCenters", "BOND-WC").GetProperty("layoutX").GetInt32());
+        Assert.Equal(1, Find(r, "workCenters", "BOND-WC-2").GetProperty("layoutX").GetInt32());
         Assert.Equal("WIND-WC", Find(r, "machines", "LAM-1").GetProperty("workCenterCode").GetString());
         Assert.Equal("WINDING", Find(r, "machines", "LAM-1").GetProperty("safetyAreaCode").GetString());
+        var workers = await Get(e, "/api/workforce/workers");
+        Assert.Equal("Bonding Operator", workers.EnumerateArray().Single(w => w.GetProperty("personId").GetGuid() == operatorId).GetProperty("jobTitle").GetString());
 
         // A work center with an active machine cannot be retired; retire the machine first.
         var withMachine = await Try(plant, e, "/api/resources/work-centers/WIND-WC/retire", new { reason = "Closing winding" });

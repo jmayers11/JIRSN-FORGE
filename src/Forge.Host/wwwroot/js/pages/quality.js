@@ -22,16 +22,19 @@ export async function qualityPage(page, ctx) {
   const engineer = canAction(me, 'quality.plan');
   const disposition = canAction(me, 'quality.disposition');
   const manager = canAction(me, 'quality.approve');
+  const canRequestMaterial = canAction(me, 'inventory.material-request');
+  const canReadInventory = canAction(me, 'inventory.read');
   let tab = ctx.query.get('tab') ?? 'due';
   let showClosed = false;
   let data = {};
 
   async function load() {
-    const [due, ncrs, capas, plans, gauges, inspections, items] = await Promise.all([
+    const [due, ncrs, capas, plans, gauges, inspections, items, suspectReports, locations] = await Promise.all([
       tryGet('/api/quality/due'), tryGet(`/api/quality/ncrs?includeClosed=${showClosed}`), tryGet(`/api/quality/capas?includeVerified=${showClosed}`),
-      tryGet('/api/quality/plans'), tryGet('/api/quality/gauges'), tryGet('/api/quality/inspections?take=100'), tryGet('/api/engineering/items'),
+      tryGet('/api/quality/plans'), tryGet('/api/quality/gauges'), tryGet('/api/quality/inspections?take=100'), tryGet('/api/engineering/items'), tryGet('/api/quality/suspect-scrap'),
+      canReadInventory ? tryGet('/api/inventory/locations') : Promise.resolve({ data: [] }),
     ]);
-    data = { due, ncrs, capas, plans, gauges, inspections, items };
+    data = { due, ncrs, capas, plans, gauges, inspections, items, suspectReports, locations };
   }
   const reload = async () => { await load(); render(); };
   const mine = actor => actor === `person:${me.personId}`;
@@ -42,7 +45,8 @@ export async function qualityPage(page, ctx) {
     const open = ncrs.filter(n => n.status === 'Open' || n.status === 'AwaitingApproval').length;
     const due = data.due.data?.length ?? 0;
     const overdueGauges = (data.gauges.data ?? []).filter(g => g.active && g.calibrationDue < today());
-    const tabs = [['due', `Inspections due${due ? ` (${due})` : ''}`], ['ncrs', `Nonconformances${open ? ` (${open})` : ''}`], ['capas', 'Corrective actions'], ['history', 'Inspection history'], ['plans', 'Inspection plans'], ['gauges', 'Gauges']];
+    const suspectCount = (data.suspectReports.data ?? []).filter(report => !report.ncrId).length;
+    const tabs = [['due', `Inspections due${due ? ` (${due})` : ''}`], ['ncrs', `Nonconformances${open ? ` (${open})` : ''}`], ['suspect', `Suspect reports${suspectCount ? ` (${suspectCount})` : ''}`], ['capas', 'Corrective actions'], ['history', 'Inspection history'], ['plans', 'Inspection plans'], ['gauges', 'Gauges']];
     page.innerHTML = `
       <div class="page-head">
         <div><h1>Quality</h1><div class="sub">Inspections, nonconformances and corrective actions. An undecided NCR or a missed inspection holds the order; finished goods enter stock and ship only after they pass.</div></div>
@@ -53,7 +57,7 @@ export async function qualityPage(page, ctx) {
       ${overdueGauges.length ? `<div class="notice warn">${overdueGauges.length} gauge(s) are past their calibration date and cannot be used for inspection: ${overdueGauges.map(g => esc(g.code)).join(', ')}.</div>` : ''}
       <section class="panel">
         <header><div class="seg">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${{ due: dueTab, ncrs: ncrTab, capas: capaTab, history: historyTab, plans: plansTab, gauges: gaugesTab }[tab]?.() ?? dueTab()}
+        ${{ due: dueTab, ncrs: ncrTab, suspect: suspectTab, capas: capaTab, history: historyTab, plans: plansTab, gauges: gaugesTab }[tab]?.() ?? dueTab()}
       </section>`;
 
     enhanceTables(page);
@@ -61,6 +65,8 @@ export async function qualityPage(page, ctx) {
     $('#closed', page).onchange = async e => { showClosed = e.target.checked; await reload(); };
     $('#raise', page)?.addEventListener('click', () => raiseNcr());
     $$('[data-inspect]', page).forEach(b => b.addEventListener('click', () => inspect(...b.dataset.inspect.split('/').map(Number))));
+    $$('[data-suspect-ncr]', page).forEach(b => b.addEventListener('click', () => raiseSuspectNcr(Number(b.dataset.suspectNcr))));
+    $$('[data-suspect-replacement]', page).forEach(b => b.addEventListener('click', () => requestSuspectReplacement(Number(b.dataset.suspectReplacement))));
     $$('[data-dispose]', page).forEach(b => b.addEventListener('click', () => dispose(Number(b.dataset.dispose))));
     $$('[data-docs-ncr]', page).forEach(b => b.addEventListener('click', () => attachmentsDrawer(`NCR ${b.dataset.docsNcr}`, { type: 'Ncr', id: b.dataset.docsNcr, me, note: 'Photos, measurements, supplier responses and evidence for this nonconformance.' })));
     $$('[data-approve]', page).forEach(b => b.addEventListener('click', () => decide(Number(b.dataset.approve), true)));
@@ -110,6 +116,52 @@ export async function qualityPage(page, ctx) {
         ${n.status === 'Dispositioned' && disposition ? `<button class="btn small" data-close="${n.ncrId}">Close</button> <button class="btn small ghost" data-capa-for="${n.ncrId}">Corrective action</button>` : ''}
         <button class="btn small ghost" data-docs-ncr="${n.ncrId}">Documents</button>
       </div></div>`).join('');
+  }
+
+  function suspectTab() {
+    if (data.suspectReports.error) return errorBlock(data.suspectReports.error, 'suspect material reports');
+    const rows = data.suspectReports.data ?? [];
+    if (!rows.length) return emptyBlock('No suspect material reports', 'Reports submitted from active shop-floor operations appear here for Quality review.');
+    return `<div class="notice warn">These reports preserve operator evidence. They are not approved scrap, quarantine transactions, or stock deductions. Raising an NCR places the linked order on Quality hold; inventory disposition remains a separate controlled action.</div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Reported</th><th>Source</th><th>Part / lot / serial</th><th>Qty</th><th>Reason</th><th>Evidence</th><th>Review</th></tr></thead><tbody>${rows.map(report => `<tr>
+        <td>${esc(fmtDateTime(report.reportedAt))}</td><td><a href="#/orders/${report.orderNumber}">WO ${report.orderNumber}</a> / op ${report.sequence}<div class="faint">${esc(report.machineCode ?? 'Machine not recorded')}</div></td>
+        <td><b>${esc(report.partNumber)}</b>${report.revision ? ` · rev ${esc(report.revision)}` : ''}${report.lotNumber ? `<div class="faint">Lot ${esc(report.lotNumber)}</div>` : ''}${report.serialNumber ? `<div class="faint">Serial ${esc(report.serialNumber)}</div>` : ''}</td>
+        <td>${qty(report.quantity)}</td><td>${esc(report.kind)} · ${esc(report.reasonCode)}</td><td>${esc(report.description)}<div class="faint">Reported by ${esc(who(`person:${report.reporterPersonId}`))}</div></td>
+        <td>${report.ncrId ? `<a class="pill bad" href="#/quality?tab=ncrs">NCR ${report.ncrId}</a>` : inspector ? `<button class="btn small primary" data-suspect-ncr="${report.reportId}">Raise NCR &amp; hold order</button>` : '<span class="pill warn">Review needed</span>'}
+          ${report.kind === 'Scrap' && report.replacementTaskId ? `<div><a class="pill info" href="#/inventory?tab=tasks">Replacement task #${report.replacementTaskId}</a></div>` : report.kind === 'Scrap' && report.orderStatus === 'Released' && canRequestMaterial && canReadInventory ? `<div><button class="btn small" data-suspect-replacement="${report.reportId}">Request BOM replacement</button></div>` : ''}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  async function raiseSuspectNcr(reportId) {
+    const report = (data.suspectReports.data ?? []).find(item => item.reportId === reportId);
+    if (!report) return;
+    const result = await confirmWithReason({ title: `Raise NCR from suspect report ${reportId}?`,
+      detail: `Create an open NCR for WO ${report.orderNumber}, operation ${report.sequence}, ${report.quantity} ${report.partNumber}. The order will be held for Quality disposition. This does not post an inventory adjustment.`,
+      confirmLabel: 'Raise NCR and hold order', reasonRequired: true },
+    reason => command(`/api/quality/suspect-scrap/${reportId}/ncr`, {}, reason));
+    if (result) { toast(result.message ?? 'NCR raised.'); await reload(); }
+  }
+
+  async function requestSuspectReplacement(reportId) {
+    const report = (data.suspectReports.data ?? []).find(item => item.reportId === reportId);
+    if (!report || report.kind !== 'Scrap' || !canRequestMaterial || !canReadInventory) return;
+    try {
+      const locations = (data.locations.data ?? []).filter(location => location.active && location.inCompanyCustody
+        && location.workCenterCode === report.workCenterCode && (location.kind === 'Staging' || location.kind === 'Production'
+          || location.kind === 'MachineSide' && location.pointOfUse));
+      if (!locations.length) throw new Error('There is no active staging or point-of-use location configured at this operation.');
+      const result = await formModal({
+        title: `Request replacement — suspect report ${report.reportId}`,
+        detail: `This creates one material task linked to report ${report.reportId}. The part must be an approved component on the released BOM; this does not approve scrap, post stock, or change the work order. Request no more than the reported quantity (${qty(report.quantity)}).`,
+        confirmLabel: 'Request replacement material', reasonRequired: true,
+        fields: [
+          { name: 'quantity', label: 'Replacement quantity', type: 'number', min: 0.000001, max: report.quantity, step: 'any', required: true, value: report.quantity },
+          { name: 'toLocation', label: 'Destination', type: 'select', required: true, value: locations[0].code,
+            options: locations.map(location => [location.code, `${location.name} · ${location.code}`]) },
+        ],
+      }, (values, reason) => command(`/api/quality/suspect-scrap/${report.reportId}/replacement-request`, values, reason));
+      if (result) { toast(result.message ?? 'Replacement material request submitted.'); await reload(); }
+    } catch (error) { toast(error.message, true); }
   }
 
   function capaTab() {

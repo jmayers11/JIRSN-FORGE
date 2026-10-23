@@ -43,7 +43,8 @@ public sealed record ShiftHandoff(
 
 public enum ShiftActionStatus { Assigned, Acknowledged, InProgress, Completed }
 public sealed record ShiftAction(long ActionId, long HandoffId, string Description, string? SourceKind, string? SourceReference, Guid Assignee, ShiftActionStatus Status, DateTimeOffset CreatedAt, string CreatedBy,
-    DateTimeOffset? AcknowledgedAt, string? AcknowledgedBy, DateTimeOffset? InProgressAt, string? InProgressBy, DateTimeOffset? CompletedAt, string? CompletedBy, Guid? ProgramId);
+    DateTimeOffset? AcknowledgedAt, string? AcknowledgedBy, DateTimeOffset? InProgressAt, string? InProgressBy, DateTimeOffset? CompletedAt, string? CompletedBy, Guid? ProgramId,
+    DateTimeOffset? DueAt = null, IReadOnlyList<long>? BlockedByActionIds = null, string? CompletionEvidence = null);
 public sealed record ShiftAcknowledgment(long HandoffId, Guid PersonId, DateTimeOffset AcknowledgedAt, string? Note);
 public sealed record ShiftCloseout(long CloseoutId, string WorkCenterCode, string ShiftCode, DateTimeOffset ShiftFrom, DateTimeOffset ShiftUntil, DateTimeOffset ClosedAt, string ClosedBy, ShiftCloseoutFacts Facts, string? Note);
 
@@ -57,9 +58,10 @@ public interface IShiftContinuityStore
     Task<bool> MarkReviewedAsync(long handoffId, DateTimeOffset at, string actor, CancellationToken ct);
     Task<bool> InsertAcknowledgmentAsync(ShiftAcknowledgment acknowledgment, CancellationToken ct);
     Task<IReadOnlyList<ShiftAcknowledgment>> ListAcknowledgmentsAsync(long handoffId, CancellationToken ct);
-    Task<long> InsertActionAsync(long handoffId, string description, string? sourceKind, string? sourceReference, Guid assignee, Guid? programId, DateTimeOffset at, string actor, CancellationToken ct);
+    Task<long> InsertActionAsync(long handoffId, string description, string? sourceKind, string? sourceReference, Guid assignee, Guid? programId,
+        DateTimeOffset? dueAt, IReadOnlyList<long> blockedByActionIds, DateTimeOffset at, string actor, CancellationToken ct);
     Task<ShiftAction?> FindActionAsync(long actionId, CancellationToken ct);
-    Task<bool> UpdateActionStatusAsync(long actionId, ShiftActionStatus expected, ShiftActionStatus status, DateTimeOffset at, string actor, CancellationToken ct);
+    Task<bool> UpdateActionStatusAsync(long actionId, ShiftActionStatus expected, ShiftActionStatus status, string? completionEvidence, DateTimeOffset at, string actor, CancellationToken ct);
     Task<IReadOnlyList<ShiftAction>> ListActionsAsync(long handoffId, CancellationToken ct);
     Task<long?> InsertCloseoutAsync(string workCenter, string shiftCode, DateTimeOffset from, DateTimeOffset until, DateTimeOffset at, string actor, ShiftCloseoutFacts facts, string? note, CancellationToken ct);
     Task<IReadOnlyList<ShiftCloseout>> ListCloseoutsAsync(string? workCenter, int limit, CancellationToken ct);
@@ -75,8 +77,9 @@ public sealed record ConfigureShiftChecklistItem(string WorkCenterCode, string C
 public sealed record CreateShiftHandoff(string WorkCenterCode, string ShiftCode, DateTimeOffset ShiftFrom, DateTimeOffset ShiftUntil, string? Context, IReadOnlyList<ShiftChecklistResponse>? Checklist = null);
 public sealed record ReviewShiftHandoff(long HandoffId);
 public sealed record AcknowledgeShiftHandoff(long HandoffId, string? Note);
-public sealed record AssignShiftAction(long HandoffId, string Description, string? SourceKind, string? SourceReference, Guid Assignee);
-public sealed record TransitionShiftAction(long ActionId, ShiftActionStatus Expected, ShiftActionStatus Status);
+public sealed record AssignShiftAction(long HandoffId, string Description, string? SourceKind, string? SourceReference, Guid Assignee,
+    DateTimeOffset? DueAt = null, IReadOnlyList<long>? BlockedByActionIds = null);
+public sealed record TransitionShiftAction(long ActionId, ShiftActionStatus Expected, ShiftActionStatus Status, string? Evidence = null);
 public sealed record CloseShift(string WorkCenterCode, string ShiftCode, DateTimeOffset ShiftFrom, DateTimeOffset ShiftUntil, string? Note);
 
 public sealed record ShiftHandoffCreated(long HandoffId, string WorkCenterCode, string ShiftCode, DateTimeOffset ShiftFrom, DateTimeOffset ShiftUntil) : IDomainEvent

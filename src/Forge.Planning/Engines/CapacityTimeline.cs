@@ -10,13 +10,17 @@ public sealed record WorkRequirement(
     string ActivityCode,
     IReadOnlyList<string> OperatorQualifications,
     IReadOnlyList<string> RequiredQualifications,
-    int Crew)
+    int Crew,
+    bool RequiresMachineAuthorization = false)
 {
     public string Key =>
-        $"{WorkCenterCode}|{MachineCode}|{ActivityCode}|{string.Join(",", OperatorQualifications)}|{string.Join(",", RequiredQualifications)}|{Crew}";
+        $"{WorkCenterCode}|{MachineCode}|{ActivityCode}|{string.Join(",", OperatorQualifications)}|{string.Join(",", RequiredQualifications)}|{Crew}|{RequiresMachineAuthorization}";
 
-    public bool Qualifies(PersonSnapshot person) =>
-        (OperatorQualifications.Count == 0 || OperatorQualifications.Any(person.Holds)) && RequiredQualifications.All(person.Holds);
+    public bool Qualifies(PersonSnapshot person, DateTimeOffset at) =>
+        (OperatorQualifications.Count == 0 || OperatorQualifications.Any(code => person.HoldsAt(code, at)))
+        && RequiredQualifications.All(code => person.HoldsAt(code, at))
+        && (!RequiresMachineAuthorization || (MachineCode is { } machine
+            && OperatorQualifications.Any(code => person.HoldsAt(code, at) && person.AuthorizedForMachineAt(machine, ActivityCode, code, at))));
 }
 
 /// <summary>
@@ -53,6 +57,7 @@ internal sealed class CapacityTimeline
             schedules.Values.SelectMany(spans => spans.SelectMany(s => new[] { s.Start, s.End }))
                 .Concat(snapshot.Downtime.SelectMany(d => new[] { d.StartsAt, d.EndsAt ?? horizon.End }))
                 .Concat(snapshot.People.SelectMany(p => p.QualificationExpiry.Values.OfType<DateTimeOffset>()))
+                .Concat(snapshot.People.SelectMany(p => p.MachineAuthorizationExpiry.Values.OfType<DateTimeOffset>()))
                 .Concat(snapshot.ToolEvents.Select(e => e.At))
                 .Concat(snapshot.People.SelectMany(p => p.WorkCenterPeriods)
                     .SelectMany(p => new[] { p.From, p.Through is { } t && t < DateOnly.MaxValue ? t.AddDays(1) : DateOnly.MinValue })
@@ -148,7 +153,7 @@ internal sealed class CapacityTimeline
 
         var projected = ProjectedAt(span.Start);
         var safety = composition.Evaluate(projected, new WorkItem(area, requirement.WorkCenterCode, requirement.MachineCode, requirement.ActivityCode), span.Start).Output;
-        var candidates = projected.PresentInArea(area).Where(requirement.Qualifies).ToList();
+        var candidates = projected.PresentInArea(area).Where(person => requirement.Qualifies(person, span.Start)).ToList();
 
         if (safety.Status == CompositionStatus.NotSatisfied)
         {

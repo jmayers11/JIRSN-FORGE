@@ -7,6 +7,14 @@ import { installBrowser, response, deferred, flush, fire } from './browser-harne
 
 const person = badge => ({ displayName: `Operator ${badge}`, personId: badge, clockedInSince: '2026-10-12T09:00:00Z', hasPin: true, isWorker: true, queue: [], training: [] });
 
+test('opening sign-in keeps the original redtail hawk artwork in the responsive showcase', async () => {
+  const app = await readFile(new URL('../../src/Forge.Host/wwwroot/js/app.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../../src/Forge.Host/wwwroot/css/forge.css', import.meta.url), 'utf8');
+  assert.match(app, /class="login-hawk-feature" src="\/img\/brand\/bg-hero-hawk\.jpg" alt="The original JIRSN redtail hawk artwork"/);
+  assert.match(css, /\.login-hawk-feature\s*\{[^}]*object-fit:\s*cover/);
+  assert.match(css, /@media\s*\(max-width:\s*860px\)[\s\S]*?\.login-hawk-feature\s*\{/);
+});
+
 async function terminalPage(t, route = (path, body) => response(person(body?.badge)), idleTimeoutSeconds = undefined) {
   const browser = installBrowser(t), calls = [];
   const page = browser.document.createElement('div');

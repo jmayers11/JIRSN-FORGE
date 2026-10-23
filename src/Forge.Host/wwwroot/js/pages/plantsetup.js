@@ -135,7 +135,7 @@ export async function plantSetupPage(page, ctx) {
     const live = m.active !== false && wcLive;
     return `<div class="plant-row machine${m.active === false ? ' retired' : ''}">
       <div>${img('production', 'sm')} <b>${esc(m.name)}</b>${retiredPill(m)} <span class="faint mono">${esc(m.code)}</span>
-        <div class="machine-acts">${profile.map(p => `<span class="chip" title="Operator needs one of: ${esc(p.operatorQualifications.join(', '))}">${esc(actName(p.activityCode))} · ${esc(p.operatorQualifications.join(' / '))}${live && canManage ? `<button class="chip-x" data-act="edit-mact" data-machine="${esc(m.code)}" data-activity="${esc(p.activityCode)}" aria-label="Change">✎</button><button class="chip-x" data-act="remove-mact" data-machine="${esc(m.code)}" data-activity="${esc(p.activityCode)}" aria-label="Remove">×</button>` : ''}</span>`).join('') || '<span class="c-warn">No work set up — it cannot be scheduled</span>'}
+        <div class="machine-acts">${profile.map(p => `<span class="chip" title="Operator needs one of: ${esc(p.operatorQualifications.join(', '))}${p.requiresMachineAuthorization ? '; plus a current practical authorization for this exact machine and activity' : ''}">${esc(actName(p.activityCode))} · ${esc(p.operatorQualifications.join(' / '))}${p.requiresMachineAuthorization ? ' · machine authorization' : ''}${live && canManage ? `<button class="chip-x" data-act="edit-mact" data-machine="${esc(m.code)}" data-activity="${esc(p.activityCode)}" aria-label="Change">✎</button><button class="chip-x" data-act="remove-mact" data-machine="${esc(m.code)}" data-activity="${esc(p.activityCode)}" aria-label="Remove">×</button>` : ''}</span>`).join('') || '<span class="c-warn">No work set up — it cannot be scheduled</span>'}
         ${live ? btn('add-mact', '+ Work it does', { machine: m.code }, 'tiny') : ''}</div>
       </div>
       <div class="row-actions">${btn('edit-machine', 'Edit', { code: m.code })}${m.active === false && !wcLive ? '' : retireBtn('Machine', m)}</div>
@@ -287,11 +287,12 @@ export async function plantSetupPage(page, ctx) {
     const current = activityCode ? r.machineActivities.find(x => x.machineCode === machineCode && x.activityCode === activityCode) : null;
     return formModal({
       title: activityCode ? `${activityCode} on ${machineCode}` : `Work ${machineCode} does`,
-      detail: 'An operator needs any one of the ticked qualifications to run it.',
+      detail: 'An operator needs any one of the ticked qualifications to run it. For specialized work, require a separately assessed authorization for this exact machine and activity.',
       confirmLabel: 'Save', reasonRequired: false,
       fields: [
         activityCode ? { name: 'activityCode', label: 'Kind of work', value: activityCode, readonly: true } : { name: 'activityCode', label: 'Kind of work', type: 'select', options: activityOptions() },
         { name: 'operatorQualifications', label: 'Operator qualifications', type: 'checks', options: qualOptions(), value: current?.operatorQualifications ?? [], required: true },
+        { name: 'requiresMachineAuthorization', label: 'Require machine-specific authorization', type: 'check', text: 'Independent practical assessment and approval must be current for this exact machine and activity', value: current?.requiresMachineAuthorization ?? false },
       ],
     }, (v, reason) => command(`/api/resources/machines/${enc(machineCode)}/activities`, v, reason));
   }

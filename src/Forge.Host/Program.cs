@@ -39,8 +39,8 @@ var connectionString = builder.Configuration.GetConnectionString("Forge")
 // Bounded contexts in dependency order (migrations run in this order).
 builder.Services.AddForgeKernel(connectionString);
 builder.Services.AddForgeStore<INotificationStore>(uow => new NotificationStore(uow));
-builder.Services.AddForgeCompetency();
 builder.Services.AddForgeResources();
+builder.Services.AddForgeCompetency();
 builder.Services.AddForgeWorkforce();
 builder.Services.AddForgeSafetyRules();
 builder.Services.AddForgeEngineering();
@@ -80,6 +80,7 @@ builder.Services.AddSingleton<Forge.Kernel.Commands.ICommandSourceResolver>(sp =
 builder.Services.AddSingleton<IdentificationResolver>();
 builder.Services.AddForgeStore<IIdentificationPresentationStore>(uow => new LabelStore(uow));
 builder.Services.AddForgeStore<Forge.Engineering.Contracts.IGeneratedDocumentContentStore>(uow => new GeneratedDocumentContentStore(uow));
+builder.Services.AddScoped<Forge.Host.Workforce.PlantVisualService>();
 builder.Services.AddForgeStore<IScanSessionStore>(uow => new PostgresScanSessionStore(uow));
 builder.Services.AddSingleton<PresentationAccess>();
 builder.Services.AddSingleton<LabelRendering>();
@@ -260,6 +261,7 @@ app.MapScanSessionEndpoints();
 app.MapKernelEndpoints();
 app.MapScimEndpoints();
 app.MapOperationsEndpoints();
+app.MapPlantVisualEndpoints();
 app.MapEngineeringEndpoints();
 app.MapDocumentEndpoints();
 app.MapChangeEndpoints();

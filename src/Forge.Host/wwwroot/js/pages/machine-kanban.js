@@ -137,7 +137,7 @@ export async function machineKanbanPage(page, ctx) {
   }
 
   const state = { machines: [], workCenters: [], operations: [], activeWork: [], schedule: null, downtime: [], assets: [], maintenanceOrders: [], workers: [], qualifications: [], errors: {},
-    refreshedAt: null, loading: false, center: '', signal: '', query: '' };
+    refreshedAt: null, loading: false, center: '', signal: '', query: '', filtersOpen: false };
   await load();
 
   async function load() {
@@ -217,38 +217,45 @@ export async function machineKanbanPage(page, ctx) {
   }
 
   function render() {
-    const all = cards();
     const shown = visibleCards();
     const centerOptions = state.workCenters.map(center => `<option value="${esc(center.code)}" ${center.code === state.center ? 'selected' : ''}>${esc(center.name)} (${esc(center.code)})</option>`).join('');
     const errors = Object.entries(state.errors).filter(([name]) => !['workers', 'qualifications', 'schedule'].includes(name));
     const readAt = state.refreshedAt ? fmtDateTime(state.refreshedAt) : 'not yet read';
     page.innerHTML = `
-      <div class="page-head"><div><h1>Machine Readiness</h1><div class="sub">Exceptions first. Signals come from Forge readiness and maintenance records; this plant has no live machine telemetry feed.</div></div>
-        <div class="spacer"></div><div class="head-controls"><a class="btn" href="#/supervisor">Plant Overview</a>${has(permissions, 'workforce.supervise') || has(permissions, 'workforce.manage') ? '<a class="btn" href="#/workforce-kanban">Workforce Kanban</a>' : ''}<button class="btn primary" id="refresh-machine-board" type="button" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Refreshing…' : 'Refresh status'}</button></div>
+      <div class="page-head"><div><h1>Machine Readiness</h1><div class="sub">Machines grouped by signal. Open a machine to see its readiness and maintenance details.</div></div>
+        <div class="spacer"></div><div class="head-controls"><a class="btn" href="#/supervisor">Plant Overview</a>${has(permissions, 'workforce.supervise') || has(permissions, 'workforce.manage') || has(permissions, 'resources.floor-map.manage') ? '<a class="btn" href="#/workforce-kanban">Workforce Kanban</a>' : ''}<button class="btn primary" id="refresh-machine-board" type="button" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Refreshing…' : 'Refresh status'}</button></div>
       </div>
-      <div class="notice warn"><b>Readiness is not telemetry.</b> “Ready” means an evaluated Forge operation passed at the last read time; it does not mean the machine is running. Missing or failed readiness reads remain Unknown. A status here cannot clear a safety, maintenance, quality or material blocker.</div>
       ${!has(permissions, 'planning.readiness.read') ? '<div class="notice warn">Your role cannot read operation readiness; machine readiness stays Unknown unless a separate Forge record confirms a blocker.</div>' : ''}
       ${errors.length ? `<section class="panel machine-source-errors"><b>Some source reads failed.</b><span> Failed readiness/resource reads prevent a Ready signal; maintenance and workforce details may be incomplete.</span>${errors.map(([name, error]) => `<div>${errorBlock(error, name)}</div>`).join('')}</section>` : ''}
-      <section class="kpis machine-board-kpis" aria-label="Machine status summary">${LANE_ORDER.map(key => `<div class="kpi machine-kpi ${key}"><div><div class="t">${esc(LANE[key].title)}</div><div class="v">${all.filter(card => card.status === key).length}</div></div></div>`).join('')}</section>
-      <section class="panel machine-board-filters" aria-label="Machine board filters">
+      ${renderKpis(shown)}
+      <details class="panel machine-filter-disclosure" ${state.filtersOpen ? 'open' : ''}><summary>Find or filter machines</summary><div class="machine-board-filters" aria-label="Machine board filters">
         <label class="field"><span>Work center</span><select class="input" id="machine-center"><option value="">All work centers</option>${centerOptions}</select></label>
         <label class="field"><span>Signal</span><select class="input" id="machine-signal"><option value="">All signals</option>${LANE_ORDER.map(key => `<option value="${key}" ${state.signal === key ? 'selected' : ''}>${esc(LANE[key].title)}</option>`).join('')}</select></label>
-        <label class="field"><span>Find a machine, order or state</span><input class="input" id="machine-search" type="search" value="${esc(state.query)}" placeholder="Machine ID, name, order" autocomplete="off"></label>
-      </section>
-      <div class="machine-board-meta" role="status">Forge records read ${esc(readAt)} · ${state.schedule?.versionId ? `approved production schedule ${esc(state.schedule.versionId)}` : 'schedule context unavailable or not authorized'} · separate reads, not a real-time or atomic snapshot</div>
+        <label class="field"><span>Find a machine</span><input class="input" id="machine-search" type="search" value="${esc(state.query)}" placeholder="Machine name or ID" autocomplete="off"></label>
+      </div></details>
       ${!state.machines.length ? emptyBlock(state.errors.resources || !has(permissions, 'resources.read') ? 'Machine data is not available' : 'No machines available', state.errors.resources ? 'Machine resource data could not be read.' : !has(permissions, 'resources.read') ? 'Your role does not include resource read access.' : 'Set up active machines under Plant Setup.') : renderLanes(shown)}
-      <section class="panel machine-board-legend"><b>Signal guide</b><span><i class="machine-signal-dot blocked" aria-hidden="true">■</i> Blocked / Down — a recorded outage, restriction, or assigned/scheduled operation failure</span><span><i class="machine-signal-dot attention" aria-hidden="true">!</i> Attention — overdue PM/inspection/calibration work or upcoming recorded downtime</span><span><i class="machine-signal-dot ready" aria-hidden="true">✓</i> Ready — an eligible operation passes Forge readiness</span><span><i class="machine-signal-dot unknown" aria-hidden="true">?</i> Unknown / Not verified — no current eligible operation or required read failed</span></section>`;
+      <details class="panel machine-board-legend"><summary>About readiness signals</summary><div class="machine-board-meta">Forge records read ${esc(readAt)} · ${state.schedule?.versionId ? `approved schedule ${esc(state.schedule.versionId)}` : 'schedule unavailable or not authorized'} · reads are separate, not real-time or atomic. Ready means an evaluated Forge operation passed at the last read; it does not mean the machine is running. This board cannot clear a recorded safety, maintenance, quality or material blocker.</div>
+        <div class="machine-board-legend-items"><span><i class="machine-signal-dot blocked" aria-hidden="true">■</i> Blocked / Down — recorded outage, restriction, or operation failure</span><span><i class="machine-signal-dot attention" aria-hidden="true">!</i> Attention — overdue service or upcoming recorded downtime</span><span><i class="machine-signal-dot ready" aria-hidden="true">✓</i> Ready — an eligible operation passes Forge readiness</span><span><i class="machine-signal-dot unknown" aria-hidden="true">?</i> Unknown — no current eligible operation or required read failed</span></div></details>`;
 
     $('#refresh-machine-board', page)?.addEventListener('click', () => { void load(); });
-    $('#machine-center', page)?.addEventListener('change', event => { state.center = event.target.value; render(); });
-    $('#machine-signal', page)?.addEventListener('change', event => { state.signal = event.target.value; render(); });
+    $('.machine-filter-disclosure', page)?.addEventListener('toggle', event => { state.filtersOpen = event.target.open; });
+    $('#machine-center', page)?.addEventListener('change', event => { state.center = event.target.value; state.filtersOpen = true; render(); });
+    $('#machine-signal', page)?.addEventListener('change', event => { state.signal = event.target.value; state.filtersOpen = true; render(); });
     $('#machine-search', page)?.addEventListener('input', event => { state.query = event.target.value; renderBoardOnly(); });
   }
 
   function renderBoardOnly() {
+    const kpis = $('.machine-board-kpis', page);
+    if (kpis) kpis.outerHTML = renderKpis(visibleCards());
     const host = $('.machine-kanban-host', page);
     if (!host) return;
     host.outerHTML = renderLanes(visibleCards());
+  }
+
+  function renderKpis(list) {
+    return `<section class="kpis machine-board-kpis" aria-label="Machine readiness counts">
+      ${LANE_ORDER.map(key => { const count = list.filter(card => card.status === key).length; return `<div class="kpi ${key}"><div class="k">${esc(LANE[key].title)}</div><div class="v">${count}</div></div>`; }).join('')}
+    </section>`;
   }
 
   function renderLanes(list) {
@@ -272,15 +279,17 @@ export async function machineKanbanPage(page, ctx) {
     const due = nextMaintenance ? `${esc(nextMaintenance.title)}${nextMaintenance.dueDate ? ` · due ${esc(fmtDate(nextMaintenance.dueDate))}` : nextMaintenance.dueByRunHours ? ' · run-hour limit reached' : ''}` : 'No open PM/inspection/calibration work order found.';
     const operationDetail = operation ? `Order #${operation.orderNumber} · op ${operation.sequence} · ${operation.description ?? 'Operation'}${operation.partNumber ? ` · ${operation.partNumber}` : ''}` : 'No linked operation readiness result.';
     const upcoming = card.futureWindow ? `<div><b>Upcoming downtime</b><br>${esc(DOWN_LABEL[card.futureWindow.kind] ?? card.futureWindow.kind)} · ${esc(fmtDateTime(card.futureWindow.startsAt))} · ${esc(card.futureWindow.reason ?? '')}</div>` : '';
-    return `<article class="machine-kanban-card ${card.status}" aria-label="${esc(machine.code)} ${esc(lane.title)}">
-      <header><div><span class="machine-code">${esc(machine.code)}</span><h3>${esc(machine.name)}</h3></div><span class="machine-status ${lane.tone}"><span class="machine-signal-dot ${card.status}" aria-hidden="true">${lane.icon}</span><span>${esc(lane.title)}</span></span></header>
-      <div class="machine-card-summary">${esc(card.summary)}</div>
-      <dl class="machine-card-facts"><div><dt>Work center</dt><dd>${esc(workCenter?.name ?? machine.workCenterCode)} <span class="muted">${esc(machine.workCenterCode)}</span></dd></div>
-        <div><dt>Current readiness context</dt><dd>${esc(operationDetail)}</dd></div>
+    const location = workCenter?.name ? `${workCenter.name} (${machine.workCenterCode})` : machine.workCenterCode ?? 'Location not set';
+    return `<details class="machine-kanban-card ${card.status}" aria-label="${esc(machine.name)}, ${esc(location)}, ${esc(lane.title)}">
+      <summary class="machine-card-summary"><span class="machine-machine-name">${esc(machine.name)}</span><span class="machine-machine-location">${esc(location)}</span></summary>
+      <div class="machine-card-detail-body">
+      <header class="machine-card-detail-head"><span class="machine-code">${esc(machine.code)}</span><span class="machine-status ${lane.tone}"><span class="machine-signal-dot ${card.status}" aria-hidden="true">${lane.icon}</span><span>${esc(lane.title)}</span></span></header>
+      <div class="machine-card-signal-summary">${esc(card.summary)}</div>
+      <dl class="machine-card-facts"><div><dt>Current readiness context</dt><dd>${esc(operationDetail)}</dd></div>
         <div><dt>Assigned staff</dt><dd>${staff}</dd></div>
         <div><dt>Next maintenance record</dt><dd>${due}</dd></div></dl>
       ${card.blockers.length ? `<ul class="machine-blocker-list" aria-label="Current blockers">${card.blockers.map(blocker => `<li><b>${esc(blocker.source)}:</b> ${esc(blocker.text)}</li>`).join('')}</ul>` : ''}
-      <details class="machine-card-more"><summary>Details and related work</summary><div class="machine-card-detail-body">
+      <div class="machine-card-evidence">
         ${operation?.dimensions?.length ? `<div><b>Readiness evidence</b><ul>${operation.dimensions.map(d => `<li><span class="pill ${d.outcome === 'Pass' ? 'ok' : ['Fail', 'Indeterminate'].includes(d.outcome) ? 'bad' : 'none'}">${esc(d.outcome)}</span> ${esc(d.name)} — ${esc(d.detail)}</li>`).join('')}</ul></div>` : ''}
         ${card.candidateBlockers.length ? `<div><b>Other open operation blockers</b><ul>${card.candidateBlockers.map(item => `<li><a href="#/orders/${encodeURIComponent(item.orderNumber)}">Order #${esc(item.orderNumber)} / op ${esc(item.sequence)}</a> — ${esc(item.why || item.primaryConstraint || 'Not executable')}</li>`).join('')}</ul></div>` : ''}
         ${nextScheduled ? `<div><b>Next approved operation</b><br><a href="#/orders/${encodeURIComponent(nextScheduled.orderNumber)}">Order #${esc(nextScheduled.orderNumber)} / op ${esc(nextScheduled.sequence)}</a> · ${esc(fmtDateTime(nextScheduled.start))}–${esc(fmtDateTime(nextScheduled.end))}</div>` : ''}
@@ -289,9 +298,9 @@ export async function machineKanbanPage(page, ctx) {
         ${card.asset?.status ? `<div><b>Production asset</b> ${esc(card.asset.assetCode)} · ${esc(card.asset.status)}</div>` : ''}
         ${card.error ? `<div>${errorBlock(card.error, 'machine readiness')}</div>` : ''}
         <div><b>Read at</b> ${esc(fmtDateTime(state.refreshedAt))}</div>
-      </div></details>
+      </div>
       <footer class="machine-card-actions">${orderLink}<a class="btn small" href="#/work-centers/${encodeURIComponent(machine.workCenterCode)}">Work center</a>${!card.maintenanceHidden ? '<a class="btn small" href="#/maintenance?tab=machines">Maintenance</a>' : ''}</footer>
-    </article>`;
+      </div></details>`;
   }
 
   render();

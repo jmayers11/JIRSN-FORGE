@@ -30,6 +30,11 @@ public sealed record RecordInspection(long OrderNumber, int Sequence, decimal Qu
 
 public sealed record RaiseNcr(string PartNumber, long? OrderNumber, int? Sequence, string? LotNumber, decimal Quantity, string Defect, string Description);
 
+public sealed record ReportSuspectScrap(SuspectReportKind Kind, Guid ReporterPersonId, long OrderNumber, int Sequence, string PartNumber,
+    decimal Quantity, string ReasonCode, string Description, string? LotNumber = null, string? SerialNumber = null);
+
+public sealed record RaiseNcrFromSuspectScrap(long ReportId);
+
 public sealed record DispositionNcr(long NcrId, Disposition Disposition, string Note);
 
 public sealed record DecideUseAsIs(long NcrId, bool Approve);
@@ -53,6 +58,18 @@ public sealed record NcrChanged(long NcrId, string PartNumber, long? OrderNumber
 {
     public static string EventType => nameof(NcrChanged);
 
+    public static int SchemaVersion => 1;
+}
+
+public sealed record SuspectScrapReported(long ReportId, long OrderNumber, int Sequence, string PartNumber, string Kind) : IDomainEvent
+{
+    public static string EventType => nameof(SuspectScrapReported);
+    public static int SchemaVersion => 1;
+}
+
+public sealed record SuspectScrapEscalated(long ReportId, long NcrId, long OrderNumber, int Sequence) : IDomainEvent
+{
+    public static string EventType => nameof(SuspectScrapEscalated);
     public static int SchemaVersion => 1;
 }
 
@@ -363,6 +380,82 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
                 CommandResult.Ok(id, $"NCR {id} raised: {c.Quantity} {part}, {ncr.Defect}." + (c.OrderNumber is null ? string.Empty : $" Order {c.OrderNumber} is held until it is dispositioned.")),
                 [pipeline.Event(new NcrChanged(ncrId, part, c.OrderNumber, nameof(NcrStatus.Open)), context, SourceContext, "Ncr", id)],
                 new AuditChange("Ncr", id, null, CanonicalJson.Serialize(ncr with { NcrId = ncrId })));
+        }, ct);
+    }
+
+    /// <summary>Captures shop-floor suspicion separately from approved scrap, NCR disposition and inventory movement.</summary>
+    public Task<CommandResult> ReportSuspectScrapAsync(ReportSuspectScrap c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var part = BusinessCode.Require(c.PartNumber, "Part");
+        var spec = new CommandSpec(SourceContext, nameof(ReportSuspectScrap), Permissions.QualityReportSuspect,
+            ResourceRef.Of("Order", c.OrderNumber.ToString(System.Globalization.CultureInfo.InvariantCulture)), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            if (c.Kind is not (SuspectReportKind.Scrap or SuspectReportKind.QualityIssue))
+                throw new CommandRejectedException("invalid_report_kind", "Choose scrap or quality issue.");
+            if (c.Quantity <= 0 || c.Quantity > 100_000_000)
+                throw new CommandRejectedException("invalid_quantity", "Reported quantity must be above zero.");
+            if (await uow.Store<IEngineeringLookup>().FindItemAsync(part, ct) is null)
+                throw new CommandRejectedException("unknown_part", $"Part {part} does not exist.");
+
+            var order = await uow.Store<IExecutionLookup>().FindOrderAsync(c.OrderNumber, ct);
+            if (order is null || order.Status is not (OrderStatus.Released or OrderStatus.Held)
+                || order.ProgramId is { } program && !context.Principal.Programs.Contains(new ProgramId(program)))
+                throw new CommandRejectedException("order_not_found", $"Released order {c.OrderNumber} does not exist in your program access.");
+            var operation = order.Operations.SingleOrDefault(candidate => candidate.Sequence == c.Sequence)
+                ?? throw new CommandRejectedException("operation_not_found", $"Order {c.OrderNumber} has no operation {c.Sequence}.");
+            if (operation.Status == OperationStatus.Complete)
+                throw new CommandRejectedException("operation_complete", "Suspect production material must be reported against an operation that is still open.");
+            if (part != order.PartNumber && order.Materials.All(material => material.ComponentPartNumber != part))
+                throw new CommandRejectedException("part_not_on_order", $"Part {part} is not the order output or a released BOM component.");
+            var labor = (await uow.Store<IExecutionLookup>().ListOpenLaborAsync(ct))
+                .SingleOrDefault(entry => entry.PersonId == c.ReporterPersonId && entry.OrderNumber == c.OrderNumber
+                    && entry.Sequence == c.Sequence && entry.Role != LaborRole.Trainer)
+                ?? throw new CommandRejectedException("not_on_operation", "The reporting employee must have an active operator or trainee session on this operation.");
+            if (await uow.People.FindAsync(new PersonId(c.ReporterPersonId), ct) is not { IsActive: true })
+                throw new CommandRejectedException("reporter_not_found", "The reporting identity is not an active Forge person.");
+
+            var report = new SuspectScrapReport(0, c.Kind, order.OrderNumber, c.Sequence, part, order.Revision,
+                Trim(c.LotNumber, 80)?.ToUpperInvariant(), Trim(c.SerialNumber, 100), c.Quantity, labor.MachineCode,
+                c.ReporterPersonId, BusinessCode.Require(c.ReasonCode, "Reason code"), BusinessCode.RequireName(c.Description, "Description"), now);
+            var id = await uow.Store<ISuspectScrapReportStore>().InsertSuspectScrapReportAsync(report, ct);
+            var key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return new CommandOutcome(
+                CommandResult.Ok(key, $"Suspect {c.Kind.ToString().ToLowerInvariant()} report {key} recorded for order {order.OrderNumber}, operation {c.Sequence}. Quality review is required; no stock was deducted or dispositioned."),
+                [pipeline.Event(new SuspectScrapReported(id, order.OrderNumber, c.Sequence, part, c.Kind.ToString()), context, SourceContext, "SuspectScrapReport", key, order.ProgramId is { } programId ? new ProgramId(programId) : null)],
+                new AuditChange("SuspectScrapReport", key, null, CanonicalJson.Serialize(report with { ReportId = id }), order.ProgramId is { } auditProgramId ? new ProgramId(auditProgramId) : null));
+        }, ct);
+    }
+
+    /// <summary>Quality review links operator evidence to a canonical NCR in one transaction; NCR holds remain authoritative.</summary>
+    public Task<CommandResult> RaiseNcrFromSuspectScrapAsync(RaiseNcrFromSuspectScrap c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var key = c.ReportId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var spec = new CommandSpec(SourceContext, nameof(RaiseNcrFromSuspectScrap), Permissions.QualityInspect,
+            ResourceRef.Of("SuspectScrapReport", key), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var report = await uow.Store<IQualityLookup>().FindSuspectScrapReportAsync(c.ReportId, ct)
+                ?? throw new CommandRejectedException("suspect_report_not_found", $"Suspect report {key} does not exist.");
+            if (report.NcrId is not null)
+                throw new CommandRejectedException("ncr_already_linked", $"Suspect report {key} is already linked to NCR {report.NcrId}.");
+            var order = await uow.Store<IExecutionLookup>().FindOrderAsync(report.OrderNumber, ct);
+            if (order is null || order.ProgramId is { } program && !context.Principal.Programs.Contains(new ProgramId(program)))
+                throw new CommandRejectedException("order_not_found", "The source work order is not available in your program access.");
+            var ncr = new NcrInfo(0, report.PartNumber, report.OrderNumber, report.Sequence, report.LotNumber, report.Quantity,
+                report.ReasonCode, report.Description, NcrStatus.Open, null, null, context.Actor, now, null, null, null, null, null);
+            var ncrId = await uow.Store<IQualityStore>().InsertNcrAsync(ncr, ct);
+            if (!await uow.Store<ISuspectScrapReportStore>().LinkSuspectScrapReportNcrAsync(report.ReportId, ncrId, ct))
+                throw new CommandRejectedException("suspect_report_changed", "Another reviewer linked this report to an NCR. Refresh the queue and try again.");
+            var linkedReport = report with { NcrId = ncrId };
+            var ncrKey = ncrId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return new CommandOutcome(
+                CommandResult.Ok(key, $"NCR {ncrKey} raised and linked to suspect report {key}. The work order is held for authorized Quality disposition; no inventory quantity was adjusted."),
+                [pipeline.Event(new NcrChanged(ncrId, ncr.PartNumber, ncr.OrderNumber, nameof(NcrStatus.Open)), context, SourceContext, "Ncr", ncrKey, order.ProgramId is { } eventProgramId ? new ProgramId(eventProgramId) : null),
+                    pipeline.Event(new SuspectScrapEscalated(report.ReportId, ncrId, report.OrderNumber, report.Sequence), context, SourceContext, "SuspectScrapReport", key, order.ProgramId is { } escalationProgramId ? new ProgramId(escalationProgramId) : null)],
+                new AuditChange("SuspectScrapReport", key, CanonicalJson.Serialize(report), CanonicalJson.Serialize(linkedReport), order.ProgramId is { } auditProgramId ? new ProgramId(auditProgramId) : null));
         }, ct);
     }
 

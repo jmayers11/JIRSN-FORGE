@@ -34,6 +34,7 @@ public static class PlanningRegistration
         services.AddSingleton<ProductionActualsQueries>();
         services.AddSingleton<HistoryService>();
         services.AddSingleton<ScheduleService>();
+        services.AddSingleton<AttendanceScheduleService>();
         services.AddSingleton<IPriorityImpactProvider, PriorityImpactProvider>();
         services.AddSingleton<IShiftFactsProvider, ShiftFactsProvider>();
         services.AddSingleton<GoalService>();

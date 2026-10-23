@@ -376,7 +376,10 @@ public sealed class AnalystService(
         var rows = new List<ReportRow>();
         foreach (var p in snapshot.People.Where(p => p.Active).OrderBy(p => p.Name, StringComparer.Ordinal))
         {
-            var can = activities.Where(a => a.OperatorQualifications.All(q => p.HoldsAt(q, at))).Select(a => $"{a.MachineCode} {a.ActivityCode}").ToList();
+            var can = activities.Where(a => a.OperatorQualifications.Any(q => p.HoldsAt(q, at))
+                && (!a.RequiresMachineAuthorization || a.OperatorQualifications.Any(q => p.HoldsAt(q, at)
+                    && p.AuthorizedForMachineAt(a.MachineCode, a.ActivityCode, q, at))))
+                .Select(a => $"{a.MachineCode} {a.ActivityCode}").ToList();
             if (can.Count == 0 || (shift is not null && p.ShiftCode is not null && p.ShiftCode != shift))
             {
                 continue;
@@ -392,7 +395,7 @@ public sealed class AnalystService(
         var headline = rows.Count == 0
             ? $"Nobody holds the qualifications for {i.Machine ?? i.WorkCenter}" + (shift is null ? "." : $" on shift {shift}.")
             : $"{rows.Count} people are qualified for {i.Machine ?? i.WorkCenter}" + (shift is null ? string.Empty : $" on shift {shift}") + $"; {available} available at {Local(at, zone)}.";
-        var notes = new List<string> { "Qualified means every operator qualification of the machine activity is certified and unexpired at that time. Reasons for unavailability are not shown." };
+        var notes = new List<string> { "Qualified means the worker holds at least one listed operator qualification; machine-specific profiles also require a current authorization for that exact machine and activity. Reasons for unavailability are not shown." };
         if (shift is not null)
         {
             notes.Add($"People with no shift assigned are included; people on other shifts are not.");

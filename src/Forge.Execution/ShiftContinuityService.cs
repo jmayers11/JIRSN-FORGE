@@ -132,6 +132,9 @@ public sealed class ShiftContinuityService(
             var kind = Optional(command.SourceKind, 80);
             var reference = Optional(command.SourceReference, 160);
             if ((kind is null) != (reference is null)) throw Invalid("incomplete_source_reference", "Provide both source kind and source reference, or neither.");
+            var blockedBy = command.BlockedByActionIds ?? [];
+            if (blockedBy.Count > 20 || blockedBy.Any(id => id <= 0) || blockedBy.Distinct().Count() != blockedBy.Count)
+                throw Invalid("invalid_action_dependencies", "Choose at most 20 distinct, valid action dependencies.");
             Guid? programId = null;
             if (kind is not null && reference is not null)
             {
@@ -140,7 +143,12 @@ public sealed class ShiftContinuityService(
                 reference = source.Reference;
                 programId = source.ProgramId;
             }
-            var id = await uow.Store<IShiftContinuityStore>().InsertActionAsync(handoff.HandoffId, description, kind, reference, command.Assignee, programId, now, context.Actor, ct);
+            var existingActions = VisibleActions(await uow.Store<IShiftContinuityStore>().ListActionsAsync(handoff.HandoffId, ct), context.Principal)
+                .Where(action => action.ProgramId == programId).ToList();
+            if (blockedBy.Except(existingActions.Select(action => action.ActionId)).Any())
+                throw Invalid("unknown_action_dependency", "Dependencies must be existing actions on this handoff that are visible in the same program scope.");
+            var id = await uow.Store<IShiftContinuityStore>().InsertActionAsync(handoff.HandoffId, description, kind, reference, command.Assignee, programId,
+                command.DueAt, blockedBy, now, context.Actor, ct);
             var action = await uow.Store<IShiftContinuityStore>().FindActionAsync(id, ct) ?? throw new InvalidOperationException("Created action could not be reloaded.");
             return new CommandOutcome(CommandResult.Ok(id.ToString(), "Shift action assigned; the source record remains unchanged."),
                 [pipeline.Event(new ShiftActionChanged(handoff.HandoffId, id, action.Status), context, "Execution", "ShiftAction", id.ToString(), programId is { } p ? new ProgramId(p) : null)],
@@ -164,11 +172,21 @@ public sealed class ShiftContinuityService(
                     (await uow.Store<IShiftContinuityStore>().FindHandoffAsync(action.HandoffId, ct))!.WorkCenterCode)))
                 throw Invalid("not_action_assignee", "Only the assigned worker or a supervisor may update this action.");
             if (!Next(command.Expected, command.Status)) throw Invalid("invalid_action_transition", "Action status advances one step at a time: assigned, acknowledged, in progress, completed.");
-            if (!await uow.Store<IShiftContinuityStore>().UpdateActionStatusAsync(action.ActionId, command.Expected, command.Status, now, context.Actor, ct))
+            if ((command.Status is ShiftActionStatus.InProgress or ShiftActionStatus.Completed) && (action.BlockedByActionIds?.Count ?? 0) > 0)
+            {
+                var actions = await uow.Store<IShiftContinuityStore>().ListActionsAsync(action.HandoffId, ct);
+                var unresolved = actions.Where(candidate => (action.BlockedByActionIds ?? []).Contains(candidate.ActionId) && candidate.Status != ShiftActionStatus.Completed).ToList();
+                if (unresolved.Count > 0)
+                    throw Invalid("action_dependencies_open", $"Complete blocking action(s) {string.Join(", ", unresolved.Select(candidate => candidate.ActionId))} before starting or completing this action.");
+            }
+            var completionEvidence = command.Status == ShiftActionStatus.Completed ? Required(command.Evidence, 2000, "Completion evidence") : null;
+            if (!await uow.Store<IShiftContinuityStore>().UpdateActionStatusAsync(action.ActionId, command.Expected, command.Status, completionEvidence, now, context.Actor, ct))
                 throw Invalid("stale_action_status", "Action status changed; reload and try again.");
+            var updated = await uow.Store<IShiftContinuityStore>().FindActionAsync(action.ActionId, ct) ?? throw new InvalidOperationException("Updated action could not be reloaded.");
             return new CommandOutcome(CommandResult.Ok(action.ActionId.ToString(), $"Action marked {command.Status}; referenced issue records are unchanged."),
                 [pipeline.Event(new ShiftActionChanged(action.HandoffId, action.ActionId, command.Status), context, "Execution", "ShiftAction", action.ActionId.ToString(), action.ProgramId is { } p ? new ProgramId(p) : null)],
-                new AuditChange("ShiftAction", action.ActionId.ToString(), command.Expected.ToString(), command.Status.ToString(), action.ProgramId is { } auditProgram ? new ProgramId(auditProgram) : null));
+                new AuditChange("ShiftAction", action.ActionId.ToString(), Forge.Kernel.Serialization.CanonicalJson.Serialize(action),
+                    Forge.Kernel.Serialization.CanonicalJson.Serialize(updated), action.ProgramId is { } auditProgram ? new ProgramId(auditProgram) : null));
         }, command.Expected, ct);
 
     public async Task<IReadOnlyList<ShiftCloseout>> CloseoutsAsync(string? workCenter, int limit, ForgePrincipal principal, CancellationToken ct)

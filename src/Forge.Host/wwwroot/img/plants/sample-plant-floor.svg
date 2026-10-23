@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 500" role="img" aria-labelledby="title desc">
+  <title id="title">Reference precision manufacturing plant floor plan</title>
+  <desc id="desc">A clean architectural floor plan with receiving, materials, machining, fabrication, electronics, assembly, quality, test, shipping and support areas. Live status is shown by Forge overlays.</desc>
+  <defs>
+    <linearGradient id="floor" x2="0" y2="1"><stop stop-color="#1c2935"/><stop offset="1" stop-color="#101923"/></linearGradient>
+    <linearGradient id="zone" x2="0" y2="1"><stop stop-color="#263746"/><stop offset="1" stop-color="#1a2936"/></linearGradient>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="#7890a0" stroke-opacity=".055" stroke-width="1"/></pattern>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="5.8" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7Z" fill="#f97316" fill-opacity=".72"/></marker>
+    <style>
+      .outer{fill:url(#floor);stroke:#8293a0;stroke-width:5}.zone{fill:url(#zone);stroke:#8ca0ad;stroke-opacity:.65;stroke-width:2}.divider{stroke:#8293a0;stroke-opacity:.54;stroke-width:2}.aisle{fill:#101923;stroke:#455866;stroke-width:1.5}.code{fill:#b5c6d2;font:700 11px 'Segoe UI',sans-serif;letter-spacing:2px;opacity:.58}.small{fill:#8fa1af;font:600 8px 'Segoe UI',sans-serif;letter-spacing:1px;opacity:.64}.flow{fill:none;stroke:#f97316;stroke-width:2;stroke-dasharray:8 7;stroke-opacity:.65;marker-end:url(#arrow)}.dock{fill:#243847;stroke:#e1a964;stroke-width:2}.rack{fill:#32495a;stroke:#627a89;stroke-width:1}.bench{fill:#3b4c57;stroke:#86939a;stroke-width:1}.machine{fill:#344b5c;stroke:#8a9da8;stroke-width:1.2}.light{fill:#c5d0d5;opacity:.3}
+    </style>
+  </defs>
+  <rect width="1000" height="500" fill="#0a1118"/>
+  <rect x="12" y="12" width="976" height="476" rx="8" class="outer"/>
+  <rect x="14" y="14" width="972" height="472" rx="6" fill="url(#grid)"/>
+
+  <!-- Receiving, raw stock, machining and fabrication bays -->
+  <rect x="28" y="35" width="145" height="104" rx="3" class="zone"/><text x="42" y="55" class="code">RCV</text>
+  <rect x="43" y="73" width="28" height="42" class="dock"/><rect x="78" y="73" width="28" height="42" class="dock"/><text x="46" y="128" class="small">DOCK 01 · 02</text>
+  <rect x="201" y="35" width="125" height="104" rx="3" class="zone"/><text x="214" y="55" class="code">RAW</text>
+  <path d="M218 72v50m19-50v50m19-50v50m19-50v50m19-50v50" class="divider"/><path d="M214 86h92M214 104h92" class="divider"/>
+  <rect x="354" y="35" width="174" height="104" rx="3" class="zone"/><text x="366" y="55" class="code">CNC · MILL</text>
+  <rect x="372" y="72" width="38" height="48" rx="3" class="machine"/><rect x="421" y="72" width="38" height="48" rx="3" class="machine"/><rect x="470" y="72" width="38" height="48" rx="3" class="machine"/>
+  <circle cx="391" cy="82" r="4" class="light"/><circle cx="440" cy="82" r="4" class="light"/><circle cx="489" cy="82" r="4" class="light"/>
+  <rect x="550" y="35" width="137" height="104" rx="3" class="zone"/><text x="562" y="55" class="code">CNC · LATHE</text><rect x="572" y="72" width="45" height="48" rx="3" class="machine"/><rect x="626" y="72" width="45" height="48" rx="3" class="machine"/>
+  <rect x="710" y="35" width="259" height="104" rx="3" class="zone"/><text x="723" y="55" class="code">FAB</text><rect x="729" y="74" width="54" height="44" class="bench"/><rect x="798" y="74" width="54" height="44" class="machine"/><rect x="867" y="74" width="80" height="44" class="machine"/>
+
+  <!-- Electronics, soft goods, kitting and assembly -->
+  <rect x="28" y="178" width="145" height="105" rx="3" class="zone"/><text x="41" y="198" class="code">ELE · PCB</text><path d="M45 223h107M45 240h107M45 257h107" class="divider"/><rect x="57" y="215" width="28" height="55" class="bench"/><rect x="104" y="215" width="28" height="55" class="bench"/>
+  <rect x="201" y="178" width="144" height="105" rx="3" class="zone"/><text x="214" y="198" class="code">ELE · HARNESS</text><rect x="220" y="220" width="48" height="48" class="bench"/><rect x="280" y="220" width="48" height="48" class="bench"/>
+  <rect x="373" y="178" width="155" height="105" rx="3" class="zone"/><text x="386" y="198" class="code">SFT</text><rect x="391" y="221" width="39" height="46" rx="3" class="machine"/><rect x="441" y="221" width="39" height="46" rx="3" class="machine"/><rect x="490" y="221" width="22" height="46" rx="3" class="machine"/>
+  <rect x="556" y="178" width="130" height="105" rx="3" class="zone"/><text x="569" y="198" class="code">KIT</text><rect x="574" y="222" width="94" height="15" class="rack"/><rect x="574" y="246" width="94" height="15" class="rack"/>
+  <rect x="710" y="178" width="174" height="105" rx="3" class="zone"/><text x="723" y="198" class="code">ASM · STANDARD</text><path d="M729 222h136M729 244h136M729 266h136" class="divider"/><rect x="742" y="215" width="20" height="58" class="bench"/><rect x="794" y="215" width="20" height="58" class="bench"/>
+  <rect x="904" y="178" width="65" height="105" rx="3" class="zone"/><text x="913" y="198" class="code">ASM</text><text x="913" y="214" class="small">HEAVY</text><rect x="918" y="226" width="36" height="40" class="machine"/>
+
+  <!-- Quality, test, pack, ship, maintenance and facilities -->
+  <rect x="28" y="322" width="145" height="105" rx="3" class="zone"/><text x="41" y="342" class="code">QAL</text><rect x="45" y="362" width="39" height="48" class="machine"/><rect x="94" y="362" width="61" height="48" class="bench"/>
+  <rect x="201" y="322" width="145" height="105" rx="3" class="zone"/><text x="214" y="342" class="code">TST</text><rect x="219" y="362" width="48" height="48" class="machine"/><rect x="279" y="362" width="49" height="48" class="machine"/>
+  <rect x="373" y="322" width="155" height="105" rx="3" class="zone"/><text x="386" y="342" class="code">PKG</text><rect x="392" y="362" width="118" height="19" class="bench"/><rect x="392" y="390" width="118" height="19" class="rack"/>
+  <rect x="556" y="322" width="130" height="105" rx="3" class="zone"/><text x="569" y="342" class="code">SHP</text><rect x="574" y="362" width="94" height="48" class="dock"/><path d="M596 362v48m23-48v48m23-48v48" class="divider"/>
+  <rect x="710" y="322" width="174" height="105" rx="3" class="zone"/><text x="723" y="342" class="code">MNT</text><rect x="730" y="362" width="55" height="48" class="rack"/><rect x="799" y="362" width="66" height="48" class="bench"/>
+  <rect x="904" y="322" width="65" height="105" rx="3" class="zone"/><text x="913" y="342" class="code">FAC</text><path d="M920 371h34m-34 14h34m-34 14h34" class="divider"/>
+  <rect x="373" y="447" width="313" height="25" rx="3" class="zone"/><text x="495" y="464" text-anchor="middle" class="code">OFF · SHIFT COMMAND</text>
+
+  <!-- Clean center aisle and directional material flow. Status is always data-driven. -->
+  <path d="M182 35v392M350 35v392M536 35v392M696 35v392M894 35v392" class="aisle" opacity=".35"/>
+  <path d="M26 154H972M26 299H972M26 439H972" class="aisle"/>
+  <path d="M145 154h212m24 0h184m20 0h192M144 299h220m22 0h190m25 0h220M144 439h210m26 0h180m30 0h220" class="flow"/>
+  <text x="34" y="474" class="small">MATERIAL FLOW · RECEIVING → PRODUCTION → QUALITY → SHIPPING</text>
+  <text x="965" y="474" text-anchor="end" class="small">REFERENCE LAYOUT · LIVE STATUS FROM FORGE</text>
+</svg>

@@ -44,6 +44,8 @@ public class MaterialFlowTests
             Job(3, "COIL", 20, MaterialTaskStatus.Allocated),
             Job(4, "COIL", 10, MaterialTaskStatus.Requested),
             Job(5, "COIL", 10, MaterialTaskStatus.Cancelled),
+            Job(6, "COIL", 500, MaterialTaskStatus.ApprovalNeeded) with { IsNonBom = true },
+            Job(7, "COIL", 500, MaterialTaskStatus.Rejected) with { IsNonBom = true },
         };
         var ledger = new[]
         {

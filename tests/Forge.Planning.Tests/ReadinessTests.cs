@@ -68,4 +68,35 @@ public class ReadinessTests
         Assert.Equal("Safety", result.PrimaryConstraint);
         Assert.Contains(result.Safety.Rules[0].Shortfalls, s => s.Contains("1 present", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Machine_specific_practical_authorization_is_required_in_addition_to_the_qualification()
+    {
+        var f = Slitting().SlittingAreaRule();
+        var operatorId = f.Add("Sarah", OnSlitter("SLITTER-A"), true, null, SlitII);
+        f.Add("Michael", InSlitting(StageRoll), true, null, FirstAid);
+        var snapshot = f.Build() with
+        {
+            MachineActivities = f.Build().MachineActivities.Select(profile => profile with { RequiresMachineAuthorization = true }).ToList(),
+        };
+
+        var blocked = engine.Evaluate(snapshot, SlitterWork("SLITTER-A"), Now).Output;
+        Assert.False(blocked.Executable);
+        Assert.Contains("lacks current authorization", blocked.Dimensions.Single(dimension => dimension.Name == "Workforce").Detail, StringComparison.Ordinal);
+
+        var authorizedPerson = snapshot.Person(operatorId)! with
+        {
+            MachineAuthorizationExpiry = new Dictionary<string, DateTimeOffset?>(StringComparer.Ordinal)
+            {
+                ["SLITTER-A|RUN_SLITTER|SLIT-II"] = Now.AddHours(1),
+            },
+        };
+        var authorized = snapshot with { People = snapshot.People.Select(person => person.PersonId == operatorId ? authorizedPerson : person).ToList() };
+        Assert.True(engine.Evaluate(authorized, SlitterWork("SLITTER-A"), Now).Output.Executable);
+
+        var capacityRequirement = new WorkRequirement("SLIT-WC", "SLITTER-A", RunSlitter, [SlitII], [], 1, RequiresMachineAuthorization: true);
+        Assert.False(capacityRequirement.Qualifies(snapshot.Person(operatorId)!, Now));
+        Assert.True(capacityRequirement.Qualifies(authorizedPerson, Now));
+        Assert.False(capacityRequirement.Qualifies(authorizedPerson, Now.AddHours(2)), "Authorization expiry blocks future projected capacity.");
+    }
 }

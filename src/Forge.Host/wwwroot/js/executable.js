@@ -115,8 +115,14 @@ export async function appendDocumentTraining(container, me) {
   container.appendChild(section);
   const manage = canAction(me, 'competency.manage');
   const load = async () => {
-    const { data, error } = await tryGet('/api/engineering/document-training');
+    const [{ data, error }, directoryResult] = await Promise.all([
+      tryGet('/api/engineering/document-training'), tryGet('/api/kernel/directory'),
+    ]);
     const records = data?.records ?? [];
+    const directory = directoryResult.data ?? [];
+    const personField = directory.length
+      ? { name: 'personId', label: 'Employee', type: 'select', required: true, blank: '— choose employee —', options: directory.map(person => [person.personId, `${person.displayName} (${person.personId.slice(0, 8)})`]) }
+      : { name: 'personId', label: 'Person ID', required: true };
     section.innerHTML = `<header><h2>Training on controlled documents</h2><span class="spacer"></span>${manage ? '<button class="btn small ghost" data-train-policy>Policy</button> <button class="btn small" data-train-add>+ Training</button>' : ''}</header>
       ${error ? errorBlock(error, 'document training') : `<div class="notice">Policy: <b>${esc(data.policy.policy)}</b> for ${esc(data.policy.documentTypes.join(', '))}. ${data.policy.policy === 'Enforce' ? 'An operation is not executable until enough trained operators are present.' : data.policy.policy === 'Warn' ? 'Untrained operators are named; work is not stopped.' : 'Training is not checked.'}</div>
       ${!records.length ? emptyBlock('No training recorded', 'Record who is trained on which revision; a new revision needs new training.') : `
@@ -125,7 +131,7 @@ export async function appendDocumentTraining(container, me) {
       </tbody></table>`}`}`;
     $$('[data-train-add]', section).forEach(b => b.addEventListener('click', () => formModal({
       title: 'Record training on a document', confirmLabel: 'Record',
-      fields: [{ name: 'personId', label: 'Person ID', required: true }, { name: 'documentNumber', label: 'Document', code: true, required: true }, { name: 'revision', label: 'Revision', required: true }, { name: 'trainedOn', label: 'Trained on', type: 'date' }],
+      fields: [personField, { name: 'documentNumber', label: 'Document', code: true, required: true }, { name: 'revision', label: 'Revision', required: true }, { name: 'trainedOn', label: 'Trained on', type: 'date' }],
     }, (v, reason) => command('/api/engineering/document-training', { ...v, trainedOn: v.trainedOn || null }, reason), load)));
     $$('[data-train-policy]', section).forEach(b => b.addEventListener('click', () => formModal({
       title: 'Training policy', detail: 'Off: not checked. Warn: untrained operators are named. Enforce: an operation is not executable until enough trained operators are present.', confirmLabel: 'Save', reasonRequired: true,

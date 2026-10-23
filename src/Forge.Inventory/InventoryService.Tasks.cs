@@ -8,11 +8,16 @@ using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
+using Forge.Workforce;
+using Forge.Workforce.Contracts;
+using Forge.Quality.Contracts;
 
 namespace Forge.Inventory;
 
 /// <param name="FromLocation">Where to take it from, when already known: the task starts allocated.</param>
-public sealed record RequestMaterial(MaterialTaskKind Kind, long? OrderNumber, string PartNumber, decimal Quantity, string ToLocation, string? LotNumber = null, string? FromLocation = null, string? KitCode = null);
+public sealed record RequestMaterial(MaterialTaskKind Kind, long? OrderNumber, string PartNumber, decimal Quantity, string ToLocation, string? LotNumber = null,
+    string? FromLocation = null, string? KitCode = null, int? OperationSequence = null, bool OperatorInitiated = false, Guid? RequesterPersonId = null,
+    long? SourceSuspectReportId = null, bool AllowNonBomMaterial = false);
 
 public sealed record AllocateMaterial(long TaskId, string FromLocation, string? LotNumber);
 
@@ -22,7 +27,13 @@ public sealed record PickMaterial(long TaskId, string ScannedLocation, string? S
 
 public sealed record DeliverMaterial(long TaskId, string ScannedLocation);
 
+/// <summary>A receiver confirms the destination with a badge-and-PIN identity verified at the API boundary.</summary>
+public sealed record ReceiveMaterial(long TaskId, string ScannedLocation, Guid ReceiverPersonId);
+public sealed record ReportMaterialCustodyException(long TaskId, Guid ReporterPersonId, string ScannedLocation);
+
 public sealed record CancelMaterialTask(long TaskId);
+public sealed record ReviewAdditionalMaterialRequest(long TaskId, bool Approve);
+public sealed record RequestOrderMaterialShortages(long OrderNumber, string ToLocation);
 
 public sealed record CreateCountProgram(string ProgramCode, string Name, string? LocationCode, string? PartNumber, int FrequencyDays);
 
@@ -32,6 +43,30 @@ public sealed record MaterialTaskChanged(long TaskId, string Status, long? Order
 {
     public static string EventType => nameof(MaterialTaskChanged);
 
+    public static int SchemaVersion => 1;
+}
+
+public sealed record MaterialTaskClosed(long TaskId, string Status) : IDomainEvent
+{
+    public static string EventType => nameof(MaterialTaskClosed);
+    public static int SchemaVersion => 1;
+}
+
+public sealed record MaterialTaskReviewed(long TaskId, string Status) : IDomainEvent
+{
+    public static string EventType => nameof(MaterialTaskReviewed);
+    public static int SchemaVersion => 1;
+}
+
+public sealed record MaterialCustodyExceptionReported(long TaskId, Guid ReporterPersonId, string LocationCode) : IDomainEvent
+{
+    public static string EventType => nameof(MaterialCustodyExceptionReported);
+    public static int SchemaVersion => 1;
+}
+
+public sealed record MaterialCustodyAccepted(long TaskId, Guid ReceiverPersonId, string Location, long TransactionId) : IDomainEvent
+{
+    public static string EventType => nameof(MaterialCustodyAccepted);
     public static int SchemaVersion => 1;
 }
 
@@ -53,11 +88,73 @@ public sealed partial class InventoryService
 {
     private const string TaskEntity = "MaterialTask";
 
+    public Task<CommandResult> RequestOrderMaterialShortagesAsync(RequestOrderMaterialShortages c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var spec = new CommandSpec(SourceContext, nameof(RequestOrderMaterialShortages), Permissions.InventoryMaterialRequest,
+            ResourceRef.Of("ProductionOrder", c.OrderNumber.ToString(CultureInfo.InvariantCulture)), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var order = await ReleasedOrderAsync(uow, c.OrderNumber, context, ct);
+            if (order.Materials.Count == 0)
+                throw new CommandRejectedException("order_has_no_materials", $"Order {order.OrderNumber} has no released BOM material demand.");
+            var destination = await CompanyLocationAsync(uow, c.ToLocation, ct);
+            if (destination.Kind is not (LocationKind.Staging or LocationKind.Production)
+                && !(destination.Kind == LocationKind.MachineSide && destination.PointOfUse))
+                throw new CommandRejectedException("not_point_of_use", $"{destination.Code} is not an active staging or point-of-use destination.");
+            if (destination.WorkCenterCode is { } center && order.Operations.All(operation => operation.WorkCenterCode != center))
+                throw new CommandRejectedException("wrong_work_center", $"{destination.Code} serves {center}; order {order.OrderNumber} has no operation there.");
+
+            var partNumbers = order.Materials.Select(material => material.ComponentPartNumber).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            var inventory = uow.Store<IInventoryStore>();
+            foreach (var partNumber in partNumbers) await inventory.LockPartAsync(partNumber, ct);
+            var lookup = uow.Store<IInventoryLookup>();
+            var tasks = await lookup.ListMaterialTasksAsync(false, order.OrderNumber, ct);
+            var created = new List<MaterialTask>();
+            foreach (var (partNumber, required) in order.Materials.GroupBy(material => material.ComponentPartNumber, StringComparer.Ordinal)
+                .Select(group => (group.Key, group.Sum(line => line.RequiredQuantity))).OrderBy(row => row.Key, StringComparer.Ordinal))
+            {
+                var item = await ItemAsync(uow, partNumber, ct);
+                var transactions = await lookup.ListTransactionsAsync(partNumber, order.OrderNumber, 100_000, ct);
+                var issued = transactions.Where(transaction => transaction.Kind is InventoryTransactionKind.Issue or InventoryTransactionKind.Return && transaction.SubstitutesFor is null)
+                    .Sum(transaction => transaction.Kind == InventoryTransactionKind.Issue ? transaction.Quantity : -transaction.Quantity);
+                var remaining = MaterialTaskDemand.Remaining(required, issued, tasks.Where(task => task.PartNumber == partNumber));
+                if (remaining <= 0) continue;
+                RequireQuantity(item, remaining);
+                created.Add(new MaterialTask(0, MaterialTaskKind.Stage, order.OrderNumber, null, partNumber, null, remaining, null, destination.Code,
+                    MaterialTaskStatus.Requested, null, context.Reason, context.Actor, now));
+            }
+
+            if (created.Count == 0)
+                return CommandOutcome.NoChange(CommandResult.NoChange(order.OrderNumber.ToString(CultureInfo.InvariantCulture), "No remaining BOM quantity needs a material task; existing issues and requests cover the released demand."));
+
+            var events = new List<Forge.Kernel.Events.EventEnvelope>();
+            var saved = new List<MaterialTask>();
+            foreach (var task in created)
+            {
+                var id = await inventory.InsertMaterialTaskAsync(task, ct);
+                var persisted = task with { TaskId = id };
+                saved.Add(persisted);
+                events.Add(pipeline.Event(new MaterialTaskChanged(id, persisted.Status.ToString(), persisted.OrderNumber), context, SourceContext, TaskEntity,
+                    id.ToString(CultureInfo.InvariantCulture), order.ProgramId is { } eventProgramId ? new ProgramId(eventProgramId) : null));
+            }
+            var ids = saved.Select(task => task.TaskId).ToArray();
+            return new CommandOutcome(CommandResult.Ok(order.OrderNumber.ToString(CultureInfo.InvariantCulture),
+                $"Created {saved.Count} staging task(s) for remaining BOM demand: {string.Join(", ", saved.Select(task => $"{Qty(task.Quantity)} {task.PartNumber} (task {task.TaskId})"))}."),
+                events, new AuditChange("MaterialTaskBatch", order.OrderNumber.ToString(CultureInfo.InvariantCulture), null,
+                    CanonicalJson.Serialize(new { orderNumber = order.OrderNumber, destination = destination.Code, taskIds = ids, tasks = saved }),
+                    order.ProgramId is { } auditProgramId ? new ProgramId(auditProgramId) : null));
+        }, ct);
+    }
+
     public Task<CommandResult> RequestMaterialAsync(RequestMaterial c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
         var part = BusinessCode.Require(c.PartNumber, "Part");
-        var spec = new CommandSpec(SourceContext, nameof(RequestMaterial), Permissions.InventoryTransact, ResourceRef.Of(StockEntity, part));
+        var requestPermission = c.Kind is MaterialTaskKind.Stage or MaterialTaskKind.Kit
+            ? Permissions.InventoryMaterialRequest : Permissions.InventoryTransact;
+        var spec = new CommandSpec(SourceContext, nameof(RequestMaterial), requestPermission, ResourceRef.Of(StockEntity, part),
+            ReasonRequired: c.OperatorInitiated || c.AllowNonBomMaterial || c.SourceSuspectReportId is not null);
         return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
         {
             var item = await ItemAsync(uow, part, ct);
@@ -65,17 +162,53 @@ public sealed partial class InventoryService
             var to = await CompanyLocationAsync(uow, c.ToLocation, ct);
             var lot = Optional(c.LotNumber) is null ? null : RequireLot(item, c.LotNumber);
             var lookup = uow.Store<IInventoryLookup>();
+            if (c.OperatorInitiated)
+            {
+                if (c.Kind is not (MaterialTaskKind.Stage or MaterialTaskKind.Kit) || c.RequesterPersonId is not { } requester || c.OperationSequence is null)
+                    throw new CommandRejectedException("operator_request_context_required", "An operator request must identify an active operation and employee.");
+                var identity = await uow.People.FindAsync(new PersonId(requester), ct);
+                if (identity is not { IsActive: true } || !await uow.Store<IWorkforceLookup>().WorkerExistsAsync(requester, ct))
+                    throw new CommandRejectedException("requester_not_found", "The requesting employee must be an active Forge worker.");
+            }
+            if (c.SourceSuspectReportId is { } reportId)
+            {
+                var report = await uow.Store<IQualityLookup>().FindSuspectScrapReportAsync(reportId, ct)
+                    ?? throw new CommandRejectedException("suspect_report_not_found", "The source suspect report does not exist.");
+                if (report.Kind != SuspectReportKind.Scrap || c.Kind is not (MaterialTaskKind.Stage or MaterialTaskKind.Kit)
+                    || c.OrderNumber != report.OrderNumber || c.OperationSequence != report.Sequence || part != report.PartNumber
+                    || quantity > report.Quantity)
+                    throw new CommandRejectedException("replacement_request_context_mismatch", "A replacement request must match the reported scrap's work order, operation, part, and quantity, and use a staging or kit task.");
+                if (await lookup.FindMaterialTaskBySuspectReportAsync(reportId, ct) is { } existing)
+                    throw new CommandRejectedException("replacement_already_requested", $"Suspect report {reportId} is already linked to material task {existing.TaskId}.");
+            }
             OrderInfo? order = null;
             string? kit = null;
+            var isNonBom = false;
             switch (c.Kind)
             {
                 case MaterialTaskKind.Stage or MaterialTaskKind.Kit:
                 {
                     order = await ReleasedOrderAsync(uow, c.OrderNumber ?? throw new CommandRejectedException("order_required", "Staging and kitting are for a production order."), context, ct);
+                    if (c.OperationSequence is { } sequence)
+                    {
+                        var operation = order.Operations.SingleOrDefault(candidate => candidate.Sequence == sequence)
+                            ?? throw new CommandRejectedException("operation_not_found", $"Order {order.OrderNumber} has no operation {sequence}.");
+                        if (to.WorkCenterCode is not null && to.WorkCenterCode != operation.WorkCenterCode)
+                            throw new CommandRejectedException("wrong_work_center", $"Location {to.Code} is not at operation {sequence}'s work center {operation.WorkCenterCode}.");
+                    }
+                    if (c.OperatorInitiated)
+                    {
+                        var activeLabor = await uow.Store<IExecutionLookup>().ListOpenLaborAsync(ct);
+                        if (!activeLabor.Any(labor => labor.PersonId == c.RequesterPersonId && labor.OrderNumber == order.OrderNumber
+                            && labor.Sequence == c.OperationSequence!.Value && labor.Role != LaborRole.Trainer))
+                            throw new CommandRejectedException("not_on_operation", "The employee must have an active shop-floor session on the requested work order operation.");
+                    }
                     var required = order.Materials.Where(m => m.ComponentPartNumber == part).Sum(m => m.RequiredQuantity);
                     if (required == 0)
                     {
-                        throw new CommandRejectedException("not_on_order", $"Order {order.OrderNumber} does not need {part}.");
+                        if (!c.AllowNonBomMaterial)
+                            throw new CommandRejectedException("not_on_order", $"Order {order.OrderNumber} does not need {part}; an additional material request needs a reason and independent approval.");
+                        isNonBom = true;
                     }
 
                     if (!to.PointOfUse && to.Kind is not LocationKind.Staging and not LocationKind.Production)
@@ -88,16 +221,17 @@ public sealed partial class InventoryService
                         throw new CommandRejectedException("wrong_work_center", $"{to.Code} serves {wc}; order {order.OrderNumber} has no operation there.");
                     }
 
+                    await uow.Store<IInventoryStore>().LockPartAsync(part, ct);
                     var issued = (await lookup.ListTransactionsAsync(part, order.OrderNumber, 100_000, ct))
                         .Where(t => t.Kind is InventoryTransactionKind.Issue or InventoryTransactionKind.Return && t.SubstitutesFor is null)
                         .Sum(t => t.Kind == InventoryTransactionKind.Issue ? t.Quantity : -t.Quantity);
-                    var requested = (await lookup.ListMaterialTasksAsync(false, order.OrderNumber, ct))
-                        .Where(t => t.PartNumber == part && t.Status != MaterialTaskStatus.Cancelled)
-                        .Sum(t => t.Status == MaterialTaskStatus.Delivered ? t.PickedQuantity ?? t.Quantity : t.Quantity);
-                    var open = required - Math.Max(issued, requested);
+                    var requested = await lookup.ListMaterialTasksAsync(false, order.OrderNumber, ct);
+                    var open = MaterialTaskDemand.Remaining(required, issued, requested.Where(task => task.PartNumber == part));
                     if (quantity > open)
                     {
-                        throw new CommandRejectedException("over_request", $"Order {order.OrderNumber} needs {Qty(required)} {part}; {Qty(Math.Max(issued, requested))} is already requested or issued, so at most {Qty(Math.Max(0, open))} more.");
+                        if (!c.AllowNonBomMaterial)
+                            throw new CommandRejectedException("over_request", $"Order {order.OrderNumber} has {Qty(Math.Max(0, open))} of released demand for {part} not already issued or tasked; an additional request needs independent approval.");
+                        isNonBom = true;
                     }
 
                     if (c.Kind == MaterialTaskKind.Kit)
@@ -126,7 +260,13 @@ public sealed partial class InventoryService
                     throw new CommandRejectedException("invalid_kind", $"Unknown task kind {c.Kind}.");
             }
 
-            var task = new MaterialTask(0, c.Kind, order?.OrderNumber, kit, part, lot, quantity, null, to.Code, MaterialTaskStatus.Requested, null, context.Reason, context.Actor, now);
+            var initialStatus = isNonBom ? MaterialTaskStatus.ApprovalNeeded : MaterialTaskStatus.Requested;
+            if (isNonBom && c.FromLocation is not null)
+                throw new CommandRejectedException("approval_before_allocation", "Additional material cannot be allocated or picked before independent review.");
+            if (isNonBom && c.SourceSuspectReportId is not null)
+                throw new CommandRejectedException("replacement_requires_released_bom_demand", "A linked scrap replacement request must match uncovered released-BOM demand; additional-material review is a separate workflow.");
+            var task = new MaterialTask(0, c.Kind, order?.OrderNumber, kit, part, lot, quantity, null, to.Code, initialStatus, null, context.Reason, context.Actor, now,
+                OperationSequence: c.OperationSequence, RequesterPersonId: c.RequesterPersonId, SourceSuspectReportId: c.SourceSuspectReportId, IsNonBom: isNonBom);
             if (Optional(c.FromLocation) is { } from)
             {
                 task = await AllocatedAsync(uow, task, from, lot, context.Actor, now, ct);
@@ -135,9 +275,11 @@ public sealed partial class InventoryService
             var id = await uow.Store<IInventoryStore>().InsertMaterialTaskAsync(task, ct);
             var key = id.ToString(CultureInfo.InvariantCulture);
             return new CommandOutcome(
-                CommandResult.Ok(key, $"Task {key}: {Qty(quantity)} {item.UnitOfMeasure} {part}{(lot is null ? string.Empty : " lot " + lot)} to {to.Code}{(order is null ? string.Empty : $" for order {order.OrderNumber}")} — {task.Status.ToString().ToLowerInvariant()}{(task.FromLocation is null ? string.Empty : " from " + task.FromLocation)}."),
-                [pipeline.Event(new MaterialTaskChanged(id, task.Status.ToString(), task.OrderNumber), context, SourceContext, TaskEntity, key)],
-                new AuditChange(TaskEntity, key, null, CanonicalJson.Serialize(task with { TaskId = id })));
+                CommandResult.Ok(key, $"Task {key}: {Qty(quantity)} {item.UnitOfMeasure} {part}{(lot is null ? string.Empty : " lot " + lot)} to {to.Code}{(order is null ? string.Empty : $" for order {order.OrderNumber}")} — {(isNonBom ? "awaiting independent planner / inventory approval" : task.Status.ToString().ToLowerInvariant())}{(task.FromLocation is null ? string.Empty : " from " + task.FromLocation)}."),
+                [pipeline.Event(new MaterialTaskChanged(id, task.Status.ToString(), task.OrderNumber), context, SourceContext, TaskEntity, key,
+                    order?.ProgramId is { } taskProgramId ? new ProgramId(taskProgramId) : null)],
+                new AuditChange(TaskEntity, key, null, CanonicalJson.Serialize(task with { TaskId = id }),
+                    order?.ProgramId is { } taskAuditProgramId ? new ProgramId(taskAuditProgramId) : null));
         }, ct);
     }
 
@@ -203,11 +345,105 @@ public sealed partial class InventoryService
             var quantity = task.PickedQuantity!.Value;
             await RequireStockAsync(uow, task.PartNumber, task.FromLocation!, task.LotNumber, StockStatus.Released, quantity, ct);
             await CompanyLocationAsync(uow, task.ToLocation, ct);
+            var lookup = uow.Store<IInventoryLookup>();
+            var locations = await lookup.ListLocationsAsync(ct);
+            var destination = locations.FirstOrDefault(location => location.Code == task.ToLocation && location.Active)
+                ?? throw new CommandRejectedException("destination_unavailable", $"Destination {task.ToLocation} is not active.");
+            var transit = locations.Where(location => location.Active && location.SiteCode == destination.SiteCode && location.Kind == LocationKind.InTransit).ToArray();
+            if (transit.Length != 1)
+                throw new CommandRejectedException("in_transit_location_required", $"Site {destination.SiteCode} needs exactly one active In Transit location before a material task can leave Stores.");
+            var inTransit = transit[0];
+            if (inTransit.Nettable || inTransit.InCompanyCustody)
+                throw new CommandRejectedException("invalid_in_transit_location", $"Location {inTransit.Code} must be non-nettable and marked In Transit custody.");
             var id = await store.InsertTransactionAsync(
-                new NewTransaction(InventoryTransactionKind.Transfer, task.PartNumber, quantity, task.FromLocation, StockStatus.Released, task.ToLocation, StockStatus.Released, task.LotNumber,
-                    OrderNumber: task.OrderNumber, Reason: $"{task.Kind} task {task.TaskId.ToString(CultureInfo.InvariantCulture)}"), now, context.Actor, ct);
-            var delivered = task with { Status = MaterialTaskStatus.Delivered, DeliveredBy = context.Actor, DeliveredAt = now, TransactionId = id };
-            return (delivered, $"Task {task.TaskId}: delivered {Qty(quantity)} {task.PartNumber} to {task.ToLocation}.");
+                new NewTransaction(InventoryTransactionKind.Transfer, task.PartNumber, quantity, task.FromLocation, StockStatus.Released, inTransit.Code, StockStatus.Released, task.LotNumber,
+                    OrderNumber: task.OrderNumber, Reason: $"Custody dispatch for material task {task.TaskId.ToString(CultureInfo.InvariantCulture)}"), now, context.Actor, ct);
+            await store.InsertMaterialTaskCustodyEventAsync(new MaterialTaskCustodyEvent(0, task.TaskId, MaterialCustodyEventKind.DispatchedToTransit,
+                now, context.Actor, context.Principal.PersonId.Value, inTransit.Code, id, "ForgeSession", null), ct);
+            var delivered = task with { Status = MaterialTaskStatus.InTransit, DeliveredBy = context.Actor, DeliveredAt = now, TransactionId = id, TransitLocation = inTransit.Code };
+            return (delivered, $"Task {task.TaskId}: {Qty(quantity)} {task.PartNumber} is in transit to {task.ToLocation}; receiver acknowledgment is required before it becomes usable there.");
+        }, ct);
+    }
+
+    public Task<CommandResult> ReceiveMaterialAsync(ReceiveMaterial c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        return ChangeTaskAsync(nameof(ReceiveMaterial), c.TaskId, c, context, MaterialTaskStatus.InTransit, false, async (uow, task, now) =>
+        {
+            if (c.ReceiverPersonId == Guid.Empty)
+                throw new CommandRejectedException("receiver_authentication_required", "A receiver must authenticate with their own badge and PIN.");
+            var receiver = await uow.People.FindAsync(new PersonId(c.ReceiverPersonId), ct);
+            var workforce = uow.Store<IWorkforceLookup>();
+            if (receiver is not { IsActive: true } || !await workforce.WorkerExistsAsync(c.ReceiverPersonId, ct))
+                throw new CommandRejectedException("receiver_not_found", "The authenticated receiver must be an active Forge worker.");
+            if (task.DeliveredBy == $"person:{c.ReceiverPersonId:D}")
+                throw new CommandRejectedException("independent_receiver_required", "The person who dispatched the material cannot accept their own handoff.");
+            Scanned(c.ScannedLocation, task.ToLocation, "destination");
+            var locations = await uow.Store<IInventoryLookup>().ListLocationsAsync(ct);
+            var transit = locations.FirstOrDefault(location => location.Code == task.TransitLocation && location.Active && location.Kind == LocationKind.InTransit)
+                ?? throw new CommandRejectedException("transit_stock_unavailable", "The task's in-transit custody location is unavailable.");
+            var destination = await CompanyLocationAsync(uow, task.ToLocation, ct);
+            if (destination.SiteCode != transit.SiteCode)
+                throw new CommandRejectedException("cross_site_handoff", "The receiver must accept material at the same site as its in-transit custody location.");
+            var store = uow.Store<IInventoryStore>();
+            await store.LockPartAsync(task.PartNumber, ct);
+            var quantity = task.PickedQuantity ?? throw new CommandRejectedException("picked_quantity_missing", "The task has no recorded picked quantity.");
+            await RequireStockAsync(uow, task.PartNumber, transit.Code, task.LotNumber, StockStatus.Released, quantity, ct);
+            var receiptTransaction = await store.InsertTransactionAsync(
+                new NewTransaction(InventoryTransactionKind.Transfer, task.PartNumber, quantity, transit.Code, StockStatus.Released, destination.Code, StockStatus.Released, task.LotNumber,
+                    OrderNumber: task.OrderNumber, Reason: $"Receiver acknowledgment for material task {task.TaskId.ToString(CultureInfo.InvariantCulture)}"), now, context.Actor, ct);
+            await store.InsertMaterialTaskCustodyEventAsync(new MaterialTaskCustodyEvent(0, task.TaskId, MaterialCustodyEventKind.ReceivedAtDestination,
+                now, context.Actor, c.ReceiverPersonId, destination.Code, receiptTransaction, "BadgePin", null), ct);
+            var received = task with { Status = MaterialTaskStatus.Delivered, ReceivedBy = context.Actor, ReceivedAt = now,
+                ReceiverPersonId = c.ReceiverPersonId, ReceiptTransactionId = receiptTransaction };
+            return (received, $"Task {task.TaskId}: {Qty(quantity)} {task.PartNumber} accepted at {destination.Code} by an independently authenticated receiver.");
+        }, ct);
+    }
+
+    public Task<CommandResult> ReportMaterialCustodyExceptionAsync(ReportMaterialCustodyException c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var key = c.TaskId.ToString(CultureInfo.InvariantCulture);
+        var spec = new CommandSpec(SourceContext, nameof(ReportMaterialCustodyException), Permissions.InventoryCustodyReceive,
+            ResourceRef.Of(TaskEntity, key), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var lookup = uow.Store<IInventoryLookup>();
+            var task = await lookup.FindMaterialTaskAsync(c.TaskId, ct)
+                ?? throw new CommandRejectedException("task_not_found", $"Task {key} does not exist.");
+            if (task.Status != MaterialTaskStatus.InTransit || task.TransitLocation is null)
+                throw new CommandRejectedException("task_not_in_transit", "A custody exception can be recorded only while the task is in transit.");
+            ProgramId? programId = null;
+            if (task.OrderNumber is { } orderNumber)
+            {
+                var order = await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct);
+                if (order is null || !Visible(context, order)) throw new CommandRejectedException("task_not_found", $"Task {key} does not exist.");
+                programId = order.ProgramId is { } id ? new ProgramId(id) : null;
+            }
+            if (c.ReporterPersonId == Guid.Empty)
+                throw new CommandRejectedException("reporter_authentication_required", "A worker must authenticate with their own badge and PIN to report a custody exception.");
+            var person = await uow.People.FindAsync(new PersonId(c.ReporterPersonId), ct);
+            if (person is not { IsActive: true } || !await uow.Store<IWorkforceLookup>().WorkerExistsAsync(c.ReporterPersonId, ct))
+                throw new CommandRejectedException("reporter_not_found", "The authenticated reporter must be an active Forge worker.");
+            if (task.DeliveredBy == $"person:{c.ReporterPersonId:D}")
+                throw new CommandRejectedException("independent_receiver_required", "The dispatcher cannot independently report the receiving exception.");
+            var locations = await lookup.ListLocationsAsync(ct);
+            var transit = locations.FirstOrDefault(location => location.Code == task.TransitLocation && location.Active && location.Kind == LocationKind.InTransit)
+                ?? throw new CommandRejectedException("transit_stock_unavailable", "The task's in-transit custody location is unavailable.");
+            var destination = locations.FirstOrDefault(location => location.Code == task.ToLocation && location.Active)
+                ?? throw new CommandRejectedException("destination_unavailable", "The task destination is no longer active.");
+            var observed = locations.FirstOrDefault(location => location.Code.Equals(c.ScannedLocation?.Trim(), StringComparison.OrdinalIgnoreCase) && location.Active
+                && location.SiteCode == transit.SiteCode && (location.InCompanyCustody || location.Kind == LocationKind.InTransit))
+                ?? throw new CommandRejectedException("exception_location_invalid", "Scan an active company or in-transit location at the task's site where the material was observed.");
+            var eventId = await uow.Store<IInventoryStore>().InsertMaterialTaskCustodyEventAsync(new MaterialTaskCustodyEvent(0, task.TaskId,
+                MaterialCustodyEventKind.ExceptionRecorded, now, context.Actor, c.ReporterPersonId, observed.Code, null, "BadgePin", context.Reason), ct);
+            var evt = pipeline.Event(new MaterialCustodyExceptionReported(task.TaskId, c.ReporterPersonId, observed.Code), context, SourceContext,
+                TaskEntity, key, programId);
+            return new CommandOutcome(CommandResult.Ok(eventId.ToString(CultureInfo.InvariantCulture),
+                    $"Custody exception {eventId} recorded for task {task.TaskId} at {observed.Code}. The material remains non-nettable in transit pending reconciliation."),
+                [evt], new AuditChange("MaterialTaskCustodyEvent", eventId.ToString(CultureInfo.InvariantCulture), null,
+                    CanonicalJson.Serialize(new { taskId = task.TaskId, kind = MaterialCustodyEventKind.ExceptionRecorded, observedLocation = observed.Code,
+                        reporterPersonId = c.ReporterPersonId, reason = context.Reason, inventoryLocation = transit.Code, intendedDestination = destination.Code }), programId));
         }, ct);
     }
 
@@ -216,14 +452,33 @@ public sealed partial class InventoryService
         ArgumentNullException.ThrowIfNull(c);
         return ChangeTaskAsync(nameof(CancelMaterialTask), c.TaskId, c, context, null, true, (_, task, now) =>
         {
-            if (task.Status is MaterialTaskStatus.Delivered or MaterialTaskStatus.Cancelled)
+            if (task.Status is MaterialTaskStatus.InTransit or MaterialTaskStatus.Delivered or MaterialTaskStatus.Cancelled)
             {
-                throw new CommandRejectedException("task_closed", $"Task {task.TaskId} is {task.Status.ToString().ToLowerInvariant()}.");
+                throw new CommandRejectedException("task_closed", task.Status == MaterialTaskStatus.InTransit
+                    ? $"Task {task.TaskId} is in transit; reconcile the physical custody exception before changing it."
+                    : $"Task {task.TaskId} is {task.Status.ToString().ToLowerInvariant()}.");
             }
 
             var cancelled = task with { Status = MaterialTaskStatus.Cancelled, CancelledBy = context.Actor, CancelledAt = now, CancelReason = context.Reason };
             return Task.FromResult((cancelled, $"Task {task.TaskId} cancelled; anything allocated is free again."));
         }, ct);
+    }
+
+    public Task<CommandResult> ReviewAdditionalMaterialRequestAsync(ReviewAdditionalMaterialRequest c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        return ChangeTaskAsync(nameof(ReviewAdditionalMaterialRequest), c.TaskId, c, context, MaterialTaskStatus.ApprovalNeeded, true, (uow, task, now) =>
+        {
+            if (!task.IsNonBom)
+                throw new CommandRejectedException("not_additional_material", "Only a controlled additional-material request can be reviewed here.");
+            if (string.Equals(task.RequestedBy, context.Actor, StringComparison.Ordinal))
+                throw new CommandRejectedException("independent_review_required", "The requester cannot approve or reject their own additional-material request.");
+            var status = c.Approve ? MaterialTaskStatus.Requested : MaterialTaskStatus.Rejected;
+            var changed = task with { Status = status, ReviewedBy = context.Actor, ReviewedAt = now, ReviewNote = context.Reason };
+            return Task.FromResult((changed, c.Approve
+                ? $"Additional material task {task.TaskId} approved and queued for stockroom fulfillment."
+                : $"Additional material task {task.TaskId} rejected; its request remains in the audit history."));
+        }, ct, Permissions.InventoryApprove);
     }
 
     public Task<CommandResult> CreateCountProgramAsync(CreateCountProgram c, CommandContext context, CancellationToken ct)
@@ -291,18 +546,21 @@ public sealed partial class InventoryService
     }
 
     private Task<CommandResult> ChangeTaskAsync<TCommand>(string name, long taskId, TCommand command, CommandContext context, MaterialTaskStatus? expected, bool reasonRequired,
-        Func<IKernelUnitOfWork, MaterialTask, DateTimeOffset, Task<(MaterialTask Changed, string Message)>> change, CancellationToken ct)
+        Func<IKernelUnitOfWork, MaterialTask, DateTimeOffset, Task<(MaterialTask Changed, string Message)>> change, CancellationToken ct, string? permission = null)
         where TCommand : notnull
     {
         var key = taskId.ToString(CultureInfo.InvariantCulture);
-        var spec = new CommandSpec(SourceContext, name, Permissions.InventoryTransact, ResourceRef.Of(TaskEntity, key), ReasonRequired: reasonRequired);
+        var spec = new CommandSpec(SourceContext, name, permission ?? (name == nameof(ReceiveMaterial) ? Permissions.InventoryCustodyReceive : Permissions.InventoryTransact),
+            ResourceRef.Of(TaskEntity, key), ReasonRequired: reasonRequired);
         return pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
         {
             var task = await uow.Store<IInventoryLookup>().FindMaterialTaskAsync(taskId, ct)
                 ?? throw new CommandRejectedException("task_not_found", $"Task {key} does not exist.");
-            if (task.OrderNumber is { } orderNumber && await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct) is { } order && !Visible(context, order))
+            ProgramId? programId = null;
+            if (task.OrderNumber is { } orderNumber && await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct) is { } order)
             {
-                throw new CommandRejectedException("task_not_found", $"Task {key} does not exist.");
+                if (!Visible(context, order)) throw new CommandRejectedException("task_not_found", $"Task {key} does not exist.");
+                programId = order.ProgramId is { } id ? new ProgramId(id) : null;
             }
 
             if (expected is { } status && task.Status != status)
@@ -316,9 +574,21 @@ public sealed partial class InventoryService
                 throw new CommandRejectedException("wrong_step", $"Task {key} changed while you were working on it; look again.");
             }
 
+            var events = new List<EventEnvelope>
+            {
+                pipeline.Event(new MaterialTaskChanged(taskId, changed.Status.ToString(), changed.OrderNumber), context, SourceContext, TaskEntity, key, programId),
+            };
+            if (task.Status == MaterialTaskStatus.ApprovalNeeded && changed.Status != MaterialTaskStatus.ApprovalNeeded)
+                events.Add(pipeline.Event(new MaterialTaskReviewed(taskId, changed.Status.ToString()), context, SourceContext, TaskEntity, key, programId));
+            if (changed.Status is MaterialTaskStatus.Delivered or MaterialTaskStatus.Rejected or MaterialTaskStatus.Cancelled)
+                events.Add(pipeline.Event(new MaterialTaskClosed(taskId, changed.Status.ToString()), context, SourceContext, TaskEntity, key, programId));
+            if (changed.ReceiverPersonId is { } receiver && changed.ReceiptTransactionId is { } receipt && changed.Status == MaterialTaskStatus.Delivered)
+            {
+                events.Add(pipeline.Event(new MaterialCustodyAccepted(taskId, receiver, changed.ToLocation, receipt), context, SourceContext, TaskEntity, key, programId));
+            }
             return new CommandOutcome(
                 CommandResult.Ok(key, message),
-                [pipeline.Event(new MaterialTaskChanged(taskId, changed.Status.ToString(), changed.OrderNumber), context, SourceContext, TaskEntity, key)],
+                events,
                 new AuditChange(TaskEntity, key, CanonicalJson.Serialize(task), CanonicalJson.Serialize(changed)));
         }, ct);
     }
@@ -353,5 +623,18 @@ public sealed partial class InventoryService
         {
             throw new CommandRejectedException("scan_mismatch", $"The scanned {what} does not match the material task.");
         }
+    }
+}
+
+/// <summary>One calculation for unreconciled order demand, including partial picks and delivered tasks.</summary>
+public static class MaterialTaskDemand
+{
+    public static decimal Remaining(decimal required, decimal netIssued, IEnumerable<MaterialTask> tasks)
+    {
+        ArgumentNullException.ThrowIfNull(tasks);
+        ArgumentOutOfRangeException.ThrowIfNegative(required);
+        var tasked = tasks.Where(task => !task.IsNonBom && task.Status is not (MaterialTaskStatus.Cancelled or MaterialTaskStatus.Rejected))
+            .Sum(task => task.PickedQuantity ?? task.Quantity);
+        return Math.Max(0, required - Math.Max(netIssued, tasked));
     }
 }

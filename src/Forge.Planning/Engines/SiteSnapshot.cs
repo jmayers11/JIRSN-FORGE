@@ -41,6 +41,9 @@ public sealed record PersonSnapshot(
     /// <summary>Expiry of each currently valid qualification (null = never expires).</summary>
     public IReadOnlyDictionary<string, DateTimeOffset?> QualificationExpiry { get; init; } = new Dictionary<string, DateTimeOffset?>();
 
+    /// <summary>Current machine/activity authorizations and their expiry instants.</summary>
+    public IReadOnlyDictionary<string, DateTimeOffset?> MachineAuthorizationExpiry { get; init; } = new Dictionary<string, DateTimeOffset?>();
+
     /// <summary>Controlled-document revisions this person is trained on, as "NUMBER@REV" (V3.9).</summary>
     public IReadOnlySet<string> TrainedDocuments { get; init; } = new HashSet<string>(StringComparer.Ordinal);
 
@@ -52,6 +55,9 @@ public sealed record PersonSnapshot(
     /// <summary>Whether a currently valid qualification is still valid at a later instant.</summary>
     public bool HoldsAt(string qualification, DateTimeOffset at) =>
         Holds(qualification) && (!QualificationExpiry.TryGetValue(qualification, out var expiry) || expiry is null || at < expiry);
+
+    public bool AuthorizedForMachineAt(string machineCode, string activityCode, string qualificationCode, DateTimeOffset at) =>
+        MachineAuthorizationExpiry.TryGetValue($"{machineCode}|{activityCode}|{qualificationCode}", out var expiry) && (expiry is null || at < expiry);
 }
 
 /// <summary>

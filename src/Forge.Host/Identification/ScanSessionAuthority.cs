@@ -267,10 +267,10 @@ public sealed class ScanSessionAuthority(IdentificationResolver identification, 
         var tasks = await lookup.ListMaterialTasksAsync(false, facts.Order.OrderNumber, ct);
         foreach (var task in tasks
             .Where(task => task.PartNumber == part && task.LotNumber == lot && task.Status == MaterialTaskStatus.Delivered
-                && task.TransactionId is not null && (task.PickedQuantity ?? task.Quantity) > 0))
+                && (task.ReceiptTransactionId ?? task.TransactionId) is not null && (task.PickedQuantity ?? task.Quantity) > 0))
         {
             if (!await AtOperationAsync(task.ToLocation)) continue;
-            var delivered = await uow.Store<IReceivingLookup>().FindTransactionAsync(task.TransactionId!.Value, ct);
+            var delivered = await uow.Store<IReceivingLookup>().FindTransactionAsync((task.ReceiptTransactionId ?? task.TransactionId)!.Value, ct);
             if (delivered is { Kind: InventoryTransactionKind.Transfer } && delivered.PartNumber == part && delivered.LotNumber == lot
                 && delivered.ToLocation == task.ToLocation && delivered.Quantity > 0) return;
         }

@@ -7,7 +7,7 @@ using NpgsqlTypes;
 
 namespace Forge.Quality.Infrastructure;
 
-internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQualityStore, IQualityLookup, IWorkHoldLookup
+internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQualityStore, IQualityLookup, IWorkHoldLookup, ISuspectScrapReportStore
 {
     private const string NcrSql =
         """
@@ -84,6 +84,27 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
             """,
             ncr.PartNumber, Long(ncr.OrderNumber), Int(ncr.Sequence), Text(ncr.LotNumber), ncr.Quantity, ncr.Defect, ncr.Description, ncr.Status.ToString(), ncr.RaisedBy, ncr.RaisedAt);
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<long> InsertSuspectScrapReportAsync(SuspectScrapReport report, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO quality.suspect_scrap_report
+                (kind, order_number, sequence, part_number, revision, lot_number, serial_number, quantity, machine_code,
+                 reporter_person_id, reason_code, description, reported_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING report_id
+            """,
+            report.Kind.ToString(), report.OrderNumber, report.Sequence, report.PartNumber, Text(report.Revision), Text(report.LotNumber),
+            Text(report.SerialNumber), report.Quantity, Text(report.MachineCode), report.ReporterPersonId, report.ReasonCode, report.Description, report.ReportedAt);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<bool> LinkSuspectScrapReportNcrAsync(long reportId, long ncrId, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE quality.suspect_scrap_report SET ncr_id=$2 WHERE report_id=$1 AND ncr_id IS NULL", reportId, ncrId);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
     public async Task UpdateNcrAsync(NcrInfo ncr, DateTimeOffset at, string actor, CancellationToken ct)
@@ -201,6 +222,28 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
     public async Task<NcrInfo?> FindNcrAsync(long ncrId, CancellationToken ct) =>
         (await ReadAsync(NcrSql + " WHERE ncr_id = $1", ReadNcr, ct, ncrId)).SingleOrDefault();
 
+    public Task<IReadOnlyList<SuspectScrapReport>> ListSuspectScrapReportsAsync(long? orderNumber, CancellationToken ct) =>
+        ReadAsync(
+            """
+            SELECT report_id, kind, order_number, sequence, part_number, revision, lot_number, serial_number, quantity,
+                   machine_code, reporter_person_id, reason_code, description, reported_at, ncr_id
+            FROM quality.suspect_scrap_report
+            WHERE ($1::bigint IS NULL OR order_number = $1)
+            ORDER BY reported_at DESC, report_id DESC LIMIT 1000
+            """,
+            r => new SuspectScrapReport(r.GetInt64(0), Enum.Parse<SuspectReportKind>(r.GetString(1)), r.GetInt64(2), r.GetInt32(3), r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7),
+                Dec(r, 8), r.IsDBNull(9) ? null : r.GetString(9), r.GetGuid(10), r.GetString(11), r.GetString(12),
+                r.GetFieldValue<DateTimeOffset>(13), r.IsDBNull(14) ? null : r.GetInt64(14)), ct, Long(orderNumber));
+
+    public async Task<SuspectScrapReport?> FindSuspectScrapReportAsync(long reportId, CancellationToken ct) =>
+        (await ReadAsync(
+            "SELECT report_id, kind, order_number, sequence, part_number, revision, lot_number, serial_number, quantity, machine_code, reporter_person_id, reason_code, description, reported_at, ncr_id FROM quality.suspect_scrap_report WHERE report_id=$1",
+            r => new SuspectScrapReport(r.GetInt64(0), Enum.Parse<SuspectReportKind>(r.GetString(1)), r.GetInt64(2), r.GetInt32(3), r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7), Dec(r, 8),
+                r.IsDBNull(9) ? null : r.GetString(9), r.GetGuid(10), r.GetString(11), r.GetString(12), r.GetFieldValue<DateTimeOffset>(13),
+                r.IsDBNull(14) ? null : r.GetInt64(14)), ct, reportId)).SingleOrDefault();
+
     public Task<IReadOnlyList<CapaInfo>> ListCapasAsync(bool includeVerified, CancellationToken ct) =>
         ReadAsync(CapaSql + (includeVerified ? string.Empty : " WHERE status <> 'Verified'") + " ORDER BY capa_id DESC LIMIT 500", ReadCapa, ct);
 
@@ -314,6 +357,7 @@ public static class QualityRegistration
         services.AddForgeCommercialQuality();
         services.AddForgeStore<IQualityStore>(uow => new PostgresQualityStore(uow));
         services.AddForgeStore<IQualityLookup>(uow => new PostgresQualityStore(uow));
+        services.AddForgeStore<ISuspectScrapReportStore>(uow => new PostgresQualityStore(uow));
         services.AddForgeStore<IWorkHoldLookup>(uow => new PostgresQualityStore(uow));
         services.AddSingleton<QualityService>();
         services.AddForgeStore<Forge.Quality.Contracts.IReturnAcceptanceLookup>(uow => new PostgresReturnCohortStore(uow));

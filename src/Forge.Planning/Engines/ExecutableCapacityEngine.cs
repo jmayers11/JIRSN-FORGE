@@ -52,7 +52,7 @@ public sealed class ExecutableCapacityEngine : IEngine<SiteSnapshot, CapacityReq
                 continue;
             }
 
-            var intervals = timeline.For(new WorkRequirement(machine.WorkCenterCode, machine.Code, profile.ActivityCode, profile.OperatorQualifications, [], 1));
+            var intervals = timeline.For(new WorkRequirement(machine.WorkCenterCode, machine.Code, profile.ActivityCode, profile.OperatorQualifications, [], 1, profile.RequiresMachineAuthorization));
             var working = Hours(intervals.Sum(i => i.Span.Length.TotalHours));
             var executable = Hours(intervals.Where(i => i.Executable).Sum(i => i.Span.Length.TotalHours));
             var merged = CapacityTimeline.Merged(intervals);

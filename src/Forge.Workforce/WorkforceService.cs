@@ -3,12 +3,16 @@ using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
 using Forge.Kernel.Security;
 using Forge.Kernel.Serialization;
+using Forge.Competency.Contracts;
+using Forge.Kernel.Access;
 using Forge.Resources.Contracts;
 using Forge.Workforce.Contracts;
 
 namespace Forge.Workforce;
 
 public sealed record RegisterWorker(PersonId PersonId, string HomeWorkCenterCode);
+
+public sealed record SetWorkerJobTitle(PersonId PersonId, string? JobTitle);
 
 /// <summary>Assign a person to work. Give a machine, or a work center, or just a safety area.</summary>
 public sealed record AssignWork(PersonId PersonId, string? SafetyAreaCode, string? WorkCenterCode, string? MachineCode, string ActivityCode, bool AsTrainee);
@@ -33,6 +37,13 @@ public sealed record RecordUnavailability(PersonId PersonId, UnavailabilityKind 
 public sealed record WorkerRegistered(Guid PersonId, string HomeWorkCenterCode) : IDomainEvent
 {
     public static string EventType => nameof(WorkerRegistered);
+
+    public static int SchemaVersion => 1;
+}
+
+public sealed record WorkerJobTitleChanged(Guid PersonId, string? PreviousTitle, string? CurrentTitle) : IDomainEvent
+{
+    public static string EventType => nameof(WorkerJobTitleChanged);
 
     public static int SchemaVersion => 1;
 }
@@ -79,6 +90,10 @@ public interface IWorkforceStore
     Task<int> EndPresenceAsync(PersonId person, DateTimeOffset at, CancellationToken ct);
 
     Task<string?> SetShiftAsync(PersonId person, string? shiftCode, CancellationToken ct);
+
+    Task<string?> SetJobTitleAsync(PersonId person, string? jobTitle, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task SetWorkerPhotoAsync(PersonId person, string? sha256, string? contentType, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task InsertUnavailabilityAsync(PersonId person, UnavailabilityKind kind, DateTimeOffset startsAt, DateTimeOffset endsAt, DateTimeOffset at, string actor, CancellationToken ct);
 
@@ -146,6 +161,7 @@ public sealed partial class WorkforceService(CommandPipeline pipeline)
         {
             await RequireWorkerAsync(uow.Store<IWorkforceLookup>(), c.PersonId, ct);
             var assignment = await ResolveAssignmentAsync(uow.Store<IResourcesLookup>(), c, ct);
+            await RequireSpecializedAssignmentCoverageAsync(uow, c, assignment, now, ct);
             var store = uow.Store<IWorkforceStore>();
             var previous = await store.FindAssignmentAsync(c.PersonId, ct);
             if (previous == assignment)
@@ -200,6 +216,30 @@ public sealed partial class WorkforceService(CommandPipeline pipeline)
                 CommandResult.Ok(id, shift is null ? "No scheduled shift." : $"Scheduled on shift {shift}."),
                 [pipeline.Event(new WorkerShiftChanged(c.PersonId.Value, previous, shift), context, SourceContext, WorkerEntity, id)],
                 new AuditChange(WorkerEntity, id, previous, shift));
+        }, ct);
+    }
+
+    public Task<CommandResult> SetWorkerJobTitleAsync(SetWorkerJobTitle c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var title = string.IsNullOrWhiteSpace(c.JobTitle) ? null : c.JobTitle.Trim();
+        if (title?.Length > 100 || title?.Any(char.IsControl) == true)
+            throw new CommandRejectedException("invalid_job_title", "An official title must be 100 characters or fewer and contain no control characters.");
+
+        var spec = new CommandSpec(SourceContext, nameof(SetWorkerJobTitle), Permissions.WorkforceManage, ResourceRef.Of(WorkerEntity, c.PersonId), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c with { JobTitle = title }, context, async (uow, now) =>
+        {
+            var previous = await uow.Store<IWorkforceStore>().SetJobTitleAsync(c.PersonId, title, now, context.Actor, ct);
+            if (previous is null && title is null)
+                return CommandOutcome.NoChange(CommandResult.NoChange(c.PersonId.ToString(), "Official title is already blank."));
+            if (previous == title)
+                return CommandOutcome.NoChange(CommandResult.NoChange(c.PersonId.ToString(), "Official title is unchanged."));
+
+            var id = c.PersonId.ToString();
+            return new CommandOutcome(
+                CommandResult.Ok(id, title is null ? "Official title cleared." : "Official title updated."),
+                [pipeline.Event(new WorkerJobTitleChanged(c.PersonId.Value, previous, title), context, SourceContext, WorkerEntity, id)],
+                new AuditChange(WorkerEntity, id, CanonicalJson.Serialize(new { jobTitle = previous }), CanonicalJson.Serialize(new { jobTitle = title })));
         }, ct);
     }
 
@@ -263,9 +303,31 @@ public sealed partial class WorkforceService(CommandPipeline pipeline)
 
             await uow.Store<IWorkforceStore>().InsertUnavailabilityAsync(c.PersonId, c.Kind, c.StartsAt, c.EndsAt, now, context.Actor, ct);
             var id = c.PersonId.ToString();
+            var events = new List<EventEnvelope>
+            {
+                pipeline.Event(new EmployeeUnavailable(c.PersonId.Value, c.Kind.ToString(), c.StartsAt, c.EndsAt), context, SourceContext, WorkerEntity, id),
+            };
+            if (c.Kind is UnavailabilityKind.CallOut or UnavailabilityKind.ApprovedPto)
+            {
+                var intelligence = uow.Store<IAttendanceReliabilityStore>();
+                var opportunities = (await intelligence.ListAttendanceOpportunitiesAsync(c.StartsAt.AddDays(-1), c.EndsAt.AddDays(1), ct))
+                    .Where(opportunity => opportunity.PersonId == c.PersonId.Value
+                        && opportunity.ScheduledStart < c.EndsAt && opportunity.ScheduledEnd > c.StartsAt).ToArray();
+                var existing = await intelligence.ListAttendanceIntelligenceEventsAsync(c.StartsAt.AddDays(-1), c.EndsAt.AddDays(1), ct);
+                var kind = c.Kind == UnavailabilityKind.CallOut ? AttendanceEventKind.CallOut : AttendanceEventKind.ApprovedPto;
+                foreach (var opportunity in opportunities.Where(opportunity => !existing.Any(item => item.OpportunityId == opportunity.OpportunityId
+                    && item.Kind == kind && item.ReviewState != AttendanceEventReviewState.Superseded)))
+                {
+                    var item = new AttendanceIntelligenceEvent(ForgeIds.New(pipeline.Time), c.PersonId.Value, opportunity.OpportunityId, kind, c.StartsAt,
+                        AttendanceEventReviewState.PendingReview, AttendanceEventSource.Manual, now, RecordedBy: context.Actor);
+                    await intelligence.InsertAttendanceIntelligenceEventAsync(item, ct);
+                    events.Add(pipeline.Event(new AttendanceIntelligenceEventRecorded(item.EventId, item.OpportunityId, item.PersonId,
+                        item.Kind.ToString(), item.ReviewState.ToString(), item.Source.ToString()), context, SourceContext, "AttendanceEvent", item.EventId.ToString("D")));
+                }
+            }
             return new CommandOutcome(
                 CommandResult.Ok(id, $"Unavailable ({c.Kind}) {c.StartsAt:u} to {c.EndsAt:u}."),
-                [pipeline.Event(new EmployeeUnavailable(c.PersonId.Value, c.Kind.ToString(), c.StartsAt, c.EndsAt), context, SourceContext, WorkerEntity, id)],
+                events,
                 new AuditChange(WorkerEntity, id, null, CanonicalJson.Serialize(new { unavailable = c.Kind.ToString(), c.StartsAt, c.EndsAt })));
         }, ct);
     }
@@ -308,6 +370,76 @@ public sealed partial class WorkforceService(CommandPipeline pipeline)
         var area = await resources.FindSafetyAreaAsync(BusinessCode.Require(c.SafetyAreaCode, "Safety area"), ct)
             ?? throw new CommandRejectedException("unknown_safety_area", $"Safety area {c.SafetyAreaCode} does not exist.");
         return new WorkAssignment(area.Code, null, null, activity, c.AsTrainee);
+    }
+
+    private static async Task RequireSpecializedAssignmentCoverageAsync(IKernelUnitOfWork uow, AssignWork command,
+        WorkAssignment assignment, DateTimeOffset now, CancellationToken ct)
+    {
+        var resources = uow.Store<IResourcesLookup>();
+        var machines = await resources.ListMachinesAsync(ct);
+        var machineCodes = assignment.MachineCode is { } selected
+            ? new HashSet<string>([selected], StringComparer.Ordinal)
+            : machines.Where(machine => machine.WorkCenterCode == assignment.WorkCenterCode).Select(machine => machine.Code).ToHashSet(StringComparer.Ordinal);
+        var matchingProfiles = (await resources.ListMachineActivitiesAsync(ct))
+            .Where(profile => profile.ActivityCode == assignment.ActivityCode && machineCodes.Contains(profile.MachineCode)).ToArray();
+        var required = matchingProfiles.SelectMany(profile => profile.OperatorQualifications).Distinct(StringComparer.Ordinal).ToArray();
+        if (required.Length == 0) return;
+        var machineProfile = assignment.MachineCode is { } targetMachine
+            ? matchingProfiles.SingleOrDefault(profile => profile.MachineCode == targetMachine)
+            : null;
+        var requiresMachineAuthorization = machineProfile?.RequiresMachineAuthorization == true;
+
+        var competency = uow.Store<ICompetencyLookup>();
+        var workerStates = await uow.Store<IWorkforceLookup>().GetWorkerStatesAsync(now, ct);
+        var worker = workerStates.SingleOrDefault(state => state.PersonId == command.PersonId.Value)
+            ?? throw new CommandRejectedException("worker_not_found", "This person is not a registered worker.");
+        var qualifications = await competency.GetQualificationsAsync([command.PersonId], ct);
+        var holdsRequiredQualification = required.Any(code => qualifications.Any(record => record.Code == code && record.IsValidAt(now)));
+        var currentMachineAuthorizations = requiresMachineAuthorization
+            ? await competency.GetMachineAuthorizationsAsync([command.PersonId], ct)
+            : [];
+        var hasMachineAuthorization = !requiresMachineAuthorization || currentMachineAuthorizations.Any(record =>
+            record.MachineCode == machineProfile!.MachineCode && record.ActivityCode == machineProfile.ActivityCode
+            && record.IsValidAt(now) && qualifications.Any(q => q.Code == record.QualificationCode && q.IsValidAt(now)));
+        if (holdsRequiredQualification && hasMachineAuthorization) return;
+
+        var trainingCodes = required.Where(code => qualifications.Any(record => record.Code == code && record.Status == QualificationStatus.InTraining)).ToArray();
+        if (!command.AsTrainee || (!holdsRequiredQualification && trainingCodes.Length == 0))
+        {
+            if (holdsRequiredQualification && requiresMachineAuthorization)
+                throw new CommandRejectedException("machine_authorization_required",
+                    $"A current practical authorization for {machineProfile!.MachineCode} {machineProfile.ActivityCode} is required for independent assignment.");
+            throw new CommandRejectedException("qualification_required",
+                $"This assignment requires a current qualification ({string.Join(" or ", required)}). An unqualified worker cannot be assigned as an independent operator.");
+        }
+
+        var trainerPrerequisites = trainingCodes.Length > 0 ? trainingCodes : requiresMachineAuthorization && holdsRequiredQualification ? required : [];
+        var trainerTypes = (await competency.ListTypesAsync(ct)).Where(type => type.Kind == QualificationKind.Trainer
+            && trainerPrerequisites.Any(code => type.Prerequisites.Contains(code, StringComparer.Ordinal)
+                || (type.PrerequisiteAlternatives ?? []).Any(group => group.QualificationCodes.Contains(code, StringComparer.Ordinal)))).ToList();
+        var potentialTrainers = workerStates.Where(state => state.PersonId != worker.PersonId && state.IsActive && state.Unavailability is null
+            && state.PresenceKind is PresenceKind.ClockedIn or PresenceKind.SupervisorConfirmed
+            && state.PresentUntil is { } presentUntil && presentUntil > now
+            && state.Assignment is { AsTrainee: false } current && current.WorkCenterCode == assignment.WorkCenterCode
+            && (worker.ShiftCode is null || state.ShiftCode == worker.ShiftCode)).ToList();
+        IReadOnlyList<PersonQualification> trainerRecords = potentialTrainers.Count == 0 ? []
+            : await competency.GetQualificationsAsync(potentialTrainers.Select(state => new PersonId(state.PersonId)).ToArray(), ct);
+        var authorizedTrainers = !requiresMachineAuthorization ? potentialTrainers.Select(trainer => trainer.PersonId).ToHashSet()
+            : (await competency.GetMachineAuthorizationsAsync(potentialTrainers.Select(state => new PersonId(state.PersonId)).ToArray(), ct))
+                .Where(record => record.MachineCode == machineProfile!.MachineCode && record.ActivityCode == machineProfile.ActivityCode && record.IsValidAt(now)
+                    && required.Contains(record.QualificationCode, StringComparer.Ordinal))
+                .Select(record => record.PersonId).ToHashSet();
+        var covered = potentialTrainers.Any(trainer => authorizedTrainers.Contains(trainer.PersonId)
+            && trainerTypes.Any(type => trainerRecords.Any(record => record.PersonId == trainer.PersonId
+                && record.Code == type.Code && record.IsValidAt(now))));
+        if (!covered)
+        {
+            if (requiresMachineAuthorization)
+                throw new CommandRejectedException("authorized_trainer_required",
+                    $"A qualified trainer with current authorization for {machineProfile!.MachineCode} {machineProfile.ActivityCode} must be clocked in and assigned to this work center on the same shift before this trainee placement can proceed.");
+            throw new CommandRejectedException("qualified_trainer_required",
+                $"{string.Join(" or ", trainingCodes)} is in training. A qualified trainer must already be clocked in and assigned to {assignment.WorkCenterCode ?? assignment.SafetyAreaCode} on the same shift before this placement can proceed.");
+        }
     }
 
     public static string Describe(WorkAssignment a)

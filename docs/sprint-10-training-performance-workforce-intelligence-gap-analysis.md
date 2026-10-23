@@ -1,0 +1,45 @@
+# Sprint 10 architecture gap analysis and implementation status
+
+Date: 2026-10-23
+Source brief: `Forge_Sprint_10_Training_Performance_Workforce_Intelligence.md`
+Status: Phase A discovery is complete. Source implementation is in verification. The table below records the pre-change architecture and gaps that guided implementation.
+
+## Source-of-truth map
+
+| Concern | Existing Forge source | Gap before Sprint 10 |
+|---|---|---|
+| Worker identity and operational assignment | Kernel people; `Forge.Workforce` worker, shift, presence, job title, photo, unavailability, temporary move and transfer records | No employee development profile, correction request, configurable employment attendance policy, or protected-leave classification model. Do not infer employment status or sensitive leave reasons from operational records. |
+| Qualifications and supervised training | `Forge.Competency` qualification types, prerequisites (including alternatives), current qualification records; `Forge.Execution` supervised training sessions | Course completion, practical assessment evidence/version/assessor, review rules, restrictions, and machine authorization lifecycle are not separate records. A machine activity profile plus a valid qualification remains the current assignment gate. |
+| Attendance | `workforce.attendance` clock-in/out intervals and `workforce.unavailability` planning windows | No scheduled-arrival opportunity, grace policy, classification/provenance, quarter policy version, correction/dispute workflow, or reproducible attendance summary. Raw punches cannot be labeled misconduct. |
+| Operation labor and quantity | `execution.labor`, `execution.production_report`, routing snapshot in `execution.order_operation`, downtime/stoppage and training-session records | Labor duration can be derived from start/end, but no approved labor standard, category-specific time, correction history, reasoned variance, employee allocation rules for shared time, or traceable earned-standard calculation. Planned setup/run values exist on engineering routing but need to remain distinguishable on released operation snapshots. |
+| Quality and rework | `Forge.Quality` NCR/disposition/rework, inspections, CAPA/investigations; production reports record good and scrap quantities | Shop-floor production scrap is a recorded quantity, not a separate suspect/quarantine report. A new report must feed existing holds/MRB and must never finalize inventory disposition. |
+| Material and stockroom | Canonical inventory ledger, holds, lot/revision dimensions, material tasks with request/allocate/pick/deliver/cancel states, material-flow read model, canonical MRP | No dedicated operator request/scrap linkage or two-person custody acceptance. Existing `MaterialTask` is the workflow base; do not create a parallel request or inventory ledger. Inspect and extend task reservations/partial fulfillment only where existing behavior does not meet Sprint 10. |
+| Notifications and audit | Kernel transaction pipeline, audit chain, event outbox, in-app notifications and work inbox | No configurable planner/stockroom/quality notification rules with retry/deduplication evidence was found in the inspected feature routes. Any email delivery must be an outbox consumer; source commands must succeed independently of email. |
+| Workforce planning | Planning capacity, readiness, recovery trials, shift facts, safe reallocation preview and Workforce Kanban | There is no integrated, approval-gated daily development/recovery recommendation center joining training needs, quality context, operation labor, material disruption, and source-center impact. Existing planning/reallocation services remain authoritative. |
+| Verified material handoff | HID-capable scan session and badge identity resolution; existing material task and inventory transaction APIs | There is no independent receiver acknowledgment, custody event history, distinct deliverer/receiver policy, or pending-receipt constraint on line availability. Badge possession by itself cannot serve as authentication. |
+
+## Data and security plan
+
+Reuse the existing identity, work-center, machine, operation, qualification, inventory, lot, hold, and order identifiers. Add append-only or versioned records only for missing business facts: attendance schedule opportunities and policy versions; contextual labor standards and adjustment events; operator suspect reports and quality disposition links; request status and approval history where `MaterialTask` lacks it; independently authenticated custody events; and human-reviewed development nominations. Preserve raw timestamps, source provenance, policy effective dates, and calculation versions. Keep protected leave detail and compensation discussion out of broad Workforce and shop-floor views.
+
+Commands that change records must pass through the existing transaction pipeline, audit writer, outbox, idempotency handling, and permission checks. Material movement remains owned by Inventory; quality disposition remains owned by Quality; employee qualifications remain owned by Competency; assignments and staffing remain owned by Workforce and Planning. Do not introduce a second scheduler, MRP netting engine, personnel score, or stock ledger.
+
+## Delivery sequence
+
+1. Close Sprint 9's code gates and test its regression suite before calling its prerequisite complete. Its handoff still records missing full scenario assertions and an isolated WhiskerWorks database; those limitations must remain explicit if the external isolated-data gate is unavailable.
+2. Build a source-backed Workforce Command Center from existing permission-filtered records, explicitly labeling metrics as insufficient where schedule, standard, or evidence is missing.
+3. Add additive, auditable attendance policy/opportunity and correction support, then verify denominator and protected/excused exclusions with unit and integration cases.
+4. Add operation labor standards, categorized actual time, variance context, and human-reviewed training/development workflows; connect only approved facts to existing planning/readiness views.
+5. Extend the existing shop-floor and Inventory material-task workflow for suspect scrap, linked part requests, partial fulfillment and exception custody. Keep quality disposition and ledger posting separate.
+6. Add verified two-person material handoff with independent receiver authentication and audited custody state. Do not make in-transit or pending-receipt stock available at the line.
+7. Add durable, permission-safe notification rules/outbox delivery, deterministic WhiskerWorks fixtures and end-to-end scenario coverage; then run the full applicable validation and update release notes, handoff and session log.
+
+## Current limits
+
+The Sprint 9 handoff reports that the running preview contains only `PLANT1`, and that a code preflight is not tenant isolation. Do not apply WhiskerWorks seeds or reset the existing preview. The Sprint 10 brief's requirement to keep Sprint 9 intact is actionable in source and test suites; assertions requiring WhiskerWorks runtime data remain pending until a genuinely isolated database is available.
+
+## Implementation status
+
+The implementation now adds the Workforce Training & Performance Command Center; machine-specific course, practical-assessment, and authorization records; effective-dated attendance opportunities and policy versions; independent review and append-only correction events; development nomination packets; operation-level labor metrics; suspect-scrap reports; linked replacement and BOM shortage material tasks; approval-gated non-BOM requests; verified two-person material custody; custody exception reporting/history; notification rules; and Workforce `!` links to material and quality disruptions. See `docs/sprint-10-implementation-report.md` for the source paths, APIs, migrations, and remaining acceptance limits.
+
+Available local verification passed: UI 335/335, isolated Release host build with 0 warnings/errors, Planning 322/322, and deterministic attendance/material/labor integration calculations 12/12. The integration project compiles, but database-backed tests are blocked by unavailable Docker Engine and unset `FORGE_TEST_POSTGRES`; full solution restore is blocked by inaccessible `api.nuget.org` and two uncached test packages. No WhiskerWorks seed or database mutation has been run. Full acceptance remains open for the seeded scenarios and isolated database, ranked recovery what-if workflow, partial custody disposition/returns, configured email-provider delivery, and Sprint 9 prerequisite gates.

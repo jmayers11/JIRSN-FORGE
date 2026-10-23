@@ -196,12 +196,24 @@ public sealed class AttendanceService(CommandPipeline pipeline, IBadgePinVerifie
 
             // Clocking in is presence evidence, and it expires: a scan this morning is not proof of presence tonight.
             await uow.Store<IWorkforceStore>().InsertPresenceAsync(person, PresenceKind.ClockedIn, now, now + ClockInPresence, context.Actor, ct);
+            var intelligence = uow.Store<IAttendanceReliabilityStore>();
+            var opportunity = await intelligence.FindAttendanceOpportunityAsync(badge.PersonId, now, ct);
+            var events = new List<EventEnvelope>
+            {
+                pipeline.Event(new EmployeeClockedIn(badge.PersonId, attendanceId, now), context, SourceContext, WorkerEntity, id),
+                pipeline.Event(new PresenceRecorded(badge.PersonId, nameof(PresenceKind.ClockedIn), now + ClockInPresence), context, SourceContext, WorkerEntity, id),
+            };
+            if (opportunity is not null)
+            {
+                var arrival = new AttendanceIntelligenceEvent(ForgeIds.New(pipeline.Time), badge.PersonId, opportunity.OpportunityId, AttendanceEventKind.Arrival, now,
+                    AttendanceEventReviewState.Verified, AttendanceEventSource.Timeclock, now, RecordedBy: context.Actor);
+                await intelligence.InsertAttendanceIntelligenceEventAsync(arrival, ct);
+                events.Add(pipeline.Event(new AttendanceIntelligenceEventRecorded(arrival.EventId, arrival.OpportunityId, arrival.PersonId,
+                    arrival.Kind.ToString(), arrival.ReviewState.ToString(), arrival.Source.ToString()), context, SourceContext, "AttendanceEvent", arrival.EventId.ToString("D")));
+            }
             return new CommandOutcome(
                 CommandResult.Ok(id, "Clocked in."),
-                [
-                    pipeline.Event(new EmployeeClockedIn(badge.PersonId, attendanceId, now), context, SourceContext, WorkerEntity, id),
-                    pipeline.Event(new PresenceRecorded(badge.PersonId, nameof(PresenceKind.ClockedIn), now + ClockInPresence), context, SourceContext, WorkerEntity, id),
-                ],
+                events,
                 new AuditChange(WorkerEntity, id, null, CanonicalJson.Serialize(new { attendance = "in", attendanceId })));
         }, ct, authority: (uow, _) => BadgeAuthorityAsync(uow, c.Badge, WorkerEntity, ct));
     }

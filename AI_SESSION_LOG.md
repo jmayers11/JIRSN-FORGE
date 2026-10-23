@@ -1207,3 +1207,344 @@ or live-browser check was performed.
 Nexus attendance, alternate module boards, user-tested workflow, workforce roster persistence/commit, or offline and
 concurrency support was added. The page reads existing endpoints separately and explicitly says this is not an atomic
 or real-time snapshot. No API, schema, migration or operational record was changed.
+
+## Codex: Workforce and Machine Kanban density pass (2026-10-22)
+
+**Request.** The owner asked to simplify Workforce Kanban to employee names, defer safety warnings until a proposal is
+analyzed, collapse production schedule context, and show only machine name and location until a supervisor opens a
+Machine Readiness card.
+
+**Implemented.** Workforce cards now show employee names only by default; selecting one reveals proposal controls,
+and drag-and-drop remains. Removed current presence, shift, qualification, assignment, lane-health and KPI details
+from the default board. Removed preliminary readiness, downtime and qualification reads from the page. Safety and
+staffing analysis still uses the existing read-only backend preview after the supervisor clicks Analyze, and its
+comparative impacts are grouped by affected work center. Production schedule context and employee filters are
+collapsed by default. Machine cards now show only machine name and work-center location in their summary; opening a
+card reveals Forge readiness, maintenance, staff and order evidence. Removed machine KPIs and collapsed filters and
+the signal guide while preserving the warning that Ready is not telemetry or a running state.
+
+**Checks.** Full UI suite passed 282/282. Both changed JavaScript modules passed `node --check`; `git diff --check`
+reported no whitespace errors. This frontend-only change did not run a live browser/PostgreSQL smoke or backend build.
+No backend contract, schema or operational state changed.
+
+## Codex: Visual plant-floor Workforce Kanban and official titles (2026-10-22)
+
+**Request.** The owner asked to replace Workforce Kanban's sideways work-center lanes with a whole-plant map that uses
+work-center pictures, shows employee titles, and lets plant setup staff arrange centers to resemble the facility. The
+owner approved maintaining official titles in Forge.
+
+**Implemented.** Replaced the horizontal Workforce Kanban lanes with a responsive floor map grouped by site safety
+area. Each active work center reuses its configured photo and shows employees with current presence and their current
+assignment. Employee cards show official job title and machine assignment when available. Workers without current
+presence appear in a collapsed section. The view describes Forge's presence and assignment data and does not claim live
+physical tracking. Setup-authorized users can drag tiles or use arrow controls, swap positions when dropping on an
+occupied cell, and save the full map in one reason-required audited command. Layout fields are nullable and use a
+four-column/100-row per-safety-area grid; first-use positions are filled deterministically.
+
+Added a workforce-managed optional official title with audit reason/event. The workforce API includes `jobTitle`; the
+Workforce Admin page adds a title action for `workforce.manage`. Added resource and workforce migrations `0006_floor_layout.sql`
+and `0006_official_job_titles.sql`, the complete-map route `POST /api/resources/work-centers/layout`, and the
+title route `POST /api/workforce/workers/{personId}/job-title`. Updated [ADR 0058](docs/adr/0058-workforce-visual-floor-map-and-official-titles.md)
+and the README.
+
+**Checks.** Full UI suite passed **283/283**. All **59** frontend JavaScript modules passed `node --check`;
+`git diff --check` passed. Host and integration-test project build passed with **0 warnings and 0 errors** using an
+isolated output path because an active Forge process held the normal outputs. Added integration assertions for
+permissions, reasons, duplicate-cell refusal, persisted layout and title reads; the project compiles.
+
+**Not run.** PostgreSQL-backed integration execution was unavailable: `FORGE_TEST_POSTGRES` is unset and the Docker
+daemon pipe is missing. No migration was applied to a live database, no Forge process was restarted, and no browser
+smoke was performed. Run the focused `PlantSetupTests` when a test PostgreSQL is reachable, then restart Forge through
+its normal startup migration path and smoke the supervisor and setup-authorized views. No commit was made.
+
+## Codex: Compact Workforce Kanban (2026-10-22)
+
+**Request.** The owner said the visual plant map remained cumbersome and asked for a centered, screenshot-inspired
+staffing view that fits almost all work centers on one screen. The attached redesign brief also calls for compact
+Kanban columns while preserving staged-only staffing proposals.
+
+**Implemented.** Added a compact default staffing board with a single horizontal row of work centers, small configured
+photos, safety-area labels, headcounts, employee names, official titles, shift and on-site status. Additional centers
+scroll inside the board. Name/title/ID search and area/shift filters stay visible; search updates only the board so its
+input remains mounted. Production schedule context stays collapsed, while scenario actions use a condensed sticky bar.
+The existing spatial Facility map remains available with one click for layout setup; unused empty map drop cells are
+hidden outside edit mode. Existing drag-and-drop and selectable proposal controls remain in place.
+
+**Limits.** This is a front-end density pass; no API, backend, migration, database, or live assignment change was made.
+The page uses existing presence, assignment, shift and title data and existing read-only scenario analysis. It does
+not yet bring in worker photos, qualifications, training restrictions, safety roles, confirmed absence categories,
+machine readiness, required staffing, or computed downstream production impact. No schedule commit/approval flow or
+safety override was introduced.
+
+**Checks.** `node --test tests/ui/*.test.mjs` passed **283/283**. `node --check
+src/Forge.Host/wwwroot/js/pages/workforce-kanban.js` and `git diff --check` passed. The local Forge tab opened at the
+development sign-in screen, so browser visual review was not possible; the tab was restored to its prior `#/analyst`
+URL without signing in. No screenshot was produced and no production data was touched.
+
+**Follow-up.** Review desktop and tablet widths after signing in. Map any requested qualification, restriction,
+machine-health or staffing-rule details to their real source APIs before adding them; preserve the current staged-only
+proposal flow and facility-map view. No commit was made.
+
+## Codex: 4×4 workforce board and image-backed plant map (2026-10-22)
+
+**Request.** The owner asked for the plant-floor view to mix horizontal and vertical layout in a 4×4 setup, use the
+attached plant-floor screenshot as the map reference, show seeded workers at locations, support employee photos, and
+let management or administrators upload a site map and move work centers.
+
+**Implemented.** Workforce Kanban now has a responsive 4-column staffing board (four rows show sixteen centers on a
+desktop-width view) and a separate image-backed map. Cropped the supplied reference image into
+`src/Forge.Host/wwwroot/img/plants/sample-plant-floor.png`; site maps without an upload are explicitly labeled as a
+reference example. Map markers show on-site headcount and faces, expand to employee names/titles, and can be moved by
+dragging or keyboard-accessible arrow controls. Saving sends a complete center layout with an audit reason. Added
+upload/replace/remove for PNG/JPEG/WebP site maps (8 MiB cap), protected image reads and storage metadata, and
+Facilities Manager upload/replace/remove of optional employee headshots through the narrow
+`workforce.photos.manage` permission, with initials fallback. Existing sample seeding
+now gives eight sample employees official titles and positions centers over the reference map; the seed workflow was
+not executed against a live database.
+
+Added the narrow `resources.floor-map.manage` permission and granted it to FacilitiesManager, ManufacturingEngineer
+and SecurityAdministrator; FacilitiesManager also receives workforce read/supervise and photo-management access for
+this page. Full plant setup and general workforce edits remain separately permissioned. Added resource map and workforce photo schema migrations
+`0007`, kernel role migration `0020`, plus API/service wiring, ADR 0058 revisions and README usage notes.
+
+**Checks.** `node --test tests/ui/*.test.mjs` passed **283/283**. JavaScript syntax checks and `git diff --check`
+passed. Host and integration projects compiled into a temporary output directory with zero warnings/errors. The
+focused PostgreSQL integration test compiled but could not start because `FORGE_TEST_POSTGRES` is unset and the Docker
+engine pipe is unavailable. No application migration or live data write, restart or browser screenshot was performed.
+No commit was made; existing worktree changes were preserved.
+
+**Next.** Run `PlantVisualTests` with a reachable test PostgreSQL, allow the ordinary startup path to apply migrations,
+then smoke-check the 4×4 board, FacilitiesManager map upload/reposition permissions and workforce-manager photo flow
+after signing in. Visually review desktop and tablet widths. Run the sample seeder only against the intended development
+database if seeded faces/titles/locations are needed.
+
+## Workforce Kanban map access and shift control (2026-10-22)
+
+The owner asked how to move work centers on the map after entering as `dev-admin`, and requested an easier shift
+changer. Moved the existing shift filter into the Workforce Kanban page header and reduced the secondary filter row
+to employee search and safety area. Added a focused regression test proving the selected shift filters workers while
+the header control stays mounted; `node --test tests/ui/workforce-kanban.test.mjs` passed **4/4**.
+
+The open preview was an older Release backend: the map-layout POST route returned 404 and `dev-admin` did not have
+`resources.floor-map.manage`. A Release rebuild exposed that migration `0020_facilities_visual_map_access.sql`
+granted `resources.floor-map.manage` and `workforce.photos.manage` before registering those permission names, causing
+a permission-catalog foreign-key failure. Added both catalog entries before the grants. Rebuilt
+`Forge.Host.csproj` in Release (**0 warnings, 0 errors**) and restarted through `.forge-logs/run-forge-release.cmd`.
+Startup applied the migration; `/health/ready` returned `ready`, and the live `dev-admin` principal now has both
+permissions. No map positions were edited and no sample seeder was run.
+
+To arrange centers, open **Plant map** → **Arrange work centers**, move a pin by dragging it or using arrow controls,
+then save and enter an audit reason. The current local database only has `ALL` (“Around the clock”), so separate
+day/night options require creating shifts in Plant Setup and assigning employees to them. The app is running at
+`http://localhost:5080`; refresh the open page to load the updated permission set. No commit was made.
+
+## Workforce Kanban planning rail (2026-10-22)
+
+The owner asked for a Workforce Kanban closer to the supplied planner reference, with movable workers on the right
+and a place to see upcoming PTO, vacation, call-outs and other unavailability.
+
+Moved unassigned, confirmed-on-site people into a right-side **Available to assign** rail alongside the 4-column
+work-center grid. Staff can be dragged into a work center or selected to stage a destination; those actions remain
+scenario proposals and do not write assignments. Added a **Callouts & upcoming time away** list for saved approved
+PTO, call-outs, unavailable windows and training, plus a collapsed roster for people not confirmed on site without
+an absence record. The page requests a 30-day range from new read-only `GET /api/workforce/unavailability`, protected
+by `workforce.read` and capped to 90 days. Responsive CSS stacks the board at narrow widths.
+
+Added UI coverage for the right rail and proposal flow, and extended the real-API Phase 4 PTO test. Focused UI tests
+passed **5/5**; the full UI suite passed **285/285**. The Release host build succeeded with **0 warnings and 0
+errors**. The Phase 4 integration test project compiled, but execution stopped before the test because PostgreSQL
+was unavailable (`FORGE_TEST_POSTGRES` is unset and the Docker engine pipe is missing). The previously locked host
+process was stopped so the build could replace its assembly, then Forge was restarted at `http://localhost:5080`.
+`/health/ready` returned HTTP 200 and an authenticated read of the new unavailability endpoint also returned HTTP
+200. The current local database has 9 registered workers and 7 work centers, with no time-away windows in the next
+week. Refresh the Workforce Kanban page to load this version. No commit was made; the integration test remains
+pending a reachable PostgreSQL test database.
+
+## Pre-shift workforce planning (2026-10-22)
+
+The owner asked to plan workforce before employees clock in. Added a **Pre-shift roster** containing active workers
+who are not confirmed on site and have no current unavailability. Supervisors can drag them to a work center or
+open a worker card and stage a destination. A staged person appears in that lane with a dashed card and the explicit
+**Planned · not clocked in** label; the lane displays proposed count separately from people on site. Active absence
+records remain in the time-away panel. The roster omits a worker after they are staged to a work center so the same
+person is not duplicated in the rail and lane.
+
+Updated the board summary to separate confirmed on-site and not-clocked-in counts. Clarified that the existing
+read-only safety analysis evaluates active work at the current snapshot and does not certify future shift coverage;
+the preview calls for another review when attendance and qualifications are current. No live assignment changes or
+database schema changes were added.
+
+**Checks:** focused Workforce Kanban tests **5/5**; full UI suite **285/285**; Release build **0 warnings, 0 errors**;
+Forge restarted and `/health/ready` returned HTTP 200. No commit was made. The earlier real-API PTO test is still
+unable to execute in this environment because the test PostgreSQL/Docker connection is unavailable.
+
+## Specialized workforce placement safeguards (2026-10-22)
+
+The owner asked for move restrictions in specialized work such as Slitting or Winding unless the worker is qualified
+or has a trainer present first. Workforce Kanban now checks the machine activity's configured
+`operatorQualifications` against current Competency records before allowing the scenario to be analyzed. A current
+qualification permits independent placement. An unqualified worker must have a recorded `InTraining` record and a
+currently qualified trainer already clocked in/confirmed at that exact work center. The trainer must hold both the
+underlying qualification and a current `Trainer`-kind qualification whose prerequisite is that qualification; a
+trainer who is only planned to arrive does not count. The trainer must be active, available, not a trainee and on the
+same selected shift when the trainee has a shift. An unavailable, expired or inaccessible qualification feed blocks
+specialized placements. Work-center activities without configured qualification requirements remain unaffected.
+
+The Kanban displays the blocking reason on the worker card and above the board, and disables **Analyze impact** until
+the missing training or trainer condition is fixed. This remains a staged, read-only planning flow and does not write
+live assignments. Shop-floor execution checks remain authoritative at operation start. Added `competency.read` to the
+Facilities Manager role and migration `0021_facilities_manager_competency_read.sql` so staffing managers can verify
+qualification coverage.
+
+Added UI regressions for an independently qualified worker, a supervised trainee with a qualified trainer already
+at Slitting, a trainee blocked until the authorized trainer is present at Winding, and fail-closed behavior when the
+planner lacks competency access. Focused Workforce Kanban tests passed **9/9**; the full UI suite passed **289/289**;
+Release host build passed with **0 warnings and 0 errors**; `git diff --check` passed. Local Forge restarted at
+`http://localhost:5080`, migration `0021_facilities_manager_competency_read` applied, and `/health/ready` returned
+`ready`. No worker, qualification or assignment data changed. No commit was made.
+
+## Supervisor Kanban Polish Sprint 8 (2026-10-22)
+
+Implemented the requested frontend work from `jirsn_forge_supervisor_kanban_polish_sprint8.md`. Expanded employee
+cards now offer permission-gated title editing, headshot upload/removal, an inline training and qualification drawer,
+presence confirmation, callout/PTO recording and a reason-confirmed live-assignment action. Before a specialized
+assignment is committed, the page rereads current workers and qualification coverage and applies the trainer guard
+again; if the worker is in training, the saved assignment is marked `asTrainee`. The confirmation form only offers
+presence types accepted by the existing API.
+
+Added the `#/workforce?personId=...` profile deep link and auto-selection in Manage people. Document training uses
+the active-person directory as a dropdown and falls back to manual ID entry if that directory read is unavailable.
+Machine Readiness now displays blocked, attention, ready and unknown totals plus matching lane counts; totals track
+filters. The plant-map off-site/unassigned accordion stays open when an expanded employee is rendered. Updated dark
+status colors for WCAG contrast. No endpoint, C# backend or database changes were added for Sprint 8.
+
+**Validation:** focused Sprint 8 tests passed; all UI tests passed **293/293**; `node --check` passed for the changed
+modules; `git diff --check` passed. Tests verify reason-gated action presentation, current trainee marking,
+profile selection, directory fallback, filtered KPIs and map accordion state. No employee, qualification, presence,
+photo or assignment records were changed. Gemini has not rerun its review, so a 100/100 score is not yet verified.
+The local server returned HTTP 200 from `/health/ready`; its updated Workforce Kanban, Machine Readiness, Workforce
+and CSS assets also returned HTTP 200. No commit was made. Refresh the local pages for a visual check, then rerun
+Gemini review against this implementation.
+
+## Sprint 9 WhiskerWorks map, sign-in and operator kiosk (2026-10-23)
+
+Implemented the UI portion of `jirsn_forge_whiskerworks_plant_map_and_kiosk_master_spec_sprint9.md` while preserving the existing Sprint 8 changes. Replaced the stacked login images with a responsive split-screen sign-in, one hawk icon plus CSS JIRSN/FORGE wordmark, a Development-only fictional/sample-data reminder, and a one-click `Launch Operator Kiosk` flow. The OIDC button remains organization sign-in.
+
+The locked Shop Floor page now presents a large station HUD, a site-local clock using the app's configured time zone, scanner-focus feedback and an explicit safety/IPC gate reminder. Active production shows a segmented Good/Scrap progress strip and Target, Good, Scrap and Remaining tiles. One shared keypad switches between the Good and Scrap inputs and adds `+1`, `+5`, `+10`, `+25` and Fill remaining controls. Scrap reasons have touch tiles. The work queue is now touch-friendly job cards with scheduled-for-you state, machine selection and the existing server-side start/hold/clock-in rules. An authorized maintenance reporter sees `Report machine down`; its reason-required modal submits to the existing audited maintenance endpoint.
+
+Created `src/Forge.Host/wwwroot/img/plants/sample-plant-floor.svg`, an architectural reference map without static status text, and switched the Workforce Kanban map to this file by default. Added deterministic coordinate defaults for the WhiskerWorks `WC-*` codes. The map derives machine status with the existing `deriveMachineCards()` function, reading readiness and maintenance endpoints according to role permissions; each center displays its worst machine signal, expanded centers list machine signals, and machine selection opens current readiness evidence, maintenance and staffing information. This uses Forge state and leaves unknown sources Gray/Unknown.
+
+Added UI regressions for locked scanner state, active progress/shared keypad/reason tiles, job cards and the clock-in gate, downtime command payload/permission, and WhiskerWorks map signal provenance. The machine readiness drawer also shows required operator qualifications and offers a Stage action only for currently present workers with every required unexpired qualification; this selects the machine's exact activity and asset in a staged proposal. An extended regression verifies the proposal can be analyzed and that the action does not directly alter the live assignment. Updated an expired Workforce presence fixture from October 2026 to October 2030 so the on-site test remains deterministic relative to the current date.
+
+**Checks:** `node --test tests/ui/*.test.mjs` passed **299/299**. `dotnet build src/Forge.Host/Forge.Host.csproj --configuration Release --no-restore` passed with **0 warnings and 0 errors**. `git diff --check` passed. The full `dotnet test Forge.slnx --configuration Release --no-restore` command was attempted: unit suites that do not need PostgreSQL passed (Kernel 44, Planning 321, Architecture 32), but 266 integration tests failed to initialize because the local Docker engine pipe is unavailable and `FORGE_TEST_POSTGRES` is unset. The solution run additionally reports an unresolved `TestSite` name in `tests/Forge.Integration.Tests/SlittingPlant.cs` when compiling `Forge.Simulation.Tests`. Local `/health/ready` and updated JS/CSS/SVG asset routes all returned HTTP 200. No database rows, badges, employee photos, assignments or production records were changed; no schema changes or migrations were added; no commit or screenshot was made.
+
+The broad master specification is **partially complete**, not all 32 assertions complete. There is still no isolated `WW-DEMO`/`WW-P01` deterministic seed, no Demo Scenario Control Center, no `S01`–`S16` scenario engine/assertion set, no simulated clock/baseline/evidence export, no kiosk photo endpoint scoped to the current operator, and no demo badge feed. The legacy PNG with status artwork remains as an unused reference file; the page uses the new SVG. Map pan/zoom, composable layers and searchable cross-machine qualified coverage remain for follow-up. The selected-machine drawer does display required qualification codes and supports safe staging for present workers with current qualifications. These gaps are listed with status in the Sprint 9 section at the top of `AI_HANDOFF.md`. Do not reset or relabel the existing sample plant as WhiskerWorks; seed only a dedicated demo tenant after strict scope and reset-reason protections are implemented.
+
+Follow-up read-only discovery of `GET /api/resources/` on the running preview returned only `PLANT1` (“Sample Plant”). The current API surface does not expose a separate `WW-DEMO` tenant identity or a verified tenant-wide reset boundary. No WhiskerWorks site or other records were written. Before adding a seed/reset operation, establish and test tenant isolation across every affected Forge domain; a site-code check alone is not evidence that orders, inventory, workforce and quality records are isolated.
+
+## Redtail hero and WhiskerWorks foundation continuation (2026-10-23)
+
+The owner asked to restore the original redtail hawk to the opening screen and continue WhiskerWorks. Restored `bg-hero-hawk.jpg` as a full showcase image in the split sign-in, with responsive sizing and descriptive alt text. Added a UI regression proving the image is referenced with alt text and cover styling.
+
+Added the fictional WhiskerWorks phase-one manifest and audited-API seed CLI. The manifest declares 15 safety areas, 16 work centers mapped to unique 4×4 cells, 24 machines, 52 workers, three shifts, five product-family identifiers for later work, 22 named qualification types with prerequisites, and two independently approved two-person safety rules. Each center has two day-shift workers in the preview roster; the Fabrication weld pair has the join qualification, the Heavy Assembly day-shift pair has the heavy-assembly qualification, and CNC Lathe has a qualified trainer present. Fixed an initial roster mismatch where two heavy-assembly workers referenced standard-assembly machines.
+
+The seed CLI defaults to a no-network dry run. Its apply path requires an explicit localhost base, administrator subject and a separate preflight reader with engineering, orders, inventory, procurement, quality, maintenance, competency and safety-rule read permissions. It preflights global stores for foreign site/catalog/operations data, registers demo principals before commands use them, performs audited API writes only, and has no reset/delete command. The tool was not applied because the local database still contains `PLANT1` and the API reads are not tenant-scoped. Continue only against a separate empty local Forge database; this CLI's empty-database guard does not itself prove tenant isolation. No database rows, identities, credentials, badges, qualifications or assignments were written.
+
+**Validation:** `node --check` passed for both seed modules; manifest/dry-run tests passed **6/6**; accessibility tests passed **20/20**; `git diff --check` passed. The complete UI suite passed **306/306**. The preview health route, sign-in page, hawk image, stylesheet and app bundle all returned HTTP 200. The apply preflight was exercised with `--apply`, `dev-admin`, and the broad-read `eng` identity; it completed all reads and refused on the existing `PLANT1` site before any write. No host restart or database row change was made in this continuation. The rest of Sprint 9 remains open: products and BOMs/routings, suppliers/customers, sales and work orders, inventory lots, maintenance/quality evidence, 16 scenario controls/assertions, simulated clock/baseline/evidence export, and tenant-wide isolation.
+
+**Spec reconciliation note:** The seed preserves all 22 named qualification gates because the source summary's target of 18 conflicts with its more detailed matrix. Forge's prerequisite contract currently requires every listed prerequisite, so it cannot yet express the CNC Setup requirement of either Mill or Lathe authorization; that alternate path remains open. Fourteen fixed support stations are in the manifest, but are not seeded as commissioned machines in this phase.
+
+## Post-Sprint-9 Inventory, MRB, and Work-Order Upgrade Audit (2026-10-23)
+
+Reviewed `C:/Users/wrest/Downloads/Forge_Post_Sprint_9_Inventory_MRB_Work_Order_Upgrades.md` as the product brief. Completed Phase 0 static review and wrote `docs/post-sprint-9-inventory-mrb-work-order-gap-analysis.md`; added its current status and next gate to `AI_HANDOFF.md`. No application code, database, or seed data was changed, and all existing uncommitted Sprint 8/9 work was preserved.
+
+The audit found strong existing foundations in the append-only inventory ledger and stock dimensions, kernel holds and transactional audit/outbox/idempotency, engineering BOMs/routings, released production-order snapshots, NCR/rework/CAPA/investigations, and maintenance work orders. The principal gaps are physical stock reservations/ATP, one quantity-scoped containment and disposition flow across existing quality/hold/inventory records, versioned amendments and linked rework orders, a part-centered inventory workspace, and a consistently demonstrated site boundary. The handoff still marks Sprint 9 partial and unapplied, so post-Sprint-9 feature implementation remains pending its tested isolated-database baseline.
+
+**Validation:** `git diff --check` passed (Git reported only its existing LF/CRLF normalization warnings). This was a documentation-only audit; no runtime checks or migrations were run. No commit was made.
+
+## Sprint 9 implementation continuation (2026-10-23)
+
+The owner directed continuation of Sprint 9 and asked to defer testing until implementation is complete. No build or test was run in this continuation.
+
+Extended the WhiskerWorks data definition with the five master-spec product names and a shared fictional catalog: 95 components plus five finished goods, 26 complete make-item BOMs/routings, ten fictional suppliers and customer identities, 28 deterministic demand lines, and 42 deterministic production-order definitions. Added a separate dry-run-first `tools/seed-whiskerworks-commercial.mjs` that requires explicit local target and identities, validates the existing WhiskerWorks foundation and empty/demo-only data scope, versions command idempotency keys, and assigns production orders to a `WW-DEMO` program. It also seeds eight inventory locations, bought-part receipt lots (including the 250 m sisal and named motor lots), approved audited opening-balance adjustments for make subassemblies, 24 active machine assets with PM plans, three current gauges, five final inspection plans, and three released internal-document records with plain-text files explicitly marked as fictional non-operating placeholders. Added distinct inventory adjustment approval authority to the demo setup. No seeder was applied; `PLANT1` remains untouched.
+
+Added a single 16-scenario catalog module shared by the seed tooling and Scenarios page. The page detects `WW-P01`, exposes four private preview entry points for existing planning scenario kinds, and provides a current authorized read-snapshot baseline, count comparison, and JSON export. Evidence omits source records and reports sources that are unavailable. It explicitly says the previews do not inject events and that the clock is not simulated.
+
+Open work remains substantial: authoritative event injection and assertions for S01–S16, Start Shift, a site-scoped simulated clock, a persisted baseline, reset with tenant-wide transaction guarantees, the remaining preview mappings, support-station commissioning, and the CNC either/or prerequisite remain incomplete. The new API call sequences have not been exercised; their integration, expected counts and workflow outcomes must be verified only after implementation is complete, per the owner's instruction. No database writes, commit, host restart, or screenshots occurred.
+
+## Sprint 9 scenario action continuation (2026-10-23)
+
+Continued the implementation while honoring the request to defer builds and tests. Added real, reason-required, idempotent scenario controls for the supported S02/S03/S04/S06/S08/S16 source actions: deterministic Day Shift roster handling, callout and explicit presence-end commands, CNC-01 unplanned downtime, exact motor-lot inventory hold, and the 250 m sisal split plus 5 m scrap ledger flow. S16 runs the S02/S04/S06 source commands in sequence and keeps each completed step in Forge if a later action fails. The UI requires the visible database to contain only WW-P01 and only WhiskerWorks item codes before enabling source-changing controls; that client check does not establish server-side tenant isolation.
+
+Extended the evidence export to include current downtime, holds, unavailability, stock positions and sisal inventory transactions, with explicit checks for the controls the UI can substantiate. Added tested-later pure helper coverage for deterministic roster selection, safe sisal replay states, and exact child/split/scrap reconciliation. Corrected the commercial order seeder to reuse exact WW-DEMO signatures and resume the intended Planned → Released → Held transition on rerun instead of issuing duplicate create commands. No database/preview state was touched, no seeder was applied, and no build or test was run. The complete 16-scenario execution/assertion matrix, isolated site clock, server baseline/reset and remaining unsupported source events remain open; see the top Sprint 9 entry in `AI_HANDOFF.md`.
+
+## Sprint 9 implementation continuation — safety evidence and scope (2026-10-23)
+
+Continued implementation without running tests, builds or database operations, per the owner's request. The ASM-03 scenario now reads actual qualification records and only records a callout when exactly two active, current, qualified Day Shift workers are present on the machine. Its evidence export checks the source CallOut window and current qualified staffing. The sisal evidence helper also verifies each released child lot is at `WW-RAW`, in addition to reconciling the 245 m split, 5 m scrap and zero parent balance.
+
+The Scenario Center now describes its 16 rows as definitions, not passed acceptance tests, and labels each row as an audited source command, private what-if preview, existing workflow requiring manual evidence, or unavailable. It includes a read-only Machine Readiness path for the baseline. Source controls require the visible WW-P01 site, 100 WhiskerWorks items, 16 work centers, 24 machines and 52-worker foundation shape. That client check remains defense-in-depth only; it cannot replace backend tenant scoping. Added deferred regressions for the qualification/presence gate and raw-location ledger proof.
+
+Implemented a scoped operator-photo read path for the Shop Floor kiosk. `POST /api/shopfloor/worker-photo` accepts the current scanned badge and returns only that holder's protected image under the existing `ShopFloorRead` permission; the terminal account does not gain broad `workforce.read`. The UI fetches the image without putting a badge in the URL, shows it with the operator's home work center and readiness-gate reminder before start and during active production, keeps the initials avatar when no photo exists, and revokes its object URL on user switch, lock, or page disposal. Added deferred kiosk UI regressions for image loading and the no-photo fallback. No seed was applied; the running preview remains untouched. No tests/builds were run, as requested; implementation and source APIs still need the deferred verification.
+
+## Sprint 9 implementation continuation — sensor shortage source action (2026-10-23)
+
+Added S07 as an audited Procurement source action. It deterministically selects the earliest visible approved/open `WW-SENS-PROX-05` PO line with remaining quantity, advances its promised date by four calendar days through the existing purchase-line date command, and requires both Purchasing read/manage permissions plus the demo-shape guard and reason modal. It refuses when no line is eligible and prevents a second line extension after an S07 entry is recorded in the browser session. The evidence snapshot now reports sensor PO line status/date, and the S07 export assertion checks the exact recorded line and target date. The UI explicitly says that this source date change does not prove supplier correspondence or an MRP shortage. Added deferred helper coverage for deterministic line selection, eligibility and calendar-boundary date arithmetic. Updated `AI_HANDOFF.md`; S07 supplier correspondence and downstream MRP-shortage validation remain open. No tests/builds, server restarts, seeding, or database writes were run; the user's test deferral remains in effect.
+
+## Sprint 9 implementation continuation — S01 baseline evidence (2026-10-23)
+
+Added an S01 source-snapshot evaluator to the Scenario Center. A baseline capture now evaluates four explicit claims: all 24 active machines have Active asset records and a Ready Forge signal; no blocking Safety/Quality readiness dimensions or active holds are visible; every open operation on released orders has an executable readiness answer; and every active Day Shift worker has current confirmed presence without an overlapping unavailability window. It reports missing source permissions as Indeterminate and keeps absence details to worker IDs, not private reasons. The evidence export includes the baseline and current-state check results, with a note that this is partial S01 evidence, not a complete S01–S16 suite. Added deferred pass/fail/indeterminate helper coverage. No tests/builds, server restart, database write or seed apply was run.
+
+## Sprint 9 implementation continuation — recovery action board (2026-10-23)
+
+Extended the existing Shift Continuity actions with optional due dates and dependencies on existing actions from the same handoff and program scope. Forge refuses transitions into InProgress or Completed while a prerequisite action remains open. Completing an action now requires evidence; the evidence is persisted and the audit change records the full before/after action state. The Shift Continuity UI now presents these fields as a recovery action board, shows overdue-date input/dependencies/completion evidence, and captures completion evidence in a reasoned form. Added a deferred integration regression for dependency blocking, due-date persistence, and evidence retention; the migration is additive (`execution` migration 0012). This remains a manual workflow rather than an automated S14 scenario injector/assertion. No migration was applied and no tests/builds were run.
+
+## Sprint 9 implementation continuation — fixed support-station assets (2026-10-23)
+
+Extended the commercial seed to register and commission the 14 manifest support stations as non-production Forge assets at their owning work centers. The records are typed as Building, Utility, TestEquipment, Tooling or Other; they keep `MachineCode` null so they do not create capacity or qualify for machine-specific routing. The seed preflight now allows only the declared 24 machines and 14 fixed stations, verifies existing fixed-asset definitions before reuse, and preserves fail-closed behavior without overwriting mismatches. Added deferred manifest regression coverage for unique station IDs, valid work-center ownership and non-machine typing. Updated `AI_HANDOFF.md` to reflect the new source capability. No seeder, tests, build, migration, preview or database operation was run; support-asset state remains unapplied until an isolated demo database is available.
+
+Extended the commercial seed with one approved, open, fictional `WW-SENS-PROX-05` supplier line and a separately approved manufacturer part for S07. It proposes the fictional MPN as the engineer and approves it as the engineering approver, creates the approved source as the purchasing approver, drafts the PO as the buyer, then approves it as the independent purchasing manager. Retry discovers the exact existing records, accepts only the original or four-day-delayed date, and refuses conflicting/duplicate records before writes. The same preflight rejects foreign-part purchase orders and supplier/source mismatches. Updated dry-run and handoff descriptions. This makes the S07 audited promise-date control usable on a properly seeded isolated demo database; it still does not establish supplier correspondence or guarantee an MRP shortage. No tests/builds or database writes were run.
+
+## Sprint 9 implementation continuation — CNC prerequisite alternatives and gauge expiry action (2026-10-23)
+
+Implemented grouped OR-prerequisites in `Forge.Competency`: definitions persist as named groups, qualification-type reads return the groups, cycle checks include their edges, mandatory prerequisites remain AND, and certification accepts any one current credential in each alternative group. Added an audited, permission-gated API command and additive migration. The WhiskerWorks foundation defines CNC setup as requiring Mill **or** Lathe authorization. Its seed now validates and appends that group on a compatible rerun, while refusing mismatched or unexpected existing group definitions before the seed begins writes. Added a deferred integration test for a Mill-only operator succeeding, an operator with neither credential being rejected, the API contract, and cycle protection.
+
+Added an S11 Scenario Center action that posts dated calibration events through the existing audited Quality command for the fictional torque and optical gauges. It calculates yesterday's due date relative to the WW-P01 site date, only updates gauges that are not already expired, and keeps historical calibration events intact. The scenario records an evidence index for the action. This exercises existing expiry/readiness behavior without simulating time; clock-driven timing and automated acceptance remain open.
+
+No tests, build, migration, seeding, database write, host restart, or commit was performed. The user asked to defer the test pass until implementation is complete. The updated handoff lists the remaining S01/S05/S07/S09/S11–S16 work and keeps the current `PLANT1` preview untouched.
+
+## Sprint 9 implementation continuation — CNC setup authorization and S07 MRP evidence (2026-10-23)
+
+Connected CNC setup to protected `CNC_SETUP` machine activity profiles on CNC-01 and CNC-02 without adding machine assets or capacity. Added `QUAL-CNC-TOOLPATH` for Toolpath / First-Article Verification as a mandatory prerequisite to `QUAL-CNC-SETUP`, which still requires either current `QUAL-CNC-MILL` or `QUAL-CNC-LATHE`. The WhiskerWorks foundation assigns this full fictional chain to one mill setup lead. The seed adds the new profiles and prerequisite on compatible existing demo records, but refuses unknown or conflicting profiles before applying writes. Work-center activity entries are deduplicated. The workforce map's qualified-worker picker now follows the OR semantics used by the assignment service.
+
+Added deferred integration coverage for direct mill-to-lathe assignment rejection, setup denial before setup credentials exist, and successful CNC setup assignment after Toolpath plus Mill certification. S07's authorized source snapshot now reads live MRP for `WW-SENS-PROX-05`, and its export assertion checks that the exact delayed PO receipt and an earlier requirement appear with a `RescheduleIn` exception naming the same PO line. This is evidence instrumentation only; the result remains unexecuted and does not claim broader bearing shortage propagation.
+
+No tests, builds, migrations, seed applies, database writes, preview restarts, or commits were performed. Testing remains deferred until implementation is complete, and `PLANT1` remains untouched.
+## Sprint 9 implementation continuation — S12 scanner / label outage rehearsal (2026-10-23)
+
+Added a dedicated WW-P01 S12 control in the Scenario Center. It arms only when the existing demo-shape and workforce-supervision gates pass, records a browser-session evidence marker, and opens the Shop Floor rehearsal. The kiosk now supports separate simulated barcode-staging and label-printer 503 outcomes, preserves entered demo fields in `sessionStorage`, locks its local terminal state after each simulated outage, and prevents duplicate attempts. A label print remains `PendingReconciliation` until a supervisor with `workforce.supervise` and a Forge person identity records the observed outcome and a note. Closing the rehearsal requires both flows to be completed.
+
+The rehearsal contacts no scanner or printer and issues no source-changing API command; the normal kiosk may still perform read-only data loads. It creates no Forge audit or production record. It demonstrates the fail-closed and reconciliation UI only; real device fault injection and authoritative server audit remain open. Evidence export now reports the local rehearsal state while explicitly marking it non-authoritative. Added unrun state-machine regression coverage for preserved drafts, one-shot failures, required signoff, and closeout.
+
+No tests, builds, migrations, seed applies, database writes, host restarts, or commits were performed. The owner asked to defer testing until implementation is complete; `PLANT1` remains untouched.
+## Sprint 10 start — workforce intelligence discovery and first UI slice (2026-10-23)
+
+Read `Forge_Sprint_10_Training_Performance_Workforce_Intelligence.md` as the implementation specification and completed the required static architecture gap analysis in `docs/sprint-10-training-performance-workforce-intelligence-gap-analysis.md`. Confirmed the project already has canonical qualifications, supervised operation training, labor intervals, production reports, shift calendars, readiness/capacity, MRB, the inventory ledger, and material tasks. The material gaps and proposed ownership boundaries are documented before adding feature stores.
+
+Added a source-backed Training & Performance Command Center section to Workforce with configurable 30/60/90-day qualification windows, shift/work-center filters, expiring and expired qualification counts, machine/shift gaps, existing readiness blockers, recorded operation labor and quantity context, and explicit `N/A` for attendance reliability and labor efficiency while prerequisites are missing. The view uses existing read APIs and keeps absence reasons out of the UI. Added unit/UI regression coverage for expiration, training-vs-authorization, shift-scoped coverage, program-visible blockers, evidence gaps, and privacy handling.
+
+No tests, builds, migrations, database writes, server restarts, seed applies, or commits were performed. This is an incomplete Sprint 10 slice; Sprint 9 remains incomplete and the current `PLANT1` preview remains untouched. Continue with additive attendance/labor evidence and approval workflows, then the operator scrap/material request, stockroom notification, and verified custody vertical slices before the deferred full validation and commits.
+## Sprint 10 implementation completion pass — 2026-10-23
+
+Continued the approved Sprint 10 work after the owner requested implementation and commits through the remaining scope. Added the source-backed Workforce Command Center, separate training course/practical assessment/machine authorization records, effective-dated attendance policies and opportunities, independent attendance review/corrections, development nomination workflow, and operation labor metrics with evidence-based N/A when accepted-output basis is missing. Added the Workforce attendance period selector for calendar quarter, month-to-date, rolling 90 days, and year-to-date with visible scheduled/eligible/on-time/late/callout/no-show/excluded/pending counts.
+
+Completed the material-control vertical slice against canonical Forge Quality and Inventory systems: suspect scrap is distinct from disposition; replacement requests are one-to-one linked; released-order staging requests cover only remaining BOM demand; additional material stays approval-gated and does not affect BOM readiness; partial picks remain requestable; two-person handoff uses badge/PIN receiver verification; custody exceptions append audit evidence; and Inventory now exposes the custody history. Material and quality disruptions link from the Workforce `!` feed. Default material notifications are in-app through the existing durable, permission-checked outbox. Added tests for demand boundaries, excluded additional material, attendance counters/period controls, and custody-history rendering.
+
+No tests or builds had been run when this entry was written; the user's sequencing request was to test after implementation was finished. The implementation report records limits still requiring isolated scenario replay: ranked what-if recovery, partial receipt/rejection and return/reversal custody workflows, configured email delivery, expanded Sprint 10 WhiskerWorks fixtures, and accepted-output labor standards. The existing Sprint 9 foundation and current `PLANT1` preview were not seeded or mutated. Verification and commit are the next actions.
+
+## Sprint 10 verification pass — 2026-10-23
+
+Ran validation after the implementation pass. `node --test tests/ui/*.test.mjs` passed 335/335. `dotnet build src/Forge.Host/Forge.Host.csproj --no-restore -c Release -p:BaseOutputPath=.forge-logs/isolated-build/` passed with 0 warnings and 0 errors; a custom output path was required because the live preview held the normal Release DLLs open. `dotnet test tests/Forge.Planning.Tests/Forge.Planning.Tests.csproj --no-restore -c Release -p:BaseOutputPath=.forge-logs/isolated-build/` passed 322/322. A filtered deterministic integration run for attendance, material demand, and labor metrics passed 12/12. The integration test project compiles after correcting a tuple-unpack error in a shifted-workforce test. `git diff --check` passes.
+
+The first integration run exposed two real attendance-calculation cases: explicitly overlapping policy windows had been silently shortened, and the correction test had accidentally linked its replacement to a different scheduled opportunity. The calculator now preserves authored overlap as an ambiguous/missing-policy result while deriving the end of a prior open-ended version from the next valid revision. The test correction now supersedes the event on the same opportunity. Both cases pass in the final 12-test run.
+
+Database-backed integration tests could not execute: the Docker CLI is installed but the Docker Engine pipe is unavailable, and `FORGE_TEST_POSTGRES` is unset. A full solution restore also could not complete because `api.nuget.org` is inaccessible and the offline cache lacks `NetArchTest.Rules` and `Microsoft.Extensions.TimeProvider.Testing`. No seeds, migrations, database writes, or preview restart were performed. The 60-worker fixture, full Sprint 9 regression, full Sprint 10 scenario replay, ranked recovery alternatives, partial custody acceptance/return/reversal, and configured email provider remain open acceptance work, as listed in the handoff and implementation report.

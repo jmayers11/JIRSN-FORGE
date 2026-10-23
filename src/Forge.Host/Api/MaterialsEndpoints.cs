@@ -11,6 +11,7 @@ using Forge.Planning;
 using Forge.Procurement;
 using Forge.Procurement.Contracts;
 using Forge.Programs.Contracts;
+using Forge.Workforce.Contracts;
 using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
@@ -46,13 +47,18 @@ public sealed record SplitRequest(string PartNumber, string LotNumber, string Lo
 
 public sealed record MergeRequest(string PartNumber, InstanceShare[] Sources, string ResultLot, string LocationCode, StockStatus? Status, string? Reason);
 
-public sealed record MaterialTaskRequest(MaterialTaskKind Kind, long? OrderNumber, string PartNumber, decimal Quantity, string ToLocation, string? LotNumber, string? FromLocation, string? KitCode, string? Reason);
+public sealed record MaterialTaskRequest(MaterialTaskKind Kind, long? OrderNumber, string PartNumber, decimal Quantity, string ToLocation, string? LotNumber, string? FromLocation, string? KitCode, string? Reason, int? OperationSequence = null, bool AllowNonBomMaterial = false);
+public sealed record OrderMaterialShortageRequest(string ToLocation, string? Reason);
+public sealed record MaterialTaskReviewRequest(bool Approve, string? Reason);
 
 public sealed record AllocateRequest(string FromLocation, string? LotNumber, string? Reason);
 
 public sealed record PickRequest(string ScannedLocation, string? ScannedLot, decimal? Quantity, string? Reason, ScannedMaterialIdentity? ScannedMaterial = null);
 
 public sealed record DeliverRequest(string ScannedLocation, string? Reason);
+
+public sealed record MaterialReceiveRequest(string ScannedLocation, string Badge, string Pin, string? Reason);
+public sealed record MaterialCustodyExceptionRequest(string ScannedLocation, string Badge, string Pin, string? Reason);
 
 public sealed record CountProgramRequest(string ProgramCode, string Name, string? LocationCode, string? PartNumber, int FrequencyDays, string? Reason);
 
@@ -283,6 +289,17 @@ public static class MaterialsEndpoints
                     .Where(t => t.OrderNumber is not { } n || !hidden.Contains(n))
                     .ToList();
             }));
+        api.MapGet("/tasks/{id:long}/custody", (HttpContext http, long id, CancellationToken _) =>
+            Read(http, Permissions.InventoryRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var task = await uow.Store<IInventoryLookup>().FindMaterialTaskAsync(id, http.RequestAborted);
+                if (task is null) throw new CommandRejectedException("task_not_found", $"Task {id} does not exist.");
+                var hidden = await HiddenOrdersAsync(uow, principal, http.RequestAborted);
+                if (task.OrderNumber is { } order && hidden.Contains(order))
+                    throw new CommandRejectedException("task_not_found", $"Task {id} does not exist.");
+                return await uow.Store<IInventoryLookup>().ListMaterialTaskCustodyEventsAsync(id, http.RequestAborted);
+            }));
         api.MapGet("/orders/{order:long}/material-flow", async (HttpContext http, long order, MaterialFlowService s, CancellationToken ct) =>
         {
             var principal = await PrincipalAsync(http);
@@ -350,15 +367,57 @@ public static class MaterialsEndpoints
         api.MapPost("/counts", (HttpContext http, CountRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RecordCountAsync(new RecordCount(b.PartNumber, b.LocationCode, b.LotNumber, b.Status ?? StockStatus.Released, b.Counted), c, ct)));
         api.MapPost("/tasks", (HttpContext http, MaterialTaskRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.RequestMaterialAsync(new RequestMaterial(b.Kind, b.OrderNumber, b.PartNumber, b.Quantity, b.ToLocation, b.LotNumber, b.FromLocation, b.KitCode), c, ct)));
+            Command(http, b.Reason, c => s.RequestMaterialAsync(new RequestMaterial(b.Kind, b.OrderNumber, b.PartNumber, b.Quantity, b.ToLocation, b.LotNumber, b.FromLocation, b.KitCode,
+                b.OperationSequence, AllowNonBomMaterial: b.AllowNonBomMaterial), c, ct)));
+        api.MapPost("/orders/{orderNumber:long}/stage-shortages", (HttpContext http, long orderNumber, OrderMaterialShortageRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RequestOrderMaterialShortagesAsync(new RequestOrderMaterialShortages(orderNumber, b.ToLocation), c, ct)));
         api.MapPost("/tasks/{id:long}/allocate", (HttpContext http, long id, AllocateRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AllocateMaterialAsync(new AllocateMaterial(id, b.FromLocation, b.LotNumber), c, ct)));
         api.MapPost("/tasks/{id:long}/pick", (HttpContext http, long id, PickRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.PickMaterialAsync(new PickMaterial(id, b.ScannedLocation, b.ScannedLot, b.Quantity, b.ScannedMaterial), c, ct)));
         api.MapPost("/tasks/{id:long}/deliver", (HttpContext http, long id, DeliverRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DeliverMaterialAsync(new DeliverMaterial(id, b.ScannedLocation), c, ct)));
+        api.MapPost("/tasks/{id:long}/receive", async (HttpContext http, long id, MaterialReceiveRequest b, InventoryService s,
+            IBadgePinVerifier pins, IForgeAuthorizer authorizer, IKernelUnitOfWorkFactory uows, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            var decision = authorizer.Authorize(principal, Permissions.InventoryCustodyReceive, Forge.Kernel.Security.ResourceRef.Of(Permissions.InventoryCustodyReceive));
+            if (!decision.IsPermitted) throw new ForgeAuthorizationException(decision);
+            if (string.IsNullOrWhiteSpace(b.Badge) || string.IsNullOrWhiteSpace(b.Pin) || !await pins.VerifyAsync(b.Badge, b.Pin, ct))
+                return Results.Problem(title: "Receiver authentication failed", detail: "Use an active Forge worker badge and its PIN.", statusCode: StatusCodes.Status403Forbidden);
+            Guid receiverPersonId;
+            await using (var uow = await uows.BeginSnapshotAsync(ct))
+            {
+                var holder = await uow.Store<IWorkforceLookup>().FindBadgeHolderAsync(b.Badge, ct);
+                if (holder is not { IsWorker: true })
+                    return Results.Problem(title: "Receiver is not an active worker", detail: "The authenticated badge must belong to a registered active Forge worker.", statusCode: StatusCodes.Status403Forbidden);
+                receiverPersonId = holder.PersonId;
+            }
+            return await Command(http, b.Reason, c => s.ReceiveMaterialAsync(new ReceiveMaterial(id, b.ScannedLocation, receiverPersonId), c, ct));
+        });
+        api.MapPost("/tasks/{id:long}/custody-exception", async (HttpContext http, long id, MaterialCustodyExceptionRequest b, InventoryService s,
+            IBadgePinVerifier pins, IKernelUnitOfWorkFactory uows, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            if (string.IsNullOrWhiteSpace(b.Badge) || string.IsNullOrWhiteSpace(b.Pin) || !await pins.VerifyAsync(b.Badge, b.Pin, ct))
+                return Results.Problem(title: "Reporter authentication failed", detail: "Use an active Forge worker badge and its PIN.", statusCode: StatusCodes.Status403Forbidden);
+            Guid reporterPersonId;
+            await using (var uow = await uows.BeginSnapshotAsync(ct))
+            {
+                var holder = await uow.Store<IWorkforceLookup>().FindBadgeHolderAsync(b.Badge, ct);
+                if (holder is not { IsWorker: true })
+                    return Results.Problem(title: "Reporter is not an active worker", detail: "The authenticated badge must belong to a registered active worker.", statusCode: StatusCodes.Status403Forbidden);
+                reporterPersonId = holder.PersonId;
+            }
+            return await Command(http, b.Reason, c => s.ReportMaterialCustodyExceptionAsync(
+                new ReportMaterialCustodyException(id, reporterPersonId, b.ScannedLocation), c, ct));
+        });
         api.MapPost("/tasks/{id:long}/cancel", (HttpContext http, long id, ReasonRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CancelMaterialTaskAsync(new CancelMaterialTask(id), c, ct)));
+        api.MapPost("/tasks/{id:long}/review", (HttpContext http, long id, MaterialTaskReviewRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReviewAdditionalMaterialRequestAsync(new ReviewAdditionalMaterialRequest(id, b.Approve), c, ct)));
         api.MapPost("/count-programs", (HttpContext http, CountProgramRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CreateCountProgramAsync(new CreateCountProgram(b.ProgramCode, b.Name, b.LocationCode, b.PartNumber, b.FrequencyDays), c, ct)));
         api.MapPost("/count-programs/{code}/retire", (HttpContext http, string code, ReasonRequest b, InventoryService s, CancellationToken ct) =>

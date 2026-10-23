@@ -41,7 +41,11 @@ public sealed record WorkerState(
     DateTimeOffset? PresentUntil,
     UnavailabilityKind? Unavailability,
     WorkAssignment? Assignment,
-    string? ShiftCode = null);
+    string? ShiftCode = null,
+    string? JobTitle = null,
+    bool HasPhoto = false);
+
+public sealed record WorkerPhotoInfo(string Sha256, string ContentType);
 
 /// <summary>A period a worker is not available. There is deliberately no reason.</summary>
 public sealed record UnavailabilityWindow(Guid PersonId, UnavailabilityKind Kind, DateTimeOffset StartsAt, DateTimeOffset EndsAt);
@@ -110,6 +114,7 @@ public interface IWorkforceLookup
     Task<IReadOnlyList<AttendanceRecord>> ListAttendanceAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct);
 
     Task<bool> WorkerExistsAsync(Guid personId, CancellationToken ct);
+    Task<WorkerPhotoInfo?> FindWorkerPhotoAsync(Guid personId, CancellationToken ct);
 
     /// <summary>Every worker's state at the instant, sorted by person id.</summary>
     Task<IReadOnlyList<WorkerState>> GetWorkerStatesAsync(DateTimeOffset at, CancellationToken ct);

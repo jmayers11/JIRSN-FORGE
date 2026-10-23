@@ -13,18 +13,25 @@ public static class Permissions
     public const string WorkAssignmentsManage = "work.assignments.manage";
 
     public const string ResourcesManage = "resources.manage";
+    public const string ResourcesFloorMapManage = "resources.floor-map.manage";
     public const string ResourcesRead = "resources.read";
     public const string ToolsManage = "resources.tools.manage";
     public const string ToolsCalibrate = "resources.tools.calibrate";
     public const string ToolsHandle = "resources.tools.handle";
 
     public const string WorkforceManage = "workforce.manage";
+    public const string WorkforcePhotosManage = "workforce.photos.manage";
     public const string WorkforceSupervise = "workforce.supervise";
     public const string WorkforceRead = "workforce.read";
+    public const string WorkforceDevelopmentNominate = "workforce.development.nominate";
+    public const string WorkforceNominationReview = "workforce.development.review";
+    public const string WorkforceNominationRead = "workforce.development.read";
+    public const string WorkforceCompensationRead = "workforce.compensation.read";
 
     public const string CompetencyManage = "competency.manage";
     public const string CompetencyCertify = "competency.certify";
     public const string CompetencyRead = "competency.read";
+    public const string CompetencyMachineAuthorize = "competency.machine.authorize";
 
     public const string SafetyRulesDraft = "safety.rules.draft";
     public const string SafetyRulesApprove = "safety.rules.approve";
@@ -102,6 +109,11 @@ public static class Permissions
 
     public const string BadgesManage = "workforce.badges.manage";
     public const string AttendanceRecord = "workforce.attendance.record";
+    public const string AttendanceIntelligenceRead = "workforce.attendance-intelligence.read";
+    public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
+    public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
+    public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
+    public const string AttendanceClassificationReview = "workforce.attendance-classification.review";
     public const string ShopFloorRecord = "execution.shopfloor.record";
     public const string ShopFloorRead = "execution.shopfloor.read";
     public const string ProductionReasonsManage = "execution.reasons.manage";
@@ -120,6 +132,8 @@ public static class Permissions
     public const string ItemPlanningManage = "engineering.planning.manage";
 
     public const string InventoryTransact = "inventory.transact";
+    public const string InventoryMaterialRequest = "inventory.material-request";
+    public const string InventoryCustodyReceive = "inventory.custody.receive";
     public const string InventoryApprove = "inventory.approve";
     public const string InventoryManage = "inventory.manage";
     public const string InventoryRead = "inventory.read";
@@ -137,6 +151,7 @@ public static class Permissions
     public const string QualityApprove = "quality.approve";
     public const string QualityCommunicationsApprove = "quality.communications.approve";
     public const string QualityRead = "quality.read";
+    public const string QualityReportSuspect = "quality.suspect.report";
     public const string AuditManage = "quality.audit.manage";
     public const string AuditConduct = "quality.audit.conduct";
     public const string AuditApprove = "quality.audit.approve";
@@ -197,6 +212,7 @@ public static class Roles
     public const string Certifier = "Certifier";
     public const string SafetyEngineer = "SafetyEngineer";
     public const string SafetyApprover = "SafetyApprover";
+    public const string HumanResources = "HumanResources";
     public const string Supervisor = "Supervisor";
     public const string Planner = "Planner";
     public const string EngineeringApprover = "EngineeringApprover";
@@ -263,7 +279,8 @@ public static class Roles
 
     private static readonly Dictionary<string, string[]> Map = new(StringComparer.Ordinal)
     {
-        [SecurityAdministrator] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.AccessManage, Permissions.PeopleRead, Permissions.AuditRead, Permissions.BadgesManage, Permissions.ProgramsDirectory],
+        [SecurityAdministrator] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.AccessManage, Permissions.PeopleRead, Permissions.AuditRead, Permissions.BadgesManage, Permissions.ProgramsDirectory, Permissions.ResourcesManage, Permissions.ResourcesFloorMapManage, Permissions.ResourcesRead, Permissions.WorkforceManage, Permissions.WorkforcePhotosManage, Permissions.WorkforceRead, Permissions.AttendanceIntelligenceRead, Permissions.AttendanceScheduleManage, Permissions.AttendancePolicyManage, Permissions.AttendanceClassificationRecord, Permissions.AttendanceClassificationReview, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationReview, Permissions.WorkforceNominationRead, Permissions.WorkforceCompensationRead, Permissions.CompetencyMachineAuthorize],
+        [HumanResources] = [Permissions.PeopleRead, Permissions.WorkforceRead, Permissions.AttendanceIntelligenceRead, Permissions.AttendanceScheduleManage, Permissions.AttendancePolicyManage, Permissions.AttendanceClassificationRecord, Permissions.AttendanceClassificationReview, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationReview, Permissions.WorkforceNominationRead, Permissions.WorkforceCompensationRead],
         [Auditor] = [Permissions.HoldsRead, Permissions.AuditRead, Permissions.PeopleRead, Permissions.ProjectsRead],
         [QmsAuthor] = [Permissions.QmsRead, Permissions.QmsManage, Permissions.EngineeringRead],
         [AuditPlanner] = [Permissions.AuditManage, Permissions.QualityRead, Permissions.QmsRead, Permissions.EngineeringRead, Permissions.CompetencyRead],
@@ -277,30 +294,30 @@ public static class Roles
         [LabelPrinter] = [Permissions.IdentificationRead, Permissions.IdentificationLabelsPrint],
         [IdentificationAdministrator] = [Permissions.IdentificationRead, Permissions.IdentificationAliasesManage],
         [ScanOperator] = [Permissions.IdentificationRead, Permissions.IdentificationScanStage],
-        [ManufacturingEngineer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ToolsManage, Permissions.ProductionReasonsManage, Permissions.RootCauseConfirm, Permissions.AssetsManage, Permissions.ObsolescenceRecord, Permissions.ResourcesManage, Permissions.ResourcesRead, Permissions.WorkforceManage, Permissions.WorkforceRead, Permissions.SafetyRulesRead, Permissions.CompetencyRead, Permissions.ReadinessRead, Permissions.EngineeringManage, Permissions.EngineeringRead, Permissions.OrdersManage, Permissions.OrdersRead, Permissions.MaintenanceRead, Permissions.ScheduleRead, Permissions.ShopFloorRead, Permissions.ItemPlanningManage, Permissions.InventoryRead, Permissions.MaterialPlanRead, Permissions.PurchasingRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.CotsPropose, Permissions.DocumentsManage, Permissions.DocumentsAttach, Permissions.ChangesManage, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.RequisitionRaise, Permissions.ProjectsRead, Permissions.ProjectsManage],
+        [ManufacturingEngineer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ToolsManage, Permissions.ProductionReasonsManage, Permissions.RootCauseConfirm, Permissions.AssetsManage, Permissions.ObsolescenceRecord, Permissions.ResourcesManage, Permissions.ResourcesFloorMapManage, Permissions.ResourcesRead, Permissions.WorkforceManage, Permissions.WorkforcePhotosManage, Permissions.WorkforceRead, Permissions.SafetyRulesRead, Permissions.CompetencyRead, Permissions.ReadinessRead, Permissions.EngineeringManage, Permissions.EngineeringRead, Permissions.OrdersManage, Permissions.OrdersRead, Permissions.MaintenanceRead, Permissions.ScheduleRead, Permissions.ShopFloorRead, Permissions.ItemPlanningManage, Permissions.InventoryRead, Permissions.MaterialPlanRead, Permissions.PurchasingRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.CotsPropose, Permissions.DocumentsManage, Permissions.DocumentsAttach, Permissions.ChangesManage, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.RequisitionRaise, Permissions.ProjectsRead, Permissions.ProjectsManage],
         [MaintenanceTechnician] = [Permissions.ToolsCalibrate, Permissions.ToolsHandle, Permissions.DowntimeReport, Permissions.MaintenancePlan, Permissions.MaintenanceRead, Permissions.MaintenanceWork, Permissions.ResourcesRead, Permissions.SparesIssue, Permissions.InventoryRead, Permissions.EngineeringRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach],
         [MaintenancePlanner] = [Permissions.HoldsRead, Permissions.ToolsManage, Permissions.ToolsHandle, Permissions.RootCauseConfirm, Permissions.OutageApprove, Permissions.AssetsManage, Permissions.MroManage, Permissions.ObsolescenceRecord, Permissions.MaintenanceProgram, Permissions.InventoryRead, Permissions.MaintenanceApprove, Permissions.MaintenancePlan, Permissions.MaintenanceRead, Permissions.DowntimeReport, Permissions.ResourcesRead, Permissions.ScheduleRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.CotsPropose, Permissions.EngineeringRead, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.MaintenanceAlternatesApprove, Permissions.RequisitionRaise, Permissions.DemandManage, Permissions.ProjectsRead, Permissions.ProjectsManage],
         [ProgramManager] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.GoalsManage, Permissions.ProgramsManage, Permissions.ProgramsRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.MaterialPlanRead, Permissions.ScheduleRead, Permissions.InventoryRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.RequisitionRaise, Permissions.ProjectsRead],
         [EngineeringApprover] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.EngineeringRelease, Permissions.EngineeringRead, Permissions.ResourcesRead, Permissions.CotsManage, Permissions.DocumentsApprove, Permissions.DocumentsRelease, Permissions.OrdersRead, Permissions.ProgramsRead, Permissions.ChangesReview, Permissions.ChangesApprove, Permissions.AlternatesApprove],
-        [TrainingCoordinator] = [Permissions.CompetencyManage, Permissions.CompetencyRead, Permissions.WorkforceRead, Permissions.ResourcesRead, Permissions.EngineeringRead],
-        [Certifier] = [Permissions.CompetencyCertify, Permissions.CompetencyRead],
+        [TrainingCoordinator] = [Permissions.CompetencyManage, Permissions.CompetencyRead, Permissions.CompetencyMachineAuthorize, Permissions.WorkforceRead, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationReview, Permissions.WorkforceNominationRead, Permissions.ResourcesRead, Permissions.EngineeringRead],
+        [Certifier] = [Permissions.CompetencyCertify, Permissions.CompetencyRead, Permissions.CompetencyMachineAuthorize],
         [SafetyEngineer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.SafetyRulesDraft, Permissions.SafetyRulesRead, Permissions.ResourcesRead, Permissions.CompetencyRead],
         [SafetyApprover] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.SafetyRulesApprove, Permissions.SafetyRulesRead, Permissions.ResourcesRead, Permissions.CompetencyRead],
-        [Supervisor] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.HoldsRelease, Permissions.ToolsHandle, Permissions.WorkforceSupervise, Permissions.WorkforceRead, Permissions.ReadinessRead, Permissions.ResourcesRead, Permissions.CompetencyRead, Permissions.SafetyRulesRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.DowntimeReport, Permissions.MaintenanceRead, Permissions.ScheduleRead, Permissions.ConstraintsManage, Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.InventoryRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach, Permissions.ChangesReview],
+        [Supervisor] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.HoldsRelease, Permissions.ToolsHandle, Permissions.WorkforceSupervise, Permissions.WorkforceRead, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationRead, Permissions.WorkforceNominationReview, Permissions.ReadinessRead, Permissions.ResourcesRead, Permissions.CompetencyRead, Permissions.CompetencyMachineAuthorize, Permissions.SafetyRulesRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.DowntimeReport, Permissions.MaintenanceRead, Permissions.ScheduleRead, Permissions.ConstraintsManage, Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.AttendanceScheduleManage, Permissions.AttendanceClassificationRecord, Permissions.AttendanceClassificationReview, Permissions.InventoryRead, Permissions.InventoryMaterialRequest, Permissions.InventoryCustodyReceive, Permissions.QualityRead, Permissions.QualityReportSuspect, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach, Permissions.ChangesReview],
         [Planner] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.HoldsRelease, Permissions.GoalsManage, Permissions.OutageApprove, Permissions.MroManage, Permissions.ReadinessRead, Permissions.ResourcesRead, Permissions.WorkforceRead, Permissions.SafetyRulesRead, Permissions.OrdersManage, Permissions.OrdersRelease, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.MaintenanceRead, Permissions.ScheduleRead, Permissions.SchedulePropose, Permissions.ScheduleApprove, Permissions.ConstraintsManage, Permissions.ShopFloorRead, Permissions.ItemPlanningManage, Permissions.DemandManage, Permissions.MaterialPlanRead, Permissions.InventoryRead, Permissions.PurchasingRead, Permissions.QualityRead, Permissions.ProgramsRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.RequisitionRaise, Permissions.ProjectsRead],
-        [MaterialHandler] = [Permissions.HoldsRead, Permissions.ToolsHandle, Permissions.InventoryTransact, Permissions.SparesIssue, Permissions.MaintenanceRead, Permissions.InventoryRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.PurchasingRead, Permissions.ResourcesRead, Permissions.QualityRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.ProjectsRead],
-        [InventoryController] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.MroManage, Permissions.InventoryApprove, Permissions.InventoryManage, Permissions.InventoryRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.PurchasingRead, Permissions.ResourcesRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.ProjectsRead],
+        [MaterialHandler] = [Permissions.HoldsRead, Permissions.ToolsHandle, Permissions.InventoryTransact, Permissions.InventoryMaterialRequest, Permissions.InventoryCustodyReceive, Permissions.SparesIssue, Permissions.MaintenanceRead, Permissions.InventoryRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.PurchasingRead, Permissions.ResourcesRead, Permissions.QualityRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.ProjectsRead],
+        [InventoryController] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.MroManage, Permissions.InventoryApprove, Permissions.InventoryManage, Permissions.InventoryTransact, Permissions.InventoryCustodyReceive, Permissions.InventoryRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.PurchasingRead, Permissions.ResourcesRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.ProjectsRead],
         [Buyer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ObsolescenceRecord, Permissions.PurchasingManage, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.EngineeringRead, Permissions.MaterialPlanRead, Permissions.OrdersRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.CotsPropose, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.RequisitionRaise, Permissions.ProjectsRead],
-        [Inspector] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.QualityInspect, Permissions.QualityRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.ResourcesRead, Permissions.ShopFloorRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach],
-        [QualityEngineer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ToolsManage, Permissions.ToolsCalibrate, Permissions.ToolsHandle, Permissions.RootCauseConfirm, Permissions.QualityPlan, Permissions.QualityDisposition, Permissions.QualityInspect, Permissions.QualityRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.ResourcesRead, Permissions.ShopFloorRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsManage, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.RequisitionRaise, Permissions.DemandManage],
+        [Inspector] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.QualityInspect, Permissions.QualityRead, Permissions.QualityReportSuspect, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.ResourcesRead, Permissions.ShopFloorRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach],
+        [QualityEngineer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ToolsManage, Permissions.ToolsCalibrate, Permissions.ToolsHandle, Permissions.RootCauseConfirm, Permissions.QualityPlan, Permissions.QualityDisposition, Permissions.QualityInspect, Permissions.QualityRead, Permissions.QualityReportSuspect, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.ResourcesRead, Permissions.ShopFloorRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsManage, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.RequisitionRaise, Permissions.DemandManage],
         [QualityManager] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.QualityApprove, Permissions.QualityRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.ResourcesRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.ChangesReview],
         [CustomerCommunicationsApprover] = [Permissions.QualityCommunicationsApprove, Permissions.QualityRead, Permissions.OrdersRead, Permissions.PurchasingRead, Permissions.EngineeringRead, Permissions.InventoryRead],
         [Shipper] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ShippingRelease, Permissions.InventoryRead, Permissions.MaterialPlanRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse],
         [PurchasingManager] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.PurchasingApprove, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.EngineeringRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.RequisitionRaise, Permissions.ProjectsRead],
         [DocumentController] = [Permissions.DocumentsManage, Permissions.DocumentsApprove, Permissions.DocumentsRelease, Permissions.DocumentsAttach, Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.PurchasingRead, Permissions.QualityRead, Permissions.MaintenanceRead, Permissions.ProgramsRead, Permissions.ResourcesRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.ChangesManage, Permissions.ChangesReview, Permissions.EngineeringRelease],
         [ChangeBoard] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ChangesApprove, Permissions.ChangesReview, Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.QualityRead, Permissions.ProgramsRead, Permissions.ResourcesRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.AlternatesApprove],
-        [FacilitiesManager] = [Permissions.ProjectsRead, Permissions.ProjectsManage, Permissions.ProjectsApprove, Permissions.RequisitionRaise, Permissions.DemandManage, Permissions.InventoryRead, Permissions.MaintenanceRead, Permissions.EngineeringRead, Permissions.PurchasingRead, Permissions.MaterialPlanRead, Permissions.ResourcesRead, Permissions.ScheduleRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach],
-        [ShopFloorTerminal] = [Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.ReadinessRead, Permissions.OrdersRead, Permissions.ResourcesRead, Permissions.ScheduleRead],
+        [FacilitiesManager] = [Permissions.ProjectsRead, Permissions.ProjectsManage, Permissions.ProjectsApprove, Permissions.RequisitionRaise, Permissions.DemandManage, Permissions.InventoryRead, Permissions.MaintenanceRead, Permissions.EngineeringRead, Permissions.PurchasingRead, Permissions.MaterialPlanRead, Permissions.ResourcesRead, Permissions.ResourcesFloorMapManage, Permissions.WorkforcePhotosManage, Permissions.WorkforceRead, Permissions.WorkforceSupervise, Permissions.CompetencyRead, Permissions.ScheduleRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach],
+        [ShopFloorTerminal] = [Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.InventoryMaterialRequest, Permissions.QualityReportSuspect, Permissions.ReadinessRead, Permissions.OrdersRead, Permissions.ResourcesRead, Permissions.ScheduleRead],
     };
 
     /// <summary>

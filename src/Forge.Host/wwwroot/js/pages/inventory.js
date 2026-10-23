@@ -30,6 +30,7 @@ export const parseInventoryShares = text => (text ?? '').split(/[,;\n]+/).map(x 
 export async function inventoryPage(page, ctx) {
   const me = ctx.me;
   const handler = canAction(me, 'inventory.transact');
+  const custodyReceiver = canAction(me, 'inventory.custody.receive');
   const controller = canAction(me, 'inventory.approve');
   const inventoryManager = canAction(me, 'inventory.manage');
   const mroManager = canAction(me, 'inventory.mro.manage');
@@ -69,20 +70,24 @@ export async function inventoryPage(page, ctx) {
   const statusField = (value = 'Released') => ({ name: 'status', label: 'Quality status', type: 'select', value, options: [['Released', 'Released'], ['Inspection', 'Inspection'], ['Hold', 'Hold']] });
   const reload = async () => { await load(); render(); };
 
-  function scanTask(task, picking) {
+  function scanTask(task, step) {
+    const picking = step === true;
+    const receiving = step === 'receive';
+    const actionName = picking ? 'Pick' : receiving ? 'Receive' : 'Dispatch';
     closeTaskDialogs();
     const context = pageGeneration;
     const scrim = document.createElement('div'); scrim.className = 'scrim'; scrim.setAttribute('aria-hidden', 'true');
     const modal = document.createElement('div'); modal.className = 'modal';
-    modal.innerHTML = `<h2>${picking ? 'Pick' : 'Deliver'} task ${task.taskId}</h2>
-      <div class="muted">${picking ? `Pick ${qty(task.quantity)} ${esc(task.partNumber)} from ${esc(task.fromLocation)}${task.lotNumber ? `, lot ${esc(task.lotNumber)}` : ''}.` : `Deliver ${qty(task.pickedQuantity)} ${esc(task.partNumber)} to ${esc(task.toLocation)}.`} Review any resolved code, then confirm below.</div>
+    modal.innerHTML = `<h2>${actionName} task ${task.taskId}</h2>
+      <div class="muted">${picking ? `Pick ${qty(task.quantity)} ${esc(task.partNumber)} from ${esc(task.fromLocation)}${task.lotNumber ? `, lot ${esc(task.lotNumber)}` : ''}.` : receiving ? `Accept ${qty(task.pickedQuantity)} ${esc(task.partNumber)} at ${esc(task.toLocation)}. The receiver must be a different active worker and authenticate with a badge and PIN.` : `Dispatch ${qty(task.pickedQuantity)} ${esc(task.partNumber)} toward ${esc(task.toLocation)}. Stock stays in non-nettable transit custody until a second worker accepts it.`} Review any resolved code, then confirm below.</div>
       <div data-location-identification></div>
       <div class="field"><label for="task-scanned-location">${picking ? 'Source' : 'Destination'} location code (manual)</label><input class="input mono" id="task-scanned-location" autocomplete="off"></div>
       ${picking && task.lotNumber ? '<div data-material-identification></div><div class="field"><label for="task-scanned-lot">Lot number (manual)</label><input class="input mono" id="task-scanned-lot" autocomplete="off"></div>' : ''}
       ${picking ? `<div class="field"><label for="task-picked-quantity">Quantity picked</label><input class="input" id="task-picked-quantity" type="number" min="0" step="any" value="${esc(task.quantity)}"></div>` : ''}
+      ${receiving ? '<div class="field"><label for="task-receiver-badge">Receiver badge</label><input class="input mono" id="task-receiver-badge" autocomplete="off" required></div><div class="field"><label for="task-receiver-pin">Receiver PIN</label><input class="input" id="task-receiver-pin" type="password" inputmode="numeric" autocomplete="off" required></div>' : ''}
       <div class="field"><label for="task-reason">Reason (optional, recorded with the action)</label><textarea class="input" id="task-reason" rows="2"></textarea></div>
       <div class="notice bad hidden" data-task-error role="alert" aria-live="assertive"></div>
-      <div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-task-confirm>${picking ? 'Picked' : 'Delivered'}</button></div>`;
+      <div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-task-confirm>${picking ? 'Picked' : receiving ? 'Accept material' : 'Dispatch to transit'}</button></div>`;
     let closed = false, busy = false, releaseFocus = () => {}, scannedMaterial = null;
     let locationSelected = false, materialSelected = false;
     const widgets = [];
@@ -130,13 +135,18 @@ export async function inventoryPage(page, ctx) {
         if (scannedMaterial) body.scannedMaterial = scannedMaterial;
         body.quantity = Number($('#task-picked-quantity', modal).value);
       }
-      if (!body.scannedLocation || (picking && task.lotNumber && !body.scannedLot) || (picking && !(body.quantity > 0))) {
-        error.textContent = 'Give the location, required lot and a positive picked quantity.'; error.classList.remove('hidden'); return;
+      if (receiving) {
+        body.badge = $('#task-receiver-badge', modal).value.trim();
+        body.pin = $('#task-receiver-pin', modal).value.trim();
+      }
+      if (!body.scannedLocation || (picking && task.lotNumber && !body.scannedLot) || (picking && !(body.quantity > 0)) || (receiving && (!body.badge || !body.pin))) {
+        error.textContent = 'Give the location, any required pick details, and the receiver badge and PIN when accepting a handoff.'; error.classList.remove('hidden'); return;
       }
       busy = true; confirm.disabled = true;
       for (const widget of widgets) widget.stage.clear();
       try {
-        const result = await command(`/api/inventory/tasks/${task.taskId}/${picking ? 'pick' : 'deliver'}`, body, $('#task-reason', modal).value.trim() || undefined);
+        const endpoint = picking ? 'pick' : receiving ? 'receive' : 'deliver';
+        const result = await command(`/api/inventory/tasks/${task.taskId}/${endpoint}`, body, $('#task-reason', modal).value.trim() || undefined);
         if (!current()) return;
         close(); toast(result.message ?? 'Saved.'); await reload();
       } catch (failure) {
@@ -438,18 +448,22 @@ export async function inventoryPage(page, ctx) {
     const t = data.tasks;
     if (t.error) return errorBlock(t.error, 'tasks');
     if (!t.data.length) return emptyBlock('No open tasks', 'Request material for an order (or from the order page) and it appears here to allocate, pick and deliver.');
-    const step = x => x.status === 'Requested' ? `<button class="btn small primary" data-task-allocate="${x.taskId}">Allocate</button>`
+    const step = x => x.status === 'ApprovalNeeded' ? (controller && x.requestedBy !== `person:${me.personId}`
+        ? `<button class="btn small primary" data-task-review="${x.taskId}">Approve</button> <button class="btn small danger" data-task-reject="${x.taskId}">Reject</button>`
+        : '<span class="faint">Independent review required</span>')
+      : x.status === 'Requested' ? `<button class="btn small primary" data-task-allocate="${x.taskId}">Allocate</button>`
       : x.status === 'Allocated' ? `<button class="btn small primary" data-task-pick="${x.taskId}">Pick (scan)</button>`
-      : x.status === 'Picked' ? `<button class="btn small primary" data-task-deliver="${x.taskId}">Deliver (scan)</button>` : '';
+      : x.status === 'Picked' ? `<button class="btn small primary" data-task-deliver="${x.taskId}">Dispatch (scan)</button>`
+      : x.status === 'InTransit' && custodyReceiver ? `<button class="btn small primary" data-task-receive="${x.taskId}">Receive (badge + PIN)</button> <button class="btn small danger" data-task-exception="${x.taskId}">Report exception</button>` : '';
     return `<table class="table"><thead><tr><th>#</th><th>Task</th><th>For</th><th>Part</th><th class="num">Qty</th><th>From → To</th><th>Status</th><th>Requested</th><th></th></tr></thead><tbody>
-      ${t.data.map(x => `<tr><td>${x.taskId}</td><td>${esc(TASK_NAME[x.kind] ?? x.kind)}${x.kitCode ? ` <span class="faint">kit ${esc(x.kitCode)}</span>` : ''}</td>
+      ${t.data.map(x => `<tr><td>${x.taskId}</td><td>${esc(TASK_NAME[x.kind] ?? x.kind)}${x.kitCode ? ` <span class="faint">kit ${esc(x.kitCode)}</span>` : ''}${x.sourceSuspectReportId ? `<div><a class="faint" href="#/quality?tab=suspect">Replacement for report #${x.sourceSuspectReportId}</a></div>` : ''}</td>
         <td>${x.orderNumber ? `<a href="#/orders/${x.orderNumber}">#${x.orderNumber}</a>` : '—'}</td><td>${esc(x.partNumber)}${x.lotNumber ? ` <span class="faint">lot ${esc(x.lotNumber)}</span>` : ''}</td>
         <td class="num">${qty(x.quantity)}${x.pickedQuantity != null && x.pickedQuantity < x.quantity ? ` <span class="c-warn">picked ${qty(x.pickedQuantity)}</span>` : ''}</td>
-        <td>${esc(x.fromLocation ?? '?')} → ${esc(x.toLocation)}</td><td><span class="pill info">${esc(x.status)}</span></td>
+        <td>${esc(x.fromLocation ?? '?')} → ${esc(x.toLocation)}${x.transitLocation ? `<br><span class="faint">Transit custody: ${esc(x.transitLocation)}</span>` : ''}</td><td><span class="pill ${x.status === 'ApprovalNeeded' ? 'warn' : x.status === 'InTransit' ? 'info' : ''}">${x.status === 'InTransit' ? 'Awaiting receipt' : x.status === 'ApprovalNeeded' ? 'Approval needed' : esc(x.status)}</span>${x.isNonBom ? '<div class="faint">Additional material · released BOM unchanged</div>' : ''}${x.reviewNote ? `<div class="faint">Review: ${esc(x.reviewNote)}</div>` : ''}</td>
         <td>${esc(who(x.requestedBy))}<br><span class="faint">${esc(fmtDateTime(x.requestedAt))}</span></td>
-        <td class="nowrap">${handler ? `${step(x)} <button class="btn small ghost" data-task-cancel="${x.taskId}">Cancel</button>` : ''}</td></tr>`).join('')}
+        <td class="nowrap"><button class="btn small ghost" data-task-custody="${x.taskId}">Custody history</button> ${handler ? `${step(x)} ${x.status === 'InTransit' ? '' : `<button class="btn small ghost" data-task-cancel="${x.taskId}">Cancel</button>`}` : ''}</td></tr>`).join('')}
       </tbody></table>
-      <div class="faint" style="margin-top:6px">Allocated stock is held back from other tasks. Picking and delivering are confirmed by scanning the location (and lot); only delivery moves stock in the ledger.</div>`;
+      <div class="faint" style="margin-top:6px">Allocated stock is held back from other tasks. Dispatch moves stock into the site’s non-nettable In Transit custody location; only a different active worker authenticated by badge and PIN can receive it into the destination.</div>`;
   }
 
   function countsTab() {
@@ -579,6 +593,45 @@ export async function inventoryPage(page, ctx) {
     }, (v, reason) => command(`/api/inventory/tasks/${x.taskId}/allocate`, { ...v, lotNumber: v.lotNumber || null }, reason), reload); }));
     $$('[data-task-pick]', page).forEach(b => b.addEventListener('click', () => scanTask(task(b.dataset.taskPick), true)));
     $$('[data-task-deliver]', page).forEach(b => b.addEventListener('click', () => scanTask(task(b.dataset.taskDeliver), false)));
+    $$('[data-task-receive]', page).forEach(b => b.addEventListener('click', () => scanTask(task(b.dataset.taskReceive), 'receive')));
+    $$('[data-task-custody]', page).forEach(b => b.addEventListener('click', async () => {
+      const id = Number(b.dataset.taskCustody);
+      const d = drawer(`Custody history — task ${id}`, '<div class="muted">Loading custody events…</div>');
+      const { data: events, error } = await tryGet(`/api/inventory/tasks/${id}/custody`);
+      if (!d.element.isConnected) return;
+      d.element.innerHTML = error ? errorBlock(error, 'custody history') : events.length
+        ? `<p class="muted">Append-only custody evidence for this material task. Inventory movement is shown separately in the ledger.</p>
+          <ol class="stack">${events.map(event => `<li class="notice"><b>${esc(event.kind === 'ExceptionRecorded' ? 'Exception reported' : event.kind === 'DispatchedToTransit' ? 'Dispatched to transit' : 'Accepted at destination')}</b>
+            <div>${esc(event.locationCode)} · ${esc(fmtDateTime(event.recordedAt))}</div>
+            <div class="faint">${esc(who(event.recordedBy))}${event.authenticationMethod ? ` · ${esc(event.authenticationMethod)}` : ''}${event.transactionId ? ` · transaction ${event.transactionId}` : ''}</div>
+            ${event.reason ? `<div>${esc(event.reason)}</div>` : ''}</li>`).join('')}</ol>`
+        : '<div class="muted">No custody events have been recorded for this task.</div>';
+    }));
+    $$('[data-task-exception]', page).forEach(b => b.addEventListener('click', () => {
+      const x = task(b.dataset.taskException);
+      if (!x) return;
+      formModal({
+        title: `Report a custody exception — task ${x.taskId}`,
+        detail: `Material is still recorded in non-nettable transit custody. This records the discrepancy and alerts Inventory and Planning; it does not move stock or confirm receipt. A different authenticated worker than the dispatcher must report it.`,
+        confirmLabel: 'Record exception', reasonRequired: true,
+        fields: [
+          { name: 'scannedLocation', label: 'Scan location where observed', required: true, code: true },
+          { name: 'badge', label: 'Your worker badge', required: true, code: true, maxLength: 80 },
+          { name: 'pin', label: 'Your badge PIN', type: 'password', required: true, maxLength: 80 },
+        ],
+      }, (values, reason) => command(`/api/inventory/tasks/${x.taskId}/custody-exception`, values, reason), reload);
+    }));
+    for (const [selector, approve, label] of [['[data-task-review]', true, 'Approve'], ['[data-task-reject]', false, 'Reject']]) {
+      $$(selector, page).forEach(b => b.addEventListener('click', async () => {
+        const x = task(b.dataset.taskReview ?? b.dataset.taskReject);
+        if (!x) return;
+        const result = await confirmWithReason({ title: `${label} additional material task ${x.taskId}`,
+          detail: `${qty(x.quantity)} ${x.partNumber} for order ${x.orderNumber ?? '—'} to ${x.toLocation}. This independent decision does not change the released BOM.`,
+          confirmLabel: `${label} request`, reasonRequired: true },
+        reason => command(`/api/inventory/tasks/${x.taskId}/review`, { approve }, reason));
+        if (result) { toast(result.message ?? 'Request reviewed.'); await reload(); }
+      }));
+    }
     $$('[data-task-cancel]', page).forEach(b => b.addEventListener('click', async () => {
       const done = await confirmWithReason({ title: `Cancel task ${b.dataset.taskCancel}`, detail: 'Anything allocated is free again. Nothing moves.', confirmLabel: 'Cancel task' },
         reason => command(`/api/inventory/tasks/${b.dataset.taskCancel}/cancel`, {}, reason));

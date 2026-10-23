@@ -22,6 +22,9 @@ public sealed record InspectionRequest(long OrderNumber, int Sequence, decimal Q
 
 public sealed record NcrRequest(string PartNumber, long? OrderNumber, int? Sequence, string? LotNumber, decimal Quantity, string Defect, string Description, string? Reason);
 
+public sealed record SuspectNcrRequest(string? Reason);
+public sealed record SuspectReplacementMaterialRequest(decimal Quantity, string ToLocation, string? Reason);
+
 public sealed record DispositionRequest(Disposition Disposition, string Note, string? Reason);
 
 public sealed record NoteRequest(string Note, string? Reason);
@@ -76,6 +79,54 @@ public static class QualityEndpoints
                         && await http.RequestServices.GetRequiredService<IAcceptanceSourceAccess>().CanReadNcrSourceAsync(uow, principal, ncr.NcrId, ct)) visible.Add(ncr);
                 return Results.Ok(visible);
             });
+        api.MapGet("/suspect-scrap", (HttpContext http, CancellationToken _) =>
+            Read(http, Permissions.QualityRead, async principal =>
+            {
+                await using var uow = await Snapshot(http);
+                var execution = uow.Store<IExecutionLookup>();
+                var allowedOrders = (await execution.ListOrdersAsync(http.RequestAborted))
+                    .Where(order => order.ProgramId is not { } program || principal.Programs.Contains(new ProgramId(program)))
+                    .ToDictionary(order => order.OrderNumber);
+                var tasks = (await uow.Store<IInventoryLookup>().ListMaterialTasksAsync(false, null, http.RequestAborted))
+                    .Where(task => task.SourceSuspectReportId is not null).ToDictionary(task => task.SourceSuspectReportId!.Value, task => task.TaskId);
+                var reports = await uow.Store<IQualityLookup>().ListSuspectScrapReportsAsync(null, http.RequestAborted);
+                var result = new List<object>();
+                foreach (var report in reports.Where(report => allowedOrders.ContainsKey(report.OrderNumber)))
+                {
+                    var order = await execution.FindOrderAsync(report.OrderNumber, http.RequestAborted);
+                    var operation = order?.Operations.FirstOrDefault(item => item.Sequence == report.Sequence);
+                    var replacementTaskId = tasks.TryGetValue(report.ReportId, out var linkedTaskId) ? linkedTaskId : (long?)null;
+                    result.Add(new { report.ReportId, report.Kind, report.OrderNumber, report.Sequence, report.PartNumber, report.Revision, report.LotNumber,
+                        report.SerialNumber, report.Quantity, report.MachineCode, report.ReporterPersonId, report.ReasonCode, report.Description,
+                        report.ReportedAt, report.NcrId, ReplacementTaskId = replacementTaskId, WorkCenterCode = operation?.WorkCenterCode, OrderStatus = order?.Status.ToString() });
+                }
+                return result;
+            }));
+        api.MapPost("/suspect-scrap/{reportId:long}/ncr", (HttpContext http, long reportId, SuspectNcrRequest body, QualityService quality, CancellationToken ct) =>
+            Command(http, body.Reason, context => quality.RaiseNcrFromSuspectScrapAsync(new RaiseNcrFromSuspectScrap(reportId), context, ct)));
+        api.MapPost("/suspect-scrap/{reportId:long}/replacement-request", async (HttpContext http, long reportId, SuspectReplacementMaterialRequest body,
+            InventoryService inventory, IForgeAuthorizer authorizer, IKernelUnitOfWorkFactory uows, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            var permission = authorizer.Authorize(principal, Permissions.InventoryMaterialRequest, ResourceRef.Of(Permissions.InventoryMaterialRequest));
+            if (!permission.IsPermitted) throw new ForgeAuthorizationException(permission);
+            SuspectScrapReport report;
+            await using (var uow = await uows.BeginSnapshotAsync(ct))
+            {
+                report = await uow.Store<IQualityLookup>().FindSuspectScrapReportAsync(reportId, ct)
+                    ?? throw new CommandRejectedException("suspect_report_not_found", "The suspect report does not exist.");
+                var order = await uow.Store<IExecutionLookup>().FindOrderAsync(report.OrderNumber, ct);
+                if (order is null || order.ProgramId is { } program && !principal.Programs.Contains(new ProgramId(program)))
+                    throw new CommandRejectedException("suspect_report_not_found", "The suspect report does not exist.");
+                var scoped = authorizer.Authorize(principal, Permissions.InventoryMaterialRequest,
+                    new ResourceRef("ProductionOrder", report.OrderNumber.ToString(System.Globalization.CultureInfo.InvariantCulture), order.ProgramId is { } id ? new ProgramId(id) : null));
+                if (!scoped.IsPermitted) throw new ForgeAuthorizationException(scoped);
+            }
+            return await Command(http, body.Reason, context => inventory.RequestMaterialAsync(
+                new RequestMaterial(MaterialTaskKind.Stage, report.OrderNumber, report.PartNumber, body.Quantity, body.ToLocation,
+                    OperationSequence: report.Sequence, SourceSuspectReportId: reportId), context, ct));
+        });
         api.MapGet("/inspections", (HttpContext http, long? order, int? take, CancellationToken _) =>
             Read(http, Permissions.QualityRead, async principal =>
             {
