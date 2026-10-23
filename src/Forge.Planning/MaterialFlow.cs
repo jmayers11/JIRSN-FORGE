@@ -1,3 +1,4 @@
+using Forge.Inventory;
 using Forge.Execution.Contracts;
 using Forge.Inventory.Contracts;
 using Forge.Planning.Engines;
@@ -67,7 +68,7 @@ public sealed record MaterialFlowLine(
         var workCenter = (ops.FirstOrDefault(o => o.Status != OperationStatus.Complete) ?? ops.LastOrDefault())?.WorkCenterCode;
         // Additional material requests deliberately do not alter the released BOM or its readiness.
         var mine = tasks.Where(t => t.OrderNumber == order.OrderNumber && !t.IsNonBom
-            && t.Status is not (MaterialTaskStatus.Cancelled or MaterialTaskStatus.Rejected)).ToList();
+            && t.Status is not (MaterialTaskStatus.Cancelled or MaterialTaskStatus.Rejected or MaterialTaskStatus.DeliveryRejected)).ToList();
         var ledger = orderTransactions.Where(t => t.OrderNumber == order.OrderNumber && t.SubstitutesFor is null && t.Kind is InventoryTransactionKind.Issue or InventoryTransactionKind.Return).ToList();
         var consumedLines = transformations.Where(x => x.OrderNumber == order.OrderNumber).SelectMany(x => x.Lines).Where(l => l.Role == TransformationRole.Consumed).ToList();
         var stock = positions.Where(p => p.QualityStatus == StockStatus.Released && p.Custody == Custody.Company).ToList();
@@ -78,16 +79,18 @@ public sealed record MaterialFlowLine(
             var required = group.Sum(m => m.RequiredQuantity);
             var partTasks = mine.Where(t => t.PartNumber == part).ToList();
             var requested = partTasks.Sum(t => t.Quantity);
-            var allocated = partTasks.Where(t => t.Status is MaterialTaskStatus.Allocated or MaterialTaskStatus.Picked or MaterialTaskStatus.InTransit or MaterialTaskStatus.Delivered).Sum(t => t.Quantity);
+            var allocated = partTasks.Where(t => t.Status is MaterialTaskStatus.Allocated or MaterialTaskStatus.Picked or MaterialTaskStatus.InTransit or MaterialTaskStatus.Delivered)
+                .Sum(t => t.Status == MaterialTaskStatus.Delivered ? MaterialTaskDemand.Coverage(t) : Math.Max(0m, (t.PickedQuantity ?? t.Quantity) - t.RejectedQuantity));
             var picked = partTasks.Where(t => t.Status is MaterialTaskStatus.Picked or MaterialTaskStatus.InTransit or MaterialTaskStatus.Delivered).Sum(t => t.PickedQuantity ?? 0);
-            var delivered = partTasks.Where(t => t.Status == MaterialTaskStatus.Delivered).Sum(t => t.PickedQuantity ?? 0);
+            var delivered = partTasks.Where(t => t.Status is MaterialTaskStatus.InTransit or MaterialTaskStatus.Delivered).Sum(t => t.Status == MaterialTaskStatus.Delivered
+                ? MaterialTaskDemand.Coverage(t) : t.ReceivedQuantity);
             var issued = ledger.Where(t => t.PartNumber == part).Sum(t => t.Kind == InventoryTransactionKind.Issue ? t.Quantity : -t.Quantity);
             var consumed = consumedLines.Where(l => l.PartNumber == part).Sum(l => l.Quantity);
             var atUse = stock.Where(p => p.PartNumber == part && workCenter is not null && p.PointOfUseWorkCenter == workCenter).Sum(p => p.Quantity);
             var elsewhere = stock.Where(p => p.PartNumber == part && p.Nettable && p.PointOfUseWorkCenter is null).Sum(p => p.Quantity);
             var inTransit = positions.Where(p => p.PartNumber == part && p.QualityStatus == StockStatus.Released && p.Custody == Custody.InTransit).Sum(p => p.Quantity);
             var remaining = Math.Max(0, required - issued);
-            var open = partTasks.Where(t => t.Status is MaterialTaskStatus.Requested or MaterialTaskStatus.Allocated or MaterialTaskStatus.Picked or MaterialTaskStatus.InTransit).Sum(t => t.Quantity);
+            var open = partTasks.Sum(MaterialTaskDemand.Pending);
             var (state, why) = remaining == 0 ? (MaterialFlowState.Issued, "All issued.")
                 : atUse >= remaining ? (MaterialFlowState.AtPointOfUse, $"{Quantities.Text(atUse)} at {workCenter}'s point of use; {Quantities.Text(remaining)} still to issue.")
                 : atUse + elsewhere >= remaining ? (MaterialFlowState.InWarehouse,

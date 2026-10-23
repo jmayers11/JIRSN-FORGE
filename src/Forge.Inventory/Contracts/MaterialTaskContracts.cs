@@ -25,14 +25,24 @@ public enum MaterialTaskStatus
     Picked,
     InTransit,
     Delivered,
+    DeliveryRejected,
     Rejected,
     Cancelled,
 }
 
-public enum MaterialCustodyEventKind { DispatchedToTransit, ReceivedAtDestination, ExceptionRecorded }
+public enum MaterialCustodyEventKind
+{
+    DispatchedToTransit,
+    ReceivedAtDestination,
+    PartiallyReceived,
+    RejectedAtReceipt,
+    ExceptionRecorded,
+    ReturnedToStores,
+    ReceiptReversed,
+}
 
 public sealed record MaterialTaskCustodyEvent(long EventId, long TaskId, MaterialCustodyEventKind Kind, DateTimeOffset RecordedAt,
-    string RecordedBy, Guid? PersonId, string LocationCode, long? TransactionId, string? AuthenticationMethod, string? Reason);
+    string RecordedBy, Guid? PersonId, string LocationCode, long? TransactionId, string? AuthenticationMethod, string? Reason, decimal? Quantity = null);
 
 /// <summary>The exact part and physical identity read by a typed material scan; no authority or quantity is implied.</summary>
 public sealed record ScannedMaterialIdentity(string PartNumber, string LotNumber);
@@ -74,7 +84,11 @@ public sealed record MaterialTask(
     bool IsNonBom = false,
     string? ReviewedBy = null,
     DateTimeOffset? ReviewedAt = null,
-    string? ReviewNote = null)
+    string? ReviewNote = null,
+    decimal ReceivedQuantity = 0m,
+    decimal RejectedQuantity = 0m,
+    decimal ReturnedQuantity = 0m,
+    decimal ReversedQuantity = 0m)
 {
     /// <summary>Stock this task holds back from other allocations: allocated or picked, not yet delivered.</summary>
     public decimal Reserved => Status switch

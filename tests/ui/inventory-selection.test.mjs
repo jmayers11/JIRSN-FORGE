@@ -32,6 +32,57 @@ test('inventory custody history shows append-only dispatch, exception and receiv
   assert.doesNotMatch(trail.innerHTML, /<script>unexpected count/);
 });
 
+test('receiver can separately accept and reject a partial handoff into quarantine', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div'); browser.document.body.append(page);
+  const task = { taskId: 32, kind: 'Stage', orderNumber: 1042, partNumber: 'COMP-1', quantity: 10, pickedQuantity: 10,
+    receivedQuantity: 0, rejectedQuantity: 0, status: 'InTransit', fromLocation: 'STORES', toLocation: 'SLIT-STAGE',
+    transitLocation: 'TRANSIT', requestedBy: 'person:picker', requestedAt: '2026-10-23T09:00:00Z' };
+  globalThis.fetch = path => {
+    if (path === '/api/inventory/tasks?open=true') return Promise.resolve(response([task]));
+    if (path === '/api/inventory/locations') return Promise.resolve(response([
+      { code: 'QUARANTINE', name: 'Quality quarantine', kind: 'Quarantine', active: true, nettable: false, inCompanyCustody: true },
+    ]));
+    if (path === '/api/resources/') return Promise.resolve(response({ sites: [], workCenters: [], machines: [] }));
+    return Promise.resolve(response([]));
+  };
+  const controller = await inventoryPage(page, { me: { personId: 'receiver', permissions: ['inventory.read', 'inventory.custody.receive'] }, query: new URLSearchParams('tab=tasks'), params: [], refreshBell() {} });
+  t.after(controller.dispose);
+  assert.ok(page.querySelector('[data-task-receive="32"]'), page.innerHTML);
+  fire(page.querySelector('[data-task-receive="32"]'), 'click');
+  const modal = browser.document.querySelector('.modal');
+  assert.equal(modal.querySelector('#task-accepted-quantity').value, '10');
+  assert.equal(modal.querySelector('#task-rejected-quantity').value, '0');
+  assert.match(modal.innerHTML, /QUARANTINE/);
+  modal.querySelector('#task-accepted-quantity').value = '7';
+  modal.querySelector('#task-rejected-quantity').value = '3';
+  modal.querySelector('#task-quarantine-location').value = 'QUARANTINE';
+  assert.match(modal.textContent, /Reason \(required when rejecting quantity\)/);
+});
+
+test('inventory controller can see recent delivered tasks and launch audited return or receipt correction', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div'); browser.document.body.append(page);
+  const delivered = { taskId: 33, kind: 'Stage', orderNumber: 1042, partNumber: 'COMP-1', quantity: 10, pickedQuantity: 10,
+    receivedQuantity: 8, rejectedQuantity: 2, returnedQuantity: 0, reversedQuantity: 0, status: 'Delivered',
+    fromLocation: 'STORES', toLocation: 'SLIT-STAGE', requestedBy: 'person:picker', requestedAt: '2026-10-23T09:00:00Z' };
+  globalThis.fetch = path => {
+    if (path === '/api/inventory/tasks?open=true') return Promise.resolve(response([]));
+    if (path === '/api/inventory/tasks?open=false&take=200') return Promise.resolve(response([delivered]));
+    if (path === '/api/inventory/locations') return Promise.resolve(response([
+      { code: 'STORES', name: 'Main stores', kind: 'Stores', active: true, inCompanyCustody: true },
+      { code: 'QUARANTINE', name: 'Quality quarantine', kind: 'Quarantine', active: true, nettable: false, inCompanyCustody: true },
+    ]));
+    if (path === '/api/resources/') return Promise.resolve(response({ sites: [], workCenters: [], machines: [] }));
+    return Promise.resolve(response([]));
+  };
+  const controller = await inventoryPage(page, { me: { personId: 'controller', permissions: ['inventory.read', 'inventory.manage'] }, query: new URLSearchParams('tab=tasks'), params: [], refreshBell() {} });
+  t.after(controller.dispose);
+  assert.ok(page.querySelector('[data-task-return="33"]'));
+  assert.ok(page.querySelector('[data-task-reverse="33"]'));
+  fire(page.querySelector('[data-task-return="33"]'), 'click'); await flush();
+  assert.match(browser.document.querySelector('.modal').textContent, /preserves the original receipt and custody events/);
+  assert.match(browser.document.querySelector('.modal').innerHTML, /STORES/);
+});
+
 test('inventory lot selection shows ranked eligible and excluded candidates without reserving stock', async t => {
   const browser = installBrowser(t), calls = [], page = browser.document.createElement('div'); browser.document.body.append(page);
   const before = { subject: session.subject, token: session.token }; session.subject = 'inventory-selection-user'; session.token = null; t.after(() => Object.assign(session, before));

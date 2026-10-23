@@ -30,13 +30,23 @@ public sealed class V41ScanMaterialMovementTests(PostgresFixture postgres)
         var stores = flow.Plant.As("stores");
         await flow.Plant.Ok(stores, "/api/inventory/receipts", new
         {
-            partNumber = "SCAN-RAW", quantity = 25m, locationCode = "STORES", lotNumber = Lot,
+            partNumber = "SCAN-RAW", quantity = 35m, locationCode = "STORES", lotNumber = Lot,
             revision = "A", reason = "Record the exact lot used by the scan-bound material movement"
         });
         await flow.Plant.Ok(stores, "/api/inventory/locations", new
         {
             code = PointOfUse, siteCode = "PLANT1", name = "Slitting point of use", kind = "Staging", workCenterCode = "SLIT-WC",
             reason = "Use the actual operation work center as the material task destination"
+        });
+        await flow.Plant.Ok(stores, "/api/inventory/locations", new
+        {
+            code = "SCAN-TRANSIT", siteCode = "PLANT1", name = "Non-nettable handoff transit", kind = "InTransit", nettable = false,
+            reason = "Keep dispatched material unavailable until a different worker confirms receipt"
+        });
+        await flow.Plant.Ok(stores, "/api/inventory/locations", new
+        {
+            code = "SCAN-QUARANTINE", siteCode = "PLANT1", name = "Non-nettable receipt quarantine", kind = "Quarantine", nettable = false,
+            reason = "Rejected or corrected handoff material must remain unavailable for production"
         });
         var task = Id(await flow.Plant.Ok(stores, "/api/inventory/tasks", new
         {
@@ -100,6 +110,17 @@ public sealed class V41ScanMaterialMovementTests(PostgresFixture postgres)
 
         var deliverCorrelation = Guid.NewGuid();
         var delivered = await JsonAsync(await SendAsync(flow.Terminal, deliverPath, deliver, "scan-deliver-exact", session, deliverCorrelation));
+        Assert.Equal("InTransit", await TaskStatusAsync(flow, task, order));
+        Assert.Equal(0m, await BalanceAsync(flow, "SCAN-RAW", PointOfUse, Lot));
+        await flow.Plant.Ok(flow.Plant.Admin, $"/api/kernel/people/{flow.Plant.People["scan-terminal"]}/roles",
+            new { role = "MaterialHandler", reason = "The authenticated stockroom terminal performs the dispatch step in this custody test" });
+        const string receiverPin = "60428173";
+        await flow.Plant.Ok(flow.Terminal, "/api/shopfloor/pin", new { badge = SarahBadge, newPin = receiverPin });
+        await flow.Plant.Ok(flow.Terminal, $"/api/inventory/tasks/{task}/receive", new
+        {
+            scannedLocation = PointOfUse, badge = SarahBadge, pin = receiverPin, acceptedQuantity = 25m, rejectedQuantity = 0m,
+            quarantineLocation = (string?)null, reason = "Distinct authenticated floor worker confirms the complete delivery"
+        });
         Assert.Equal("Delivered", await TaskStatusAsync(flow, task, order));
         await AssertActualTransferAsync(flow, order);
         var afterDelivery = await ReadAsync(flow.Terminal, session.GetProperty("id").GetGuid());
@@ -114,6 +135,30 @@ public sealed class V41ScanMaterialMovementTests(PostgresFixture postgres)
         var final = await ReadAsync(flow.Terminal, session.GetProperty("id").GetGuid());
         Assert.Equal(3, final.GetProperty("accepted").GetArrayLength());
         Assert.Contains(final.GetProperty("accepted").EnumerateArray(), row => row.GetProperty("commandType").GetString() == "StartOperation");
+
+        var partialTask = Id(await flow.Plant.Ok(flow.Terminal, "/api/inventory/tasks", new
+        {
+            kind = "Replenish", partNumber = "SCAN-RAW", quantity = 10m, toLocation = PointOfUse, fromLocation = "STORES", lotNumber = Lot,
+            reason = "Stage a separate replenishment for partial custody acceptance"
+        }));
+        await flow.Plant.Ok(flow.Terminal, $"/api/inventory/tasks/{partialTask}/pick", new { scannedLocation = "STORES", scannedLot = Lot, quantity = 10m, reason = "Pick exact replenishment lot" });
+        await flow.Plant.Ok(flow.Terminal, $"/api/inventory/tasks/{partialTask}/deliver", new { scannedLocation = PointOfUse, reason = "Dispatch replenishment to controlled transit custody" });
+        await flow.Plant.Ok(flow.Terminal, $"/api/inventory/tasks/{partialTask}/receive", new
+        {
+            scannedLocation = PointOfUse, badge = SarahBadge, pin = receiverPin, acceptedQuantity = 7m, rejectedQuantity = 3m,
+            quarantineLocation = "SCAN-QUARANTINE", reason = "Three units have damaged packaging and are rejected into quarantine"
+        });
+        var settledTasks = await JsonAsync(await flow.Terminal.GetAsync("/api/inventory/tasks?open=false"));
+        var partial = Assert.Single(settledTasks.EnumerateArray(), row => row.GetProperty("taskId").GetInt64() == partialTask);
+        Assert.Equal(("Delivered", 7m, 3m), (partial.GetProperty("status").GetString(), partial.GetProperty("receivedQuantity").GetDecimal(), partial.GetProperty("rejectedQuantity").GetDecimal()));
+        var custody = await JsonAsync(await flow.Terminal.GetAsync($"/api/inventory/tasks/{partialTask}/custody"));
+        Assert.Contains(custody.EnumerateArray(), row => row.GetProperty("kind").GetString() == "RejectedAtReceipt" && row.GetProperty("quantity").GetDecimal() == 3m);
+
+        await flow.Plant.Ok(flow.Plant.Admin, $"/api/inventory/tasks/{partialTask}/return", new { quantity = 1m, locationCode = "STORES", reason = "Return one unused accepted unit through the authorized correction path" });
+        await flow.Plant.Ok(flow.Plant.Admin, $"/api/inventory/tasks/{partialTask}/reverse-receipt", new { quantity = 1m, locationCode = "SCAN-QUARANTINE", reason = "Correct one miscounted acceptance into controlled hold" });
+        settledTasks = await JsonAsync(await flow.Plant.Admin.GetAsync("/api/inventory/tasks?open=false"));
+        partial = Assert.Single(settledTasks.EnumerateArray(), row => row.GetProperty("taskId").GetInt64() == partialTask);
+        Assert.Equal((1m, 1m), (partial.GetProperty("returnedQuantity").GetDecimal(), partial.GetProperty("reversedQuantity").GetDecimal()));
     }
 
     private static async Task<string> TaskStatusAsync(Flow flow, long taskId, long order)
@@ -126,14 +171,29 @@ public sealed class V41ScanMaterialMovementTests(PostgresFixture postgres)
     {
         await using var connection = new NpgsqlConnection(flow.App.ConnectionString);
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand("SELECT count(*), COALESCE(sum(quantity),0) FROM inventory.transaction WHERE order_number=$1 AND kind='Transfer' AND part_number='SCAN-RAW' AND lot_number=$2 AND from_location='STORES' AND to_location=$3", connection);
-        command.Parameters.AddWithValue(order);
-        command.Parameters.AddWithValue(Lot);
-        command.Parameters.AddWithValue(PointOfUse);
-        await using var reader = await command.ExecuteReaderAsync();
-        Assert.True(await reader.ReadAsync());
-        Assert.Equal(1L, reader.GetInt64(0));
-        Assert.Equal(25m, reader.GetDecimal(1));
+        foreach (var (from, to) in new[] { ("STORES", "SCAN-TRANSIT"), ("SCAN-TRANSIT", PointOfUse) })
+        {
+            await using var command = new NpgsqlCommand("SELECT count(*), COALESCE(sum(quantity),0) FROM inventory.transaction WHERE order_number=$1 AND kind='Transfer' AND part_number='SCAN-RAW' AND lot_number=$2 AND from_location=$3 AND to_location=$4", connection);
+            command.Parameters.AddWithValue(order);
+            command.Parameters.AddWithValue(Lot);
+            command.Parameters.AddWithValue(from);
+            command.Parameters.AddWithValue(to);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(1L, reader.GetInt64(0));
+            Assert.Equal(25m, reader.GetDecimal(1));
+        }
+    }
+
+    private static async Task<decimal> BalanceAsync(Flow flow, string part, string location, string lot)
+    {
+        await using var connection = new NpgsqlConnection(flow.App.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("SELECT COALESCE(sum(quantity),0) FROM inventory.transaction WHERE part_number=$1 AND lot_number=$2 AND to_location=$3", connection);
+        command.Parameters.AddWithValue(part);
+        command.Parameters.AddWithValue(lot);
+        command.Parameters.AddWithValue(location);
+        return Convert.ToDecimal(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
     }
 
     private static async Task<long> CreateLotTrackedOperationAsync(Flow flow)

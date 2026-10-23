@@ -202,8 +202,8 @@ export function buildWorkforceIntelligence(input = {}) {
     .filter(task => !input.workCenterCode || !task.workCenterCode || task.workCenterCode === input.workCenterCode)
     .map(task => ({
       severity: task.status === 'InTransit' ? 'urgent' : 'attention',
-      title: `WO ${task.orderNumber} · ${task.partNumber} material ${task.status === 'ApprovalNeeded' ? 'needs approval' : task.status === 'InTransit' ? 'awaits receipt' : 'awaits stockroom'}`,
-      detail: `${task.quantity} requested for ${task.toLocation}${task.operationSequence == null ? '' : ` · operation ${task.operationSequence}`}. No staffing or safety gate is bypassed.`,
+      title: `WO ${task.orderNumber} · ${task.partNumber} material ${task.status === 'ApprovalNeeded' ? 'needs approval' : task.status === 'InTransit' ? task.rejectedQuantity > 0 ? 'has rejected quantity awaiting resolution' : 'awaits receipt' : 'awaits stockroom'}`,
+      detail: `${task.quantity} requested for ${task.toLocation}${task.receivedQuantity ? ` · ${task.receivedQuantity} accepted` : ''}${task.rejectedQuantity ? ` · ${task.rejectedQuantity} quarantined` : ''}${task.operationSequence == null ? '' : ` · operation ${task.operationSequence}`}. No staffing or safety gate is bypassed.`,
       orderNumber: task.orderNumber,
       sequence: task.operationSequence,
       evidenceReferences: [`MaterialTask/${task.taskId}`, ...(task.operationSequence == null ? [] : [`OrderOperation/${task.orderNumber}/${task.operationSequence}`])],

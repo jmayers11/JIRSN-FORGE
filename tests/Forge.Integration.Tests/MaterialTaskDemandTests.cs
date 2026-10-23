@@ -41,6 +41,32 @@ public sealed class MaterialTaskDemandTests
         Assert.Equal(20m, MaterialTaskDemand.Remaining(20m, 0m, [approvalNeeded, rejected]));
     }
 
+    [Fact]
+    public void Partial_receipt_covers_only_accepted_and_unresolved_quantity_not_rejected_quantity()
+    {
+        var partial = Task(MaterialTaskStatus.InTransit, picked: 10m) with { ReceivedQuantity = 3m, RejectedQuantity = 2m };
+
+        Assert.Equal(8m, MaterialTaskDemand.Coverage(partial));
+        Assert.Equal(5m, MaterialTaskDemand.Pending(partial));
+        Assert.Equal(2m, MaterialTaskDemand.Remaining(10m, 0m, [partial]));
+    }
+
+    [Fact]
+    public void Delivered_receipt_returns_and_corrections_reduce_current_demand_coverage()
+    {
+        var settled = Task(MaterialTaskStatus.Delivered, picked: 10m) with
+        {
+            ReceivedQuantity = 6m,
+            RejectedQuantity = 4m,
+            ReturnedQuantity = 2m,
+            ReversedQuantity = 1m,
+        };
+
+        Assert.Equal(3m, MaterialTaskDemand.Coverage(settled));
+        Assert.Equal(7m, MaterialTaskDemand.Remaining(10m, 0m, [settled]));
+        Assert.Equal(0m, MaterialTaskDemand.Coverage(Task(MaterialTaskStatus.DeliveryRejected, picked: 10m) with { RejectedQuantity = 10m }));
+    }
+
     private static MaterialTask Task(MaterialTaskStatus status, decimal? picked) => new(
         1, MaterialTaskKind.Stage, 1042, null, "COMP-1", null, 20m, "STORES", "WC-A-STAGE", status, picked,
         "test", "person:test", At);

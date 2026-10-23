@@ -189,8 +189,8 @@ public interface IInventoryStore
 
     Task<long> InsertMaterialTaskAsync(MaterialTask task, CancellationToken ct);
 
-    /// <summary>Writes a task's new state; false when it was no longer in the expected status (someone else moved it).</summary>
-    Task<bool> UpdateMaterialTaskAsync(MaterialTask task, MaterialTaskStatus expected, CancellationToken ct);
+    /// <summary>Writes a task's new state; false when its status or custody counters changed since the caller read it.</summary>
+    Task<bool> UpdateMaterialTaskAsync(MaterialTask task, MaterialTask expected, CancellationToken ct);
 
     Task<long> InsertMaterialTaskCustodyEventAsync(MaterialTaskCustodyEvent custodyEvent, CancellationToken ct);
 

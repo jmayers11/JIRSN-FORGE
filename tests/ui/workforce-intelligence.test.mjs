@@ -71,13 +71,15 @@ test('evidence links accept only recognized Forge source-reference formats', () 
 test('material and suspect-scrap disruptions become source-linked workforce alerts without implying disposition', () => {
   const summary = buildWorkforceIntelligence({
     now, materialTasks: [
-      { taskId: 44, orderNumber: 1042, operationSequence: 10, partNumber: 'COMP-1', quantity: 8, toLocation: 'WC-A-STAGE', status: 'InTransit' },
+      { taskId: 44, orderNumber: 1042, operationSequence: 10, partNumber: 'COMP-1', quantity: 8, receivedQuantity: 5, rejectedQuantity: 1, toLocation: 'WC-A-STAGE', status: 'InTransit' },
       { taskId: 45, orderNumber: 1042, operationSequence: 20, partNumber: 'COMP-2', quantity: 4, toLocation: 'WC-A-STAGE', status: 'ApprovalNeeded', isNonBom: true },
     ],
     suspectReports: [{ reportId: 9, kind: 'Scrap', orderNumber: 1042, sequence: 10, partNumber: 'COMP-1', reasonCode: 'DIM', ncrId: null }],
   });
   assert.equal(summary.materialDisruptions.length, 3);
   assert.equal(summary.materialDisruptions[0].severity, 'urgent');
+  assert.match(summary.materialDisruptions[0].title, /rejected quantity awaiting resolution/);
+  assert.match(summary.materialDisruptions[0].detail, /5 accepted · 1 quarantined/);
   assert.ok(summary.materialDisruptions[0].evidenceReferences.includes('MaterialTask/44'));
   assert.ok(summary.materialDisruptions.some(row => row.evidenceReferences.includes('SuspectScrapReport/9')));
   assert.match(summary.materialDisruptions.find(row => row.title.includes('Suspect report')).detail, /reported evidence, not an approved disposition/);

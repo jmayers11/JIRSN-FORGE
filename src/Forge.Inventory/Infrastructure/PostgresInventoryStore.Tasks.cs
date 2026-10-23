@@ -11,7 +11,7 @@ internal sealed partial class PostgresInventoryStore
         SELECT task_id, kind, order_number, kit_code, part_number, lot_number, quantity, from_location, to_location, status, picked_quantity, reason,
                requested_by, requested_at, allocated_by, allocated_at, picked_by, picked_at, delivered_by, delivered_at, transaction_id, cancelled_by, cancelled_at, cancel_reason,
                transit_location, receiver_person_id, received_by, received_at, receipt_transaction_id, operation_sequence, requester_person_id, source_suspect_report_id,
-               is_non_bom, reviewed_by, reviewed_at, review_note
+               is_non_bom, reviewed_by, reviewed_at, review_note, received_quantity, rejected_quantity, returned_quantity, reversed_quantity
         FROM inventory.material_task
         """;
 
@@ -37,7 +37,7 @@ internal sealed partial class PostgresInventoryStore
         return id;
     }
 
-    public async Task<bool> UpdateMaterialTaskAsync(MaterialTask task, MaterialTaskStatus expected, CancellationToken ct)
+    public async Task<bool> UpdateMaterialTaskAsync(MaterialTask task, MaterialTask expected, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(task);
         await using var cmd = uow.Command(
@@ -46,14 +46,18 @@ internal sealed partial class PostgresInventoryStore
                 lot_number = $3, from_location = $4, status = $5, picked_quantity = $6, allocated_by = $7, allocated_at = $8, picked_by = $9, picked_at = $10,
                 delivered_by = $11, delivered_at = $12, transaction_id = $13, cancelled_by = $14, cancelled_at = $15, cancel_reason = $16,
                 transit_location = $17, receiver_person_id = $18, received_by = $19, received_at = $20, receipt_transaction_id = $21,
-                is_non_bom = $22, reviewed_by = $23, reviewed_at = $24, review_note = $25
+                is_non_bom = $22, reviewed_by = $23, reviewed_at = $24, review_note = $25,
+                received_quantity = $26, rejected_quantity = $27, returned_quantity = $28, reversed_quantity = $29
             WHERE task_id = $1 AND status = $2
+              AND received_quantity = $30 AND rejected_quantity = $31 AND returned_quantity = $32 AND reversed_quantity = $33
             """,
-            task.TaskId, expected.ToString(), Text(task.LotNumber), Text(task.FromLocation), task.Status.ToString(),
+            task.TaskId, expected.Status.ToString(), Text(task.LotNumber), Text(task.FromLocation), task.Status.ToString(),
             new NpgsqlParameter { Value = (object?)task.PickedQuantity ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric },
             Text(task.AllocatedBy), Time(task.AllocatedAt), Text(task.PickedBy), Time(task.PickedAt), Text(task.DeliveredBy), Time(task.DeliveredAt), Long(task.TransactionId),
             Text(task.CancelledBy), Time(task.CancelledAt), Text(task.CancelReason), Text(task.TransitLocation), Uuid(task.ReceiverPersonId),
-            Text(task.ReceivedBy), Time(task.ReceivedAt), Long(task.ReceiptTransactionId), task.IsNonBom, Text(task.ReviewedBy), Time(task.ReviewedAt), Text(task.ReviewNote));
+            Text(task.ReceivedBy), Time(task.ReceivedAt), Long(task.ReceiptTransactionId), task.IsNonBom, Text(task.ReviewedBy), Time(task.ReviewedAt), Text(task.ReviewNote),
+            task.ReceivedQuantity, task.RejectedQuantity, task.ReturnedQuantity, task.ReversedQuantity,
+            expected.ReceivedQuantity, expected.RejectedQuantity, expected.ReturnedQuantity, expected.ReversedQuantity);
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
@@ -74,20 +78,21 @@ internal sealed partial class PostgresInventoryStore
     {
         await using var cmd = uow.Command("""
             INSERT INTO inventory.material_task_custody_event
-                (task_id, kind, recorded_at, recorded_by, person_id, location_code, transaction_id, authentication_method, reason)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING event_id
+                (task_id, kind, recorded_at, recorded_by, person_id, location_code, transaction_id, authentication_method, reason, quantity)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING event_id
             """, custodyEvent.TaskId, custodyEvent.Kind.ToString(), custodyEvent.RecordedAt, custodyEvent.RecordedBy,
-            Uuid(custodyEvent.PersonId), custodyEvent.LocationCode, Long(custodyEvent.TransactionId), Text(custodyEvent.AuthenticationMethod), Text(custodyEvent.Reason));
+            Uuid(custodyEvent.PersonId), custodyEvent.LocationCode, Long(custodyEvent.TransactionId), Text(custodyEvent.AuthenticationMethod), Text(custodyEvent.Reason),
+            new NpgsqlParameter { Value = (object?)custodyEvent.Quantity ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric });
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
     public Task<IReadOnlyList<MaterialTaskCustodyEvent>> ListMaterialTaskCustodyEventsAsync(long taskId, CancellationToken ct) =>
         ReadAsync("""
-            SELECT event_id, task_id, kind, recorded_at, recorded_by, person_id, location_code, transaction_id, authentication_method, reason
+            SELECT event_id, task_id, kind, recorded_at, recorded_by, person_id, location_code, transaction_id, authentication_method, reason, quantity
             FROM inventory.material_task_custody_event WHERE task_id = $1 ORDER BY event_id
             """, r => new MaterialTaskCustodyEvent(r.GetInt64(0), r.GetInt64(1), Enum.Parse<MaterialCustodyEventKind>(r.GetString(2)),
                 r.GetFieldValue<DateTimeOffset>(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetGuid(5), r.GetString(6),
-                r.IsDBNull(7) ? null : r.GetInt64(7), NullableText(r, 8), NullableText(r, 9)), ct, taskId);
+                r.IsDBNull(7) ? null : r.GetInt64(7), NullableText(r, 8), NullableText(r, 9), r.IsDBNull(10) ? null : Dec(r, 10)), ct, taskId);
 
     public async Task<bool> InsertCountProgramAsync(CycleCountProgram program, CancellationToken ct)
     {
@@ -159,5 +164,6 @@ internal sealed partial class PostgresInventoryStore
         r.IsDBNull(29) ? null : r.GetInt32(29),
         r.IsDBNull(30) ? null : r.GetGuid(30),
         r.IsDBNull(31) ? null : r.GetInt64(31),
-        r.GetBoolean(32), NullableText(r, 33), r.IsDBNull(34) ? null : r.GetFieldValue<DateTimeOffset>(34), NullableText(r, 35));
+        r.GetBoolean(32), NullableText(r, 33), r.IsDBNull(34) ? null : r.GetFieldValue<DateTimeOffset>(34), NullableText(r, 35),
+        Dec(r, 36), Dec(r, 37), Dec(r, 38), Dec(r, 39));
 }

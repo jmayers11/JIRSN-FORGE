@@ -57,8 +57,10 @@ public sealed record PickRequest(string ScannedLocation, string? ScannedLot, dec
 
 public sealed record DeliverRequest(string ScannedLocation, string? Reason);
 
-public sealed record MaterialReceiveRequest(string ScannedLocation, string Badge, string Pin, string? Reason);
+public sealed record MaterialReceiveRequest(string ScannedLocation, string Badge, string Pin, string? Reason, decimal AcceptedQuantity = 0m,
+    decimal RejectedQuantity = 0m, string? QuarantineLocation = null);
 public sealed record MaterialCustodyExceptionRequest(string ScannedLocation, string Badge, string Pin, string? Reason);
+public sealed record CustodyAdjustmentRequest(decimal Quantity, string LocationCode, string? Reason);
 
 public sealed record CountProgramRequest(string ProgramCode, string Name, string? LocationCode, string? PartNumber, int FrequencyDays, string? Reason);
 
@@ -280,14 +282,14 @@ public static class MaterialsEndpoints
                 return new OrderReconciliationView(order, info.PartNumber, rows, transformations);
             }));
         // V3.4: material tasks, an order's material flow, cycle-count programs and counts due.
-        api.MapGet("/tasks", (HttpContext http, bool? open, long? order, CancellationToken _) =>
+        api.MapGet("/tasks", (HttpContext http, bool? open, long? order, int? take, CancellationToken _) =>
             Read(http, Permissions.InventoryRead, async principal =>
             {
                 await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
                 var hidden = await HiddenOrdersAsync(uow, principal, http.RequestAborted);
-                return (await uow.Store<IInventoryLookup>().ListMaterialTasksAsync(open ?? true, order, http.RequestAborted))
-                    .Where(t => t.OrderNumber is not { } n || !hidden.Contains(n))
-                    .ToList();
+                var visible = (await uow.Store<IInventoryLookup>().ListMaterialTasksAsync(open ?? true, order, http.RequestAborted))
+                    .Where(t => t.OrderNumber is not { } n || !hidden.Contains(n)).ToList();
+                return take is { } limit ? visible.TakeLast(Math.Clamp(limit, 1, 500)).ToList() : visible;
             }));
         api.MapGet("/tasks/{id:long}/custody", (HttpContext http, long id, CancellationToken _) =>
             Read(http, Permissions.InventoryRead, async principal =>
@@ -394,8 +396,13 @@ public static class MaterialsEndpoints
                     return Results.Problem(title: "Receiver is not an active worker", detail: "The authenticated badge must belong to a registered active Forge worker.", statusCode: StatusCodes.Status403Forbidden);
                 receiverPersonId = holder.PersonId;
             }
-            return await Command(http, b.Reason, c => s.ReceiveMaterialAsync(new ReceiveMaterial(id, b.ScannedLocation, receiverPersonId), c, ct));
+            return await Command(http, b.Reason, c => s.ReceiveMaterialAsync(
+                new ReceiveMaterial(id, b.ScannedLocation, receiverPersonId, b.AcceptedQuantity, b.RejectedQuantity, b.QuarantineLocation), c, ct));
         });
+        api.MapPost("/tasks/{id:long}/return", (HttpContext http, long id, CustodyAdjustmentRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReturnReceivedMaterialAsync(new ReturnReceivedMaterial(id, b.Quantity, b.LocationCode), c, ct)));
+        api.MapPost("/tasks/{id:long}/reverse-receipt", (HttpContext http, long id, CustodyAdjustmentRequest b, InventoryService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReverseMaterialReceiptAsync(new ReverseMaterialReceipt(id, b.Quantity, b.LocationCode), c, ct)));
         api.MapPost("/tasks/{id:long}/custody-exception", async (HttpContext http, long id, MaterialCustodyExceptionRequest b, InventoryService s,
             IBadgePinVerifier pins, IKernelUnitOfWorkFactory uows, CancellationToken ct) =>
         {

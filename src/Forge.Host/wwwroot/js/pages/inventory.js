@@ -51,6 +51,7 @@ export async function inventoryPage(page, ctx) {
       tryGet('/api/engineering/items'), tryGet('/api/orders/'), tryGet('/api/resources/'), tryGet('/api/inventory/mro'),
       tryGet('/api/procurement/suppliers'), tryGet('/api/inventory/tasks?open=true'),
     ]);
+    const taskHistory = tab === 'tasks' && inventoryManager ? await tryGet('/api/inventory/tasks?open=false&take=200') : null;
     let ledger = { data: [] }, programs = { data: [] }, due = { data: [] };
     let shelf = { pending: { data: [] } }, receiving = null, outside = { data: [] };
     if (tab === 'ledger') ledger = await tryGet('/api/inventory/transactions?take=200');
@@ -59,10 +60,13 @@ export async function inventoryPage(page, ctx) {
     if (tab === 'receiving') receiving = await loadReceiving();
     if (tab === 'outside') outside = await tryGet('/api/inventory/outside-processing');
     if (disposed || generation !== loadGeneration) return;
-    data = { shelf, receiving, outside, summary, locations, requests, ledger, items, orders, mro, tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
+    data = { shelf, receiving, outside, summary, locations, requests, ledger, items, orders, mro,
+      tasks: taskHistory?.error ? tasks : taskHistory ?? tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
   }
 
   const locs = (active = true, ours = true) => (data.locations.data ?? []).filter(l => (!active || l.active) && (!ours || l.inCompanyCustody)).map(l => [l.code, `${l.code} — ${l.name} (${l.kind})`]);
+  const quarantineLocations = () => (data.locations.data ?? []).filter(l => l.active && l.kind === 'Quarantine' && !l.nettable && l.inCompanyCustody);
+  const storesLocations = () => (data.locations.data ?? []).filter(l => l.active && l.inCompanyCustody && ['Stores', 'WipStorage'].includes(l.kind));
   const parts = () => (data.items.data ?? []).map(i => [i.partNumber, `${i.partNumber} — ${i.description}`]);
   const item = part => (data.items.data ?? []).find(i => i.partNumber === part);
   const released = () => (data.orders.data ?? []).filter(o => o.status === 'Released').map(o => [o.orderNumber, `#${o.orderNumber} — ${o.partNumber} × ${qty(o.quantity)}`]);
@@ -73,6 +77,8 @@ export async function inventoryPage(page, ctx) {
   function scanTask(task, step) {
     const picking = step === true;
     const receiving = step === 'receive';
+    const remainingReceipt = Math.max(0, (task.pickedQuantity ?? task.quantity) - (task.receivedQuantity ?? 0) - (task.rejectedQuantity ?? 0));
+    const quarantineOptions = quarantineLocations();
     const actionName = picking ? 'Pick' : receiving ? 'Receive' : 'Dispatch';
     closeTaskDialogs();
     const context = pageGeneration;
@@ -84,8 +90,11 @@ export async function inventoryPage(page, ctx) {
       <div class="field"><label for="task-scanned-location">${picking ? 'Source' : 'Destination'} location code (manual)</label><input class="input mono" id="task-scanned-location" autocomplete="off"></div>
       ${picking && task.lotNumber ? '<div data-material-identification></div><div class="field"><label for="task-scanned-lot">Lot number (manual)</label><input class="input mono" id="task-scanned-lot" autocomplete="off"></div>' : ''}
       ${picking ? `<div class="field"><label for="task-picked-quantity">Quantity picked</label><input class="input" id="task-picked-quantity" type="number" min="0" step="any" value="${esc(task.quantity)}"></div>` : ''}
-      ${receiving ? '<div class="field"><label for="task-receiver-badge">Receiver badge</label><input class="input mono" id="task-receiver-badge" autocomplete="off" required></div><div class="field"><label for="task-receiver-pin">Receiver PIN</label><input class="input" id="task-receiver-pin" type="password" inputmode="numeric" autocomplete="off" required></div>' : ''}
-      <div class="field"><label for="task-reason">Reason (optional, recorded with the action)</label><textarea class="input" id="task-reason" rows="2"></textarea></div>
+      ${receiving ? `<div class="field"><label for="task-accepted-quantity">Quantity accepted at destination</label><input class="input" id="task-accepted-quantity" type="number" min="0" max="${remainingReceipt}" step="any" value="${remainingReceipt}"></div>
+        <div class="field"><label for="task-rejected-quantity">Quantity rejected</label><input class="input" id="task-rejected-quantity" type="number" min="0" max="${remainingReceipt}" step="any" value="0"></div>
+        <div class="field"><label for="task-quarantine-location">Quarantine location for rejected quantity</label><select class="input" id="task-quarantine-location"><option value="">Select only when rejecting material</option>${quarantineOptions.map(x => `<option value="${esc(x.code)}">${esc(x.code)} — ${esc(x.name)}</option>`).join('')}</select>${quarantineOptions.length ? '' : '<div class="faint">No active non-nettable Quarantine location is configured for this site.</div>'}</div>
+        <div class="field"><label for="task-receiver-badge">Receiver badge</label><input class="input mono" id="task-receiver-badge" autocomplete="off" required></div><div class="field"><label for="task-receiver-pin">Receiver PIN</label><input class="input" id="task-receiver-pin" type="password" inputmode="numeric" autocomplete="off" required></div>` : ''}
+      <div class="field"><label for="task-reason">${receiving ? 'Reason (required when rejecting quantity)' : 'Reason (optional, recorded with the action)'}</label><textarea class="input" id="task-reason" rows="2"></textarea></div>
       <div class="notice bad hidden" data-task-error role="alert" aria-live="assertive"></div>
       <div class="actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-task-confirm>${picking ? 'Picked' : receiving ? 'Accept material' : 'Dispatch to transit'}</button></div>`;
     let closed = false, busy = false, releaseFocus = () => {}, scannedMaterial = null;
@@ -138,8 +147,14 @@ export async function inventoryPage(page, ctx) {
       if (receiving) {
         body.badge = $('#task-receiver-badge', modal).value.trim();
         body.pin = $('#task-receiver-pin', modal).value.trim();
+        body.acceptedQuantity = Number($('#task-accepted-quantity', modal).value);
+        body.rejectedQuantity = Number($('#task-rejected-quantity', modal).value);
+        body.quarantineLocation = $('#task-quarantine-location', modal).value || null;
       }
-      if (!body.scannedLocation || (picking && task.lotNumber && !body.scannedLot) || (picking && !(body.quantity > 0)) || (receiving && (!body.badge || !body.pin))) {
+      const receiveQuantityInvalid = receiving && (!(body.acceptedQuantity >= 0) || !(body.rejectedQuantity >= 0)
+        || body.acceptedQuantity + body.rejectedQuantity <= 0 || body.acceptedQuantity + body.rejectedQuantity > remainingReceipt
+        || (body.rejectedQuantity > 0 && (!body.quarantineLocation || !$('#task-reason', modal).value.trim())));
+      if (!body.scannedLocation || (picking && task.lotNumber && !body.scannedLot) || (picking && !(body.quantity > 0)) || (receiving && (!body.badge || !body.pin || receiveQuantityInvalid))) {
         error.textContent = 'Give the location, any required pick details, and the receiver badge and PIN when accepting a handoff.'; error.classList.remove('hidden'); return;
       }
       busy = true; confirm.disabled = true;
@@ -459,9 +474,9 @@ export async function inventoryPage(page, ctx) {
       ${t.data.map(x => `<tr><td>${x.taskId}</td><td>${esc(TASK_NAME[x.kind] ?? x.kind)}${x.kitCode ? ` <span class="faint">kit ${esc(x.kitCode)}</span>` : ''}${x.sourceSuspectReportId ? `<div><a class="faint" href="#/quality?tab=suspect">Replacement for report #${x.sourceSuspectReportId}</a></div>` : ''}</td>
         <td>${x.orderNumber ? `<a href="#/orders/${x.orderNumber}">#${x.orderNumber}</a>` : '—'}</td><td>${esc(x.partNumber)}${x.lotNumber ? ` <span class="faint">lot ${esc(x.lotNumber)}</span>` : ''}</td>
         <td class="num">${qty(x.quantity)}${x.pickedQuantity != null && x.pickedQuantity < x.quantity ? ` <span class="c-warn">picked ${qty(x.pickedQuantity)}</span>` : ''}</td>
-        <td>${esc(x.fromLocation ?? '?')} → ${esc(x.toLocation)}${x.transitLocation ? `<br><span class="faint">Transit custody: ${esc(x.transitLocation)}</span>` : ''}</td><td><span class="pill ${x.status === 'ApprovalNeeded' ? 'warn' : x.status === 'InTransit' ? 'info' : ''}">${x.status === 'InTransit' ? 'Awaiting receipt' : x.status === 'ApprovalNeeded' ? 'Approval needed' : esc(x.status)}</span>${x.isNonBom ? '<div class="faint">Additional material · released BOM unchanged</div>' : ''}${x.reviewNote ? `<div class="faint">Review: ${esc(x.reviewNote)}</div>` : ''}</td>
+        <td>${esc(x.fromLocation ?? '?')} → ${esc(x.toLocation)}${x.transitLocation ? `<br><span class="faint">Transit custody: ${esc(x.transitLocation)}</span>` : ''}</td><td><span class="pill ${x.status === 'ApprovalNeeded' ? 'warn' : x.status === 'InTransit' ? 'info' : x.status === 'DeliveryRejected' ? 'bad' : ''}">${x.status === 'InTransit' ? 'Awaiting receipt' : x.status === 'ApprovalNeeded' ? 'Approval needed' : x.status === 'DeliveryRejected' ? 'Rejected to quarantine' : esc(x.status)}</span>${x.isNonBom ? '<div class="faint">Additional material · released BOM unchanged</div>' : ''}${x.receivedQuantity || x.rejectedQuantity ? `<div class="faint">Accepted ${qty(x.receivedQuantity)} · rejected ${qty(x.rejectedQuantity)} · returned ${qty(x.returnedQuantity)} · corrected ${qty(x.reversedQuantity)}</div>` : ''}${x.reviewNote ? `<div class="faint">Review: ${esc(x.reviewNote)}</div>` : ''}</td>
         <td>${esc(who(x.requestedBy))}<br><span class="faint">${esc(fmtDateTime(x.requestedAt))}</span></td>
-        <td class="nowrap"><button class="btn small ghost" data-task-custody="${x.taskId}">Custody history</button> ${handler ? `${step(x)} ${x.status === 'InTransit' ? '' : `<button class="btn small ghost" data-task-cancel="${x.taskId}">Cancel</button>`}` : ''}</td></tr>`).join('')}
+        <td class="nowrap"><button class="btn small ghost" data-task-custody="${x.taskId}">Custody history</button> ${(handler || (x.status === 'ApprovalNeeded' && controller) || (x.status === 'InTransit' && custodyReceiver)) ? step(x) : ''}${inventoryManager && x.status === 'Delivered' ? ` <button class="btn small ghost" data-task-return="${x.taskId}">Return to stores</button> <button class="btn small ghost" data-task-reverse="${x.taskId}">Correct to hold</button>` : ''}${handler && ['ApprovalNeeded', 'Requested', 'Allocated', 'Picked'].includes(x.status) ? ` <button class="btn small ghost" data-task-cancel="${x.taskId}">Cancel</button>` : ''}</td></tr>`).join('')}
       </tbody></table>
       <div class="faint" style="margin-top:6px">Allocated stock is held back from other tasks. Dispatch moves stock into the site’s non-nettable In Transit custody location; only a different active worker authenticated by badge and PIN can receive it into the destination.</div>`;
   }
@@ -601,9 +616,9 @@ export async function inventoryPage(page, ctx) {
       if (!d.element.isConnected) return;
       d.element.innerHTML = error ? errorBlock(error, 'custody history') : events.length
         ? `<p class="muted">Append-only custody evidence for this material task. Inventory movement is shown separately in the ledger.</p>
-          <ol class="stack">${events.map(event => `<li class="notice"><b>${esc(event.kind === 'ExceptionRecorded' ? 'Exception reported' : event.kind === 'DispatchedToTransit' ? 'Dispatched to transit' : 'Accepted at destination')}</b>
+          <ol class="stack">${events.map(event => `<li class="notice"><b>${esc(({ ExceptionRecorded: 'Exception reported', DispatchedToTransit: 'Dispatched to transit', ReceivedAtDestination: 'Accepted at destination', PartiallyReceived: 'Partially accepted', RejectedAtReceipt: 'Rejected to quarantine', ReturnedToStores: 'Returned to stores', ReceiptReversed: 'Receipt corrected to hold' })[event.kind] ?? event.kind)}</b>
             <div>${esc(event.locationCode)} · ${esc(fmtDateTime(event.recordedAt))}</div>
-            <div class="faint">${esc(who(event.recordedBy))}${event.authenticationMethod ? ` · ${esc(event.authenticationMethod)}` : ''}${event.transactionId ? ` · transaction ${event.transactionId}` : ''}</div>
+            <div class="faint">${event.quantity != null ? `Quantity ${qty(event.quantity)} · ` : ''}${esc(who(event.recordedBy))}${event.authenticationMethod ? ` · ${esc(event.authenticationMethod)}` : ''}${event.transactionId ? ` · transaction ${event.transactionId}` : ''}</div>
             ${event.reason ? `<div>${esc(event.reason)}</div>` : ''}</li>`).join('')}</ol>`
         : '<div class="muted">No custody events have been recorded for this task.</div>';
     }));
@@ -620,6 +635,32 @@ export async function inventoryPage(page, ctx) {
           { name: 'pin', label: 'Your badge PIN', type: 'password', required: true, maxLength: 80 },
         ],
       }, (values, reason) => command(`/api/inventory/tasks/${x.taskId}/custody-exception`, values, reason), reload);
+    }));
+    $$('[data-task-return]', page).forEach(b => b.addEventListener('click', () => {
+      const x = task(b.dataset.taskReturn);
+      if (!x) return;
+      const available = Math.max(0, (x.receivedQuantity ?? x.pickedQuantity ?? 0) - (x.returnedQuantity ?? 0) - (x.reversedQuantity ?? 0));
+      formModal({ title: `Return received material — task ${x.taskId}`,
+        detail: `Move released ${x.partNumber} from ${x.toLocation} back to company Stores or WIP storage. This compensating transfer preserves the original receipt and custody events. Up to ${qty(available)} may be returned.`,
+        confirmLabel: 'Return to stores', reasonRequired: true,
+        fields: [
+          { name: 'quantity', label: 'Quantity to return', type: 'number', min: 0, max: available, step: 'any', value: available, required: true },
+          { name: 'locationCode', label: 'Return location', type: 'select', options: storesLocations().map(location => [location.code, `${location.code} — ${location.name}`]), required: true },
+        ],
+      }, (values, reason) => command(`/api/inventory/tasks/${x.taskId}/return`, values, reason), reload);
+    }));
+    $$('[data-task-reverse]', page).forEach(b => b.addEventListener('click', () => {
+      const x = task(b.dataset.taskReverse);
+      if (!x) return;
+      const available = Math.max(0, (x.receivedQuantity ?? x.pickedQuantity ?? 0) - (x.returnedQuantity ?? 0) - (x.reversedQuantity ?? 0));
+      formModal({ title: `Correct custody receipt — task ${x.taskId}`,
+        detail: `Transfer an incorrectly accepted quantity of ${x.partNumber} from ${x.toLocation} into a controlled non-nettable Quarantine location. The original receipt remains visible in the audit history. Up to ${qty(available)} may be corrected.`,
+        confirmLabel: 'Move to quarantine', reasonRequired: true,
+        fields: [
+          { name: 'quantity', label: 'Quantity to correct', type: 'number', min: 0, max: available, step: 'any', value: available, required: true },
+          { name: 'locationCode', label: 'Quarantine location', type: 'select', options: quarantineLocations().map(location => [location.code, `${location.code} — ${location.name}`]), required: true },
+        ],
+      }, (values, reason) => command(`/api/inventory/tasks/${x.taskId}/reverse-receipt`, values, reason), reload);
     }));
     for (const [selector, approve, label] of [['[data-task-review]', true, 'Approve'], ['[data-task-reject]', false, 'Reject']]) {
       $$(selector, page).forEach(b => b.addEventListener('click', async () => {

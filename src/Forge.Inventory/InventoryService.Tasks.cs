@@ -27,9 +27,11 @@ public sealed record PickMaterial(long TaskId, string ScannedLocation, string? S
 
 public sealed record DeliverMaterial(long TaskId, string ScannedLocation);
 
-/// <summary>A receiver confirms the destination with a badge-and-PIN identity verified at the API boundary.</summary>
-public sealed record ReceiveMaterial(long TaskId, string ScannedLocation, Guid ReceiverPersonId);
+/// <summary>A receiver independently settles accepted and rejected quantities from a scanned transit task.</summary>
+public sealed record ReceiveMaterial(long TaskId, string ScannedLocation, Guid ReceiverPersonId, decimal AcceptedQuantity, decimal RejectedQuantity = 0m, string? QuarantineLocation = null);
 public sealed record ReportMaterialCustodyException(long TaskId, Guid ReporterPersonId, string ScannedLocation);
+public sealed record ReturnReceivedMaterial(long TaskId, decimal Quantity, string StoresLocation);
+public sealed record ReverseMaterialReceipt(long TaskId, decimal Quantity, string QuarantineLocation);
 
 public sealed record CancelMaterialTask(long TaskId);
 public sealed record ReviewAdditionalMaterialRequest(long TaskId, bool Approve);
@@ -67,6 +69,24 @@ public sealed record MaterialCustodyExceptionReported(long TaskId, Guid Reporter
 public sealed record MaterialCustodyAccepted(long TaskId, Guid ReceiverPersonId, string Location, long TransactionId) : IDomainEvent
 {
     public static string EventType => nameof(MaterialCustodyAccepted);
+    public static int SchemaVersion => 1;
+}
+
+public sealed record MaterialCustodyDeliveryDiscrepancy(long TaskId, Guid ReceiverPersonId, decimal RejectedQuantity, string QuarantineLocation) : IDomainEvent
+{
+    public static string EventType => nameof(MaterialCustodyDeliveryDiscrepancy);
+    public static int SchemaVersion => 1;
+}
+
+public sealed record MaterialCustodyResolved(long TaskId, string Status) : IDomainEvent
+{
+    public static string EventType => nameof(MaterialCustodyResolved);
+    public static int SchemaVersion => 1;
+}
+
+public sealed record MaterialCustodyAdjusted(long TaskId, string Adjustment, decimal Quantity, string Location) : IDomainEvent
+{
+    public static string EventType => nameof(MaterialCustodyAdjusted);
     public static int SchemaVersion => 1;
 }
 
@@ -359,7 +379,7 @@ public sealed partial class InventoryService
                 new NewTransaction(InventoryTransactionKind.Transfer, task.PartNumber, quantity, task.FromLocation, StockStatus.Released, inTransit.Code, StockStatus.Released, task.LotNumber,
                     OrderNumber: task.OrderNumber, Reason: $"Custody dispatch for material task {task.TaskId.ToString(CultureInfo.InvariantCulture)}"), now, context.Actor, ct);
             await store.InsertMaterialTaskCustodyEventAsync(new MaterialTaskCustodyEvent(0, task.TaskId, MaterialCustodyEventKind.DispatchedToTransit,
-                now, context.Actor, context.Principal.PersonId.Value, inTransit.Code, id, "ForgeSession", null), ct);
+                now, context.Actor, context.Principal.PersonId.Value, inTransit.Code, id, "ForgeSession", null, quantity), ct);
             var delivered = task with { Status = MaterialTaskStatus.InTransit, DeliveredBy = context.Actor, DeliveredAt = now, TransactionId = id, TransitLocation = inTransit.Code };
             return (delivered, $"Task {task.TaskId}: {Qty(quantity)} {task.PartNumber} is in transit to {task.ToLocation}; receiver acknowledgment is required before it becomes usable there.");
         }, ct);
@@ -387,16 +407,103 @@ public sealed partial class InventoryService
                 throw new CommandRejectedException("cross_site_handoff", "The receiver must accept material at the same site as its in-transit custody location.");
             var store = uow.Store<IInventoryStore>();
             await store.LockPartAsync(task.PartNumber, ct);
-            var quantity = task.PickedQuantity ?? throw new CommandRejectedException("picked_quantity_missing", "The task has no recorded picked quantity.");
-            await RequireStockAsync(uow, task.PartNumber, transit.Code, task.LotNumber, StockStatus.Released, quantity, ct);
-            var receiptTransaction = await store.InsertTransactionAsync(
-                new NewTransaction(InventoryTransactionKind.Transfer, task.PartNumber, quantity, transit.Code, StockStatus.Released, destination.Code, StockStatus.Released, task.LotNumber,
-                    OrderNumber: task.OrderNumber, Reason: $"Receiver acknowledgment for material task {task.TaskId.ToString(CultureInfo.InvariantCulture)}"), now, context.Actor, ct);
-            await store.InsertMaterialTaskCustodyEventAsync(new MaterialTaskCustodyEvent(0, task.TaskId, MaterialCustodyEventKind.ReceivedAtDestination,
-                now, context.Actor, c.ReceiverPersonId, destination.Code, receiptTransaction, "BadgePin", null), ct);
-            var received = task with { Status = MaterialTaskStatus.Delivered, ReceivedBy = context.Actor, ReceivedAt = now,
-                ReceiverPersonId = c.ReceiverPersonId, ReceiptTransactionId = receiptTransaction };
-            return (received, $"Task {task.TaskId}: {Qty(quantity)} {task.PartNumber} accepted at {destination.Code} by an independently authenticated receiver.");
+            var quarantine = c.RejectedQuantity > 0
+                ? locations.FirstOrDefault(location => location.Code.Equals(c.QuarantineLocation?.Trim(), StringComparison.OrdinalIgnoreCase)
+                    && location.Active && location.SiteCode == transit.SiteCode && location.Kind == LocationKind.Quarantine
+                    && !location.Nettable && location.InCompanyCustody)
+                    ?? throw new CommandRejectedException("quarantine_location_required", "Rejected material must be transferred to an active, non-nettable Quarantine location at the same site.")
+                : null;
+            if (c.RejectedQuantity > 0 && string.IsNullOrWhiteSpace(context.Reason))
+                throw new CommandRejectedException("rejection_reason_required", "Record why the receiver rejected this quantity.");
+            var picked = task.PickedQuantity ?? throw new CommandRejectedException("picked_quantity_missing", "The task has no recorded picked quantity.");
+            var remaining = Math.Max(0m, picked - task.ReceivedQuantity - task.RejectedQuantity);
+            if (c.AcceptedQuantity < 0 || c.RejectedQuantity < 0 || c.AcceptedQuantity + c.RejectedQuantity <= 0
+                || c.AcceptedQuantity + c.RejectedQuantity > remaining)
+                throw new CommandRejectedException("invalid_receipt_quantities", $"Enter a positive accepted or rejected quantity totaling no more than {Qty(remaining)} still in transit.");
+            await RequireStockAsync(uow, task.PartNumber, transit.Code, task.LotNumber, StockStatus.Released, c.AcceptedQuantity + c.RejectedQuantity, ct);
+            long? receiptTransaction = null;
+            if (c.AcceptedQuantity > 0)
+            {
+                receiptTransaction = await store.InsertTransactionAsync(
+                    new NewTransaction(InventoryTransactionKind.Transfer, task.PartNumber, c.AcceptedQuantity, transit.Code, StockStatus.Released, destination.Code, StockStatus.Released, task.LotNumber,
+                        OrderNumber: task.OrderNumber, Reason: $"Receiver acknowledgment for material task {task.TaskId.ToString(CultureInfo.InvariantCulture)}"), now, context.Actor, ct);
+                await store.InsertMaterialTaskCustodyEventAsync(new MaterialTaskCustodyEvent(0, task.TaskId,
+                    c.AcceptedQuantity + c.RejectedQuantity == remaining ? MaterialCustodyEventKind.ReceivedAtDestination : MaterialCustodyEventKind.PartiallyReceived,
+                    now, context.Actor, c.ReceiverPersonId, destination.Code, receiptTransaction, "BadgePin", context.Reason, c.AcceptedQuantity), ct);
+            }
+            if (c.RejectedQuantity > 0)
+            {
+                var rejectedTransaction = await store.InsertTransactionAsync(
+                    new NewTransaction(InventoryTransactionKind.Transfer, task.PartNumber, c.RejectedQuantity, transit.Code, StockStatus.Released, quarantine!.Code, StockStatus.Hold, task.LotNumber,
+                        OrderNumber: task.OrderNumber, Reason: $"Rejected material task {task.TaskId.ToString(CultureInfo.InvariantCulture)}: {context.Reason}"), now, context.Actor, ct);
+                await store.InsertMaterialTaskCustodyEventAsync(new MaterialTaskCustodyEvent(0, task.TaskId, MaterialCustodyEventKind.RejectedAtReceipt,
+                    now, context.Actor, c.ReceiverPersonId, quarantine.Code, rejectedTransaction, "BadgePin", context.Reason, c.RejectedQuantity), ct);
+            }
+            var receivedQuantity = task.ReceivedQuantity + c.AcceptedQuantity;
+            var rejectedQuantity = task.RejectedQuantity + c.RejectedQuantity;
+            var settled = receivedQuantity + rejectedQuantity >= picked;
+            var nextStatus = settled
+                ? receivedQuantity > 0 ? MaterialTaskStatus.Delivered : MaterialTaskStatus.DeliveryRejected
+                : MaterialTaskStatus.InTransit;
+            var updated = task with { Status = nextStatus, ReceivedBy = c.AcceptedQuantity > 0 ? context.Actor : task.ReceivedBy,
+                ReceivedAt = c.AcceptedQuantity > 0 ? now : task.ReceivedAt, ReceiverPersonId = c.ReceiverPersonId,
+                ReceiptTransactionId = receiptTransaction ?? task.ReceiptTransactionId, ReceivedQuantity = receivedQuantity, RejectedQuantity = rejectedQuantity };
+            return (updated, $"Task {task.TaskId}: {Qty(c.AcceptedQuantity)} {task.PartNumber} accepted and {Qty(c.RejectedQuantity)} rejected; {Qty(picked - receivedQuantity - rejectedQuantity)} remains in transit.");
+        }, ct);
+    }
+
+    public Task<CommandResult> ReturnReceivedMaterialAsync(ReturnReceivedMaterial c, CommandContext context, CancellationToken ct) =>
+        AdjustReceivedMaterialAsync(nameof(ReturnReceivedMaterial), c.TaskId, c, c.Quantity, c.StoresLocation, MaterialCustodyEventKind.ReturnedToStores,
+            Permissions.InventoryManage, StockStatus.Released, LocationKind.Stores, context, ct);
+
+    public Task<CommandResult> ReverseMaterialReceiptAsync(ReverseMaterialReceipt c, CommandContext context, CancellationToken ct) =>
+        AdjustReceivedMaterialAsync(nameof(ReverseMaterialReceipt), c.TaskId, c, c.Quantity, c.QuarantineLocation, MaterialCustodyEventKind.ReceiptReversed,
+            Permissions.InventoryManage, StockStatus.Hold, LocationKind.Quarantine, context, ct);
+
+    private Task<CommandResult> AdjustReceivedMaterialAsync<TCommand>(string commandName, long taskId, TCommand command, decimal quantity, string targetCode,
+        MaterialCustodyEventKind eventKind, string permission, StockStatus targetStatus, LocationKind targetKind, CommandContext context, CancellationToken ct)
+        where TCommand : notnull
+    {
+        var key = taskId.ToString(CultureInfo.InvariantCulture);
+        var spec = new CommandSpec(SourceContext, commandName, permission, ResourceRef.Of(TaskEntity, key), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, command, context, async (uow, now) =>
+        {
+            var task = await uow.Store<IInventoryLookup>().FindMaterialTaskAsync(taskId, ct)
+                ?? throw new CommandRejectedException("task_not_found", $"Task {key} does not exist.");
+            if (task.Status != MaterialTaskStatus.Delivered)
+                throw new CommandRejectedException("task_not_delivered", "Only a fully settled material task can be returned or corrected.");
+            if (task.OrderNumber is { } orderNumber && await uow.Store<IExecutionLookup>().FindOrderAsync(orderNumber, ct) is { } order && !Visible(context, order))
+                throw new CommandRejectedException("task_not_found", $"Task {key} does not exist.");
+            if (quantity <= 0 || quantity > task.ReceivedQuantity - task.ReturnedQuantity - task.ReversedQuantity)
+                throw new CommandRejectedException("invalid_correction_quantity", $"Quantity must be positive and no greater than {Qty(task.ReceivedQuantity - task.ReturnedQuantity - task.ReversedQuantity)} still held at the destination.");
+            var locations = await uow.Store<IInventoryLookup>().ListLocationsAsync(ct);
+            var from = locations.FirstOrDefault(location => location.Code == task.ToLocation && location.Active && location.InCompanyCustody)
+                ?? throw new CommandRejectedException("destination_unavailable", "The original receiving location is not an active company-custody location.");
+            var to = locations.FirstOrDefault(location => location.Code.Equals(targetCode?.Trim(), StringComparison.OrdinalIgnoreCase) && location.Active
+                && location.SiteCode == from.SiteCode && location.Kind == targetKind && location.InCompanyCustody
+                && (targetKind != LocationKind.Quarantine || !location.Nettable))
+                ?? throw new CommandRejectedException("correction_location_invalid", targetKind == LocationKind.Stores
+                    ? "Choose an active Stores location in the same site." : "Choose an active, non-nettable Quarantine location in the same site.");
+            var store = uow.Store<IInventoryStore>();
+            await store.LockPartAsync(task.PartNumber, ct);
+            await RequireStockAsync(uow, task.PartNumber, from.Code, task.LotNumber, StockStatus.Released, quantity, ct);
+            var transaction = await store.InsertTransactionAsync(new NewTransaction(InventoryTransactionKind.Transfer, task.PartNumber, quantity,
+                from.Code, StockStatus.Released, to.Code, targetStatus, task.LotNumber, OrderNumber: task.OrderNumber,
+                Reason: $"{eventKind} for material task {taskId.ToString(CultureInfo.InvariantCulture)}: {context.Reason}"), now, context.Actor, ct);
+            var personId = context.Principal.PersonId.Value;
+            var eventId = await store.InsertMaterialTaskCustodyEventAsync(new MaterialTaskCustodyEvent(0, taskId, eventKind, now, context.Actor,
+                personId, to.Code, transaction, "ForgeSession", context.Reason, quantity), ct);
+            var updated = eventKind == MaterialCustodyEventKind.ReturnedToStores
+                ? task with { ReturnedQuantity = task.ReturnedQuantity + quantity }
+                : task with { ReversedQuantity = task.ReversedQuantity + quantity };
+            if (!await store.UpdateMaterialTaskAsync(updated, task, ct))
+                throw new CommandRejectedException("wrong_step", $"Task {key} changed while the receipt correction was being recorded; look again.");
+            var adjusted = pipeline.Event(new MaterialCustodyAdjusted(taskId, eventKind.ToString(), quantity, to.Code), context, SourceContext, TaskEntity, key);
+            return new CommandOutcome(CommandResult.Ok(eventId.ToString(CultureInfo.InvariantCulture),
+                    $"Task {taskId}: {Qty(quantity)} returned from {from.Code} to {to.Code}; original custody evidence remains in history."),
+                [adjusted, pipeline.Event(new InventoryMoved(transaction, nameof(InventoryTransactionKind.Transfer), task.PartNumber, quantity, from.Code, to.Code),
+                    context, SourceContext, StockEntity, task.PartNumber)], new AuditChange("MaterialTaskCustodyEvent", eventId.ToString(CultureInfo.InvariantCulture), null,
+                    CanonicalJson.Serialize(new { taskId, kind = eventKind, quantity, from = from.Code, to = to.Code, transaction, reason = context.Reason })));
         }, ct);
     }
 
@@ -452,7 +559,7 @@ public sealed partial class InventoryService
         ArgumentNullException.ThrowIfNull(c);
         return ChangeTaskAsync(nameof(CancelMaterialTask), c.TaskId, c, context, null, true, (_, task, now) =>
         {
-            if (task.Status is MaterialTaskStatus.InTransit or MaterialTaskStatus.Delivered or MaterialTaskStatus.Cancelled)
+            if (task.Status is MaterialTaskStatus.InTransit or MaterialTaskStatus.Delivered or MaterialTaskStatus.DeliveryRejected or MaterialTaskStatus.Cancelled)
             {
                 throw new CommandRejectedException("task_closed", task.Status == MaterialTaskStatus.InTransit
                     ? $"Task {task.TaskId} is in transit; reconcile the physical custody exception before changing it."
@@ -569,7 +676,7 @@ public sealed partial class InventoryService
             }
 
             var (changed, message) = await change(uow, task, now);
-            if (!await uow.Store<IInventoryStore>().UpdateMaterialTaskAsync(changed, task.Status, ct))
+            if (!await uow.Store<IInventoryStore>().UpdateMaterialTaskAsync(changed, task, ct))
             {
                 throw new CommandRejectedException("wrong_step", $"Task {key} changed while you were working on it; look again.");
             }
@@ -580,12 +687,40 @@ public sealed partial class InventoryService
             };
             if (task.Status == MaterialTaskStatus.ApprovalNeeded && changed.Status != MaterialTaskStatus.ApprovalNeeded)
                 events.Add(pipeline.Event(new MaterialTaskReviewed(taskId, changed.Status.ToString()), context, SourceContext, TaskEntity, key, programId));
-            if (changed.Status is MaterialTaskStatus.Delivered or MaterialTaskStatus.Rejected or MaterialTaskStatus.Cancelled)
+            if (changed.Status is MaterialTaskStatus.Delivered or MaterialTaskStatus.DeliveryRejected or MaterialTaskStatus.Rejected or MaterialTaskStatus.Cancelled)
                 events.Add(pipeline.Event(new MaterialTaskClosed(taskId, changed.Status.ToString()), context, SourceContext, TaskEntity, key, programId));
-            if (changed.ReceiverPersonId is { } receiver && changed.ReceiptTransactionId is { } receipt && changed.Status == MaterialTaskStatus.Delivered)
+            if (changed.ReceiverPersonId is { } receiver && changed.Status is (MaterialTaskStatus.Delivered or MaterialTaskStatus.DeliveryRejected))
             {
-                events.Add(pipeline.Event(new MaterialCustodyAccepted(taskId, receiver, changed.ToLocation, receipt), context, SourceContext, TaskEntity, key, programId));
+                if (changed.ReceivedQuantity > 0 && changed.ReceiptTransactionId is { } receipt)
+                    events.Add(pipeline.Event(new MaterialCustodyAccepted(taskId, receiver, changed.ToLocation, receipt), context, SourceContext, TaskEntity, key, programId));
             }
+            if (changed.Status == MaterialTaskStatus.InTransit && changed.TransactionId is { } dispatch && changed.TransactionId != task.TransactionId)
+                events.Add(pipeline.Event(new InventoryMoved(dispatch, nameof(InventoryTransactionKind.Transfer), changed.PartNumber, changed.PickedQuantity ?? changed.Quantity,
+                    changed.FromLocation, changed.TransitLocation), context, SourceContext, StockEntity, changed.PartNumber, programId));
+            if (changed.ReceivedQuantity > task.ReceivedQuantity)
+            {
+                var custodyEvents = await uow.Store<IInventoryLookup>().ListMaterialTaskCustodyEventsAsync(taskId, ct);
+                var receiptEvent = custodyEvents.LastOrDefault(e => e.Kind is MaterialCustodyEventKind.ReceivedAtDestination or MaterialCustodyEventKind.PartiallyReceived);
+                if (receiptEvent?.TransactionId is { } receiptId)
+                    events.Add(pipeline.Event(new InventoryMoved(receiptId, nameof(InventoryTransactionKind.Transfer), changed.PartNumber,
+                        changed.ReceivedQuantity - task.ReceivedQuantity, changed.TransitLocation, changed.ToLocation), context, SourceContext, StockEntity, changed.PartNumber, programId));
+            }
+            if (changed.RejectedQuantity > task.RejectedQuantity)
+            {
+                var custodyEvents = await uow.Store<IInventoryLookup>().ListMaterialTaskCustodyEventsAsync(taskId, ct);
+                var rejectedEvent = custodyEvents.LastOrDefault(e => e.Kind == MaterialCustodyEventKind.RejectedAtReceipt);
+                if (rejectedEvent is not null)
+                {
+                    if (rejectedEvent.TransactionId is { } rejectionTransaction)
+                        events.Add(pipeline.Event(new InventoryMoved(rejectionTransaction, nameof(InventoryTransactionKind.Transfer), changed.PartNumber,
+                            changed.RejectedQuantity - task.RejectedQuantity, changed.TransitLocation, rejectedEvent.LocationCode), context, SourceContext, StockEntity, changed.PartNumber, programId));
+                    if (changed.ReceiverPersonId is { } reporter)
+                        events.Add(pipeline.Event(new MaterialCustodyDeliveryDiscrepancy(taskId, reporter,
+                            changed.RejectedQuantity - task.RejectedQuantity, rejectedEvent.LocationCode), context, SourceContext, TaskEntity, key, programId));
+                }
+            }
+            if (changed.ReceiverPersonId is not null && changed.Status is (MaterialTaskStatus.Delivered or MaterialTaskStatus.DeliveryRejected))
+                events.Add(pipeline.Event(new MaterialCustodyResolved(taskId, changed.Status.ToString()), context, SourceContext, TaskEntity, key, programId));
             return new CommandOutcome(
                 CommandResult.Ok(key, message),
                 events,
@@ -634,7 +769,31 @@ public static class MaterialTaskDemand
         ArgumentNullException.ThrowIfNull(tasks);
         ArgumentOutOfRangeException.ThrowIfNegative(required);
         var tasked = tasks.Where(task => !task.IsNonBom && task.Status is not (MaterialTaskStatus.Cancelled or MaterialTaskStatus.Rejected))
-            .Sum(task => task.PickedQuantity ?? task.Quantity);
+            .Sum(Coverage);
         return Math.Max(0, required - Math.Max(netIssued, tasked));
+    }
+
+    public static decimal Coverage(MaterialTask task)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        if (task.Status is MaterialTaskStatus.Cancelled or MaterialTaskStatus.Rejected or MaterialTaskStatus.DeliveryRejected) return 0m;
+        if (task.Status == MaterialTaskStatus.Delivered)
+        {
+            var received = task.ReceivedQuantity > 0 ? task.ReceivedQuantity : task.PickedQuantity ?? task.Quantity;
+            return Math.Max(0m, received - task.ReturnedQuantity - task.ReversedQuantity);
+        }
+        return Math.Max(0m, (task.PickedQuantity ?? task.Quantity) - task.RejectedQuantity);
+    }
+
+    public static decimal Pending(MaterialTask task)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        return task.Status switch
+        {
+            MaterialTaskStatus.ApprovalNeeded or MaterialTaskStatus.Requested or MaterialTaskStatus.Allocated => task.Quantity,
+            MaterialTaskStatus.Picked => task.PickedQuantity ?? task.Quantity,
+            MaterialTaskStatus.InTransit => Math.Max(0m, (task.PickedQuantity ?? task.Quantity) - task.ReceivedQuantity - task.RejectedQuantity),
+            _ => 0m,
+        };
     }
 }
