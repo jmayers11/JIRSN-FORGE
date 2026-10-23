@@ -176,6 +176,8 @@ const workerNames = [
   'Devon Brooks', 'Kai Mitchell', 'Remy Carter', 'Lee Thompson', 'Ash Morgan', 'Toby Jenkins', 'Nico Alvarez', 'Milan Shah',
   'Jules Porter', 'Indigo Ross', 'River Young', 'Blair Kim', 'Ellis Wright', 'Cleo Bennett', 'Zion Parker', 'Lennox Ward',
   'Mina Patel', 'Ren Davis', 'Cory Nguyen', 'Ira Sullivan',
+  'Asha Okafor', 'Noah Campbell', 'Priya Shah', 'Eli Washington',
+  'Maya Chen', 'Jonah Brooks', 'Lena Ortiz', 'Theo Jackson',
 ];
 
 export const workers = [];
@@ -202,6 +204,31 @@ for (const [workCenterCode, count, jobTitle, activityCode, machineCodes, qualifi
   }
 }
 
+// Sprint 10 extends the Sprint 9 roster without renumbering or changing its original 52 identities.
+const sprint10Roster = [
+  ['WC-RCV', 'Receiving Associate', 'RECEIVE', null, ['QUAL-PIT-FORKLIFT']],
+  ['WC-RAW', 'Raw Material Handler', 'STOCK', null, ['QUAL-MAT-KIT']],
+  ['WC-CNC-MILL', 'CNC Mill Operator', 'CNC_MILL', 'CNC-02', ['QUAL-CNC-MILL', 'QUAL-CNC-SETUP']],
+  ['WC-CNC-LATHE', 'CNC Lathe Trainer', 'CNC_LATHE', 'CNC-03', ['QUAL-CNC-LATHE', 'QUAL-TRAINER-CNC']],
+  ['WC-ELE-PCB', 'Electronics Assembly Technician', 'ELEC_SOLDER', 'ELE-SOLD-02', ['QUAL-ESD-SAFE', 'QUAL-IPC-A610']],
+  ['WC-ELE-HARN', 'Harness Assembly Technician', 'HARNESS', 'ELE-HARN-01', ['QUAL-IPC-A620']],
+  ['WC-ASM-HVY', 'Heavy Assembly Technician', 'ASSEMBLE_HEAVY', 'ASM-03', ['QUAL-ASM-TORQUE', 'QUAL-ASM-HVY']],
+  ['WC-QAL', 'Quality Inspector', 'INSPECT', 'QAL-CMM-01', ['QUAL-QAL-INSP', 'QUAL-IPC-A610', 'QUAL-IPC-A620', 'QUAL-INSP-ELEC']],
+];
+for (let index = 0; index < sprint10Roster.length; index++) {
+  const [workCenterCode, jobTitle, activityCode, machineCode, qualificationCodes] = sprint10Roster[index];
+  const id = String(workerIndex + 1).padStart(3, '0');
+  const machine = machineCode ? machines.find(item => item.code === machineCode) : null;
+  workers.push({
+    code: `WW-EMP-${id}`, subject: `ww-operator-${id}`, displayName: workerNames[workerIndex], jobTitle,
+    workCenterCode, activityCode: machine?.activityCode ?? activityCode, machineCode,
+    shiftCode: index < 4 ? 'SHIFT-SWG' : 'SHIFT-WKD',
+    qualifications: [...new Set([...qualificationCodes, ...(machine?.operatorQualifications ?? [])])],
+    presentAtBaseline: false,
+  });
+  workerIndex++;
+}
+
 export const demoPrincipals = [
   { subject: 'ww-demo-engineer', displayName: 'WhiskerWorks Demo Engineer', roles: ['ManufacturingEngineer', 'TrainingCoordinator', 'SafetyEngineer', 'QualityEngineer', 'MaintenancePlanner', 'Buyer', 'MaterialHandler', 'DocumentController'] },
   { subject: 'ww-demo-certifier', displayName: 'WhiskerWorks Demo Certifier', roles: ['Certifier', 'SafetyApprover', 'EngineeringApprover', 'PurchasingManager'] },
@@ -215,4 +242,4 @@ export const productFamilies = [
   ['WW-CAT-4000', 'Sky-Scratcher Tower'], ['WW-CAT-5000', 'Auto-Box Deployment Station'],
 ].map(([partNumber, description]) => ({ partNumber, description }));
 
-export const targets = { zones: 15, workCenters: 16, machines: 24, workers: 52, productFamilies: 5 };
+export const targets = { zones: 15, workCenters: 16, machines: 24, workers: 60, productFamilies: 5 };

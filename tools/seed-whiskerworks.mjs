@@ -94,7 +94,7 @@ function validateManifest() {
     }
   }
   const shiftCounts = Object.fromEntries(shifts.map(shift => [shift.code, workers.filter(worker => worker.shiftCode === shift.code).length]));
-  if (shiftCounts['SHIFT-DAY'] !== 32 || shiftCounts['SHIFT-SWG'] !== 12 || shiftCounts['SHIFT-WKD'] !== 8) {
+  if (shiftCounts['SHIFT-DAY'] !== 32 || shiftCounts['SHIFT-SWG'] !== 16 || shiftCounts['SHIFT-WKD'] !== 12) {
     throw new Error(`WhiskerWorks shift distribution is invalid: ${JSON.stringify(shiftCounts)}.`);
   }
 }

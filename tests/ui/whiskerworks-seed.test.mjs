@@ -30,8 +30,11 @@ test('the sixteen work centers occupy unique cells in the 4x4 staffing board', (
 test('day-shift preview staffing is qualified for two-person and trainer-gated stations', () => {
   const dayWorkers = workers.filter(worker => worker.presentAtBaseline);
   assert.equal(dayWorkers.length, 32);
-  assert.ok(workers.filter(worker => worker.shiftCode === 'SHIFT-SWG').length === 12);
-  assert.ok(workers.filter(worker => worker.shiftCode === 'SHIFT-WKD').length === 8);
+  assert.ok(workers.filter(worker => worker.shiftCode === 'SHIFT-SWG').length === 16);
+  assert.ok(workers.filter(worker => worker.shiftCode === 'SHIFT-WKD').length === 12);
+  assert.deepEqual(workers.slice(0, 52).map(worker => worker.code), Array.from({ length: 52 }, (_, index) => `WW-EMP-${String(index + 1).padStart(3, '0')}`), 'the original worker identities remain first and unchanged');
+  assert.deepEqual(workers.slice(52).map(worker => worker.code), Array.from({ length: 8 }, (_, index) => `WW-EMP-${String(index + 53).padStart(3, '0')}`));
+  assert.equal(workers.filter(worker => worker.shiftCode !== 'SHIFT-DAY' && !worker.presentAtBaseline).length, 28);
   for (const center of workCenters) {
     assert.equal(dayWorkers.filter(worker => worker.workCenterCode === center.code).length, 2, `${center.code} needs two preview workers`);
   }
@@ -81,7 +84,7 @@ test('seed CLI defaults to a no-network dry run and advertises its isolated targ
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /dry run; no server or database calls made/);
-  assert.match(result.stdout, /15 zones, 16 work centers, 24 machines, 52 fictional workers/);
+  assert.match(result.stdout, /15 zones, 16 work centers, 24 machines, 60 fictional workers/);
   assert.match(result.stdout, /no reset\/delete operation/);
 });
 

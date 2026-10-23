@@ -182,7 +182,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     const demoSiteIsExclusive = (resources.sites ?? []).length === 1 && resources.sites[0]?.code === 'WW-P01';
     const demoCatalogIsExclusive = items.length === 100 && items.every(item => String(item.partNumber ?? '').startsWith('WW-'));
     const demoFoundationShape = (resources.workCenters ?? []).length === 16 && (resources.machines ?? []).length === 24
-      && demoWorkers?.length === 52 && demoWorkers.every(worker => (resources.workCenters ?? []).some(center => center.code === worker.homeWorkCenterCode));
+      && demoWorkers?.length === 60 && demoWorkers.every(worker => (resources.workCenters ?? []).some(center => center.code === worker.homeWorkCenterCode));
     const safeTarget = demoSiteIsExclusive && demoCatalogIsExclusive && demoFoundationShape;
     const s12Rehearsal = readDemoScannerOutage();
     const s12RehearsalActive = !!s12Rehearsal;
