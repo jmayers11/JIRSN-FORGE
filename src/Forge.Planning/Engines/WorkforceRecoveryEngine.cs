@@ -5,7 +5,7 @@ namespace Forge.Planning.Engines;
 
 public sealed record WorkforceRecoveryMove(Guid PersonId, string PersonName, WorkAssignment Assignment);
 
-public sealed record WorkforceRecoveryRequest(WorkItem Target, IReadOnlySet<Guid>? CandidatePersonIds = null);
+public sealed record WorkforceRecoveryRequest(WorkItem Target, IReadOnlySet<Guid>? CandidatePersonIds = null, bool ProjectedShift = false);
 
 public sealed record WorkforceRecoveryCandidate(
     int Rank,
@@ -25,21 +25,28 @@ public sealed record WorkforceRecoveryResult(
     IReadOnlyList<ReadinessDimension> CurrentDimensions,
     int EvaluatedCandidates,
     IReadOnlyList<WorkforceRecoveryCandidate> Candidates,
-    IReadOnlyList<string> Limitations);
+    IReadOnlyList<string> Limitations,
+    bool ProjectedShift);
 
 /// <summary>
-/// Finds a small deterministic set of immediately safe, source-aware workforce moves.
-/// All options are read-only what-if plans; the supervisor still stages and commits a plan.
+/// Finds a small deterministic set of qualified workforce options for current presence or an explicitly
+/// projected shift. All options are read-only what-if plans; the supervisor still stages and commits a plan.
 /// </summary>
 public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRecoveryRequest, WorkforceRecoveryResult>
 {
     private const int MaximumCandidates = 100;
     private const int MaximumBackfillCandidatesPerSource = 30;
     private const int MaximumResults = 3;
-    private static readonly string[] Limitations = [
+    private static readonly string[] CurrentLimitations = [
         "This preview checks current presence, qualifications, machine authorization, equipment/tooling, and safety composition.",
-        "Material, order due-date, cost, and future-shift effects are not evaluated by this endpoint.",
+        "Material, order due-date, cost, and future-shift effects are not evaluated by this current-presence preview.",
         "No assignment is written; review the proposed moves and run the current plan preview before committing.",
+    ];
+    private static readonly string[] ProjectedShiftLimitations = [
+        "Candidate presence is projected from the selected shift calendar and recorded unavailability; it is not proof of clock-in or attendance.",
+        "Qualification expiry, machine authorization, equipment/tooling, and safety rules effective at the selected shift start are checked.",
+        "Future source-center production coverage, material, due-date, and cost effects are not evaluated; supervisor review is required before planning the move.",
+        "No assignment is written; confirm actual attendance and review source-center coverage before committing a plan.",
     ];
 
     private readonly OperationReadinessEngine readiness = new();
@@ -59,14 +66,20 @@ public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRec
 
         var targetBefore = readiness.Evaluate(snapshot, target, asOf).Output;
         var available = snapshot.People
-            .Where(person => person.Active && person.CountsAsPresent && person.Presence != PresenceKind.Projected && person.Unavailability is null
+            .Where(person => person.Active
+                && (request.ProjectedShift
+                    ? person.Presence == PresenceKind.Projected && person.ActiveOperation is null
+                    : person.CountsAsPresent && person.Presence != PresenceKind.Projected)
+                && person.Unavailability is null
                 && (request.CandidatePersonIds is null || request.CandidatePersonIds.Contains(person.PersonId)))
             .OrderBy(person => person.Name, StringComparer.Ordinal)
             .ThenBy(person => person.PersonId)
             .Take(MaximumCandidates + 1)
             .ToArray();
         if (available.Length > MaximumCandidates)
-            throw new ArgumentException($"Recovery ranking is limited to {MaximumCandidates} visible, currently present workers. Narrow the supervisor scope.", nameof(snapshot));
+            throw new ArgumentException(request.ProjectedShift
+                ? $"Recovery ranking is limited to {MaximumCandidates} visible, scheduled workers. Narrow the supervisor scope."
+                : $"Recovery ranking is limited to {MaximumCandidates} visible, currently present workers. Narrow the supervisor scope.", nameof(snapshot));
 
         var candidates = new List<WorkforceRecoveryCandidate>();
         foreach (var mover in available)
@@ -75,12 +88,12 @@ public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRec
                 continue;
 
             var proposed = AssignmentFor(target);
-            var preview = impact.Evaluate(snapshot, new ReallocationRequest(mover.PersonId, proposed), asOf).Output;
+            var preview = request.ProjectedShift ? null : impact.Evaluate(snapshot, new ReallocationRequest(mover.PersonId, proposed), asOf).Output;
             var targetAfter = readiness.Evaluate(snapshot.WithAssignment(mover.PersonId, proposed), target, asOf).Output;
             if (!targetAfter.Executable)
                 continue;
 
-            var sourceImpacts = preview.Impacts
+            var sourceImpacts = (preview?.Impacts ?? [])
                 .Where(item => item.Kind is ImpactKind.WouldStop or ImpactKind.WouldBeUnstaffed)
                 .GroupBy(item => item.Work)
                 .Select(group => group.First())
@@ -97,8 +110,12 @@ public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRec
                     false,
                     [new WorkforceRecoveryMove(mover.PersonId, mover.Name, proposed)],
                     [],
-                    [$"{mover.Name} can cover {target.Describe()} with current verified qualifications and any required machine authorization.", "No currently executable source-center work is stopped."],
-                    targetAfter.NotEvaluated));
+                    request.ProjectedShift
+                        ? [$"{mover.Name} is scheduled at the selected shift start and meets the target qualification, machine-authorization, equipment/tooling, and safety checks.", "The future source-center production assignment is not recorded in Forge, so its coverage is not evaluated."]
+                        : [$"{mover.Name} can cover {target.Describe()} with current verified qualifications and any required machine authorization.", "No currently executable source-center work is stopped."],
+                    request.ProjectedShift
+                        ? [.. targetAfter.NotEvaluated, "Future source-center production coverage"]
+                        : targetAfter.NotEvaluated));
                 continue;
             }
 
@@ -155,13 +172,18 @@ public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRec
             targetBefore.Dimensions,
             available.Length,
             ranked,
-            Limitations);
+            request.ProjectedShift ? ProjectedShiftLimitations : CurrentLimitations,
+            request.ProjectedShift);
         var evidence = new EvidenceNode(
             "WorkforceRecovery",
             ranked.Length > 0 ? EvidenceOutcome.Pass : EvidenceOutcome.Info,
             ranked.Length > 0
-                ? $"Found {ranked.Length} safe, source-aware workforce option(s) for {target.Describe()}; no move was committed."
-                : $"No safe, source-aware currently present replacement was found for {target.Describe()}.")
+                ? request.ProjectedShift
+                    ? $"Found {ranked.Length} qualification- and safety-checked candidate(s) scheduled for the selected shift for {target.Describe()}; no move was committed."
+                    : $"Found {ranked.Length} safe, source-aware workforce option(s) for {target.Describe()}; no move was committed."
+                : request.ProjectedShift
+                    ? $"No qualified and safety-checked worker is scheduled at the selected shift start for {target.Describe()}."
+                    : $"No safe, source-aware currently present replacement was found for {target.Describe()}.")
         {
             Children = ranked.Select(candidate => new EvidenceNode(
                 $"Rank {candidate.Rank}", EvidenceOutcome.Pass,

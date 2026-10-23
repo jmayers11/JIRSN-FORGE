@@ -1,4 +1,5 @@
 using Forge.Planning.Engines;
+using Forge.Workforce.Contracts;
 using static Forge.Planning.Tests.TestFactory;
 
 namespace Forge.Planning.Tests;
@@ -43,6 +44,63 @@ public sealed class WorkforceRecoveryEngineTests
 
         Assert.Empty(result.Candidates);
         Assert.Equal("Workforce", result.CurrentConstraint);
+    }
+
+    [Fact]
+    public void Projected_shift_recovery_uses_scheduled_people_and_discloses_unassessed_source_coverage()
+    {
+        var factory = Slitting();
+        var scheduledWorker = factory.Add("Scheduled Operator", null, false, null, SlitII);
+        var snapshot = factory.Build();
+        var projected = snapshot with
+        {
+            AsOf = Now.AddDays(1),
+            People = snapshot.People.Select(person => person.PersonId == scheduledWorker
+                ? person with
+                {
+                    Presence = PresenceKind.Projected,
+                    Assignment = new WorkAssignment("SLITTING", "SLIT-WC", null, "PROJECTED", false),
+                }
+                : person with { Presence = null, Assignment = null }).ToArray(),
+        };
+
+        var result = new WorkforceRecoveryEngine().Evaluate(projected,
+            new WorkforceRecoveryRequest(SlitterWork("SLITTER-A"), new HashSet<Guid> { scheduledWorker }, ProjectedShift: true),
+            projected.AsOf).Output;
+
+        var candidate = Assert.Single(result.Candidates);
+        Assert.True(result.ProjectedShift);
+        Assert.Equal(scheduledWorker, candidate.PersonId);
+        Assert.Contains("scheduled at the selected shift start", string.Join(" ", candidate.Evidence), StringComparison.Ordinal);
+        Assert.Contains("Future source-center production coverage", candidate.NotEvaluated);
+        Assert.Contains("not proof of clock-in", string.Join(" ", result.Limitations), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Projected_shift_recovery_rejects_qualifications_that_expire_before_shift_start()
+    {
+        var factory = Slitting();
+        var scheduledWorker = factory.Add("Expiring Operator", null, false, null, SlitII);
+        var snapshot = factory.Build();
+        var targetAt = Now.AddDays(1);
+        var projected = snapshot with
+        {
+            AsOf = targetAt,
+            People = snapshot.People.Select(person => person.PersonId == scheduledWorker
+                ? person with
+                {
+                    Presence = PresenceKind.Projected,
+                    Assignment = new WorkAssignment("SLITTING", "SLIT-WC", null, "PROJECTED", false),
+                    QualificationExpiry = new Dictionary<string, DateTimeOffset?> { [SlitII] = Now.AddHours(1) },
+                }
+                : person with { Presence = null, Assignment = null }).ToArray(),
+        };
+
+        var result = new WorkforceRecoveryEngine().Evaluate(projected,
+            new WorkforceRecoveryRequest(SlitterWork("SLITTER-A"), new HashSet<Guid> { scheduledWorker }, ProjectedShift: true), targetAt).Output;
+
+        Assert.Empty(result.Candidates);
+        Assert.Equal(1, result.EvaluatedCandidates);
     }
 
     [Fact]

@@ -162,12 +162,16 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
     public async Task<EngineRun<WorkforceRecoveryResult>> RecommendWorkforceRecoveryAsync(
         ForgePrincipal principal,
         AssignWork targetRequest,
-        CancellationToken ct)
+        CancellationToken ct,
+        DateOnly? shiftDate = null,
+        string? shiftCode = null)
     {
         ArgumentNullException.ThrowIfNull(targetRequest);
         Demand(principal);
         if (targetRequest.AsTrainee)
             throw new CommandRejectedException("invalid_recovery_target", "A recovery target must represent independently authorized work.");
+        if ((shiftDate is null) != (shiftCode is null))
+            throw new CommandRejectedException("invalid_recovery_shift", "Choose both the scheduled date and shift, or leave both blank for current presence.");
 
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
         var resources = uow.Store<IResourcesLookup>();
@@ -177,6 +181,42 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         var target = new WorkItem(targetAssignment.SafetyAreaCode, targetAssignment.WorkCenterCode,
             targetAssignment.MachineCode, targetAssignment.ActivityCode);
         var snapshot = await LoadSnapshotAsync(uow, ct);
+        var projectedShift = shiftDate is not null && shiftCode is not null;
+        if (projectedShift)
+        {
+            var date = shiftDate!.Value;
+            var selectedShiftCode = shiftCode!;
+            var center = target.WorkCenterCode
+                ?? throw new CommandRejectedException("invalid_recovery_shift", "An upcoming-shift preview requires a target work center.");
+            var siteCode = WorkCalendar.SiteOfWorkCenter(snapshot, center);
+            var shift = snapshot.Shifts.SingleOrDefault(candidate => candidate.Code == selectedShiftCode)
+                ?? throw new CommandRejectedException("unknown_recovery_shift", "The selected shift does not exist.");
+            if (shift.SiteCode != siteCode || !snapshot.WorkCenterShifts.Any(item => item.WorkCenterCode == center && item.ShiftCode == shift.Code))
+                throw new CommandRejectedException("shift_not_configured", "The selected shift is not configured for the target work center.");
+
+            var now = time.GetUtcNow();
+            var today = snapshot.LocalDate(now, siteCode);
+            if (date < today || date > today.AddDays(62))
+                throw new CommandRejectedException("invalid_recovery_shift_date", "Choose a future site date within the next 62 days.");
+            var dayStart = WorkCalendar.EndOfDay(snapshot, siteCode, date.AddDays(-1));
+            var dayEnd = WorkCalendar.EndOfDay(snapshot, siteCode, date);
+            var shiftSpan = WorkCalendar.Instances(shift, snapshot, dayStart, dayEnd)
+                .FirstOrDefault(span => WorkCalendar.LocalDate(snapshot, shift.SiteCode, span.Start) == date);
+            if (shiftSpan.End <= shiftSpan.Start || shiftSpan.Start <= now)
+                throw new CommandRejectedException("recovery_shift_not_upcoming", "The selected shift has already started or does not run on that site date.");
+            if (shiftSpan.Start > now.AddDays(62))
+                throw new CommandRejectedException("invalid_recovery_shift_date", "Choose a shift that starts within the next 62 days.");
+
+            // Load every version so rules scheduled to take effect before this shift still gate the preview.
+            var futureRules = await uow.Store<ISafetyRuleLookup>().ListAllAsync(ct);
+            var projectedAt = shiftSpan.Start;
+            var scheduled = Projection.Schedules(snapshot, projectedAt, projectedAt.AddSeconds(1));
+            snapshot = Projection.At(snapshot, projectedAt, scheduled) with
+            {
+                AsOf = projectedAt,
+                Rules = futureRules.Where(rule => rule.IsEffectiveAt(projectedAt)).OrderBy(rule => rule.Code, StringComparer.Ordinal).ThenBy(rule => rule.Version).ToArray(),
+            };
+        }
         var visibleCandidates = snapshot.People
             .Where(person => CanSuperviseWorkforceScope(principal, person.PersonId, person.Assignment?.WorkCenterCode ?? person.HomeWorkCenterCode)
                 && CanSuperviseWorkforceScope(principal, person.PersonId, target.WorkCenterCode))
@@ -184,7 +224,7 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
             .ToHashSet();
 
         return EngineRunner.Run(new WorkforceRecoveryEngine(), snapshot,
-            new WorkforceRecoveryRequest(target, visibleCandidates), snapshot.AsOf);
+            new WorkforceRecoveryRequest(target, visibleCandidates, projectedShift), snapshot.AsOf);
     }
 
     /// <summary>Previews a cascading worker move scenario against one copied Forge snapshot. Nothing is committed.</summary>

@@ -14,7 +14,7 @@ public sealed record TrainingPolicyRequest(TrainingPolicy Policy, DocumentType[]
 
 public sealed record ReallocationPlanRequest(ReallocationPlanProposal[] Moves);
 
-public sealed record WorkforceRecoveryPreviewRequest(string? SafetyAreaCode, string? WorkCenterCode, string? MachineCode, string ActivityCode);
+public sealed record WorkforceRecoveryPreviewRequest(string? SafetyAreaCode, string? WorkCenterCode, string? MachineCode, string ActivityCode, DateOnly? ShiftDate = null, string? ShiftCode = null);
 
 public sealed record MaterialReceiptImpactPreviewRequest(long TaskId);
 
@@ -51,7 +51,7 @@ internal static class ExecutableEndpoints
                 ? NotRegistered()
                 : Results.Ok(await s.RecommendWorkforceRecoveryAsync(principal,
                     new AssignWork(new PersonId(Guid.Empty), request.SafetyAreaCode, request.WorkCenterCode,
-                        request.MachineCode, request.ActivityCode, false), ct));
+                        request.MachineCode, request.ActivityCode, false), ct, request.ShiftDate, request.ShiftCode));
         });
         readiness.MapPost("/material-receipt-impact-preview", async (HttpContext http, MaterialReceiptImpactPreviewRequest request, MaterialReceiptImpactPreviewService s, CancellationToken ct) =>
         {

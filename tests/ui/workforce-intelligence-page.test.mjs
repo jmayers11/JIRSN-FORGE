@@ -110,8 +110,10 @@ test('supervisors can request a read-only ranked recovery preview for a machine 
     if (path.startsWith('/api/competency/machine-authorizations?')) return Promise.resolve(response([]));
     if (path === '/api/readiness/workforce-recovery-preview') {
       recoveryRequest = JSON.parse(options.body);
+      const projectedShift = Boolean(recoveryRequest.shiftDate);
       return Promise.resolve(response({ output: {
         evaluatedCandidates: 8,
+        projectedShift,
         currentConstraint: 'Workforce',
         candidates: [{ rank: 1, personId: 'worker-2', personName: 'Morgan Trainer', requiresSourceBackfill: true,
           moves: [
@@ -121,7 +123,9 @@ test('supervisors can request a read-only ranked recovery preview for a machine 
           sourceImpacts: [{ detail: 'WC-B would be unstaffed unless Taylor is moved first.' }],
           evidence: ['Taylor covers the source before Morgan moves.'],
         }],
-        limitations: ['Material and due-date effects are not evaluated.'],
+        limitations: projectedShift
+          ? ['Candidate presence is projected from the selected shift calendar; it is not proof of clock-in.', 'Future source-center production coverage is not evaluated.']
+          : ['Material and due-date effects are not evaluated.'],
       } }));
     }
     return Promise.resolve(response([]));
@@ -140,4 +144,18 @@ test('supervisors can request a read-only ranked recovery preview for a machine 
   assert.match(result, /WC-B would be unstaffed unless Taylor is moved first/);
   assert.match(result, /Material and due-date effects are not evaluated/);
   assert.equal(button.disabled, false);
+
+  const scheduledDate = page.querySelector('[data-wi-recovery-date]');
+  scheduledDate.value = '2026-10-27';
+  const scheduledShift = page.querySelector('[data-wi-recovery-shift]');
+  scheduledShift.value = 'DAY';
+  fire(page.querySelector('[data-projected="true"]'), 'click'); await flush(); await flush();
+  assert.deepEqual(recoveryRequest, {
+    safetyAreaCode: 'AREA-A', workCenterCode: 'WC-A', machineCode: 'WD-01', activityCode: 'WIND',
+    shiftDate: '2026-10-27', shiftCode: 'DAY',
+  });
+  const scheduledResult = page.querySelector('[data-wi-recovery-result]').innerHTML;
+  assert.match(scheduledResult, /Scheduled candidate/);
+  assert.match(scheduledResult, /Future source-center production coverage is not forecasted/);
+  assert.match(scheduledResult, /not proof of clock-in/);
 });

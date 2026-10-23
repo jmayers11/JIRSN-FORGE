@@ -140,9 +140,11 @@ function render(summary, sources, options, me) {
   const recoveryRows = canRecoverCoverage && coverageKnown && summary.capabilityGaps.length
     ? summary.capabilityGaps.slice(0, 8).map(row => {
       const machine = (sources.resources?.data?.machines ?? []).find(item => item.code === row.machineCode);
+      const scheduledShiftChoices = options.shifts.map(shift => `<option value="${escapeAttr(shift.code)}" ${shift.code === row.shiftCode ? 'selected' : ''}>${esc(shift.name)}</option>`).join('');
       return `<article class="workforce-intelligence-recovery-item">
         <div><b>${esc(row.machineCode)} · ${esc(row.activityCode)}</b><span>${esc(row.workCenterCode)} · ${esc(row.shiftName)} · ${esc(row.requiredQualifications.join(' or '))}${row.requiresMachineAuthorization ? ' · machine authorization required' : ''}</span></div>
         <button class="btn small" type="button" data-wi-recovery data-safety-area="${escapeAttr(machine?.safetyAreaCode ?? '')}" data-work-center="${escapeAttr(row.workCenterCode)}" data-machine="${escapeAttr(row.machineCode)}" data-activity="${escapeAttr(row.activityCode)}">Find safe candidates</button>
+        <details class="workforce-intelligence-recovery-scheduled"><summary>Plan for an upcoming shift</summary><div><label>Plant shift date<input class="input" type="date" data-wi-recovery-date required></label><label>Shift<select class="input" data-wi-recovery-shift required>${scheduledShiftChoices}</select></label><button class="btn small" type="button" data-wi-recovery data-projected="true" data-safety-area="${escapeAttr(machine?.safetyAreaCode ?? '')}" data-work-center="${escapeAttr(row.workCenterCode)}" data-machine="${escapeAttr(row.machineCode)}" data-activity="${escapeAttr(row.activityCode)}">Preview scheduled candidates</button></div></details>
         <div data-wi-recovery-result aria-live="polite"></div></article>`;
     }).join('')
     : '';
@@ -353,19 +355,33 @@ export async function appendWorkforceIntelligence(page, me) {
     try {
       if (recovery) {
         const output = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-result]');
+        const projectedShift = recovery.dataset.projected === 'true';
         recovery.disabled = true;
-        if (output) output.innerHTML = '<p class="faint">Evaluating current source and target work…</p>';
-        const result = await readPost('/api/readiness/workforce-recovery-preview', {
+        if (output) output.innerHTML = projectedShift
+          ? '<p class="faint">Checking scheduled workers, qualifications, safety, and the selected shift…</p>'
+          : '<p class="faint">Evaluating current source and target work…</p>';
+        const request = {
           safetyAreaCode: recovery.dataset.safetyArea || null,
           workCenterCode: recovery.dataset.workCenter || null,
           machineCode: recovery.dataset.machine || null,
           activityCode: recovery.dataset.activity,
-        });
+        };
+        if (projectedShift) {
+          request.shiftDate = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-date]')?.value || null;
+          request.shiftCode = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-shift]')?.value || null;
+          if (!request.shiftDate || !request.shiftCode) throw new Error('Choose the plant shift date and shift before previewing scheduled candidates.');
+        }
+        const result = await readPost('/api/readiness/workforce-recovery-preview', request);
         const summary = result.output;
         if (!summary || !output) throw new Error('The recovery preview returned no result.');
+        const sourceImpact = candidate => summary.projectedShift
+          ? '<span>Future source-center production coverage is not forecasted.</span>'
+          : candidate.sourceImpacts?.length
+            ? `<span>Source impact: ${candidate.sourceImpacts.map(item => esc(item.detail)).join(' · ')}</span>`
+            : '<span>No currently executable source work is disrupted.</span>';
         output.innerHTML = summary.candidates?.length
-          ? `<ol class="workforce-intelligence-recovery-list">${summary.candidates.map(candidate => `<li><b>#${candidate.rank} · ${esc(candidate.personName)}</b><span>${candidate.requiresSourceBackfill ? 'Two-step plan' : 'Direct move'} · ${candidate.moves.map(move => `${esc(move.personName)} → ${esc(move.assignment.machineCode || move.assignment.workCenterCode || move.assignment.safetyAreaCode)} / ${esc(move.assignment.activityCode)}`).join(' · ')}</span>${candidate.sourceImpacts?.length ? `<span>Source impact: ${candidate.sourceImpacts.map(item => esc(item.detail)).join(' · ')}</span>` : '<span>No currently executable source work is disrupted.</span>'}<span>${candidate.evidence.map(esc).join(' ')}</span></li>`).join('')}</ol><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`
-          : `<p class="faint">No safe candidate found among ${fmtNumber(summary.evaluatedCandidates)} visible, currently present workers. ${summary.currentConstraint ? `Current target constraint: ${esc(summary.currentConstraint)}.` : ''}</p><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`;
+          ? `<ol class="workforce-intelligence-recovery-list">${summary.candidates.map(candidate => `<li><b>#${candidate.rank} · ${esc(candidate.personName)}</b><span>${summary.projectedShift ? 'Scheduled candidate' : candidate.requiresSourceBackfill ? 'Two-step plan' : 'Direct move'} · ${candidate.moves.map(move => `${esc(move.personName)} → ${esc(move.assignment.machineCode || move.assignment.workCenterCode || move.assignment.safetyAreaCode)} / ${esc(move.assignment.activityCode)}`).join(' · ')}</span>${sourceImpact(candidate)}<span>${candidate.evidence.map(esc).join(' ')}</span></li>`).join('')}</ol><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`
+          : `<p class="faint">No ${summary.projectedShift ? 'qualified workers scheduled' : 'safe candidates among visible, currently present workers'} found (${fmtNumber(summary.evaluatedCandidates)} evaluated). ${summary.currentConstraint ? `Current target constraint: ${esc(summary.currentConstraint)}.` : ''}</p><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`;
         recovery.disabled = false;
         return;
       } else if (materialRecovery) {
