@@ -16,6 +16,8 @@ public sealed record ReallocationPlanRequest(ReallocationPlanProposal[] Moves);
 
 public sealed record WorkforceRecoveryPreviewRequest(string? SafetyAreaCode, string? WorkCenterCode, string? MachineCode, string ActivityCode);
 
+public sealed record MaterialReceiptImpactPreviewRequest(long TaskId);
+
 /// <summary>
 /// V3.9: executable capacity and presence. Every open operation answers "can this happen now, and why not?"; each
 /// worker's presence level; and training on controlled documents with the plant's policy for it.
@@ -50,6 +52,11 @@ internal static class ExecutableEndpoints
                 : Results.Ok(await s.RecommendWorkforceRecoveryAsync(principal,
                     new AssignWork(new PersonId(Guid.Empty), request.SafetyAreaCode, request.WorkCenterCode,
                         request.MachineCode, request.ActivityCode, false), ct));
+        });
+        readiness.MapPost("/material-receipt-impact-preview", async (HttpContext http, MaterialReceiptImpactPreviewRequest request, MaterialReceiptImpactPreviewService s, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            return principal is null ? NotRegistered() : Results.Ok(await s.PreviewAsync(principal, request.TaskId, ct));
         });
 
         var training = app.MapGroup("/api/engineering/document-training").RequireAuthorization();

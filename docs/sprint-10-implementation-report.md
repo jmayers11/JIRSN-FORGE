@@ -2,7 +2,7 @@
 
 Date: 2026-10-23
 Specification: `Forge_Sprint_10_Training_Performance_Workforce_Intelligence.md`
-Status: Core implementation pass complete; available local verification passed; full Sprint 9/Sprint 10 acceptance remains open.
+Status: Source implementation and available local verification are complete for this pass; full Sprint 9/Sprint 10 acceptance remains open.
 
 ## Delivered
 
@@ -20,25 +20,47 @@ Machine capability gaps now offer a read-only, ranked list of up to three curren
 
 The Workforce `!` feed now ranks open material tasks by request/custody state and links each task to the affected operation's current readiness blocker, work center, and order due date. It names the next canonical approval, stockroom, receiving, or Inventory Controller action. This prioritized source-action queue does not claim a simulated completion-date delta and does not suggest that moving labor resolves a material blocker.
 
+For eligible in-transit released-order BOM staging tasks, the `!` alert also offers a permission-gated, read-only receipt impact preview. It assumes an independent receiver accepts the remaining quantity at the current site date, pegs that hypothetical supply to the task's order, and runs the canonical MaterialEngine and finite-capacity scheduler before and after. It shows the target order's material/schedule change and any collateral completion/status changes to other visible orders. It writes no receipt, inventory transaction, assignment, or approval; normal quality, point-of-use, safety, and authorization gates still apply.
+
 The WhiskerWorks roster now extends the original Sprint 9 52-worker seed with eight additional fictional job profiles, preserving the original identity order and IDs. The updated shifts contain 32 Day, 16 Swing, and 12 Weekend workers. `tools/whiskerworks-sprint10-scenarios.mjs` defines all 22 core and 16 material-extension acceptance cases with expected invariants and explicitly pending isolated-database replay status. The seed, roster, matrix, and Scenario Center guard focused tests passed 11/11. These additions are definitions and seed preparation only: they do not yet seed the full attendance/performance histories or constitute passed scenario runs.
 
 ## Source map
 
 - Workforce and Competency: `src/Forge.Host/wwwroot/js/pages/workforce-intelligence.js`, `src/Forge.Host/wwwroot/js/workforce-intelligence.mjs`, `src/Forge.Workforce/AttendanceReliability.cs`, `src/Forge.Workforce/DevelopmentNominations.cs`, `src/Forge.Competency/CompetencyService.cs`, `src/Forge.Execution/ProductionLaborMetrics.cs`.
 - Material and quality flow: `src/Forge.Inventory/InventoryService.Tasks.cs`, `src/Forge.Quality/QualityService.cs`, `src/Forge.Host/Api/MaterialsEndpoints.cs`, `src/Forge.Host/Api/QualityEndpoints.cs`, `src/Forge.Host/wwwroot/js/pages/shopfloor.js`, `src/Forge.Host/wwwroot/js/pages/inventory.js`, `src/Forge.Host/wwwroot/js/pages/orders.js`.
-- Planning and alerts: `src/Forge.Planning/MaterialFlow.cs`, `src/Forge.Planning/ShiftFactsProvider.cs`, `src/Forge.Planning/Engines/WorkforceRecoveryEngine.cs`, `src/Forge.Host/Api/ExecutableEndpoints.cs`, `src/Forge.Host/Notifications/NotificationEventSubscriber.cs`, `src/Forge.Host/Notifications/NotificationDelivery.cs`.
+- Planning and alerts: `src/Forge.Planning/MaterialFlow.cs`, `src/Forge.Planning/MaterialReceiptImpactPreview.cs`, `src/Forge.Planning/ShiftFactsProvider.cs`, `src/Forge.Planning/Engines/MaterialEngine.cs`, `src/Forge.Planning/Engines/WorkforceRecoveryEngine.cs`, `src/Forge.Host/Api/ExecutableEndpoints.cs`, `src/Forge.Host/Notifications/NotificationEventSubscriber.cs`, `src/Forge.Host/Notifications/NotificationDelivery.cs`.
 - Additive migrations: Competency `0002`–`0003`; Execution `0012`; Inventory `0022`–`0026`; Kernel/Postgres `0022`–`0027`; Quality `0016`; Resources `0006`–`0008`; Workforce `0006`–`0009`.
+
+## Data dictionary
+
+| Record or calculation | Canonical owner | Meaning and history |
+|---|---|---|
+| Course, practical assessment, machine authorization | Competency | Separate evidence of course completion, observed skill, and machine/activity permission; each is independently versioned and auditable. |
+| Attendance policy, scheduled opportunity, classification, correction | Workforce | Effective-dated denominator rules and source events; review and correction append history while private absence detail stays scoped. |
+| Development nomination | Workforce | Human-reviewed training/advancement packet with rationale, evidence references, and status history; it does not apply pay or authorization. |
+| Operation labor and production report | Execution | Actual time and reported quantities tied to an order operation; accepted-output evidence controls whether efficiency can be calculated. |
+| Suspect scrap and disposition | Quality / Inventory | Suspect report and quality decision remain separate from inventory ledger movement. |
+| Material task and custody events | Inventory | Request, pick, in-transit, accepted/rejected quantity, return, and correction retain distinct states and append-only ledger/custody evidence. |
+| Material receipt impact preview | Planning | Ephemeral what-if only; it persists no receipt, schedule change, or inventory transaction. |
+| Notification rule and delivery | Notifications | Rule configuration and outbox delivery status/retry use the existing durable notification pipeline. |
+
+## UI walkthrough and data ownership
+
+On Workforce, open the Training & Performance Command Center and find an in-transit BOM staging alert. Users with both `inventory.read` and `planning.schedule.read` can select **Preview receipt schedule impact**. Review the target order's material state and projected completion alongside any visible collateral order shifts. Supervisors can use the page filters, review attendance denominators and pending classifications, and create evidence-linked development drafts. Operators report suspect scrap or request material from an active Shop Floor operation; Inventory staff review the stockroom queue and complete the separate custody steps. Complete the actual receipt only through the Inventory custody workflow, where the receiver must independently acknowledge the quantity.
+
+The implementation extends canonical Workforce, Competency, Execution, Quality, Inventory, Notifications, and Planning records; it does not add a second employee roster, inventory ledger, MRP engine, or scheduler. Additive migration ownership and versions are listed in the source map above. No migration was applied during this implementation pass.
 
 ## Verification and rollout
 
-Verification after implementation: `node --test tests/ui/*.test.mjs` passed 335/335 before the custody increment; the focused custody/workforce UI suite passed 15/15. The WhiskerWorks seed, roster, matrix, and Scenario Center guard tests passed 11/11 after the roster expansion. The isolated Release host build passed with 0 warnings and 0 errors; `Forge.Planning.Tests` passed 322/322; the new `WorkforceRecoveryEngineTests` passed 3/3; deterministic integration calculation tests passed 12/12; the latest material-demand tests passed 6/6 and the integration project compiled. The recovery page test passed 2/2 and the focused workforce-intelligence UI tests passed. Database-backed integration cases could not start because Docker Engine is unavailable and `FORGE_TEST_POSTGRES` is unset. Full solution restore could not reach `api.nuget.org`; offline cache lacks `NetArchTest.Rules` and `Microsoft.Extensions.TimeProvider.Testing`. The live `PLANT1` preview and database were not changed; no WhiskerWorks seed or Sprint 10 migration was applied.
+Latest local verification: `node --test tests/ui/*.test.mjs` passed **344/344**; `Forge.Planning.Tests` passed **328/328**; the isolated Release host build passed with **0 warnings and 0 errors**; and `git diff --check` passed. The two `MaterialReceiptImpactPreviewTests` cover task-order pegging, target recovery, and a collateral order completion shift. Earlier focused checks remain green: deterministic attendance/material/labor calculations **12/12**, material-demand tests **6/6**, workforce recovery engine **3/3**, recovery page tests **2/2**, and WhiskerWorks roster/catalog/guard tests **11/11**.
 
-Additional material recovery verification: Workforce intelligence model and page tests passed 12/12, including rejected-quantity priority, due-date ordering, work-center filtering, linked readiness detail, and the explicit boundary against recommending a labor move for a material blocker. `git diff --check` passed.
+The integration test project compiles, but database-backed integration tests could not start because Docker Engine is unavailable and `FORGE_TEST_POSTGRES` is unset. Full solution restore is blocked offline because `api.nuget.org` is unreachable and the cache lacks `NetArchTest.Rules` and `Microsoft.Extensions.TimeProvider.Testing`. The live `PLANT1` preview and database were not changed; no WhiskerWorks seed or Sprint 10 migration was applied. Host and test outputs were directed to isolated `.forge-logs` folders because the live preview holds the default Release DLLs open.
 
 ## Known limits
 
-- Material tasks are prioritized from current workflow state, linked operation readiness, and order due date, but the Workforce feed does not yet calculate a hypothetical finite-capacity completion-date change after recovery. Current staffing recovery remains limited to present workers and machine capability gaps.
-- The roster now contains 60 workers and all 38 acceptance cases are defined, but full training/attendance/performance histories and scenario execution have not been completed. Existing WhiskerWorks seed scripts require a genuinely isolated database.
-- Email delivery is available through the existing durable outbox/provider configuration; the new default material rules are InApp until a deployment's provider and notification policy are configured.
-- Earned standard hours and labor efficiency remain N/A until operation-scoped accepted-output evidence is available. Current operation views preserve target/actual context and explain the missing basis.
-- Sprint 9 remains subject to its own open scenario assertions and isolated-data gate. Sprint 10 must not be described as fully accepted until the relevant Sprint 9 regression gate and Sprint 10 scenario suite pass.
+- The receipt preview is limited to remaining quantities on in-transit BOM staging tasks. It is a same-site-date what-if, not a receipt; actual receiving, holds, point-of-use checks, and safety/authorization remain authoritative.
+- Machine capability recovery ranks currently present workers. Future-shift workforce candidates and their source-center coverage are not yet forecasted.
+- The WhiskerWorks roster contains 60 workers and all 38 acceptance scenarios are defined, but detailed attendance/performance histories have not been seeded and the scenarios have not been replayed against an isolated database. Their statuses remain pending, not passed.
+- Email delivery depends on a configured provider and deployment notification policies. Default material rules use InApp delivery; provider retry and recipient delivery remain deployment validation.
+- Earned standard hours and labor efficiency stay N/A until operation-scoped accepted-output evidence and approved labor standards are available.
+- Sprint 9 still has open scenario assertions and an isolated-data gate. Sprint 10 must not be marked fully accepted until those prerequisite gates and the Sprint 10 scenario suite pass.

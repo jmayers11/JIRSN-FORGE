@@ -7,6 +7,16 @@ const formatDate = value => {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'date unavailable';
 };
+const formatMoment = value => {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'not scheduled in the current horizon';
+};
+
+function renderMaterialReceiptImpact(preview) {
+  const completion = value => value ? formatMoment(value) : 'not scheduled in the current horizon';
+  const impact = row => `<li><b>WO ${fmtNumber(row.orderNumber)} · due ${esc(formatDate(row.dueDate))}</b><span>${esc(row.beforeStatus)} → ${esc(row.proposedStatus)} · ${esc(completion(row.beforeCompletion))} → ${esc(completion(row.proposedCompletion))}${row.completionShiftHours == null ? '' : ` · ${row.completionShiftHours > 0 ? '+' : ''}${fmtNumber(row.completionShiftHours)} schedule hours`}</span></li>`;
+  return `<div class="workforce-intelligence-recovery-list"><b>WO ${fmtNumber(preview.targetOrder.orderNumber)} · due ${esc(formatDate(preview.targetOrder.dueDate))}</b><span>${esc(preview.targetOrder.beforeStatus)} → ${esc(preview.targetOrder.proposedStatus)} · projected completion ${esc(completion(preview.targetOrder.beforeCompletion))} → ${esc(completion(preview.targetOrder.proposedCompletion))}${preview.targetOrder.completionShiftHours == null ? '' : ` · ${preview.targetOrder.completionShiftHours > 0 ? '+' : ''}${fmtNumber(preview.targetOrder.completionShiftHours)} schedule hours`}</span><span>Material: ${esc(preview.baselineMaterialState)} → ${esc(preview.proposedMaterialState)}</span><span>${esc(preview.baselineMaterialSummary)} ${esc(preview.proposedMaterialSummary)}</span>${preview.otherOrderImpacts?.length ? `<b>Other visible orders affected</b><ol>${preview.otherOrderImpacts.map(impact).join('')}</ol>` : '<span>No other visible order schedule changed in this comparison.</span>'}<p class="faint">${esc(preview.assumption)}</p></div>`;
+}
 
 async function qualificationRecords(workers) {
   const ids = workers.map(worker => worker.personId).filter(Boolean);
@@ -56,6 +66,8 @@ function attendancePeriodStart(period, now) {
 }
 
 function render(summary, sources, options, me) {
+  const permissions = new Set(me?.permissions ?? []);
+  const canPreviewMaterialImpact = permissions.has('inventory.read') && permissions.has('planning.schedule.read');
   const issues = [];
   if (summary.expiring.length) {
     issues.push(...summary.expiring.slice(0, 8).map(row => ({
@@ -107,7 +119,7 @@ function render(summary, sources, options, me) {
     }).join('')
     : '';
   const alertRows = issues.length
-    ? `<ul class="workforce-intelligence-alerts" aria-live="polite">${issues.slice(0, 10).map(item => `<li class="${item.severity === 'urgent' ? 'urgent' : ''}"><span class="workforce-intelligence-mark" aria-hidden="true">!</span><div><b>${esc(item.title)}</b><span>${esc(item.detail)}</span>${item.evidenceReferences?.length ? `<span>Evidence: ${item.evidenceReferences.map(renderEvidenceReference).join(' · ')}</span>` : ''}</div></li>`).join('')}</ul>`
+    ? `<ul class="workforce-intelligence-alerts" aria-live="polite">${issues.slice(0, 10).map(item => `<li class="${item.severity === 'urgent' ? 'urgent' : ''}"><span class="workforce-intelligence-mark" aria-hidden="true">!</span><div><b>${esc(item.title)}</b><span>${esc(item.detail)}</span>${item.evidenceReferences?.length ? `<span>Evidence: ${item.evidenceReferences.map(renderEvidenceReference).join(' · ')}</span>` : ''}${canPreviewMaterialImpact && item.canPreviewReceiptImpact ? `<button class="btn small" type="button" data-wi-material-recovery="${escapeAttr(item.taskId)}">Preview receipt schedule impact</button><div data-wi-material-recovery-result="${escapeAttr(item.taskId)}" aria-live="polite"></div>` : ''}</div></li>`).join('')}</ul>`
     : `<p class="faint">${workersKnown && qualificationsKnown ? 'No current qualification or readiness alerts from the available sources.' : 'Alerts are limited until Workforce and Competency records are readable.'}${materialSourcesKnown ? '' : ' Material and suspect-report sources are not visible to this account, so those disruptions are not included.'}</p>`;
   const laborRows = summary.labor.slice(0, 6);
   const laborTable = laborRows.length
@@ -116,7 +128,6 @@ function render(summary, sources, options, me) {
   const shiftChoices = options.shifts.map(shift => `<option value="${escapeAttr(shift.code)}" ${options.shiftCode === shift.code ? 'selected' : ''}>${esc(shift.name)}</option>`).join('');
   const centerChoices = options.workCenters.map(center => `<option value="${escapeAttr(center.code)}" ${options.workCenterCode === center.code ? 'selected' : ''}>${esc(center.name)}</option>`).join('');
   const attendanceCount = value => value == null ? '—' : fmtNumber(value);
-  const permissions = new Set(me?.permissions ?? []);
   const canSchedule = permissions.has('workforce.attendance-schedule.manage');
   const canPolicy = permissions.has('workforce.attendance-policy.manage');
   const canReview = permissions.has('workforce.attendance-classification.review');
@@ -333,11 +344,12 @@ export async function appendWorkforceIntelligence(page, me) {
   });
   page.addEventListener('click', async event => {
     const recovery = event.target.closest('[data-wi-recovery]');
+    const materialRecovery = event.target.closest('[data-wi-material-recovery]');
     const review = event.target.closest('[data-wi-review]');
     const correction = event.target.closest('[data-wi-correct]');
     const classification = event.target.closest('[data-wi-classify]');
     const nominationAdvance = event.target.closest('[data-wi-nom-advance]');
-    if (!recovery && !review && !correction && !classification && !nominationAdvance) return;
+    if (!recovery && !materialRecovery && !review && !correction && !classification && !nominationAdvance) return;
     try {
       if (recovery) {
         const output = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-result]');
@@ -355,6 +367,15 @@ export async function appendWorkforceIntelligence(page, me) {
           ? `<ol class="workforce-intelligence-recovery-list">${summary.candidates.map(candidate => `<li><b>#${candidate.rank} · ${esc(candidate.personName)}</b><span>${candidate.requiresSourceBackfill ? 'Two-step plan' : 'Direct move'} · ${candidate.moves.map(move => `${esc(move.personName)} → ${esc(move.assignment.machineCode || move.assignment.workCenterCode || move.assignment.safetyAreaCode)} / ${esc(move.assignment.activityCode)}`).join(' · ')}</span>${candidate.sourceImpacts?.length ? `<span>Source impact: ${candidate.sourceImpacts.map(item => esc(item.detail)).join(' · ')}</span>` : '<span>No currently executable source work is disrupted.</span>'}<span>${candidate.evidence.map(esc).join(' ')}</span></li>`).join('')}</ol><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`
           : `<p class="faint">No safe candidate found among ${fmtNumber(summary.evaluatedCandidates)} visible, currently present workers. ${summary.currentConstraint ? `Current target constraint: ${esc(summary.currentConstraint)}.` : ''}</p><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`;
         recovery.disabled = false;
+        return;
+      } else if (materialRecovery) {
+        const output = materialRecovery.closest('li')?.querySelector('[data-wi-material-recovery-result]');
+        materialRecovery.disabled = true;
+        if (output) output.innerHTML = '<p class="faint">Comparing current schedule with hypothetical receipt…</p>';
+        const preview = await readPost('/api/readiness/material-receipt-impact-preview', { taskId: Number(materialRecovery.dataset.wiMaterialRecovery) });
+        if (!output || !preview?.targetOrder) throw new Error('The material receipt impact preview returned no result.');
+        output.innerHTML = renderMaterialReceiptImpact(preview);
+        materialRecovery.disabled = false;
         return;
       } else if (nominationAdvance) {
         const id = nominationAdvance.dataset.wiNomAdvance;
@@ -392,6 +413,12 @@ export async function appendWorkforceIntelligence(page, me) {
         recovery.disabled = false;
         const output = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-result]');
         if (output) output.innerHTML = `<p class="notice warn">${esc(error?.message ?? 'The recovery preview could not be evaluated.')}</p>`;
+        return;
+      }
+      if (materialRecovery) {
+        materialRecovery.disabled = false;
+        const output = materialRecovery.closest('li')?.querySelector('[data-wi-material-recovery-result]');
+        if (output) output.innerHTML = `<p class="notice warn">${esc(error?.message ?? 'The material receipt preview could not be evaluated.')}</p>`;
         return;
       }
       const item = (review ?? correction ?? classification ?? nominationAdvance).closest('.workforce-intelligence-review-item');

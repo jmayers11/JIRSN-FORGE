@@ -175,6 +175,22 @@ public class MaterialPlanningTests
         Assert.Contains("overdue", status.Summary, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Order_pegged_material_supply_cannot_be_consumed_by_a_higher_priority_order()
+    {
+        var snapshot = new MaterialSnapshot(Today, [], [],
+            [new MaterialSupply("RECEIPT/1", "COIL", 10, Today, "Receipt for order 1", OrderNumber: 1)],
+            [NeedsCoil(1, 5, 10), NeedsCoil(2, 1, 10)]);
+
+        var result = material.Evaluate(snapshot, new MaterialRequest(), Now).Output;
+
+        Assert.Equal(MaterialState.Expected, result.Single(row => row.OrderNumber == 1).State);
+        Assert.Equal(Today, result.Single(row => row.OrderNumber == 1).ReadyOn);
+        var other = result.Single(row => row.OrderNumber == 2);
+        Assert.Equal(MaterialState.Shortfall, other.State);
+        Assert.Equal(10, other.Lines.Single().Shortfall);
+    }
+
     private static OrderInfo Released(long number) => new(
         number, "ROLL-100", "A", 10, new DateOnly(2026, 10, 20), 3, OrderStatus.Released, null, null, Now,
         [new OrderOperationInfo(10, "Slit", "SLIT-WC", RunSlitter, ["SLITTER-A", "SLITTER-B"], [], 60, 1, OperationStatus.Pending)],

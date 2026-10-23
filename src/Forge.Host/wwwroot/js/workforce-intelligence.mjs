@@ -229,7 +229,9 @@ export function buildWorkforceIntelligence(input = {}) {
       return {
         severity: statusPriority <= 1 || materialBlocked ? 'urgent' : 'attention',
         recoveryPriority: statusPriority,
+        taskId: task.taskId,
         dueDate,
+        canPreviewReceiptImpact: task.status === 'InTransit' && task.kind === 'Stage' && task.isNonBom !== true,
         title: `WO ${task.orderNumber} · ${task.partNumber} material ${task.status === 'ApprovalNeeded' ? 'needs approval' : task.status === 'InTransit' ? task.rejectedQuantity > 0 ? 'has rejected quantity awaiting resolution' : 'awaits receipt' : ['DeliveryRejected', 'Rejected'].includes(task.status) ? 'was rejected' : 'awaits stockroom'}`,
         detail: `${task.quantity} requested for ${task.toLocation}${task.receivedQuantity ? ` · ${task.receivedQuantity} accepted` : ''}${task.rejectedQuantity ? ` · ${task.rejectedQuantity} quarantined` : ''}${task.operationSequence == null ? '' : ` · operation ${task.operationSequence}`}${dueDate ? ` · order due ${dueDate}` : ''}${materialBlocked ? ' · linked operation is currently blocked by material readiness' : otherBlocker ? ` · operation also has a ${otherBlocker} blocker` : ''}. Next: ${materialRecoveryAction(task)} This is a material workflow recommendation; it does not authorize a worker move or bypass any gate.`,
         orderNumber: task.orderNumber,

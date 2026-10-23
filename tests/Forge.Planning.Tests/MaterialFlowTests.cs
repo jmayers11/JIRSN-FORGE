@@ -54,7 +54,8 @@ public class MaterialFlowTests
 
         var lines = MaterialFlowLine.For(Order(("COIL", 150), ("TAPE", 8), ("PAINT", 5)), tasks, ledger, [], positions).ToDictionary(l => l.PartNumber);
         var coil = lines["COIL"];
-        Assert.Equal((150m, 120m, 110m, 65m, 40m, 30m), (coil.Required, coil.Requested, coil.Allocated, coil.Picked, coil.Delivered, coil.Issued));
+        // Allocated is fulfilled task coverage (40 received + 25 picked + 20 allocated), not the open request quantity.
+        Assert.Equal((150m, 120m, 85m, 65m, 40m, 30m), (coil.Required, coil.Requested, coil.Allocated, coil.Picked, coil.Delivered, coil.Issued));
         Assert.Equal(("SLIT-WC", 40m, 500m, MaterialFlowState.InWarehouse), (coil.WorkCenterCode, coil.AtPointOfUse, coil.Elsewhere, coil.State));
         Assert.Contains("not a shortage", coil.Explanation, StringComparison.Ordinal);
         Assert.Equal(MaterialFlowState.AtPointOfUse, lines["TAPE"].State);

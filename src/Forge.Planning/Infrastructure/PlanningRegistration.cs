@@ -21,6 +21,7 @@ public static class PlanningRegistration
         services.AddSingleton<DemandService>();
         services.AddSingleton<MaterialPlanningService>();
         services.AddSingleton<ReadinessService>();
+        services.AddSingleton<MaterialReceiptImpactPreviewService>();
         services.AddSingleton<IOperationStartCheck, OperationStartCheck>();
         services.AddSingleton<DocumentationService>();
         services.AddSingleton<ChangeImpactService>();

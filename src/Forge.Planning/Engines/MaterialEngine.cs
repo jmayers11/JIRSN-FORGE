@@ -10,8 +10,9 @@ public sealed record MaterialOrder(long OrderNumber, int Priority, DateOnly DueD
 /// <summary>Material already issued to an order (issues less returns).</summary>
 public sealed record MaterialIssued(long OrderNumber, string PartNumber, decimal Quantity);
 
-/// <summary>Material on its way: an approved purchase order line or an open production order for a component.</summary>
-public sealed record MaterialSupply(string Key, string PartNumber, decimal Quantity, DateOnly DueDate, string Description);
+/// <summary>Material on its way: an approved purchase order line, open production order, or order-pegged hypothetical receipt.</summary>
+/// <param name="OrderNumber">Null makes the supply shared by eligible demand; a value reserves it for that production order in the calculation.</param>
+public sealed record MaterialSupply(string Key, string PartNumber, decimal Quantity, DateOnly DueDate, string Description, long? OrderNumber = null);
 
 public sealed record MaterialStock(string PartNumber, decimal Available);
 
@@ -93,7 +94,8 @@ public sealed class MaterialEngine : IEngine<MaterialSnapshot, MaterialRequest, 
                 }
 
                 var need = remaining - fromStock;
-                foreach (var pool in supplies.Where(p => p.Supply.PartNumber == part))
+                foreach (var pool in supplies.Where(p => p.Supply.PartNumber == part
+                    && (p.Supply.OrderNumber is null || p.Supply.OrderNumber == order.OrderNumber)))
                 {
                     if (need <= 0)
                     {
