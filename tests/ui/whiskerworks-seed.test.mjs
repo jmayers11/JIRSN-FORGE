@@ -16,7 +16,9 @@ test('WhiskerWorks foundation matches its site, asset and roster targets', () =>
   assert.equal(nonMachineStations.length, 14);
   assert.equal(shifts.length, 3);
   assert.equal(qualifications.length, 23, 'keep named mandatory qualification gates plus Toolpath / First-Article Verification');
-  assert.equal(demoPrincipals.length, 5);
+  assert.equal(demoPrincipals.length, 6);
+  const attendanceImporter = demoPrincipals.find(principal => principal.subject === 'ww-demo-attendance-importer');
+  assert.deepEqual(attendanceImporter?.roles, ['AttendanceImporter'], 'the HRIS import principal receives only its narrow import permission');
 });
 
 test('the sixteen work centers occupy unique cells in the 4x4 staffing board', () => {

@@ -114,6 +114,7 @@ public static class Permissions
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
     public const string AttendanceClassificationReview = "workforce.attendance-classification.review";
+    public const string AttendanceImport = "workforce.attendance.import";
     public const string ShopFloorRecord = "execution.shopfloor.record";
     public const string ShopFloorRead = "execution.shopfloor.read";
     public const string ProductionReasonsManage = "execution.reasons.manage";
@@ -213,6 +214,7 @@ public static class Roles
     public const string SafetyEngineer = "SafetyEngineer";
     public const string SafetyApprover = "SafetyApprover";
     public const string HumanResources = "HumanResources";
+    public const string AttendanceImporter = "AttendanceImporter";
     public const string Supervisor = "Supervisor";
     public const string Planner = "Planner";
     public const string EngineeringApprover = "EngineeringApprover";
@@ -279,8 +281,9 @@ public static class Roles
 
     private static readonly Dictionary<string, string[]> Map = new(StringComparer.Ordinal)
     {
-        [SecurityAdministrator] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.AccessManage, Permissions.PeopleRead, Permissions.AuditRead, Permissions.BadgesManage, Permissions.ProgramsDirectory, Permissions.ResourcesManage, Permissions.ResourcesFloorMapManage, Permissions.ResourcesRead, Permissions.WorkforceManage, Permissions.WorkforcePhotosManage, Permissions.WorkforceRead, Permissions.AttendanceIntelligenceRead, Permissions.AttendanceScheduleManage, Permissions.AttendancePolicyManage, Permissions.AttendanceClassificationRecord, Permissions.AttendanceClassificationReview, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationReview, Permissions.WorkforceNominationRead, Permissions.WorkforceCompensationRead, Permissions.CompetencyMachineAuthorize],
-        [HumanResources] = [Permissions.PeopleRead, Permissions.WorkforceRead, Permissions.AttendanceIntelligenceRead, Permissions.AttendanceScheduleManage, Permissions.AttendancePolicyManage, Permissions.AttendanceClassificationRecord, Permissions.AttendanceClassificationReview, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationReview, Permissions.WorkforceNominationRead, Permissions.WorkforceCompensationRead],
+        [SecurityAdministrator] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.AccessManage, Permissions.PeopleRead, Permissions.AuditRead, Permissions.BadgesManage, Permissions.ProgramsDirectory, Permissions.ResourcesManage, Permissions.ResourcesFloorMapManage, Permissions.ResourcesRead, Permissions.WorkforceManage, Permissions.WorkforcePhotosManage, Permissions.WorkforceRead, Permissions.AttendanceIntelligenceRead, Permissions.AttendanceScheduleManage, Permissions.AttendancePolicyManage, Permissions.AttendanceClassificationRecord, Permissions.AttendanceClassificationReview, Permissions.AttendanceImport, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationReview, Permissions.WorkforceNominationRead, Permissions.WorkforceCompensationRead, Permissions.CompetencyMachineAuthorize],
+        [HumanResources] = [Permissions.PeopleRead, Permissions.WorkforceRead, Permissions.AttendanceIntelligenceRead, Permissions.AttendanceScheduleManage, Permissions.AttendancePolicyManage, Permissions.AttendanceClassificationRecord, Permissions.AttendanceClassificationReview, Permissions.AttendanceImport, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationReview, Permissions.WorkforceNominationRead, Permissions.WorkforceCompensationRead],
+        [AttendanceImporter] = [Permissions.AttendanceImport],
         [Auditor] = [Permissions.HoldsRead, Permissions.AuditRead, Permissions.PeopleRead, Permissions.ProjectsRead],
         [QmsAuthor] = [Permissions.QmsRead, Permissions.QmsManage, Permissions.EngineeringRead],
         [AuditPlanner] = [Permissions.AuditManage, Permissions.QualityRead, Permissions.QmsRead, Permissions.EngineeringRead, Permissions.CompetencyRead],
@@ -334,7 +337,11 @@ public static class Roles
     static Roles()
     {
         foreach (var role in Map.Keys.ToArray())
+        {
+            // Integration identities should receive only their explicitly mapped capabilities.
+            if (role == AttendanceImporter) continue;
             Map[role] = [.. Map[role], Permissions.NotificationsRead, Permissions.NotificationsAcknowledge, Permissions.DelegationPropose];
+        }
         Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.NotificationRulesManage];
         Map[Supervisor] = [.. Map[Supervisor], Permissions.NotificationRulesManage];
         Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.WorkAssignmentsManage];

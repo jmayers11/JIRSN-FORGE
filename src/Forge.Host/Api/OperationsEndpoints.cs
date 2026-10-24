@@ -55,6 +55,8 @@ public sealed record AttendancePolicyRequest(string PolicyCode, int Revision, Da
 public sealed record GenerateAttendanceScheduleRequest(DateTimeOffset From, DateTimeOffset Through, string? Reason);
 
 public sealed record AttendanceClassificationRequest(AttendanceEventKind Kind, DateTimeOffset? ObservedAt, string? ReasonCode, string? Reason);
+public sealed record AttendanceSourceImportRequest(Guid OpportunityId, AttendanceEventKind Kind, DateTimeOffset? ObservedAt,
+    AttendanceEventSource Source, string SourceRecordId, string? Reason);
 
 public sealed record AttendanceEventReviewRequest(AttendanceEventReviewState Decision, string? ReasonCode, string? Reason);
 
@@ -298,6 +300,8 @@ public static class OperationsEndpoints
         });
         api.MapPost("/attendance-schedule/generate", (HttpContext http, GenerateAttendanceScheduleRequest b, AttendanceScheduleService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.GenerateAsync(new GenerateAttendanceSchedule(b.From, b.Through), c, ct)));
+        api.MapPost("/attendance-intelligence/imports", (HttpContext http, AttendanceSourceImportRequest b, AttendanceIntelligenceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ImportSourceEventAsync(new ImportAttendanceSourceEvent(b.OpportunityId, b.Kind, b.ObservedAt, b.Source, b.SourceRecordId), c, ct)));
         api.MapPost("/attendance-policies", (HttpContext http, AttendancePolicyRequest b, AttendanceIntelligenceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.SetPolicyAsync(new SetAttendancePolicy(new AttendancePolicyVersion(b.PolicyCode, b.Revision, b.EffectiveFrom, b.EffectiveThrough,
                 b.GraceMinutes, b.IncludeCallOutsInArrivalDenominator)), c, ct)));

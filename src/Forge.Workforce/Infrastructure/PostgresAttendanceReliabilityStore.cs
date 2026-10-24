@@ -52,7 +52,7 @@ internal sealed class PostgresAttendanceReliabilityStore(PostgresUnitOfWork uow)
         var rows = new List<AttendanceIntelligenceEvent>();
         await using var cmd = uow.Command("""
             SELECT e.event_id, e.person_id, e.opportunity_id, e.kind, e.observed_at, e.review_state, e.source, e.recorded_at,
-                   e.supersedes_event_id, e.reason_code, e.recorded_by
+                   e.supersedes_event_id, e.reason_code, e.recorded_by, e.source_record_id
             FROM workforce.attendance_intelligence_event e
             JOIN workforce.attendance_opportunity o USING (opportunity_id, person_id)
             WHERE o.scheduled_start >= $1 AND o.scheduled_start < $2
@@ -67,7 +67,7 @@ internal sealed class PostgresAttendanceReliabilityStore(PostgresUnitOfWork uow)
     {
         await using var cmd = uow.Command("""
             SELECT event_id, person_id, opportunity_id, kind, observed_at, review_state, source, recorded_at,
-                   supersedes_event_id, reason_code, recorded_by
+                   supersedes_event_id, reason_code, recorded_by, source_record_id
             FROM workforce.attendance_intelligence_event WHERE event_id = $1
             """, eventId);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -84,6 +84,20 @@ internal sealed class PostgresAttendanceReliabilityStore(PostgresUnitOfWork uow)
             item.ReviewState.ToString(), item.Source.ToString(), item.RecordedAt, item.RecordedBy,
             (object?)item.SupersedesEventId ?? DBNull.Value, (object?)item.ReasonCode ?? DBNull.Value);
         await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<bool> InsertImportedAttendanceIntelligenceEventAsync(AttendanceIntelligenceEvent item, string sourceRecordId, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("""
+            INSERT INTO workforce.attendance_intelligence_event
+                (event_id, opportunity_id, person_id, kind, observed_at, review_state, source, recorded_at, recorded_by,
+                 supersedes_event_id, reason_code, source_record_id)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            ON CONFLICT (source, source_record_id) WHERE source_record_id IS NOT NULL DO NOTHING
+            """, item.EventId, item.OpportunityId, item.PersonId, item.Kind.ToString(), (object?)item.ObservedAt ?? DBNull.Value,
+            item.ReviewState.ToString(), item.Source.ToString(), item.RecordedAt, item.RecordedBy,
+            (object?)item.SupersedesEventId ?? DBNull.Value, (object?)item.ReasonCode ?? DBNull.Value, sourceRecordId);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
     public async Task<IReadOnlyList<AttendancePolicyVersion>> ListAttendancePoliciesAsync(CancellationToken ct)
@@ -119,5 +133,6 @@ internal sealed class PostgresAttendanceReliabilityStore(PostgresUnitOfWork uow)
         reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), Enum.Parse<AttendanceEventKind>(reader.GetString(3)),
         reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTimeOffset>(4), Enum.Parse<AttendanceEventReviewState>(reader.GetString(5)),
         Enum.Parse<AttendanceEventSource>(reader.GetString(6)), reader.GetFieldValue<DateTimeOffset>(7),
-        reader.IsDBNull(8) ? null : reader.GetGuid(8), reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetString(10));
+        reader.IsDBNull(8) ? null : reader.GetGuid(8), reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetString(10),
+        reader.IsDBNull(11) ? null : reader.GetString(11));
 }

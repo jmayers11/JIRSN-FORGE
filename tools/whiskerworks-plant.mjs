@@ -235,6 +235,7 @@ export const demoPrincipals = [
   { subject: 'ww-demo-supervisor', displayName: 'WhiskerWorks Demo Supervisor', roles: ['Supervisor'] },
   { subject: 'ww-demo-planner', displayName: 'WhiskerWorks Demo Planner', roles: ['Planner', 'ProgramManager'] },
   { subject: 'ww-demo-inventory', displayName: 'WhiskerWorks Demo Inventory Controller', roles: ['InventoryController'] },
+  { subject: 'ww-demo-attendance-importer', displayName: 'WhiskerWorks Demo Attendance Importer', roles: ['AttendanceImporter'] },
 ];
 
 export const productFamilies = [

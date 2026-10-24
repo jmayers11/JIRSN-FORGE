@@ -38,7 +38,8 @@ public sealed record AttendanceIntelligenceEvent(
     DateTimeOffset RecordedAt,
     Guid? SupersedesEventId = null,
     string? ReasonCode = null,
-    string RecordedBy = "");
+    string RecordedBy = "",
+    string? SourceRecordId = null);
 
 /// <summary>Effective-dated calculation policy. Each scheduled opportunity uses exactly one version.</summary>
 public sealed record AttendancePolicyVersion(
@@ -232,6 +233,7 @@ public interface IAttendanceReliabilityStore
     Task<IReadOnlyList<AttendanceIntelligenceEvent>> ListAttendanceIntelligenceEventsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct);
     Task<AttendanceIntelligenceEvent?> FindAttendanceIntelligenceEventAsync(Guid eventId, CancellationToken ct);
     Task InsertAttendanceIntelligenceEventAsync(AttendanceIntelligenceEvent item, CancellationToken ct);
+    Task<bool> InsertImportedAttendanceIntelligenceEventAsync(AttendanceIntelligenceEvent item, string sourceRecordId, CancellationToken ct);
     Task<IReadOnlyList<AttendancePolicyVersion>> ListAttendancePoliciesAsync(CancellationToken ct);
     Task<bool> InsertAttendancePolicyAsync(AttendancePolicyVersion policy, DateTimeOffset recordedAt, string actor, CancellationToken ct);
 }
@@ -240,6 +242,8 @@ public sealed record SetAttendancePolicy(AttendancePolicyVersion Policy);
 public sealed record RecordAttendanceClassification(Guid OpportunityId, AttendanceEventKind Kind, DateTimeOffset? ObservedAt, string? ReasonCode);
 public sealed record ReviewAttendanceIntelligenceEvent(Guid EventId, AttendanceEventReviewState Decision, string? ReasonCode);
 public sealed record CorrectAttendanceIntelligenceEvent(Guid EventId, AttendanceEventKind Kind, DateTimeOffset? ObservedAt, string? ReasonCode);
+public sealed record ImportAttendanceSourceEvent(Guid OpportunityId, AttendanceEventKind Kind, DateTimeOffset? ObservedAt,
+    AttendanceEventSource Source, string SourceRecordId);
 public sealed record AttendanceIntelligenceEventRecorded(Guid EventId, Guid OpportunityId, Guid PersonId, string Kind, string ReviewState, string Source) : IDomainEvent
 {
     public static string EventType => nameof(AttendanceIntelligenceEventRecorded);
@@ -250,6 +254,46 @@ public sealed record AttendanceIntelligenceEventRecorded(Guid EventId, Guid Oppo
 public sealed class AttendanceIntelligenceService(CommandPipeline pipeline)
 {
     private const string SourceContext = "Workforce";
+
+    public Task<CommandResult> ImportSourceEventAsync(ImportAttendanceSourceEvent c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        if (c.Source is not (AttendanceEventSource.Hris or AttendanceEventSource.Nexus))
+            throw new CommandRejectedException("invalid_attendance_source", "Only HRIS or Nexus may submit external attendance facts.");
+        if (c.Kind is AttendanceEventKind.ScheduleChange or AttendanceEventKind.ShiftCancelled)
+            throw new CommandRejectedException("invalid_attendance_import_kind", "Schedule changes and cancellations must use the attendance schedule workflow.");
+        var sourceRecordId = RequireSourceRecordId(c.SourceRecordId);
+        var spec = new CommandSpec(SourceContext, nameof(ImportAttendanceSourceEvent), Permissions.AttendanceImport,
+            ResourceRef.Of("AttendanceOpportunity", c.OpportunityId), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c with { SourceRecordId = sourceRecordId }, context, async (uow, now) =>
+        {
+            var store = uow.Store<IAttendanceReliabilityStore>();
+            var opportunity = (await store.ListAttendanceOpportunitiesAsync(now.AddDays(-90), now.AddDays(90), ct))
+                .SingleOrDefault(item => item.OpportunityId == c.OpportunityId)
+                ?? throw new CommandRejectedException("attendance_opportunity_not_found", "The scheduled attendance opportunity was not found.");
+            if (opportunity.State != AttendanceOpportunityState.Scheduled)
+                throw new CommandRejectedException("attendance_opportunity_cancelled", "External attendance cannot be imported for a cancelled schedule opportunity.");
+            if (c.Kind is AttendanceEventKind.Arrival or AttendanceEventKind.EarlyDeparture)
+            {
+                if (c.ObservedAt is not { } observedAt || observedAt < opportunity.ScheduledStart.AddHours(-4) || observedAt > opportunity.ScheduledEnd.AddHours(4))
+                    throw new CommandRejectedException("attendance_observation_outside_shift", "Arrival or departure time must be within four hours of the scheduled shift.");
+            }
+            if (c.Kind == AttendanceEventKind.NoShow
+                && (c.ObservedAt is not { } noShowAt || noShowAt < opportunity.ScheduledEnd || now < opportunity.ScheduledEnd))
+                throw new CommandRejectedException("shift_not_finished", "A no-show can be imported only after the scheduled shift has ended.");
+
+            var item = new AttendanceIntelligenceEvent(ForgeIds.New(pipeline.Time), opportunity.PersonId, opportunity.OpportunityId,
+                c.Kind, c.ObservedAt, AttendanceEventReviewState.PendingReview, c.Source, now,
+                ReasonCode: null, RecordedBy: context.Actor, SourceRecordId: sourceRecordId);
+            if (!await store.InsertImportedAttendanceIntelligenceEventAsync(item, sourceRecordId, ct))
+                throw new CommandRejectedException("attendance_source_record_duplicate", "This external attendance source record was already imported.");
+            return new CommandOutcome(CommandResult.Ok(item.EventId.ToString("D"), "External attendance fact imported and queued for independent review."),
+                [pipeline.Event(new AttendanceIntelligenceEventRecorded(item.EventId, item.OpportunityId, item.PersonId,
+                    item.Kind.ToString(), item.ReviewState.ToString(), item.Source.ToString()), context, SourceContext, "AttendanceEvent", item.EventId.ToString("D"))],
+                new AuditChange("AttendanceEvent", item.EventId.ToString("D"), null,
+                    CanonicalJson.Serialize(new { item.OpportunityId, item.Kind, item.ReviewState, item.Source })));
+        }, ct);
+    }
 
     public Task<CommandResult> SetPolicyAsync(SetAttendancePolicy c, CommandContext context, CancellationToken ct)
     {
@@ -355,4 +399,12 @@ public sealed class AttendanceIntelligenceService(CommandPipeline pipeline)
 
     private static string? SafeCode(string? value) => string.IsNullOrWhiteSpace(value) ? null
         : new string(value.Trim().Where(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_').Take(64).ToArray());
+
+    private static string RequireSourceRecordId(string? value)
+    {
+        var key = value?.Trim();
+        if (string.IsNullOrWhiteSpace(key) || key.Length > 160 || key.Any(char.IsControl))
+            throw new CommandRejectedException("invalid_attendance_source_record", "Provide an opaque source record identifier of at most 160 characters.");
+        return key;
+    }
 }
