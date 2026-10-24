@@ -3,9 +3,16 @@ import { esc, fmtNumber, errorBlock, emptyBlock } from '../ui.js';
 import { roleTitle } from '../app.js';
 import { appendPresence, appendDocumentTraining } from '../executable.js';
 import { appendWorkforceAdmin } from './workforce-admin.js';
-import { appendWorkforceIntelligence } from './workforce-intelligence.js';
+import { appendOwnAttendanceCorrections, appendWorkforceIntelligence } from './workforce-intelligence.js';
 
 export async function workforcePage(page, ctx) {
+  const permissions = new Set(ctx.me?.permissions ?? []);
+  if (permissions.has('workforce.attendance-correction.request')
+      && !permissions.has('workforce.read') && !permissions.has('workforce.manage')) {
+    page.innerHTML = '<div class="page-head"><div><h1>My Workforce</h1><div class="sub">Review your attendance records and request a correction when needed.</div></div></div>';
+    await appendOwnAttendanceCorrections(page, ctx.me);
+    return;
+  }
   const now = Date.now();
   const iso = ms => new Date(ms).toISOString();
   const [people, capacity] = await Promise.all([
@@ -33,6 +40,7 @@ export async function workforcePage(page, ctx) {
       </tbody></table>`}
     </section>`;
   await appendWorkforceIntelligence(page, ctx.me, ctx.query.get('personId'));
+  await appendOwnAttendanceCorrections(page, ctx.me);
   // V3.9: presence levels, and training on controlled documents.
   await appendPresence(page);
   await appendDocumentTraining(page, ctx.me);

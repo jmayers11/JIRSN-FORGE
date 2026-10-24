@@ -100,6 +100,55 @@ async function loadPersonOperationHistory(personId, activityResult, me, asOf) {
   return { rows, error: failed, omittedOrders: Math.max(0, orderNumbers.length - visibleOrders.length) };
 }
 
+function renderOwnAttendanceCorrections(eventsResult) {
+  const events = Array.isArray(eventsResult?.data) ? eventsResult.data : [];
+  const superseded = new Set(events.map(item => item.supersedesEventId).filter(Boolean));
+  const correctionKinds = ['Arrival', 'CallOut', 'NoShow', 'ApprovedPto', 'ProtectedLeave', 'ExcusedAbsence', 'EarlyDeparture'];
+  const rows = events.length ? events.map(item => {
+    const replaced = superseded.has(item.eventId);
+    const pending = item.reviewState === 'PendingReview';
+    return `<article class="workforce-intelligence-review-item" data-own-attendance-event="${escapeAttr(item.eventId)}"><div><b>${esc(item.kind)}</b><span>${esc(item.reviewState.replaceAll(/([a-z])([A-Z])/g, '$1 $2'))} · ${esc(item.source)} · recorded ${formatDate(item.recordedAt)} · ${item.observedAt ? `observed ${formatMoment(item.observedAt)}` : 'no observed time'}</span></div>
+      ${replaced ? '<p class="faint">A later correction or review superseded this entry.</p>' : pending ? '<p class="faint">This entry is awaiting independent review.</p>' : `<form class="workforce-intelligence-form" data-own-attendance-correction="${escapeAttr(item.eventId)}"><label>Correct classification<select class="input" name="kind">${correctionKinds.map(kind => `<option value="${kind}" ${kind === item.kind ? 'selected' : ''}>${kind}</option>`).join('')}</select></label><label>Observed at<input class="input" name="observedAt" type="datetime-local" value="${localDateTime(item.observedAt ?? item.recordedAt)}"></label><label>Why does this record need correction?<input class="input" name="reason" maxlength="240" required placeholder="Describe the source or time correction"></label><button class="btn small" type="submit">Request correction</button><span data-own-attendance-result aria-live="polite"></span></form>`}
+    </article>`;
+  }).join('') : '<p class="faint">No attendance records were found for your account in the past year.</p>';
+  return `<section class="panel workforce-intelligence-own-attendance"><header><h2>My attendance records</h2></header><p class="faint">Review records linked to your account. A correction request is appended to the record and sent to another authorized reviewer; it does not change the original entry.</p>${eventsResult?.error ? errorBlock(eventsResult.error, 'your attendance records') : rows}<div data-own-attendance-message aria-live="polite"></div></section>`;
+}
+
+export async function appendOwnAttendanceCorrections(page, me) {
+  if (!new Set(me?.permissions ?? []).has('workforce.attendance-correction.request')) return;
+  const now = new Date();
+  const from = new Date(now.getTime() - 366 * DAY);
+  const query = `from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(new Date(now.getTime() + DAY).toISOString())}`;
+  const readOwnEvents = () => tryGet(`/api/workforce/my-attendance-events?${query}`);
+  let result = await readOwnEvents();
+  page.innerHTML += renderOwnAttendanceCorrections(result);
+  page.addEventListener('submit', async event => {
+    const form = event.target.closest('[data-own-attendance-correction]');
+    if (!form) return;
+    event.preventDefault();
+    const eventId = form.dataset.ownAttendanceCorrection;
+    const kind = form.querySelector('[name="kind"]')?.value;
+    const observedAt = form.querySelector('[name="observedAt"]')?.value ?? '';
+    const reason = form.querySelector('[name="reason"]')?.value?.trim() ?? '';
+    const resultNode = form.querySelector('[data-own-attendance-result]');
+    const submit = form.querySelector('button[type="submit"]');
+    if (!reason) { if (resultNode) resultNode.textContent = 'Add a reason for the request.'; return; }
+    if (submit) submit.disabled = true;
+    if (resultNode) resultNode.textContent = 'Submitting for independent review…';
+    try {
+      await command(`/api/workforce/my-attendance-events/${encodeURIComponent(eventId)}/correction`, {
+        kind, observedAt: observedAt ? new Date(observedAt).toISOString() : null, reasonCode: 'employee-correction-request',
+      }, reason);
+      result = await readOwnEvents();
+      const section = page.querySelector('.workforce-intelligence-own-attendance');
+      if (section) section.outerHTML = renderOwnAttendanceCorrections(result);
+    } catch (error) {
+      if (submit) submit.disabled = false;
+      if (resultNode) resultNode.textContent = error?.message ?? 'The correction request could not be submitted.';
+    }
+  });
+}
+
 function attendancePeriodStart(period, now) {
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);

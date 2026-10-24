@@ -104,7 +104,7 @@ const NAV_ACCESS = {
   scenarios: ['planning.schedule.read', 'planning.readiness.read'], 'material-plan': ['planning.mrp.read', 'planning.demand.manage'],
   'work-centers': ['resources.read', 'planning.readiness.read', 'execution.shopfloor.read'], 'shop-floor': ['execution.shopfloor.read'],
   tools: ['resources.read', 'planning.readiness.read', 'execution.shopfloor.read'],
-  'plant-setup': ['resources.manage', 'resources.read'], workforce: ['workforce.read', 'workforce.manage'],
+  'plant-setup': ['resources.manage', 'resources.read'], workforce: ['workforce.read', 'workforce.manage', 'workforce.attendance-correction.request'],
   receiving: ['inventory.read', 'inventory.transact'],
   'safety-rules': ['safety.rules.read', 'safety.rules.draft', 'safety.rules.approve'],
   'shift-continuity': ['execution.shopfloor.read', 'workforce.read'], notifications: ['notifications.read'],

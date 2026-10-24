@@ -242,6 +242,7 @@ public sealed record SetAttendancePolicy(AttendancePolicyVersion Policy);
 public sealed record RecordAttendanceClassification(Guid OpportunityId, AttendanceEventKind Kind, DateTimeOffset? ObservedAt, string? ReasonCode);
 public sealed record ReviewAttendanceIntelligenceEvent(Guid EventId, AttendanceEventReviewState Decision, string? ReasonCode);
 public sealed record CorrectAttendanceIntelligenceEvent(Guid EventId, AttendanceEventKind Kind, DateTimeOffset? ObservedAt, string? ReasonCode);
+public sealed record RequestOwnAttendanceCorrection(Guid EventId, AttendanceEventKind Kind, DateTimeOffset? ObservedAt, string? ReasonCode);
 public sealed record ImportAttendanceSourceEvent(Guid OpportunityId, AttendanceEventKind Kind, DateTimeOffset? ObservedAt,
     AttendanceEventSource Source, string SourceRecordId);
 public sealed record AttendanceIntelligenceEventRecorded(Guid EventId, Guid OpportunityId, Guid PersonId, string Kind, string ReviewState, string Source) : IDomainEvent
@@ -392,6 +393,52 @@ public sealed class AttendanceIntelligenceService(CommandPipeline pipeline)
                 SupersedesEventId = original.EventId, ReasonCode = SafeCode(c.ReasonCode), RecordedBy = context.Actor };
             await store.InsertAttendanceIntelligenceEventAsync(correction, ct);
             return new CommandOutcome(CommandResult.Ok(correction.EventId.ToString("D"), "Correction submitted for independent review."),
+                [pipeline.Event(new AttendanceIntelligenceEventRecorded(correction.EventId, correction.OpportunityId, correction.PersonId, correction.Kind.ToString(), correction.ReviewState.ToString(), correction.Source.ToString()), context, SourceContext, "AttendanceEvent", correction.EventId.ToString("D"))],
+                new AuditChange("AttendanceEvent", correction.EventId.ToString("D"), original.Kind.ToString(), correction.Kind.ToString()));
+        }, ct);
+    }
+
+    public Task<CommandResult> RequestOwnCorrectionAsync(RequestOwnAttendanceCorrection c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var spec = new CommandSpec(SourceContext, nameof(RequestOwnAttendanceCorrection), Permissions.AttendanceCorrectionRequest,
+            ResourceRef.Of("AttendanceEvent", c.EventId), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var store = uow.Store<IAttendanceReliabilityStore>();
+            var original = await store.FindAttendanceIntelligenceEventAsync(c.EventId, ct)
+                ?? throw new CommandRejectedException("attendance_event_not_found", "Attendance event was not found.");
+            if (original.PersonId != context.Principal.PersonId.Value)
+                throw new CommandRejectedException("attendance_event_not_owned", "Employees can request a correction only for their own attendance records.");
+            if (original.RecordedAt < now.AddDays(-366) || original.RecordedAt > now.AddDays(1))
+                throw new CommandRejectedException("attendance_event_outside_correction_window", "Only attendance records from the past year can be corrected here.");
+            if (c.Kind is not (AttendanceEventKind.Arrival or AttendanceEventKind.CallOut or AttendanceEventKind.NoShow
+                or AttendanceEventKind.ApprovedPto or AttendanceEventKind.ProtectedLeave or AttendanceEventKind.ExcusedAbsence or AttendanceEventKind.EarlyDeparture))
+                throw new CommandRejectedException("invalid_attendance_classification", "Choose a valid attendance classification; schedule events cannot be corrected here.");
+
+            var from = now.AddDays(-366);
+            var through = now.AddDays(1);
+            var events = await store.ListAttendanceIntelligenceEventsAsync(from, through, ct);
+            if (events.Any(item => item.SupersedesEventId == original.EventId))
+                throw new CommandRejectedException("attendance_event_already_corrected", "This attendance record already has a correction request or a reviewed replacement.");
+
+            var opportunities = await store.ListAttendanceOpportunitiesAsync(from, through, ct);
+            var opportunity = opportunities.SingleOrDefault(item => item.OpportunityId == original.OpportunityId)
+                ?? throw new CommandRejectedException("attendance_opportunity_not_found", "The scheduled shift for this attendance record was not found in the correction period.");
+            if (c.Kind is AttendanceEventKind.Arrival or AttendanceEventKind.EarlyDeparture)
+            {
+                if (c.ObservedAt is not { } observedAt || observedAt < opportunity.ScheduledStart.AddHours(-4) || observedAt > opportunity.ScheduledEnd.AddHours(4))
+                    throw new CommandRejectedException("attendance_observation_outside_shift", "Arrival or departure time must be within four hours of the scheduled shift.");
+            }
+            if (c.Kind == AttendanceEventKind.NoShow
+                && (c.ObservedAt is not { } noShowAt || noShowAt < opportunity.ScheduledEnd || now < opportunity.ScheduledEnd))
+                throw new CommandRejectedException("shift_not_finished", "A no-show correction can be submitted only after the scheduled shift has ended.");
+
+            var correction = original with { EventId = ForgeIds.New(pipeline.Time), Kind = c.Kind, ObservedAt = c.ObservedAt,
+                ReviewState = AttendanceEventReviewState.PendingReview, Source = AttendanceEventSource.Manual, RecordedAt = now,
+                SupersedesEventId = original.EventId, ReasonCode = SafeCode(c.ReasonCode), RecordedBy = context.Actor };
+            await store.InsertAttendanceIntelligenceEventAsync(correction, ct);
+            return new CommandOutcome(CommandResult.Ok(correction.EventId.ToString("D"), "Correction request submitted for independent review."),
                 [pipeline.Event(new AttendanceIntelligenceEventRecorded(correction.EventId, correction.OpportunityId, correction.PersonId, correction.Kind.ToString(), correction.ReviewState.ToString(), correction.Source.ToString()), context, SourceContext, "AttendanceEvent", correction.EventId.ToString("D"))],
                 new AuditChange("AttendanceEvent", correction.EventId.ToString("D"), original.Kind.ToString(), correction.Kind.ToString()));
         }, ct);

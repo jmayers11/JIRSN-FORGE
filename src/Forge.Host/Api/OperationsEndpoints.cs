@@ -287,6 +287,22 @@ public static class OperationsEndpoints
             return await ReadStore<IAttendanceReliabilityStore>(http, Permissions.AttendanceScheduleManage,
                 async (store, ct) => await store.ListAttendanceOpportunitiesAsync(startsAt, endsAt, ct));
         });
+        api.MapGet("/my-attendance-events", async (HttpContext http, DateTimeOffset? from, DateTimeOffset? to, TimeProvider time) =>
+        {
+            var endsAt = to ?? time.GetUtcNow().AddDays(1);
+            var startsAt = from ?? endsAt.AddDays(-366);
+            if (endsAt <= startsAt || endsAt - startsAt > TimeSpan.FromDays(366))
+                return Results.BadRequest(new { error = "invalid_date_range", message = "Choose an event period up to one year long." });
+            return await Read(http, Permissions.AttendanceCorrectionRequest, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                return (await uow.Store<IAttendanceReliabilityStore>().ListAttendanceIntelligenceEventsAsync(startsAt, endsAt, http.RequestAborted))
+                    .Where(item => item.PersonId == principal.PersonId.Value)
+                    .OrderByDescending(item => item.RecordedAt)
+                    .Select(item => new { item.EventId, item.OpportunityId, item.Kind, item.ObservedAt, item.ReviewState, item.Source, item.RecordedAt, item.SupersedesEventId })
+                    .ToArray();
+            });
+        });
         api.MapGet("/attendance-intelligence/events", async (HttpContext http, DateTimeOffset? from, DateTimeOffset? to, TimeProvider time, CancellationToken _) =>
         {
             var endsAt = to ?? time.GetUtcNow().AddDays(1);
@@ -311,6 +327,8 @@ public static class OperationsEndpoints
             Command(http, b.Reason, c => s.ReviewEventAsync(new ReviewAttendanceIntelligenceEvent(eventId, b.Decision, b.ReasonCode), c, ct)));
         api.MapPost("/attendance-intelligence/events/{eventId:guid}/correction", (HttpContext http, Guid eventId, AttendanceEventCorrectionRequest b, AttendanceIntelligenceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CorrectEventAsync(new CorrectAttendanceIntelligenceEvent(eventId, b.Kind, b.ObservedAt, b.ReasonCode), c, ct)));
+        api.MapPost("/my-attendance-events/{eventId:guid}/correction", (HttpContext http, Guid eventId, AttendanceEventCorrectionRequest b, AttendanceIntelligenceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RequestOwnCorrectionAsync(new RequestOwnAttendanceCorrection(eventId, b.Kind, b.ObservedAt, b.ReasonCode), c, ct)));
         api.MapGet("/development-nominations", async (HttpContext http, Guid? personId, CancellationToken _) =>
             ReadStore<IWorkforceDevelopmentStore>(http, Permissions.WorkforceNominationRead, async (store, ct) =>
             {

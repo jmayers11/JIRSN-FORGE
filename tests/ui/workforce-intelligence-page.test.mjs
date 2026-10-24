@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendWorkforceIntelligence } from '../../src/Forge.Host/wwwroot/js/pages/workforce-intelligence.js';
+import { appendOwnAttendanceCorrections, appendWorkforceIntelligence } from '../../src/Forge.Host/wwwroot/js/pages/workforce-intelligence.js';
+import { workforcePage } from '../../src/Forge.Host/wwwroot/js/pages/workforce.js';
 import { installBrowser, response, fire, flush } from './browser-harness.mjs';
 
 test('Workforce Command Center uses recorded sources, exposes honest gaps, and keeps absence reasons private', async t => {
@@ -213,4 +214,65 @@ test('employee operation history respects separate shop-floor and order read per
   await appendWorkforceIntelligence(page, { permissions: ['execution.shopfloor.read'] }, worker.personId);
   assert.match(page.innerHTML, /Shop-floor and work-order read permissions are required/);
   assert.equal(orderDetailCalls, 0);
+});
+
+test('employee attendance view is self-scoped and correction requests remain pending for independent review', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div');
+  browser.document.body.append(page);
+  const eventId = 'arrival-event-1', correctionId = 'arrival-correction-1';
+  const original = { eventId, opportunityId: 'shift-1', kind: 'Arrival', observedAt: '2026-10-22T12:12:00Z', reviewState: 'Verified', source: 'Hris', recordedAt: '2026-10-22T12:13:00Z', supersedesEventId: null };
+  let eventReads = 0, correctionRequest;
+  globalThis.fetch = async (path, options = {}) => {
+    if (path.startsWith('/api/workforce/my-attendance-events?')) {
+      eventReads++;
+      return response(eventReads === 1 ? [original] : [
+        { ...original, reviewState: 'Superseded' },
+        { ...original, eventId: correctionId, observedAt: '2026-10-22T12:02:00Z', reviewState: 'PendingReview', source: 'Manual', recordedAt: new Date().toISOString(), supersedesEventId: eventId },
+      ]);
+    }
+    if (path === `/api/workforce/my-attendance-events/${eventId}/correction`) {
+      correctionRequest = JSON.parse(options.body);
+      return response({ succeeded: true, entityId: correctionId, message: 'Correction request submitted for independent review.' });
+    }
+    return response([]);
+  };
+
+  page.innerHTML = '<p>employee profile</p>';
+  await appendOwnAttendanceCorrections(page, { permissions: ['workforce.attendance-correction.request'] });
+  assert.match(page.innerHTML, /My attendance records/);
+  assert.match(page.innerHTML, /arrival-event-1/);
+  assert.match(page.innerHTML, /Request correction/);
+  assert.doesNotMatch(page.innerHTML, /other employee|sourceRecordId|reasonCode/);
+
+  const form = page.querySelector('[data-own-attendance-correction="arrival-event-1"]');
+  form.querySelector('[name="kind"]').value = 'Arrival';
+  form.querySelector('[name="observedAt"]').value = '2026-10-22T08:02';
+  form.querySelector('[name="reason"]').value = 'Time clock shows the employee arrived at 8:02';
+  fire(form, 'submit', { bubbles: true });
+  await flush(); await flush();
+
+  assert.deepEqual(correctionRequest, {
+    kind: 'Arrival', observedAt: new Date('2026-10-22T08:02').toISOString(), reasonCode: 'employee-correction-request',
+    reason: 'Time clock shows the employee arrived at 8:02',
+  });
+  assert.equal(eventReads, 2);
+  assert.match(page.innerHTML, /awaiting independent review/);
+  assert.doesNotMatch(page.innerHTML, /data-own-attendance-correction="arrival-correction-1"/);
+});
+
+test('employee-only Workforce route avoids loading the manager command center', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div');
+  browser.document.body.append(page);
+  const calls = [];
+  globalThis.fetch = async path => {
+    calls.push(path);
+    if (path.startsWith('/api/workforce/my-attendance-events?')) return response([]);
+    return response([]);
+  };
+
+  await workforcePage(page, { me: { permissions: ['workforce.attendance-correction.request'] }, query: { get: () => null } });
+  assert.match(page.innerHTML, /My Workforce/);
+  assert.match(page.innerHTML, /My attendance records/);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /^\/api\/workforce\/my-attendance-events\?/);
 });
