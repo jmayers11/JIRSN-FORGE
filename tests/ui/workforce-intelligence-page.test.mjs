@@ -86,6 +86,8 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   fire(shift, 'change');
   assert.equal(page.querySelector('[data-wi-filter="shift"]').value, 'NIGHT');
 
+  page.querySelector('[data-wi-filter="shift"]').value = '';
+  fire(page.querySelector('[data-wi-filter="shift"]'), 'change');
   const role = page.querySelector('[data-wi-filter="role"]');
   role.value = 'Machine Operator'; fire(role, 'change');
   assert.equal(page.querySelector('[data-wi-filter="role"]').value, 'Machine Operator');
