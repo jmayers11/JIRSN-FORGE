@@ -1645,3 +1645,7 @@ Validation: isolated Release solution build **0 warnings / 0 errors**; UI **356/
 ## Sprint 9 S09 engineering revision and document-training acceptance source — 2026-10-23
 
 Added `WhiskerWorksRevisionTrainingTests` to cover the exact Rev A-to-Rev B S09 path with isolated PostgreSQL setup: a PCB subassembly operation is linked to `WI-ELE-610`, an operator is documented as trained on A, an independent engineering change release moves the open order and its applicable documentation to B, the kiosk start is rejected with a Rev B training blocker and no labor entry, and the same operation starts after Rev B training is recorded. The commercial seed now links `WW-PCB-CTRL-200` Rev A operation 10 to the fictional WI reference. Scenario Center status text says this regression is authored and pending execution. No tests/builds were run, per the owner's instruction to defer testing until implementation is complete. S09 remains an open acceptance gate until this regression passes.
+
+## Sprint 9 S13 regression-status reconciliation — 2026-10-23
+
+Confirmed the source contains the twelve cross-qualification denial cases in `WhiskerWorksS13QualificationMatrixTests.cs`, plus separate CNC setup alternative and supervised-trainer regressions. Updated the Scenario Center and handoff to say these tests are authored and pending execution; prior wording could be read as evidence that they had already passed. No source behavior or tests were run in this documentation/status correction.
