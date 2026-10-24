@@ -356,6 +356,7 @@ async function main() {
     }
     if (currentRouting.size !== (route?.operations ?? []).length) throw new Error(`Revision A routing for ${item.partNumber} has an unexpected operation; no change was made.`);
     const documentRequirement = new Map([
+      ['WW-PCB-CTRL-200', ['WI-ELE-610', 10]],
       ['WW-CAT-1000', ['WI-CNC-101', 10]], ['WW-CAT-2000', ['WI-ELE-610', 20]],
       ['WW-CAT-3000', ['WI-ELE-610', 20]], ['WW-CAT-4000', ['WI-ASM-400', 40]],
       ['WW-CAT-5000', ['WI-ELE-610', 20]],

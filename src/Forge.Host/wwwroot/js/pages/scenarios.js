@@ -249,7 +249,8 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         }[scenario.code];
         const control = actionButton || (preview ? `<a class="btn small" data-ww-preview href="${esc(href)}">Open private preview form</a>` : workflow ? `<a class="btn small" href="${esc(workflow[0])}">${esc(workflow[1])}</a>` : '<span class="muted small">Source workflow required</span>');
         const modeLabel = scenario.code === 'WW-S12-SCAN-OUTAGE' ? 'Local browser fault rehearsal'
-          : scenario.code === 'WW-S13-IPC-MISMATCH' ? 'Automated regression coverage · live workflow'
+          : scenario.code === 'WW-S09-ECN-REV' ? 'Regression authored · revision training gate pending run'
+            : scenario.code === 'WW-S13-IPC-MISMATCH' ? 'Automated regression coverage · live workflow'
             : action ? 'Audited source command' : preview ? 'Private what-if preview' : workflow ? 'Existing workflow · manual evidence' : 'No executable control';
         const limits = {
           'WW-S02-ABSENCES': 'Creates three audited CallOut windows and leaves two scheduled workers unconfirmed. Any current presence is ended explicitly; no attendance or payroll record is fabricated.',
@@ -258,6 +259,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
           'WW-S06-MRB-HOLD': 'Moves the seeded motor lot to inventory Hold. It does not create an NCR or claim order pegging unless the source records show that impact.',
           'WW-S07-SHORTAGE': 'Changes the earliest visible approved, open WW-SENS-PROX-05 purchase line by four calendar days through Procurement. The audited date change records the source update; it does not fabricate supplier correspondence or guarantee an MRP shortage.',
           'WW-S08-LOT-SPLIT': 'Splits and reconciles the 250 m parent into 100/100/45 m child lots and 5 m scrap. Parent-hold propagation is not modeled by this control.',
+          'WW-S09-ECN-REV': 'An isolated PostgreSQL end-to-end regression has been authored for ECN-2026-04, WW-PCB-CTRL-200 and WI-ELE-610. It verifies an operator trained only on Rev A is blocked from starting Rev B, then verifies the start succeeds only after Rev B training is recorded. The regression is pending execution; this card opens the engineering workflow and does not create a change or training record.',
           'WW-S11-CAL-EXPIRED': 'Adds a dated calibration event to the existing gauges; readiness derives their expired status from the recorded due date. No site clock or calibration history is deleted.',
           'WW-S12-SCAN-OUTAGE': 'Arms a browser-session-only rehearsal. Simulated barcode-staging and label-print 503s issue no source-changing API command and contact no printer; typed demo entries stay in session storage, the terminal locks after each failure, and label output requires a supervisor observation signoff.',
           'WW-S13-IPC-MISMATCH': 'Twelve cross-qualification assignment denials are covered by the WhiskerWorks integration matrix; CNC setup alternatives and supervised trainer coverage have separate regressions. The Workforce link opens current qualification records. This card does not run or change employee assignments.',
