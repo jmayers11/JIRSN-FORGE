@@ -103,7 +103,7 @@ async function loadPersonOperationHistory(personId, activityResult, me, asOf) {
 function renderOwnAttendanceCorrections(eventsResult) {
   const events = Array.isArray(eventsResult?.data) ? eventsResult.data : [];
   const superseded = new Set(events.map(item => item.supersedesEventId).filter(Boolean));
-  const correctionKinds = ['Arrival', 'CallOut', 'NoShow', 'ApprovedPto', 'ProtectedLeave', 'ExcusedAbsence', 'EarlyDeparture'];
+  const correctionKinds = ['Arrival', 'CallOut', 'NoShow', 'ApprovedPto', 'ProtectedLeave', 'ExcusedAbsence', 'EarlyDeparture', 'ScheduleChange'];
   const rows = events.length ? events.map(item => {
     const replaced = superseded.has(item.eventId);
     const pending = item.reviewState === 'PendingReview';
@@ -269,11 +269,12 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
   const missedOpportunities = (sources.opportunities?.data ?? []).filter(item => item.state === 'Scheduled'
     && new Date(item.scheduledEnd).getTime() < Date.now() && !currentEventIds.has(item.opportunityId)).slice(0, 12);
   const eventKinds = ['CallOut', 'NoShow', 'ApprovedPto', 'ProtectedLeave', 'ExcusedAbsence', 'EarlyDeparture'];
+  const correctionKinds = [...eventKinds, 'Arrival', 'ScheduleChange'];
   const pendingRows = pendingEvents.map(item => {
     const name = sources.workerNames.get(item.personId) ?? `Worker ${item.personId.slice(0, 8)}`;
     return `<article class="workforce-intelligence-review-item"><div><b>${esc(name)} · ${esc(item.kind)}</b><span>${esc(item.source)} · recorded ${formatDate(item.recordedAt)} · ${item.observedAt ? `observed ${formatDate(item.observedAt)}` : 'time needs verification'}</span></div>
       <div class="workforce-intelligence-review-actions">${canReview ? `<button class="btn small primary" type="button" data-wi-review="${escapeAttr(item.eventId)}" data-decision="Verified">Verify</button><button class="btn small" type="button" data-wi-review="${escapeAttr(item.eventId)}" data-decision="Disputed">Dispute</button>` : ''}</div>
-      <details><summary>Submit a correction</summary><div class="workforce-intelligence-correction"><label>Correct classification<select class="input" data-wi-correct-kind="${escapeAttr(item.eventId)}">${eventKinds.map(kind => `<option value="${kind}" ${kind === item.kind ? 'selected' : ''}>${kind}</option>`).join('')}</select></label><label>Observed at<input class="input" type="datetime-local" data-wi-correct-time="${escapeAttr(item.eventId)}" value="${localDateTime(item.observedAt ?? item.recordedAt)}"></label><label>Audit reason<input class="input" data-wi-correct-reason="${escapeAttr(item.eventId)}" value="Correct source classification" maxlength="240"></label><button class="btn small" type="button" data-wi-correct="${escapeAttr(item.eventId)}">Submit correction</button></div></details>
+      <details><summary>Submit a correction</summary><div class="workforce-intelligence-correction"><label>Correct classification<select class="input" data-wi-correct-kind="${escapeAttr(item.eventId)}">${correctionKinds.map(kind => `<option value="${kind}" ${kind === item.kind ? 'selected' : ''}>${kind}</option>`).join('')}</select></label><label>Observed at<input class="input" type="datetime-local" data-wi-correct-time="${escapeAttr(item.eventId)}" value="${localDateTime(item.observedAt ?? item.recordedAt)}"></label><label>Audit reason<input class="input" data-wi-correct-reason="${escapeAttr(item.eventId)}" value="Correct source classification" maxlength="240"></label><button class="btn small" type="button" data-wi-correct="${escapeAttr(item.eventId)}">Submit correction</button></div></details>
     </article>`;
   }).join('');
   const nominationRows = (sources.nominations?.data ?? []).map(item => {

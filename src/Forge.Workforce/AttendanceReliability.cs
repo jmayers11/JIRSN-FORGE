@@ -186,7 +186,7 @@ public static class AttendanceReliabilityCalculator
                 continue;
             }
 
-            if (verified.Any(item => item.Kind == AttendanceEventKind.ShiftCancelled))
+            if (verified.Any(item => item.Kind is AttendanceEventKind.ScheduleChange or AttendanceEventKind.ShiftCancelled))
             {
                 excluded++;
                 continue;
@@ -386,8 +386,8 @@ public sealed class AttendanceIntelligenceService(CommandPipeline pipeline)
             var store = uow.Store<IAttendanceReliabilityStore>();
             var original = await store.FindAttendanceIntelligenceEventAsync(c.EventId, ct)
                 ?? throw new CommandRejectedException("attendance_event_not_found", "Attendance event was not found.");
-            if (c.Kind is AttendanceEventKind.ScheduleChange or AttendanceEventKind.ShiftCancelled)
-                throw new CommandRejectedException("invalid_attendance_classification", "Schedule events cannot be corrected through the attendance classification workflow.");
+            if (c.Kind == AttendanceEventKind.ShiftCancelled)
+                throw new CommandRejectedException("invalid_attendance_classification", "A shift cancellation must be recorded through the schedule workflow.");
             var correction = original with { EventId = ForgeIds.New(pipeline.Time), Kind = c.Kind, ObservedAt = c.ObservedAt,
                 ReviewState = AttendanceEventReviewState.PendingReview, Source = AttendanceEventSource.Manual, RecordedAt = now,
                 SupersedesEventId = original.EventId, ReasonCode = SafeCode(c.ReasonCode), RecordedBy = context.Actor };
@@ -413,8 +413,9 @@ public sealed class AttendanceIntelligenceService(CommandPipeline pipeline)
             if (original.RecordedAt < now.AddDays(-366) || original.RecordedAt > now.AddDays(1))
                 throw new CommandRejectedException("attendance_event_outside_correction_window", "Only attendance records from the past year can be corrected here.");
             if (c.Kind is not (AttendanceEventKind.Arrival or AttendanceEventKind.CallOut or AttendanceEventKind.NoShow
-                or AttendanceEventKind.ApprovedPto or AttendanceEventKind.ProtectedLeave or AttendanceEventKind.ExcusedAbsence or AttendanceEventKind.EarlyDeparture))
-                throw new CommandRejectedException("invalid_attendance_classification", "Choose a valid attendance classification; schedule events cannot be corrected here.");
+                or AttendanceEventKind.ApprovedPto or AttendanceEventKind.ProtectedLeave or AttendanceEventKind.ExcusedAbsence
+                or AttendanceEventKind.EarlyDeparture or AttendanceEventKind.ScheduleChange))
+                throw new CommandRejectedException("invalid_attendance_classification", "Choose a valid attendance classification; shift cancellations must use the schedule workflow.");
 
             var from = now.AddDays(-366);
             var through = now.AddDays(1);

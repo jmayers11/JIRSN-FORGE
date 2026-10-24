@@ -14,11 +14,25 @@ public sealed class AttendanceSelfCorrectionTests(PostgresFixture postgres)
         var employeeId = await plant.Person("s10-self-correction-employee", "Employee");
         var otherEmployeeId = await plant.Person("s10-other-correction-employee", "Employee");
         var reviewerId = await plant.Person("s10-self-correction-reviewer", "HumanResources");
+        var recorderId = await plant.Person("s10-self-correction-recorder", "HumanResources");
         var employee = plant.As("s10-self-correction-employee");
+        var otherEmployee = plant.As("s10-other-correction-employee");
         var reviewer = plant.As("s10-self-correction-reviewer");
+        var recorder = plant.As("s10-self-correction-recorder");
 
         await plant.Ok(plant.Engineer, $"/api/workforce/workers/{employeeId:D}", new { homeWorkCenterCode = "SLIT-WC" });
         await plant.Ok(plant.Engineer, $"/api/workforce/workers/{otherEmployeeId:D}", new { homeWorkCenterCode = "SLIT-WC" });
+        using (var workersResponse = await plant.Admin.GetAsync("/api/workforce/workers"))
+        {
+            var workersBody = await workersResponse.Content.ReadAsStringAsync();
+            Assert.True(workersResponse.IsSuccessStatusCode, workersBody);
+            foreach (var existingWorker in JsonDocument.Parse(workersBody).RootElement.EnumerateArray())
+            {
+                var personId = existingWorker.GetProperty("personId").GetGuid();
+                if (personId == employeeId || personId == otherEmployeeId) continue;
+                await plant.Ok(plant.Admin, $"/api/workforce/workers/{personId:D}/shift", new { shiftCode = (string?)null, reason = "Restrict isolated correction fixture to two employees" });
+            }
+        }
         await plant.Ok(plant.Engineer, "/api/resources/shifts", new
         {
             code = "S10-SELF-CORRECTION", siteCode = "PLANT1", name = "Self-correction acceptance fixture", start = "00:00:00",
@@ -48,17 +62,22 @@ public sealed class AttendanceSelfCorrectionTests(PostgresFixture postgres)
         var otherOpportunity = opportunities.Single(item => item.GetProperty("personId").GetGuid() == otherEmployeeId);
         var eventRange = $"from={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddDays(-2).ToString("O", CultureInfo.InvariantCulture))}&to={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddDays(1).ToString("O", CultureInfo.InvariantCulture))}";
         var employeeObservedAt = employeeOpportunity.GetProperty("scheduledStart").GetDateTimeOffset().AddMinutes(12);
-        var otherObservedAt = otherOpportunity.GetProperty("scheduledStart").GetDateTimeOffset().AddMinutes(15);
+        var otherObservedAt = otherOpportunity.GetProperty("scheduledEnd").GetDateTimeOffset().AddMinutes(5);
         var original = await plant.Ok(reviewer, $"/api/workforce/attendance-opportunities/{employeeOpportunity.GetProperty("opportunityId").GetGuid():D}/classifications", new
         {
             kind = "Arrival", observedAt = employeeObservedAt, reasonCode = "SOURCE_TIME_ENTRY", reason = "Record acceptance fixture arrival",
         });
-        var otherOriginal = await plant.Ok(reviewer, $"/api/workforce/attendance-opportunities/{otherOpportunity.GetProperty("opportunityId").GetGuid():D}/classifications", new
+        var otherOriginal = await plant.Ok(recorder, $"/api/workforce/attendance-opportunities/{otherOpportunity.GetProperty("opportunityId").GetGuid():D}/classifications", new
         {
-            kind = "Arrival", observedAt = otherObservedAt, reasonCode = "SOURCE_TIME_ENTRY", reason = "Record acceptance fixture arrival",
+            kind = "NoShow", observedAt = otherObservedAt, reasonCode = "SOURCE_TIME_ENTRY", reason = "Record acceptance fixture no-show",
         });
         var originalId = Guid.Parse(original.GetProperty("entityId").GetString()!);
         var otherOriginalId = Guid.Parse(otherOriginal.GetProperty("entityId").GetString()!);
+        var noShowReview = await plant.Ok(reviewer, $"/api/workforce/attendance-intelligence/events/{otherOriginalId:D}/review", new
+        {
+            decision = "Verified", reasonCode = "SOURCE_CHECKED", reason = "Independently verify the prior no-show classification",
+        });
+        var verifiedNoShowId = Guid.Parse(noShowReview.GetProperty("entityId").GetString()!);
 
         using (var mine = await employee.GetAsync($"/api/workforce/my-attendance-events?{eventRange}"))
         {
@@ -73,7 +92,7 @@ public sealed class AttendanceSelfCorrectionTests(PostgresFixture postgres)
         using (var allEvents = await employee.GetAsync($"/api/workforce/attendance-intelligence/events?{eventRange}"))
             Assert.Equal(System.Net.HttpStatusCode.Forbidden, allEvents.StatusCode);
 
-        using (var anotherPersonsRecord = await plant.Try(employee, $"/api/workforce/my-attendance-events/{otherOriginalId:D}/correction", new
+        using (var anotherPersonsRecord = await plant.Try(employee, $"/api/workforce/my-attendance-events/{verifiedNoShowId:D}/correction", new
         {
             kind = "Arrival", observedAt = otherObservedAt, reasonCode = "WRONG_RECORD", reason = "Attempt to change another employee's record",
         }))
@@ -115,6 +134,26 @@ public sealed class AttendanceSelfCorrectionTests(PostgresFixture postgres)
             .Single(item => item.GetProperty("eventId").GetGuid() == correctionId);
         Assert.Equal("Verified", reviewedCorrection.GetProperty("reviewState").GetString());
         Assert.Equal(originalId, reviewedCorrection.GetProperty("supersedesEventId").GetGuid());
+
+        var scheduleChange = await plant.Ok(otherEmployee, $"/api/workforce/my-attendance-events/{verifiedNoShowId:D}/correction", new
+        {
+            kind = "ScheduleChange", observedAt = (DateTimeOffset?)null, reasonCode = "APPROVED_SHIFT_CHANGE", reason = "The supervisor approved a shift schedule change before the absence",
+        });
+        var scheduleChangeId = Guid.Parse(scheduleChange.GetProperty("entityId").GetString()!);
+        await plant.Ok(reviewer, $"/api/workforce/attendance-intelligence/events/{scheduleChangeId:D}/review", new
+        {
+            decision = "Verified", reasonCode = "SCHEDULE_CONFIRMED", reason = "Confirm the approved schedule change against the shift record",
+        });
+        using var summaryResponse = await reviewer.GetAsync($"/api/workforce/attendance-intelligence?{range}");
+        var summaryBody = await summaryResponse.Content.ReadAsStringAsync();
+        Assert.True(summaryResponse.IsSuccessStatusCode, summaryBody);
+        var summary = JsonDocument.Parse(summaryBody).RootElement;
+        Assert.Equal(2, summary.GetProperty("scheduledOpportunities").GetInt32());
+        Assert.Equal(1, summary.GetProperty("eligibleArrivalOpportunities").GetInt32());
+        Assert.Equal(1, summary.GetProperty("onTimeArrivals").GetInt32());
+        Assert.Equal(0, summary.GetProperty("verifiedNoShows").GetInt32());
+        Assert.Equal(1, summary.GetProperty("excludedOpportunities").GetInt32());
         Assert.NotEqual(employeeId, reviewerId);
+        Assert.NotEqual(recorderId, reviewerId);
     }
 }
