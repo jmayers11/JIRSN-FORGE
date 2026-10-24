@@ -93,16 +93,20 @@ public sealed class V34Tests(PostgresFixture postgres)
         await plant.Ok(mo, $"{tasks}/{task}/pick", new { scannedLocation = "wh1", scannedLot = "F-1", quantity = 90m });
         Assert.Equal(150m, (await Get(mo, "/api/inventory/stock?part=FOIL-4")).EnumerateArray().Where(b => b.GetProperty("locationCode").GetString() == "WH1").Sum(b => b.GetProperty("quantity").GetDecimal()));
 
-        // Delivery is confirmed by scanning where it went, and moves the picked quantity in the ledger.
+        // Delivery is confirmed by scanning where it went; the picked quantity moves through In Transit custody and a different,
+        // authenticated worker receives it at the point of use (Sprint 10).
+        await plant.EnsureCustodyAsync();
         await Rejected(plant, mo, $"{tasks}/{task}/deliver", new { scannedLocation = "SL-SIDE" }, "scan_mismatch");
         await plant.Ok(mo, $"{tasks}/{task}/deliver", new { scannedLocation = "SL-STAGE" });
+        await plant.ReceiveAsync(task, "SL-STAGE", 90m);
         var moved = (await Get(mo, $"/api/inventory/transactions?part=FOIL-4")).EnumerateArray().First();
-        Assert.Equal(("Transfer", 90m, "WH1", "SL-STAGE", order), (moved.GetProperty("kind").GetString(), moved.GetProperty("quantity").GetDecimal(), moved.GetProperty("fromLocation").GetString(), moved.GetProperty("toLocation").GetString(), moved.GetProperty("orderNumber").GetInt64()));
+        Assert.Equal(("Transfer", 90m, SlittingPlant.Plant.TransitLocation, "SL-STAGE", order), (moved.GetProperty("kind").GetString(), moved.GetProperty("quantity").GetDecimal(), moved.GetProperty("fromLocation").GetString(), moved.GetProperty("toLocation").GetString(), moved.GetProperty("orderNumber").GetInt64()));
 
-        // Each state on its own: 100 requested and allocated, 90 picked and delivered, then 90 issued from staging.
+        // Each state on its own: 100 requested, 90 picked, delivered and received, then 90 issued from staging. Once the receiver settles the
+        // short task at 90, only those 90 remain allocated to it.
         await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = order, partNumber = "FOIL-4", quantity = 90m, locationCode = "SL-STAGE", lotNumber = "F-1" });
         flow = await Flow(mo, order);
-        Assert.Equal((100m, 100m, 100m, 90m, 90m, 90m), (flow.GetProperty("required").GetDecimal(), flow.GetProperty("requested").GetDecimal(), flow.GetProperty("allocated").GetDecimal(),
+        Assert.Equal((100m, 100m, 90m, 90m, 90m, 90m), (flow.GetProperty("required").GetDecimal(), flow.GetProperty("requested").GetDecimal(), flow.GetProperty("allocated").GetDecimal(),
             flow.GetProperty("picked").GetDecimal(), flow.GetProperty("delivered").GetDecimal(), flow.GetProperty("issued").GetDecimal()));
         Assert.Equal("InWarehouse", flow.GetProperty("state").GetString()); // 10 still to issue, 60 in the warehouse
 

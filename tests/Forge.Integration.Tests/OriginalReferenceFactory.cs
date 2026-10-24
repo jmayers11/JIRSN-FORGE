@@ -158,7 +158,9 @@ internal sealed class OriginalReferenceFactory
             factory.MaterialRequests.Add(task);
             await plant.Ok(stores, $"/api/inventory/tasks/{task}/allocate", new { fromLocation = "STORES", lotNumber = lot, reason = "BN allocate identified material" });
             await plant.Ok(stores, $"/api/inventory/tasks/{task}/pick", new { scannedLocation = "STORES", scannedLot = lot, quantity = required, reason = "BN scanned pick" });
+            await plant.EnsureCustodyAsync();
             await plant.Ok(stores, $"/api/inventory/tasks/{task}/deliver", new { scannedLocation = staging, reason = "BN scanned delivery" });
+            await plant.ReceiveAsync(task, staging, required);
             await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = order, partNumber = raw, quantity = required, locationCode = staging, lotNumber = lot, reason = "BN issue from point of use" });
             factory.Transformations.Add(Id(await plant.Ok(stores, "/api/inventory/transformations", new { orderNumber = order, operationSequence = 10, entries = new[] { new { role = "Consumed", partNumber = raw, lotNumber = lot, quantity = required } }, reason = "BN measured material consumption" })));
             factory.MaintenanceRecords.Add(Id(await plant.Ok(maintenance, "/api/maintenance/work-orders", new { machineCode = machine, title = "BN planned condition check " + suffix, dueDate = Day(now, 60), kind = "Inspection", reason = "BN future maintenance record" })));
@@ -177,6 +179,7 @@ internal sealed class OriginalReferenceFactory
         var siblingTask = Id(await plant.Ok(stores, "/api/inventory/tasks", new { kind = "Stage", orderNumber = factory.SiblingOrder, partNumber = FirstRaw, quantity = 100m, toLocation = "BN-STAGE-001", fromLocation = "STORES", lotNumber = "BN-LOT-001", reason = "BN sibling material request" }));
         await plant.Ok(stores, $"/api/inventory/tasks/{siblingTask}/pick", new { scannedLocation = "STORES", scannedLot = "BN-LOT-001", quantity = 100m, reason = "BN sibling scanned pick" });
         await plant.Ok(stores, $"/api/inventory/tasks/{siblingTask}/deliver", new { scannedLocation = "BN-STAGE-001", reason = "BN sibling scanned delivery" });
+        await plant.ReceiveAsync(siblingTask, "BN-STAGE-001", 100m);
         await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = factory.SiblingOrder, partNumber = FirstRaw, quantity = 100m, locationCode = "BN-STAGE-001", lotNumber = "BN-LOT-001", reason = "BN sibling issued material" });
         await plant.Ok(stores, "/api/inventory/transformations", new { orderNumber = factory.SiblingOrder, operationSequence = 10, entries = new[] { new { role = "Consumed", partNumber = FirstRaw, lotNumber = "BN-LOT-001", quantity = 100m } }, reason = "BN sibling measured consumption" });
         var deliveryDemand = Id(await plant.Ok(planner, "/api/planning/demand", new { partNumber = FirstPart, quantity = 2m, needDate = Day(now, 32), kind = "CustomerOrder", customer = "BN goal customer", reason = "BN linked delivery commitment" }));

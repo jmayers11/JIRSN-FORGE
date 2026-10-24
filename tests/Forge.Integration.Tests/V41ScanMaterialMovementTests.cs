@@ -154,9 +154,12 @@ public sealed class V41ScanMaterialMovementTests(PostgresFixture postgres)
         var custody = await JsonAsync(await flow.Terminal.GetAsync($"/api/inventory/tasks/{partialTask}/custody"));
         Assert.Contains(custody.EnumerateArray(), row => row.GetProperty("kind").GetString() == "RejectedAtReceipt" && row.GetProperty("quantity").GetDecimal() == 3m);
 
-        await flow.Plant.Ok(flow.Plant.Admin, $"/api/inventory/tasks/{partialTask}/return", new { quantity = 1m, locationCode = "STORES", reason = "Return one unused accepted unit through the authorized correction path" });
-        await flow.Plant.Ok(flow.Plant.Admin, $"/api/inventory/tasks/{partialTask}/reverse-receipt", new { quantity = 1m, locationCode = "SCAN-QUARANTINE", reason = "Correct one miscounted acceptance into controlled hold" });
-        settledTasks = await JsonAsync(await flow.Plant.Admin.GetAsync("/api/inventory/tasks?open=false"));
+        // Returns and receipt reversals are inventory-management corrections (Sprint 10 custody), not an administrator's.
+        await flow.Plant.Person("custody-manager", "InventoryController");
+        var manager = flow.Plant.As("custody-manager");
+        await flow.Plant.Ok(manager, $"/api/inventory/tasks/{partialTask}/return", new { quantity = 1m, locationCode = "STORES", reason = "Return one unused accepted unit through the authorized correction path" });
+        await flow.Plant.Ok(manager, $"/api/inventory/tasks/{partialTask}/reverse-receipt", new { quantity = 1m, locationCode = "SCAN-QUARANTINE", reason = "Correct one miscounted acceptance into controlled hold" });
+        settledTasks = await JsonAsync(await manager.GetAsync("/api/inventory/tasks?open=false"));
         partial = Assert.Single(settledTasks.EnumerateArray(), row => row.GetProperty("taskId").GetInt64() == partialTask);
         Assert.Equal((1m, 1m), (partial.GetProperty("returnedQuantity").GetDecimal(), partial.GetProperty("reversedQuantity").GetDecimal()));
     }

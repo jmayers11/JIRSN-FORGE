@@ -62,6 +62,41 @@ internal static class SlittingPlant
         }
 
         public Task Assign(string subject, object assignment) => Ok(Engineer, $"/api/workforce/workers/{People[subject]}/assignment", assignment);
+
+        /// <summary>The In Transit location every material dispatch now passes through (Sprint 10 verified custody).</summary>
+        public const string TransitLocation = "CUSTODY-TRANSIT";
+
+        private const string ReceiverBadge = "B-CUSTODY-RECEIVER";
+        private const string ReceiverPin = "73914628";
+        private bool custodyReady;
+
+        /// <summary>
+        /// Sets up two-step material custody once: an In Transit location, a clerk who may create it and confirm receipts, and a worker
+        /// with a badge and PIN who receives. The receiver is not marked present, so readiness and staffing counts are unaffected.
+        /// </summary>
+        public async Task EnsureCustodyAsync()
+        {
+            if (custodyReady)
+                return;
+            await Person("custody-clerk", "InventoryController", "MaterialHandler", "ShopFloorTerminal");
+            var clerk = As("custody-clerk");
+            await Ok(clerk, "/api/inventory/locations", new { code = TransitLocation, siteCode = "PLANT1", name = "Material handoff in transit", kind = "InTransit", nettable = false, reason = "Custody handoff" });
+            var receiver = await Person("custody-receiver");
+            await Ok(Engineer, $"/api/workforce/workers/{receiver}", new { homeWorkCenterCode = "SLIT-WC" });
+            await Ok(Admin, $"/api/workforce/people/{receiver}/badge", new { badge = ReceiverBadge });
+            await Ok(clerk, "/api/shopfloor/pin", new { badge = ReceiverBadge, newPin = ReceiverPin });
+            custodyReady = true;
+        }
+
+        /// <summary>A different, authenticated worker accepts a dispatched material task at its destination.</summary>
+        public async Task ReceiveAsync(long taskId, string location, decimal accepted)
+        {
+            await EnsureCustodyAsync();
+            await Ok(As("custody-clerk"), $"/api/inventory/tasks/{taskId}/receive", new
+            {
+                scannedLocation = location, badge = ReceiverBadge, pin = ReceiverPin, acceptedQuantity = accepted, rejectedQuantity = 0m, reason = "Receiver confirms the delivery",
+            });
+        }
     }
 
     public static async Task<Plant> BuildAsync(ForgeApp app, string timeZone = TestSite.TimeZone)

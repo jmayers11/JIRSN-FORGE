@@ -22,7 +22,8 @@ public sealed class V318Tests(PostgresFixture postgres)
     public async Task Shift_handoff_uses_live_records_review_and_acknowledgment_are_distinct_and_closeout_is_idempotently_unique()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
-        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
+        // The spring-DST case needs a site that observes DST; test sites default to UTC.
+        var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app, "America/New_York");
         await plant.Ok(plant.Engineer, "/api/resources/shifts", new { code = "ALL", siteCode = "PLANT1", name = "All day", start = "00:00:00", durationMinutes = 1440, days = new[] { 1, 2, 3, 4, 5, 6, 7 } });
         await plant.Ok(plant.Engineer, "/api/resources/work-centers/SLIT-WC/shifts", new { shiftCode = "ALL" });
         await plant.Ok(plant.Engineer, "/api/resources/work-centers/PAINT-WC/shifts", new { shiftCode = "ALL" });
@@ -120,7 +121,7 @@ public sealed class V318Tests(PostgresFixture postgres)
             Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         }
 
-        var actionAfter = (await reviewer.GetFromJsonAsync<JsonElement[]>($"/api/execution/shifts/handoffs/{handoffId}/actions"))!.Single();
+        var actionAfter = (await reviewer.GetFromJsonAsync<JsonElement[]>($"/api/execution/shifts/handoffs/{handoffId}/actions"))!.Single(action => action.GetProperty("actionId").GetInt64() == actionId);
         Assert.Equal("Completed", actionAfter.GetProperty("status").GetString());
         Assert.True(actionAfter.GetProperty("completedAt").GetDateTimeOffset() >= actionAfter.GetProperty("acknowledgedAt").GetDateTimeOffset());
         Assert.Equal(Until.AddHours(2), actionAfter.GetProperty("dueAt").GetDateTimeOffset());

@@ -200,6 +200,7 @@ public sealed class V41MaterialIdentificationTests(PostgresFixture postgres)
             Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
             Assert.Equal(acceptedBody, await restored.Content.ReadAsStringAsync());
         }
+        await plant.EnsureCustodyAsync();
         await plant.Ok(handler, $"/api/inventory/tasks/{task}/deliver", new { scannedLocation = "IDENT-SIDE" });
         await using var connection = await app.Services.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync();
         await using var transaction = new NpgsqlCommand("SELECT count(*), sum(quantity) FROM inventory.transaction WHERE order_number=$1 AND kind='Transfer'", connection);
