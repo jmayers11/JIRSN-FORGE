@@ -1,0 +1,626 @@
+# JIRSN Forge — Sprint 10 Implementation Specification
+## Training, Performance, Attendance, Shop-Floor Material Control & Workforce Intelligence
+
+**Status:** Planned — begin only after Sprint 9 is complete and its changes have been merged and regression-tested.  
+**Demonstration environment:** WhiskerWorks Precision Manufacturing (entirely fictional).  
+**Implementation principle:** Extend existing Forge workforce, training, production, MRP, quality, safety, scheduling, work-order, and audit modules. Do not build competing databases or schedulers.
+
+## 1. Sprint goal
+Give supervisors one evidence-based view of operator qualifications, performance, attendance, training needs, and advancement opportunities while using the same verified records to improve work-order execution, capacity planning, MRP feasibility, and staffing recovery. Support employee development, not automatic personnel judgments.
+
+### Outcomes
+1. A responsive **Training & Performance Command Center** within Workforce, with a daily actionable `!` alert.
+2. Operator development profiles with traceable, contextualized evidence.
+3. Target-versus-actual labor tracking by work order and operation.
+4. Qualification-aware planning, dispatch, and training-capacity forecasts.
+5. Quality- and safety-aware training recommendations.
+6. Configurable attendance windows and transparent calculations.
+7. Documented nominations for advanced training, promotion readiness, and compensation *consideration*; human approval required.
+8. Standalone Forge employee management, with optional Nexus or third-party HR/timeclock integration.
+9. Operator scrap reporting, stockroom material requests (manual and automated), work-order material fulfillment, and configurable planner notifications.
+10. Feed material shortages, scrap, and replenishment events into the same production and workforce recovery recommendations.
+
+## 2. Architecture discovery and guardrails
+Before coding, inspect current entities, migrations, APIs, UI routes, permission models, audit logs, labor standards, work-order operations, attendance integrations, quality records, MRB, qualification records, and planning engine. Produce a gap analysis and migration plan. Preserve existing Forge data and Sprint 9 functionality. Reuse canonical employee IDs, work-center IDs, work-order IDs, operation IDs, machine IDs, and qualification IDs. Use feature flags and additive migrations where feasible. No destructive seed resets on real tenants. Separate demonstration data from production data.
+
+**Data ownership:** Forge owns manufacturing qualifications, work assignments, operation labor, and production-specific assessments. Nexus or external HRIS may provide identity, employment status, schedules, and attendance events, but Forge must operate independently. Keep the employee entity separate from application login identities. Never overwrite a verified Forge qualification solely from an HR import.
+
+## 3. Supervisor Training & Performance Command Center
+### Dashboard
+- Summary cards: current qualifications, expiring within configurable 30/60/90-day windows, expired, uncovered machine/shift capabilities, pending nominations, required safety training, and upcoming production bottlenecks.
+- Daily `!` alert on Workforce home: approved PTO coverage risks, unexpected callouts/no-shows, training expirations, safety/authorization blocks, and critical upcoming capacity gaps; deduplicate and prioritize by urgency.
+- Filters: plant, shift, department, work center, role, machine, training type, review period, and status.
+- Employee roster and drill-down: qualification matrix, development pathway, training due dates, performance trends, contextualized efficiency, first-pass yield, safety authorization status, attendance breakdown, and documented supervisor observations.
+- Supervisor actions: nominate, assign training, schedule assessment, request approval, view what-if plan, export review packet, and acknowledge alerts.
+- Mobile/tablet-first design, large touch targets, clear status labels (not color alone), role-limited visibility, minimal scrolling.
+
+### Qualification model
+Store training course completion separately from practical competency assessment and **machine-specific authorization**. Record trainer/assessor, evidence, version, issue date, review/expiry rule, restrictions, and approval. Model CNC operator versus setup/programming versus maintenance permissions distinctly. Include forklift, LOTO, guarding, inspection equipment, electrical test authorization, and any two-person operation rules. Include IPC-A-610, IPC/WHMA-A-620, and IPC J-STD-001 for appropriate electrical/electronics roles. Do not assume a universal expiry period for IPC or other credentials: configurable based on applicable scheme, employer requirements, and evidence. Expired or missing mandatory authorization is a hard block for independent assignment.
+
+## 4. Work-order target and actual labor hours
+### Data capture
+At work-order **operation** level capture planned setup hours, planned run hours per unit/batch, planned crew size, target good quantity, actual setup/run/inspection/rework hours, employee time entries, machine time, downtime reasons, training/coaching time, material wait, scrap and rework quantities, and approvals/corrections. Support simultaneous crew members, split shifts, partial completions, and rework/MRB-added operations. Avoid double-counting shared time. Require reasoned correction history and immutable audit events.
+
+### Measures
+- **Earned standard hours** = approved standard labor hours attributable to accepted output, with setup allocation defined consistently.
+- **Labor efficiency (%)** = earned standard hours / actual direct labor hours × 100, when denominator > 0 and data is sufficiently complete.
+- **Schedule variance** = actual hours − planned hours; distinguish setup, run, rework, and downtime.
+- **First-pass yield** = units passing the defined first inspection without rework / units first inspected × 100, using a documented denominator.
+- **Quality trends** = verified defects, severity and attribution confidence, rework and scrap trends, adjusted for process, part complexity, batch mix, machine condition, and inherited defects.
+
+Show **N/A / insufficient evidence** instead of a misleading score when standards or data are missing. Report both raw and contextualized metrics; do not silently remove unfavorable events. Supervisors must be able to see the source operation, time record, quality event, and adjustments behind each measure. Review standards periodically; a poorly estimated target must not become an employee penalty.
+
+## 5. Attendance and reliability analytics
+### Event model
+Support scheduled shifts, scheduled start/end, grace policy, clock events, supervisor-verified arrival, approved PTO, approved leave, protected leave, callout (with timestamp), late arrival, early departure, no-show, schedule changes, excused/unexcused classifications, and disputed/corrected events. Source provenance: manual, Nexus, timeclock, or HRIS. Keep event classification separate from raw timestamps.
+
+### Configurable review periods
+- Default calendar quarter (Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec), with selectable monthly, rolling 90-day, annual, or supervisor/HR-configured review window.
+- A new quarter starts a new period's metrics, but **does not delete historical events**; historical periods remain auditable and viewable with authorization.
+- Apply policies prospectively with effective dates; preserve prior calculation versions for reproducibility.
+
+### Attendance calculations
+- **On-time arrival percentage** = on-time arrivals / eligible scheduled arrival opportunities × 100.
+- Eligible opportunities exclude approved PTO and any protected/excused absence categories that must not count negatively under applicable policy or law; exclude canceled shifts and days without an arrival obligation.
+- Track callouts, unexcused late arrivals, and no-shows **as separate metrics**, with both counts and eligible-shift denominators; do not equate a properly reported absence with a no-show.
+- Do not infer misconduct from missing punches; mark for review until validated.
+- Show each denominator and excluded-event count in the UI, including a plain-language calculation explanation.
+- Allow configurable grace windows and documented shift exceptions, subject to HR/legal review. For attendance-related employment decisions, do not penalize legally protected leave or accommodation-related absences; rules vary by jurisdiction and employment context.
+- Permit employee/supervisor correction requests, reason codes, approvals, and appeal/review records.
+
+**Example (fictional):** 60 scheduled shifts, 4 approved PTO days, 1 other protected leave day, 55 eligible arrival opportunities, 53 on-time arrivals: **96.36% on-time**. The 5 excluded days are not counted as late or absent. If two unexcused late arrivals are verified, display them separately. Do not make a single attendance percentage a disciplinary decision.
+
+## 6. Development recommendations and nominations
+### Recommendations
+Use verified prerequisites, practical assessments, machine authorizations, demonstrated competencies, employee interest, supervisor observations, cross-training demand, upcoming order load, single-point-of-failure coverage, QA trends, and contextualized operation performance to propose:
+- Refresher training or re-assessment where supported by evidence.
+- Cross-training to relieve upcoming production bottlenecks.
+- Advanced CNC setup/programming or trainer pathways.
+- IPC-related assembly/inspection development, where role-relevant.
+- Nomination for advanced training, lead responsibilities, or promotion-readiness review.
+- Evidence packets for **raise consideration**, not automatic pay decisions.
+
+Each recommendation must show **why**, supporting record links, confidence/data gaps, prerequisite checklist, expected plant benefit, time/cost estimate where known, and alternative paths. Do not interpret reported safety incidents, disability, protected leave, or unverified quality allegations as simple negative employee scores. Safety eligibility is a hard constraint; use objective authorization status and documented remedial assessments. Quality recommendations should first consider process, equipment, material, and training causes rather than assuming operator fault.
+
+### Nominations workflow
+Draft → Submitted → Manager/Training/HR Review → Approved/Declined/Deferred → Training Scheduled → Completed → Practical Assessment → Authorization (if applicable). Record reasons, evidence, approvers, dates, costs, and follow-up. Promotion/raise recommendations are **advisory**, use transparent policy criteria, and require appropriate human decision-makers and fair-review processes. Provide employee access to appropriate personal records and a correction route. Avoid a hidden composite 'worth' score or automated adverse employment decisions.
+
+## 7. Integration with production planning, MRP, and work orders
+- **Finite-capacity planning:** available qualified labor by machine, shift, work center, and operation; subtract PTO, confirmed callouts, training sessions, and other unavailable time; account for minimum crew and safety constraints.
+- **MRP:** show material readiness and qualified labor feasibility as distinct dimensions. Avoid calling a labor-shortage warning a traditional material netting calculation; feed capacity constraints to scheduling and release checks.
+- **Work-order release/dispatch:** block assignment where mandatory training or authorization is absent, expired, or restricted; expose reasons and valid alternatives. Capture time and quality evidence on actual operations.
+- **MRB/rework:** added operations and materials must update training requirements, labor standards, capacity, cost, and genealogy; preserve original disposition and approvals.
+- **QA:** aggregate defect and rework signals with process attribution and minimum sample-size thresholds; feed improvement opportunities into training review.
+- **Safety:** equipment readiness, machine authorization, LOTO, two-person rules, and approved restrictions must be checked before recommending reassignment.
+- **Workforce Intelligence:** PTO/callout/no-show recovery evaluates safe qualified alternatives, source-center disruption, downstream impact, and multi-step moves; supervisors review what-if results before commit.
+- **Training forecast:** compare upcoming planned work with projected qualification coverage and trainer capacity; recommend training windows that minimize disruption.
+
+## 8. Access control, privacy, fairness, and auditability
+Define distinct permissions for operator (own records where permitted), supervisor (assigned team), trainer/assessor, quality, safety, HR, production planner, and system admin. Keep compensation discussions, sensitive leave classifications, and personal attendance details in restricted views; daily production alerts should show staffing impact without private leave reasons. Use least-privilege access, tenant isolation, audit trails, retention policies, and controlled exports. Maintain data minimization for medical/protected leave data. Provide documented human review and correction paths, configurable policy, and fairness testing across work centers/shifts/job types. Do not automatically discipline, deny promotion, or set pay using model recommendations.
+
+## 9. Data entities / contracts (adapt to existing schema)
+- `training_requirements`, `training_events`, `competency_assessments`, `machine_authorizations`, `qualification_rules`
+- `employee_development_profiles`, `training_nominations`, `nomination_reviews`, `training_plans`
+- `labor_standards`, `operation_labor_entries`, `labor_variance_reasons`, `operation_quality_metrics`
+- `shift_schedules`, `attendance_events`, `attendance_classifications`, `attendance_policy_versions`, `attendance_period_summaries`, `attendance_corrections`
+- `workforce_recommendations`, `recommendation_evidence`, `what_if_scenarios`, `recommendation_approvals`
+
+Treat these as conceptual entities, **not instructions to create duplicate tables**. Integrate with canonical existing models and APIs. Use stable identifiers, effective dates, provenance, revision/version fields, created/updated timestamps, and role-scoped audit events. Use transactional/idempotent imports and documented conflict-resolution precedence.
+
+## 10. User stories
+1. As a supervisor, I see an `!` warning before a shift when tomorrow's PTO will leave CNC-04 without an authorized setup operator.
+2. As a supervisor, I see three ranked qualified replacements and their predicted impact on source work centers, with no unsafe moves.
+3. As a supervisor, I open an operator's profile and verify their actual versus standard hours by operation, with downtime context.
+4. As a quality lead, I review an increase in solder rework without automatically attributing it to an employee.
+5. As a training coordinator, I see upcoming qualification expirations and approve nominations with evidence.
+6. As an HR-authorized reviewer, I see a quarter's on-time percentage and its eligible-shift denominator, with approved PTO excluded.
+7. As an employee, I can request correction of an incorrectly recorded late arrival.
+8. As a planner, I see that the next week's orders are materially feasible but constrained by qualified CNC setup coverage.
+9. As a manager, I can review a promotion or raise evidence packet without an automatic decision or hidden composite score.
+10. As a Forge-only customer, I can create employees and record attendance without purchasing Nexus.
+
+## 11. WhiskerWorks fictional seed scenarios
+Seed at least 60 fictional workers across shifts, with diverse role qualifications and credible training/attendance/performance histories. Include:
+1. CNC setup specialist on approved PTO causing a next-shift coverage gap.
+2. Unexpected callout triggering a same-day qualified reassignment proposal.
+3. No-show discovered after shift start; distinguish from reported callout.
+4. A two-person machine that cannot run after one operator is reassigned.
+5. CNC qualification expired yesterday; automatic dispatch block.
+6. Operator trained on CNC-01 but not authorized on CNC-03.
+7. Electronics operator with current J-STD-001 and pending machine-specific practical authorization.
+8. IPC-A-610 inspection competency due for reassessment under the configured company rule.
+9. IPC/WHMA-A-620 harness operation with a documented quality trend and equipment/material confounder.
+10. Employee with strong efficiency but an inaccurate labor standard flagged for review.
+11. Employee with lower efficiency due to documented machine downtime, not automatically penalized.
+12. Employee with advanced-training prerequisites met and future bottleneck coverage value.
+13. Multi-person reassignment that resolves CNC shortage without destabilizing Packaging.
+14. Rework order adds soldering and test operations with new qualifications and hours.
+15. 60-shift quarter with 4 PTO days, 1 protected leave day, and 53 of 55 eligible arrivals on time.
+16. Attendance correction changes a previously classified no-show to an approved schedule change.
+17. Quarter rollover resets displayed period metrics but retains prior history.
+18. New attendance policy effective next quarter does not rewrite historical metrics.
+19. Employee lacking enough data receives 'insufficient evidence' rather than a ranking.
+20. Promotion nomination packet with verifiable records and manager approval, without automatic pay action.
+21. Nexus disconnected: Forge-only employee/attendance workflow still functions.
+22. Cross-tenant and role-permission tests protect sensitive personnel records.
+
+## Sprint 10 extension — Shop-Floor Scrap, Material Requests & Planner Notifications
+
+**Scope:** This extension is part of Sprint 10, not a separate future sprint. Build on the existing Inventory 2.0, MRB, work-order, operation tracking, warehouse, notification, planning, and Workforce Intelligence services. If those modules are unfinished, expose dependencies explicitly and implement compatible vertical slices rather than duplicate them.
+
+### A. Operator-facing shop-floor actions
+Provide large touch-friendly controls from an active work order and operation: **Report Scrap**, **Request Parts**, **View Request Status**, and **Report Quality Issue**. Allow authorized employees to identify themselves through the existing shop-floor session/badge mechanism without assuming a personal application account. Prepopulate work order, operation, part, revision, work center, and relevant lot/serial context where possible. Support barcode scanning, quantity/unit-of-measure validation, attachments/photos if supported, and offline-safe draft/retry behavior without duplicate posting.
+
+### B. Scrap and suspected nonconformance reporting
+- Record scrap or suspected nonconformance against work order **and individual operation**, employee/team, machine, lot/serial, quantity, reason code, timestamp, and optional evidence.
+- Distinguish **reported suspect material**, **quarantined material**, **approved scrap**, **reworkable material**, and **actual inventory scrap transactions**. Operator reporting must not silently finalize MRB disposition or irreversibly deduct stock.
+- Support raw-material scrap, component scrap, WIP/assembly scrap, finished-goods scrap, setup scrap, and rework loss; prevent double counting of quantity, cost, and labor.
+- Route to quality/MRB review where required. Only authorized disposition can release, rework, return, or scrap held material; ensure hold restrictions apply to allocation, picking, issuing, and shipping.
+- Reconcile accepted output, rejected quantity, work-order completion, lot genealogy, material consumption, variance, labor efficiency context, costs, replacement demand, and planning impacts.
+- Offer **Request Replacement Material** directly from the scrap event, prefilled and linked to its source, while avoiding duplicate demands if replacement is already requested/reserved.
+- Keep immutable event history and authorized correction/reversal transactions; do not delete original evidence.
+
+### C. Material requests from work orders and from operators
+- **Work-order-generated:** create requests from approved BOM/routing demand, shortages, staged/issued deficits, approved MRB-added components, and replacement needs. Respect existing reservations, allocated stock, open requests, issued quantity, unit conversions, and revision/lot restrictions.
+- **Operator-initiated:** request a part from an active operation or standalone shop-floor request. Require reason, quantity, destination work center, requested-by, and linked work order where applicable. Standalone requests require an approved charge destination/cost center or follow-up linkage.
+- Permit controlled non-BOM or additional-material requests with justification and configurable planner/engineering/quality approval; do not silently alter released BOMs or work orders.
+- Allow partial fulfillment, backorder, substitutes/alternates only when approved, multiple lots/bins, request cancellation, and priority changes with audit history.
+- Suggested lifecycle: **Draft → Submitted → Validated/Approval Needed → Queued → Reserved → Picking → Delivered → Received/Issued → Closed**; include **Rejected, Cancelled, Partially Filled, Backordered, and Exception** states. Warehouse picking, reservation, and issue must be separate stock transactions; do not deduct inventory merely on request submission.
+- Provide a **Stockroom Fulfillment Queue** filtered by urgency, location, work center, due time, and shortage. Show available-to-promise, lot status, bin, reservation, picker, and fulfillment timestamps. Require recipient acknowledgement when configured.
+- Protect against double-issue, duplicate requests, race conditions, negative stock where prohibited, cross-tenant access, and conflicting lot/serial holds.
+
+### D. Planner, stockroom, and quality notifications
+Add configurable **Notification Rules & Escalations** with in-app and email delivery, per plant/work center/event/severity/role, optional individual recipients, immediate vs digest, quiet hours where appropriate, escalation thresholds, and per-user preferences consistent with permissions.
+
+Events include: scrap reported; MRB disposition approved; replacement requested; manual part request submitted; stockroom request awaiting approval; request fulfilled; backorder/shortage; material cannot be sourced; urgent order jeopardized; overdue unfilled request; repeated scrap threshold exceeded. Default routing should favor stockroom for routine picks, planner for material/production impacts, and quality for suspect material, while permitting site configuration.
+
+Use existing Forge email infrastructure and a durable outbox/queue with retries, idempotency, deduplication, rate limits, delivery status, and audit logs. Do not send duplicate emails for the same state transition. Minimize sensitive employee information in emails; include deep links to permission-checked records. Email failure must never roll back a valid scrap report or inventory transaction. Support test mode and verified sender configuration.
+
+### E. MRP, work-order operations, and workforce intelligence integration
+- Each scrap event and material request must update **one canonical demand/supply model**: reservations, available inventory, open orders, shortages, projected work-order completion, and purchasing/manufacturing recommendations.
+- **Operation-level target and actual hours are mandatory:** show planned setup/run/inspection/rework hours, actual employee/crew time, earned standard hours, quantity basis, downtime/material-wait reason, and variance on every operation, including MRB-added operations. Material shortages and scrap must be available as contextual variance reasons, not automatic negative operator scores.
+- On shortages, evaluate options: available alternate stock, approved substitutions, partial issue, internal transfer, expedite purchase, replacement manufacturing order, or schedule change; only recommend feasible, authorized options.
+- Feed actionable material/scrap disruptions into the **daily Workforce `!` recommendation center**. Evaluate whether qualified labor and available machine capacity can support recovery **without creating a worse constraint at the source work center**. Provide a ranked what-if explanation, production and due-date impact, and supervisor approval. Never automatically bypass training, quality holds, safety constraints, or authorization.
+- Surface related events on the planner dashboard, stockroom queue, work-order operation view, Inventory 2.0 part detail, MRB record, and Workforce Command Center, all linking to the same source record.
+
+### F. Permissions, compliance, and data contracts
+Define permission gates for operator reporting, operator requesting, approving non-BOM parts, warehouse picking/issuing, MRB disposition, scrap posting, notification-rule administration, and schedule commits. Use tenant/site scoping, transactional stock movements, concurrency protection, source references, event IDs, timestamps, and immutable audit trails. Separate quality decisions from production urgency. Respect any site-required segregation of duties.
+
+Suggested logical records (adapt to existing schema): `scrap_report`, `scrap_disposition_link`, `material_request`, `material_request_line`, `material_request_status_event`, `pick_task`, `stock_issue`, `notification_rule`, `notification_delivery`, and `recovery_recommendation_source`. These are conceptual only: **do not create duplicate tables** if equivalent entities exist.
+
+### G. WhiskerWorks seeded tests — additional scenarios
+23. Operator reports 8 defective machined components on WO-1042 operation 010; quantity becomes suspect/held, not immediately scrapped; QA receives notification.
+24. QA authorizes scrap for 5 and rework for 3; inventory, genealogy, costs, and work-order balances reconcile exactly.
+25. Operator requests 5 replacement components from the scrap report; prefilled linkage, deduplication, and stockroom queue are verified.
+26. Operator requests 20 approved BOM components with 12 available; 12 can be partially fulfilled and 8 backordered without overissuing.
+27. Two operators request the last 10 connectors concurrently; reservations and transactions prevent oversubscription.
+28. A non-BOM part request requires planner approval; the released work order is not silently modified.
+29. An approved MRB rework operation adds a replacement connector, inspection step, and labor standard; MRP, training, and target/actual hours update.
+30. Scrap creates a projected shortage affecting a customer due date; planner receives one actionable email with a permission-checked deep link.
+31. An urgent request is not filled by its configured threshold; escalation fires once and stops when fulfilled.
+32. An email service outage retries notification without duplicating material requests or stock issues.
+33. A material hold prevents stockroom picking even if stock quantity is positive.
+34. An operator submits the same request twice during a network retry; idempotency preserves one request.
+35. A replacement manufacturing order is proposed; Workforce Intelligence evaluates qualified operators and source-center impact before supervisor approval.
+36. Scrap caused by a documented machine malfunction appears as a contextual efficiency variance, not an unsupported employee performance penalty.
+37. A request is cancelled after partial issue; stock transactions and remaining demand reconcile without deleting audit history.
+38. Operator, stockroom, planner, quality, and supervisor permissions are tested across sites and tenants.
+
+### H. Additional Sprint 10 acceptance criteria
+- [ ] Operators can report suspect scrap and request material directly from a work-order operation with minimal entry.
+- [ ] Scrap reporting, quality disposition, and final stock adjustment are distinct controlled events.
+- [ ] Material requests are supported both automatically from work-order demand and manually from operators.
+- [ ] Stockroom queue supports reservation, partial picks, delivery/receipt confirmation, and exceptions without double-issuing.
+- [ ] Planner email notifications are configurable, permission-safe, auditable, deduplicated, and resilient to delivery failures.
+- [ ] Operation-level target/actual hours and material-related variance context appear in the work-order UI and feed planning.
+- [ ] Scrap and material shortages affect canonical MRP/availability and generate explainable Workforce `!` recovery recommendations.
+- [ ] Existing inventory, MRB, work-order, scheduling, and safety rules remain authoritative and pass regression tests.
+- [ ] All additional WhiskerWorks scenarios pass, including concurrency, idempotency, and cross-role permissions.
+
+## 12. Acceptance criteria / definition of done
+- [ ] Sprint 9 remains intact; existing scheduling, work-order, QA, and workforce tests pass.
+- [ ] Supervisor Command Center loads from real integrated data, not hardcoded UI demo values.
+- [ ] Daily `!` alerts include PTO and callout risk, qualification expirations, and safety blocks; no sensitive absence reasons leak.
+- [ ] Training completion, practical competency, and machine authorization are distinct and enforced.
+- [ ] Operation-level target/actual labor and variance explanations are traceable to source records.
+- [ ] Attendance periods are configurable; quarterly rollover preserves historical audit data.
+- [ ] Approved PTO and legally protected/excused absence categories are not counted negatively under the configured compliant policy.
+- [ ] On-time percentages show correct numerator, denominator, exclusions, and versioned policy.
+- [ ] Corrections and disputed events follow an authorized, audited workflow.
+- [ ] Recommendations are explainable, qualification-safe, contextualized, and approval-gated.
+- [ ] Planning/MRP/dispatch consume qualified-labor capacity and training downtime without duplicate engines.
+- [ ] Nomination and promotion/raise consideration packets support human review; no automatic personnel decisions.
+- [ ] Forge works without Nexus and supports optional synchronized integrations.
+- [ ] Seeded scenarios pass deterministic unit, integration, authorization, and end-to-end tests.
+- [ ] Provide a release note, migrations, data dictionary, UI walkthrough, test results, and known limitations.
+
+## 13. Implementation sequence (within Sprint 10)
+**Phase A — Audit and design:** Inventory current architecture, confirm source-of-truth, specify access rules and metric definitions, produce gap report.  
+**Phase B — Data and calculations:** Add only necessary migrations, labor tracking, qualification checks, attendance policies/period summaries, and evidence links.  
+**Phase C — Supervisor UI:** Command Center, drill-down profiles, due-date views, attendance period selector, review/correction flows.  
+**Phase D — Recommendation integration:** Training forecasts, staffing recovery signals, quality-context logic, nomination workflows, planning/dispatch integration.
+**Phase D2 — Material-control vertical slice:** Operator scrap and part-request actions, stockroom fulfillment, quality/MRB dispositions, notification rules and email outbox, work-order operation labor and MRP/recovery connections.  
+**Phase E — Validation:** WhiskerWorks seeds, scenario replay, permissions/fairness tests, regression tests, documentation and rollout.
+
+**Scope discipline:** If implementation exceeds one practical sprint, preserve the Sprint 10 epic and deliver vertical slices behind flags. Do not sacrifice correctness, safety, or auditability for a one-shot merge.
+
+## 14. Gemini implementation handoff prompt
+> Implement **Forge Sprint 10 — Training, Performance, Attendance & Workforce Intelligence** using this specification. First inspect the existing repository and completed Sprint 9 architecture; report which capabilities already exist and which require changes. Reuse canonical workforce, qualification, work-order, quality, MRP, and scheduling services rather than creating parallel systems. Build a supervisor-friendly, tablet-first Training & Performance Command Center, auditable operation-level target/actual labor and contextualized efficiency, configurable attendance periods with protected-leave/PTO safeguards, qualification-aware capacity planning, and explainable training/advancement recommendations. **Also implement the Sprint 10 shop-floor material-control extension:** operator scrap reporting, linked replacement requests, automated work-order and manual operator material requests, stockroom fulfillment, configurable planner email notifications, and scrap/shortage-driven MRP and Workforce `!` recommendations. All staffing decisions and promotion/raise nominations require human review. Use WhiskerWorks fictional data to test realistic scenarios. Implement in incremental commits with migrations, tests, permissions checks, and a final implementation report. Never reset customer data or weaken safety gates.
+
+## 15. Sprint 10 addition — Verified Material Handoff (ordinary barcode scanners)
+
+### 15.1 Purpose and scope
+Add a configurable, auditable **two-person material handoff** to the existing stockroom picking, material-request, inventory-transfer, and work-order issue workflows. The objective is accountability for **what** was picked and delivered, **where** it went, **which work order/operation** received it, and **who** released and accepted custody. Integrate with the canonical inventory ledger, reservations, lot genealogy, material request queue, work-order operations, notification outbox, and supervisor Workforce `!` recommendations. **Do not introduce proprietary scanning hardware or a parallel inventory system.**
+
+### 15.2 Hardware and user experience
+- Support ordinary USB and Bluetooth barcode scanners operating as **keyboard-wedge/HID input**, including scanners that append Enter/Tab. Use focused, large-input scan fields on existing browser-based tablet/desktop interfaces; do not require camera access, RFID, specialized docks, or proprietary handhelds.
+- Support existing employee badge barcodes, part/lot/container barcodes, work-order barcodes, and location labels using a **configurable identifier parser**. Never assume a scanned badge number is an authenticated login or a secret credential.
+- Provide manual entry with permission-gated reason capture when a barcode is damaged or unavailable. Prevent ambiguous barcode matches; show the resolved item, lot, quantity, and destination before confirmation.
+- Make the operator workflow simple: **Scan pick list → Scan bin/part/lot → Confirm picked quantity → Scan destination/work order → Deliverer identifies self → Receiver independently acknowledges → Complete**. Show large buttons, audible/visual confirmation if available, and concise errors.
+
+### 15.3 Picking and delivery verification
+1. **Pick list:** Retrieve only released/authorized material requests and valid work-order demand; display required part/revision, lot rules, quantity, location, reservation and status. Scan each bin, part and lot; reject wrong part, incompatible revision, held/quarantined/expired lot, unauthorized substitutions, over-picks and duplicate scans. Record picker identity, quantities, source location and timestamps.
+2. **Optional second-person pick verification:** Configure by risk/material/customer policy; require a second *distinct authorized person* to inspect and independently approve picked lines before stockroom release. Standard low-risk picks may use one authorized picker.
+3. **Delivery:** Scan destination work center/location and linked work order/operation; display items, lots, quantities and delivery identity. Require the **stockroom deliverer** to authenticate or re-authenticate and identify their badge; require a **different authorized receiving operator** to independently authenticate/confirm receipt using their own session, or badge plus an approved second factor such as PIN. **Two badge scans by the deliverer alone are not sufficient evidence of consent.**
+4. **Partial/exception receipt:** Allow receiver to accept a lower quantity, reject damaged or incorrect material, and record discrepancy reason/photos if supported. Route rejected goods to a controlled exception/hold workflow, not available production stock.
+5. **Ledger and custody:** Keep pick/reserve, in-transit and receipt states distinct. Commit the canonical inventory issue/transfer only at the appropriate validated workflow milestone. Use idempotent transaction IDs and atomic posting to prevent double issues or stock discrepancies. Record actor IDs, badge resolution, part/revision, lot/serial, container, quantities, units, locations, work order/operation, device/session reference, timestamps, approvals and exception reasons.
+6. **Returns and reversals:** Provide a separately authorized, auditable return-to-stock/correction flow; never erase or overwrite original custody events.
+
+### 15.4 Configurable policies, roles and security
+- Site/warehouse/part-family policies select: single-person pick, second-person pick check, mandatory two-person delivery, and escalation thresholds. Default to two-person delivery for production handoffs; avoid unnecessary dual checks for every stockroom action.
+- Roles: picker, stockroom verifier, deliverer, receiver, supervisor, inventory controller, QA and administrator; apply least privilege and segregation of duties. The same person cannot fulfill both sides of a mandatory independent check, including via alternate sessions or shared badges.
+- Do not treat barcode possession alone as proof of identity. Never expose sensitive employee data on the scanning screen. Preserve employee IDs even if an employee is later deactivated.
+- If offline scanning is supported, queue **pending/unverified** events only, with conflict reconciliation and no premature custody or stock posting. Do not assume offline capability already exists.
+- Supervisor override must require explicit privilege, reason, and audit trail, and must **never** bypass material holds, unsafe conditions or mandatory customer/regulatory controls.
+
+### 15.5 Notifications and cross-module intelligence
+- Publish canonical events for `pick_started`, `pick_verified`, `delivery_in_transit`, `delivery_pending_receipt`, `delivery_accepted`, `delivery_partial`, `delivery_rejected`, `delivery_exception` and `delivery_overdue`; consume them idempotently.
+- Permit configurable in-app/email alerts to planner, stockroom lead and supervisor for overdue or rejected handoffs, shortages and delivery discrepancies; deduplicate and retain notification status/retries.
+- Feed pending/failed deliveries into work-order material readiness, MRP availability and supervisor Workforce `!` recommendations. Example: if a scheduled operation is blocked because a delivered kit awaits independent receipt, show the blocker, impact and authorized resolution; do **not** recommend unqualified workers or treat in-transit material as available at the line.
+
+### 15.6 WhiskerWorks seed and acceptance tests
+Seed a stockroom picker, a distinct floor receiver, barcode-labeled employee badges, parts/lots/bins, a work-order pick list, partial deliveries and at least one high-risk item requiring second-person pick verification.
+
+- [ ] Standard HID USB/Bluetooth scanners enter barcode values without special drivers or proprietary devices.
+- [ ] Correct part, lot, bin, quantity, and work-order operation resolve and produce one traceable pick and receipt.
+- [ ] Wrong part/revision/lot, quality hold, invalid location and duplicate scan are rejected without corrupting stock.
+- [ ] Deliverer and receiver are distinct active authorized employees, each independently confirming; scanning both badges on one device without receiver confirmation cannot finalize the handoff.
+- [ ] Partial acceptance, rejection, damage and missing badge/barcode are handled with audited exceptions.
+- [ ] Concurrent picks, repeated submission, network retry and duplicate barcode events do not double-issue stock.
+- [ ] Mandatory second-person pick check is enforced only where configured; policy changes are audited.
+- [ ] Returns and corrections preserve immutable original event history and reconcile quantities.
+- [ ] Delayed or rejected handoffs generate the configured planner alerts and Workforce `!` material-readiness impact.
+- [ ] Existing work-order, inventory, MRB, MRP, stockroom, and scheduling regression tests still pass; Forge remains fully functional without Nexus.
+
+### 15.7 Sprint 10 delivery sequencing and Gemini handoff amendment
+Add **Phase D3 — Verified Material Handoff** after Phase D2 material requests and stockroom fulfillment, before Phase E validation. Inspect the existing scanner/input, badge, auth, stockroom, inventory-ledger and event/notification services first; extend those systems instead of duplicating them. Ship the scanner UI and end-to-end custody flow behind a feature flag if needed. Update migrations, permissions, documentation, WhiskerWorks seed fixtures and regression tests.
+
+**Additional Gemini instruction:** Implement Section 15 as part of Sprint 10. Use ordinary HID barcode scanners and existing badges; independently authenticate the deliverer and receiver, verify part/lot/quantity/destination, preserve a tamper-evident custody audit trail, and connect pending/failed deliveries to MRP, work orders, planner notifications and the supervisor Workforce `!` recommendations. No proprietary hardware, no duplicate inventory ledger, and no auto-approval of receipt merely because two badges were scanned.
+
+## 16. Cause-Adjusted Performance Analytics — Sprint 10 Amendment
+
+**Purpose:** Account for every minute of an employee's paid working time without treating equipment-caused or material-caused interruptions as employee underperformance or employee-caused quality defects. This is factual reporting, **not** promotion, compensation, discipline, or termination recommendation logic.
+
+### 16.1 Time attribution and reconciliation
+- Maintain employee shift/attendance time, assigned operation time, setup, direct productive labor, training, indirect tasks, paid breaks where applicable, machine downtime, material shortage, quality hold, waiting for inspection, and other coded intervals. Use a single authoritative event/timesheet ledger with start/end, employee, machine, work center, work order/operation (if applicable), cause code, provenance, and approval/correction history.
+- For each shift, reconcile `accounted_paid_minutes = sum(nonoverlapping paid-time activity intervals)` to actual paid shift minutes. Flag gaps and overlapping intervals rather than silently imputing or double counting them. Multiple employees may be impacted by one machine event; do not count one person's time twice.
+- Link machine downtime to every assigned employee whose working interval overlaps the event: `employee_machine_impact_minutes = duration(intersection(employee_assigned_interval, machine_down_interval, paid_shift_interval))`, excluding overlapping already-classified intervals and respecting reassignment. Also capture the machine event's full duration separately; it may span off-shift hours and must not be treated as employee time.
+- Equipment- and material-caused minutes remain visible in paid hours, staffing utilization, operational loss analysis and cost allocation. They are excluded from the **controllable direct-labor efficiency** denominator when evidence supports that classification. Show unadjusted figures alongside adjusted figures; never hide downtime.
+- `controllable_labor_efficiency = earned_standard_hours_for_eligible_completed_work / eligible_direct_labor_hours * 100`. Standards must use the same scope and operation mix; setup and rework must be treated explicitly and consistently. If eligible hours are zero, display N/A, not 0% or 100%.
+
+### 16.2 Quality and first-pass yield — do not change the definition silently
+- **Official first-pass yield (FPY)** is a process/product measure: `first_pass_good_units / total_units_presented_for_first_pass_inspection * 100`, using consistent unit/lot and rework rules. Equipment-caused defects still count against official process FPY when they fail first pass; otherwise the factory's true quality losses would be concealed.
+- **Employee-attributable first-pass quality** is a *separate*, explicitly labeled diagnostic metric: `employee_attributable_first_pass_good_units / eligible_employee_attributable_first_pass_units * 100`. Only include units with sufficient verified cause attribution and a meaningful employee-controlled opportunity; exclude confirmed machine-, incoming-material-, and upstream-process-caused defects from the employee-attributable denominator and numerator. Report excluded units and reasons. Unknown/mixed causes remain unassigned, not automatically blamed on the employee. Prevent favorable cherry-picking by reporting coverage (`eligible_attributed_units / all relevant inspected units`) and N/A when coverage is inadequate.
+- A machine downtime event with **no inspected units** never changes FPY by itself. If a malfunction causes defective units, those defects remain in **official process FPY**, but are excluded from employee-attributable quality when independently verified as machine-caused.
+- Attribution is determined by controlled quality/MRB or maintenance evidence, with human review, timestamps, audit trail, dispute/correction workflow and permissions. Do not let operators unilaterally reclassify defects to improve metrics. Preserve raw results, defect categories and original classifications.
+
+### 16.3 Example and UI
+A 10-hour paid shift consists of 6.5 hours productive operation, 2.0 hours verified machine downtime, 1.0 hour material shortage and 0.5 hours setup: 10.0 accounted hours, 3.0 external-delay hours. If the operator earns 7.15 standard hours for the 6.5 eligible direct-labor hours, adjusted direct-labor efficiency is 110%; the shift still reports all 10 paid hours and its delays. If 100 units are first-pass inspected and 8 fail (5 confirmed machine-caused, 3 confirmed employee-attributable), official process FPY = 92%. The separate employee-attributable first-pass quality is 97/100 = 97% **only if** all 100 units have verified attribution eligibility and the 5 machine-caused failures are excluded from the employee metric's *failure attribution*, not removed from the inspected population; label this metric 'employee-controlled first-pass success' and display the 5 excluded machine-caused defects. If using the stricter eligible-units denominator that excludes machine-caused units entirely, employee-attributable FPY = 92/95 = 96.84%; **use this latter definition consistently in implementation**. Display official FPY 92%, employee-attributable FPY 96.84%, 5 machine-caused excluded units, and attribution coverage.
+
+### 16.4 Integration and acceptance tests
+- Consume existing time, work-order operation, machine event, maintenance, inspection, scrap, MRB, and workforce records; do not create competing ledgers or duplicate machine downtime events.
+- Machine event starts before a shift, ends after it: only actual employee/assignment overlap is charged to that employee's shift.
+- Machine breaks during production, employee reassigned after 20 minutes: count only 20 minutes of affected assignment, not the entire downtime.
+- Two employees on the same affected operation: account for each person's actual overlap without duplicating their own intervals.
+- Machine downtime with zero defective units changes time attribution but not FPY.
+- Verified machine-caused defects reduce official process FPY, not employee-attributable FPY; unknown causes do not default to employee blame.
+- Corrected MRB cause re-computes derived analytics without rewriting immutable original events; preserve before/after audit history.
+- Zero eligible labor hours, low attribution coverage, incomplete scans, overlapping events and missing standards yield N/A or flagged incomplete, not misleading scores.
+- Reports show source evidence, unadjusted and adjusted figures, exclusions, time coverage, and supervisor-reviewed corrections. No automatic personnel recommendations.
+
+**Gemini/Codex implementation instruction:** Add this Section 16 to Sprint 10's operation-level labor, downtime, quality and employee reporting work. Preserve official process FPY; provide a distinct, cause-adjusted employee metric. Implement time-overlap calculations, verified attribution, transparent exclusions, and comprehensive seeded WhiskerWorks tests. Do not infer employee fault from mere machine assignment or coincident timing.
+
+---
+
+## 17. Partial Work Order Execution & Material-Aware Workforce Optimization (Sprint 10)
+
+### 17.1 Objective
+A work order must not be treated as wholly blocked solely because some BOM materials are unavailable. Determine which **quantities and routing operations** are feasible now with available, released, correctly revised and traceable material; evaluate expected replenishment dates and recommend useful, qualified work that protects due dates without creating unsafe or excessive WIP. Use Forge's existing MRP, inventory, work-order, scheduling and Workforce Intelligence engines—no parallel planning ledger or independent optimizer.
+
+### 17.2 Feasibility and quantity calculations
+- For each operation, identify its actual material consumption point (not all BOM components are required at operation 1), prerequisites, tooling, labor skills, machine capacity, setup time, lot/serial restrictions, quality holds, alternate-part approvals, and minimum viable batch.
+- Calculate **net usable available** per component from released on-hand stock at eligible locations minus allocations/reservations for other orders, safety stock where enforced, damaged/quarantined/expired stock, and other restrictions. Never double-count shared inventory or incoming purchase orders.
+- For a simple single-operation build with positive per-unit BOM quantities, a first-pass ceiling is `buildable_units = min(order_remaining_units, floor(net_usable_available_i / required_per_unit_i) for each component i required at that operation)`. Adjust for scrap/yield allowances, fixed setup consumption, pack multiples, minimum batch sizes, serial matching, approved substitutes, and existing WIP. Do not use this shortcut as a universal multi-level BOM/routing algorithm.
+- For multi-operation routings, calculate a **feasible operation-specific release quantity** using time-phased material availability, existing WIP, upstream completed quantities, dependencies, available capacity, and constraints at each operation. It may be valid to complete upstream fabrication before final purchased electronics arrive; it is not valid to report the finished goods as completed.
+- `available_to_promise` and `capable_to_promise` are distinct: on-hand material alone does not guarantee labor, machine, tooling, inspection, or shipment capacity. Do not commit an arrival date solely because a supplier ETA exists.
+- For pending inbound materials, use PO status, supplier reliability, receipt inspection lead time, transit variance and receiving/put-away lead time to compute **earliest plausible** and **risk-adjusted** ready dates, plus confidence/uncertainty. If no reliable ETA, label it unknown; never invent one.
+- Compare partial-build and wait-for-kit scenarios: estimated finish date, customer due-date risk, idle qualified labor hours, incremental setup/changeover time, WIP quantity and aging, space/storage constraints, material handling, potential rework, bottleneck utilization, and opportunity cost of diverting materials from higher-priority work.
+- Partial work is **recommended**, not automatically released. Require configurable planner/supervisor authorization; respect quality, customer, regulatory, engineering and lot controls. Configurable no-partial-build rules must be hard constraints.
+
+### 17.3 Recommended decision logic
+1. Detect underutilized employees or work centers using actual scheduled availability, qualification and safety constraints—not attendance alone.
+2. Identify released work orders with material shortages and identify operations/quantities executable immediately without violating dependencies.
+3. Compute conservative near-term inbound material scenarios and estimate whether the partially built WIP can be completed in time; show downside if delivery slips.
+4. Rank candidate partial releases alongside alternative fully kitted work using due-date protection, throughput, WIP burden, changeover cost and idle-hour reduction. Safety and authorization are hard constraints, never scoring tradeoffs.
+5. Display an explainable Workforce `!` recommendation: order, operation, recommended quantity, parts available now, parts missing, ETA confidence, assigned qualified staff/machines, expected idle hours utilized, schedule effect, WIP exposure and required approvals.
+6. On approval, reserve exact material quantities and create traceable partial operation releases/dispatch tasks **under the original work order** (or approved controlled child lots) rather than duplicating demand or issuing a second finished-goods order. Ensure inventory reservation/issue is atomic and idempotent.
+7. At the operation, operators scan actual lot/quantity, book good/scrap/rework and labor; record WIP location and hold state. Unavailable downstream operations remain blocked until required material is physically received, inspected, released and allocated.
+8. On PO delay, quantity discrepancy, cancellation, quality hold, or newly available fully kitted work, re-evaluate the recommendation, inform planner/supervisor and propose reassignment without silently changing released commitments.
+
+### 17.4 Example
+WO-204 requires 100 robotic cat toys. Housing and frame parts support 100 units at Fabrication, while motors needed only at Final Assembly support 60 units; the other 40 motors are due in 3 days with uncertain receipt timing. Forge can recommend completing 100 fabrication operations (subject to WIP limits and capacity), but only up to 60 assemblies now, then scheduling the remaining 40 after motors pass receiving inspection. Alternatively, if fabrication WIP would overwhelm storage or delay a higher-priority order, Forge should recommend only a smaller partial quantity or waiting. Record all unfinished units as WIP, not finished goods. Recompute if the motor delivery slips.
+
+### 17.5 Acceptance tests — WhiskerWorks seeded plant
+- BOM part absent but needed only at later operation: upstream work may proceed; downstream operation blocked.
+- 100-unit order, enough material for 60 at current operation: at most 60 released, with no negative inventory or duplicated demand.
+- Partial quantity would violate minimum batch, lot matching, safety, or customer no-partial policy: no release recommendation.
+- Two work orders compete for the same 60 parts: reservations prevent double allocation; priorities and impacts are explained.
+- Supplier ETA 3 days slips to 8 days: recalculate projected completion and WIP aging; raise alert and propose recovery.
+- 100 upstream units completed but only 60 downstream kits available: 40 remain accurately tracked in WIP.
+- Operator reports scrap during partial build: recalculate feasible remainder, material requests, replenishment and projected due date.
+- Material arrives but is quarantined pending inspection: do not treat as usable until released.
+- Available employee lacks qualification or required second person: reject assignment regardless of apparent labor availability.
+- Partial release and scan retried after network interruption: no duplicate reservations, issues, labor or production completions.
+- Compare against waiting for full kit and a feasible fully kitted alternative; recommendation must explain tradeoffs and sometimes advise **not** to partial-build.
+- Dashboard reconciles total original WO quantity = completed good + scrap/rework disposition as appropriate + in-process + not-yet-started without double-counting; respect unit and operation accounting.
+
+**Gemini/Codex implementation instruction:** Integrate this Section 17 into Sprint 10's Workforce Intelligence, inventory/MRP, work-order operations, material requests and shop-floor dispatch. Implement deterministic feasibility and time-phased constraints before AI narrative explanations. Show raw assumptions and source transactions. Require human authorization, hard safety checks, WIP limits and robust regression tests. Do not confuse a supplier's promised arrival with physically available material.
+
+---
+
+## 18. WIP Capacity & Storage Intelligence (Sprint 10 — extension of Section 17)
+
+### 18.1 Objective
+Before recommending partial work-order production, Forge must establish that unfinished units have **approved, safe, traceable, physically available storage** and that the storage duration and handling conditions will not create avoidable damage, deterioration, contamination, mixing, reinspection or rework. Storage capacity is a hard feasibility constraint, not a productivity score. A plant can enable this module by area and use manual location/slot data and standard barcode scanners; no sensors, RFID, digital twin or proprietary hardware are required.
+
+### 18.2 Configurable storage master data
+- Hierarchy: plant > building > room/zone > rack/shelf/bin/floor location; unique location barcode and responsible area.
+- Record room usable floor area, approved rack slots, container type, dimensions, weight/stack limits, floor/rack load ratings, access and handling clearances, fire/egress restrictions, designated exclusion zones and maximum operational utilization. **Never calculate legal or safe aisle/egress clearance from a generic percentage**: site safety personnel approve layout, permitted locations and limits.
+- Part/lot storage profile: unit or container dimensions, weight, units/container, stacking and orientation rules, approved packaging/dunnage, fragility, electrostatic/cleanliness/humidity/temperature controls, incompatibilities, handling method, max WIP hold time, revision and lot segregation, quality status and inspection/reinspection triggers.
+- For incomplete or unapproved geometry, handling or safety data, mark capacity **unknown/unavailable** and request authorized review; do not guess a safe quantity.
+- Reserve distinct space for held/quarantined WIP; never commingle released and held inventory. Allow per-zone configurable operating headroom (e.g. 15–25% as an illustrative planning preference, **not** a safety standard).
+
+### 18.3 Capacity calculation (deterministic first)
+Calculate at the level of approved physical slots/containers rather than room cubic volume alone:
+
+1. `approved_slot_capacity_units = sum over compatible approved slots (floor(usable_slot_capacity / approved_storage_unit_requirement))`, enforcing dimensions, weight, approved stack height, packaging and incompatibilities. Prefer explicitly configured units-per-slot for irregular items; never infer stacking from volume alone.
+2. `physical_free_units = max(0, approved_slot_capacity_units - physically_occupied_units - committed_reserved_units - blocked_or_quarantine_capacity_units)` **for the same compatible part/container class**. Do not subtract occupied units twice if quarantined stock is already counted in occupied.
+3. `operational_limit_units = floor(approved_slot_capacity_units * configured_max_operational_utilization)` if the utilization setting is defined; otherwise use approved slot capacity.
+4. `operational_free_units = max(0, min(physical_free_units, operational_limit_units - physically_occupied_units - committed_reserved_units))`, with consistent counting by slot and state.
+5. `time_phased_free_units(t) = approved compatible capacity - projected occupied(t) - confirmed future reservations(t)`, with only evidence-backed downstream moves/releases reducing projected occupancy. Model forecast uncertainty conservatively.
+6. `max_partial_build_quantity = min(material_feasible_qty, upstream_operation_capacity_qty, qualified_labor_qty, machine_capacity_qty, safe_storage_available_qty, downstream_time_phased_acceptance_qty where applicable, customer/quality policy limits)`.
+
+These expressions are conceptual; implementation must use a **slot-level allocation solver** where multiple part types, containers, sizes, and incompatibilities share capacity. Never sum per-part theoretical maxima as though all could occupy the same space simultaneously. A room's "comfortable" capacity is its site-approved operational limit, not an AI-estimated safety allowance.
+
+### 18.4 WIP aging, damage and rework prevention
+- Calculate `projected_WIP_dwell = estimated_downstream_start - estimated_upstream_completion` for each partial lot, with confidence ranges for inbound shortages.
+- Block partial production if projected dwell exceeds a validated part/process hold limit or if required preservation conditions cannot be met; recommend smaller lot, alternative approved location, alternate production or waiting.
+- Apply FIFO/FEFO where appropriate; trigger review/reinspection on threshold breaches. Flag potential extra handling, movement count, rework/reinspection risk and associated labor/cost, but do **not** present speculative probabilities as verified defect rates.
+- Respect downstream WIP buffers, Kanban limits and bottleneck throughput. Producing ahead solely to occupy employees must not flood the next work center.
+- Track WIP movement by barcode scans, including location, lot, quantity, status, operator, time, storage condition exception and chain of custody. Handle splits, merges, transfers, returns, rework and scrap without duplicating quantity.
+
+### 18.5 Workforce Intelligence and supervisor recommendations
+Before proposing a partial release under Section 17, verify compatible capacity **at the expected arrival time of the WIP**, including overlapping lots and already-approved future work. Recommend a bounded partial quantity, exact approved storage location(s), estimated storage dwell, expected downstream start, utilization after placement, projected labor hours saved, and impact on due dates. If there is insufficient safe capacity, show why and rank feasible alternatives (smaller lot, different approved location, alternate work order, maintenance/training task, or wait). Supervisor/planner approval must atomically reserve storage and material; physical arrival and barcode placement reconcile reservations with actual occupancy. Alerts on approaching limits, overstay, blocked egress, damaged storage, delayed inbound material or unexpected downstream bottlenecks.
+
+### 18.6 Example — WhiskerWorks
+Fabrication can make 100 frames, but only 60 motors are ready for final assembly. Approved WIP racks hold 80 compatible frames, 45 are currently stored and 10 slots are reserved for another order. At 90% plant-configured operating utilization, the rack's operating ceiling is 72 units, leaving **17 slots** (`72 - 45 - 10`). Forge must not recommend building and storing 40 additional frames there; at most 17 fit under the current operating limit, and fewer may be appropriate if dwell-time or downstream constraints apply. Do not count unapproved floor space or aisle storage as an alternative. If another approved rack has capacity, Forge may propose splitting the lot across traceable locations.
+
+### 18.7 Acceptance tests — seeded plant
+- 100-unit upstream partial build with only 17 compatible operational slots available: cap recommendation at 17 or fewer, with explicit location assignment.
+- Different part dimensions, approved containers, and no-stack restrictions: reject naïve volume-based overpacking.
+- Heavy rack load, blocked aisle, unapproved room, missing handling profile: reject placement and require authorized review.
+- Existing stock plus future reservation consumes capacity: prevent double booking across concurrent work orders.
+- Quality-held lot occupies segregated quarantine: cannot be allocated to released WIP or production.
+- Material ETA slips beyond WIP hold limit: re-evaluate and block or escalate before creating at-risk WIP.
+- Multiple partially completed lots: enforce lot/revision segregation and traceable splits/merges.
+- WIP is moved, scrapped, consumed downstream or returned: location counts and ledger reconcile with no negative or phantom capacity.
+- Simultaneous supervisors approve competing partial builds: transactional capacity reservations prevent over-allocation.
+- Scanner offline/retries: idempotent placement and movement events, no double counts; pending movements are visible and controlled.
+- Fully kitted high-priority job competes for same storage: compare due-date and congestion impact, not just idle-hour utilization.
+- Verify safety, quality, site policy, and WIP limits always override a superficially higher throughput score.
+
+**Implementation direction:** Integrate Section 18 into Section 17 partial-release feasibility, inventory location ledger, work-order operation WIP states, MRB/quality holds, stockroom barcode moves, scheduling, and Workforce `!` recommendations. Keep a single source of truth for physical occupancy and reservations, deterministic capacity checks, explainable exceptions, role-based approvals, and regression tests. Do not require new hardware beyond existing ordinary barcode scanners.
+
+## 19. Material Arrival & WIP Reentry Planning (Sprint 10)
+
+### 19.1 Purpose
+Connect partially executable work orders and approved WIP storage to purchase-order promise dates, inbound logistics, receiving/inspection lead times, and the production schedule. Alert supervisors in advance so they can stage WIP and prepare qualified resources for a smooth return to flow without prematurely releasing an operation.
+
+### 19.2 Dates and confidence
+For every missing component, store supplier-confirmed promise date, latest supplier update, expected ship and arrival dates if available, receiving/inspection/put-away durations, and confidence/source of each estimate. Keep **promised arrival**, **forecast physical arrival**, **expected usable date**, and **actual released-to-stock date** distinct. A supplier promise is not a guaranteed receipt. Recalculate on changes to purchase orders, shipment status, receiving, quality hold, and actual stock availability.
+
+Expected usable date = expected physical arrival + receiving/inspection/put-away lead time, adjusted for calendars and required quality release. If dates or lead times are missing, display uncertainty and request planner confirmation; never fabricate certainty. For multiple critical components, earliest feasible restart is no earlier than the latest expected usable date among all required components, plus necessary staging and setup time, and must respect capacity, routing, staffing, maintenance, and shift calendars.
+
+### 19.3 Reentry feasibility and staging
+For each paused or partially built work order:
+- Determine the exact remaining quantity, operation state, material shortfall, approved substitutions, reserved/available stock, WIP lot/revision and current storage location.
+- Compute material-ready quantity by date and the earliest **feasible** operation restart, not merely the earliest supplier promise date.
+- Recommend a staging window before restart, accounting for travel/handling time, rack and work-center capacity, WIP shelf life, FIFO/FEFO and lot segregation, safe access, and other competing orders.
+- Tentatively reserve appropriate staging positions and qualified labor/machines only through the existing planning engine; prevent duplicate bookings. Supervisor/planner approval is required for operational changes.
+- Keep WIP in its approved location until an authorized move. Barcode-scan each move and reconcile location/custody ledger. Do not move to an unapproved aisle or exceed safe WIP capacity.
+- Do not authorize consumption or restart while incoming material is unreceived, on quality hold, unverified, or otherwise unavailable.
+- When material becomes available, prompt supervisor to confirm staged WIP, kit completeness, work-center readiness, required quality checks, and operation release.
+
+### 19.4 Supervisor Workforce `!` recommendation
+Show work order, customer due date, remaining WIP quantity, missing parts and required quantities, PO/supplier promise dates, expected usable dates with confidence, recommended staging location and time, expected restart time, labor/machine needs, schedule impact, and an actionable reason for the recommendation. Clearly distinguish **plan**, **confirmed receipt**, and **ready to release**. Offer approve/adjust/defer actions and a drill-down to supporting purchase orders and stock transactions.
+
+On supplier delay, early arrival, failed inspection, changed demand, or conflicting staging capacity: automatically re-evaluate and notify the planner/supervisor; release tentative reservations when no longer appropriate. Prioritize customer due dates and overall plant throughput over keeping employees busy for its own sake.
+
+### 19.5 Example — WhiskerWorks
+WO-2048 has 40 partially assembled CAT-3000 units waiting on 40 motors. The supplier promises October 28 (illustrative). Receiving and quality require one working day; expected usable date is October 29 if the shipment arrives as promised and passes inspection. Forge may suggest staging approved WIP on October 28, subject to storage capacity, and tentatively plan qualified assembly resources for October 29. If the motors arrive late or fail inspection, the restart plan remains blocked and recommendations are recalculated.
+
+### 19.6 Acceptance tests — seeded plant
+- Supplier promise October 28 with one-day receiving/inspection: restart cannot be recommended as confirmed on October 28.
+- Supplier slips by three days: staging reservations and schedule are recalculated; supervisors receive a concise impact alert.
+- Early delivery and passed inspection: evaluate safe earlier reentry without displacing higher-priority orders unnecessarily.
+- Shipment arrives but is quarantined or short: release only verified usable quantity and feasible operations.
+- Two orders competing for one staging area or qualified machine: prevent overbooking and rank alternatives with due-date impact.
+- WIP has a maximum safe dwell time: warn/escalate when promised material would arrive too late.
+- WIP is moved with ordinary barcode scanners: custody and physical location remain traceable.
+- Promise date absent or unreliable: display unknown/low confidence; do not present invented restart date.
+- Simultaneous PO and work-order updates: idempotent recalculation and consistent material reservations.
+
+**Implementation direction:** Extend Sections 17 and 18, not a separate scheduling engine. Integrate purchase-order and inbound shipment records, receiving/quality release, WIP location ledger, material reservations, operation scheduling, workforce qualifications, and supervisor `!` alerts. Preserve the existing single source of truth and explicit human approvals.
+
+---
+
+## 20. Planner-Initiated Inventory Scrap & Controlled Disposition
+
+**Purpose:** Give authorized production planners and inventory-control personnel an explicit **Scrap Inventory** action on the Inventory screen and individual part/lot detail pages. This handles unusable raw materials, purchased parts, WIP, and finished goods **without creating a fictitious work order**. Reuse the existing MRB, inventory transaction, costing, traceability, notification, and scheduling services; do not create a parallel scrap ledger.
+
+### 20.1 User experience and permissions
+- Show **Scrap Inventory** alongside Receive, Transfer, and Adjustment actions for users granted the `inventory.scrap.request` permission. Access is role-based and configurable; being a planner alone does not automatically confer disposition approval.
+- Start from a specific item, revision, lot/serial (if tracked), stock location, and inventory status. Show on-hand, available, reserved, held, and already-allocated quantities.
+- Enter proposed scrap quantity and unit of measure, reason code, condition, supporting notes/photos/documents, and optional linked supplier, inspection, NCR/MRB, work order, or maintenance incident.
+- Preview affected reservations, work orders, shortage dates, inventory value, and genealogy before submission.
+- Provide a distinct **Report Suspected Scrap / Request Disposition** path versus **Execute Approved Scrap**. Do not imply that a planner can independently authorize all scrap.
+
+### 20.2 Approval and execution rules
+- Use plant-configurable rules by material type, value threshold, customer/contract requirements, quality status, and reason. Where MRB or quality approval is required, put the proposed quantity on hold/quarantine and await authorized disposition before decrementing inventory.
+- Permit direct scrap only where a site-approved policy explicitly allows the requesting role to execute it. Enforce separation of duties where required; an employee cannot self-approve restricted scrap.
+- Require a distinct, authorized execution event after approval. Prevent scrapping quantities that are unavailable, already scrapped, or held for another disposition; handle reservations through controlled release/reallocation.
+- Support partial-lot scrap, serial-level scrap, unit-of-measure conversion, and multi-location stock without inadvertently scrapping the entire lot.
+- Posted scrap is immutable as an auditable event. Corrections use linked compensating transactions and required approval, never deletion or silent editing of history.
+
+### 20.3 Integrated downstream effects
+- Atomically record the inventory decrement and scrap event, with an idempotency key to prevent duplicate scanner clicks or network retries.
+- Update lot/serial genealogy, stock availability, WIP balances where applicable, inventory valuation/costing, affected reservations, MRP net requirements, procurement/replenishment proposals, and work-order feasibility.
+- Trigger the existing planning/recovery engine to reassess partial builds, promised-material reentry dates, staging capacity, and staffing impacts. Recommendations remain advisory and require human authorization.
+- Send configurable in-app/email notifications to quality, inventory control, planners, and affected supervisors for approval requests, posted scrap, and material shortages. Avoid duplicate notifications.
+- Preserve who requested, approved, and executed the scrap, timestamps, reason, source location, quantity, original and resulting stock state, linked records, and any override rationale.
+
+### 20.4 WhiskerWorks acceptance tests
+1. Planner scraps 12 damaged, unrestricted components from a lot of 100: exactly 12 are deducted once, with genealogy and costing updated.
+2. Planner requests scrap for quality-held material: execution remains blocked pending authorized MRB disposition.
+3. Planner attempts to scrap 20 units with only 10 eligible: transaction is rejected without partial or hidden ledger changes unless an explicitly confirmed partial quantity is selected.
+4. Scrap affects a reserved work order: reservation and MRP shortage are reconciled, and the supervisor receives an explainable recovery alert.
+5. Two users submit scrap concurrently against the same lot: no negative inventory or double consumption.
+6. Network retry or duplicate barcode scan: only one approved scrap transaction posts.
+7. Partial serial/lot scrap leaves the remaining units traceable and available only if not held.
+8. Unauthorized planner attempts approval or reversal: access denied and attempt audited.
+9. Corrected scrap uses a linked compensating transaction with approvals and a complete audit trail.
+10. Scrapped WIP with linked partial-build/reentry plan causes feasibility and staging reservations to recalculate safely.
+
+**Implementation direction:** Add this workflow to the existing Sprint 10 Inventory 2.0/MRB integration and reuse the shop-floor scrap engine. This is a role- and context-specific entry point, not a separate inventory subsystem. No automated personnel or scrap-disposition decisions.
+
+---
+
+## 21. Skill Recency, Proficiency & Reassignment Capacity Adjustment
+
+**Purpose:** Make Workforce Intelligence distinguish **qualified** from **currently proficient**. When recommending cross-training coverage or moving a qualified employee to an operation they have not performed recently, estimate their realistic setup time, productive run rate, good-unit output, and impact on the *entire plant*. Reuse the existing authoritative qualifications, operation labor, downtime, scheduling, and recommendation services; **do not create a separate scheduler or an employee-ranking system**.
+
+### 21.1 Hard eligibility constraints
+- Verify the employee has a **current, machine/operation-specific qualification**, any required practical sign-off, safety training, and shift authorization before considering reassignment. An expired qualification, missing required refresher, or violated two-person safety rule makes the assignment **ineligible**, irrespective of past productivity.
+- Distinguish qualification expiry (hard stop), site-defined mandatory refresher or supervised reacclimation (hard stop or conditional eligibility according to policy), and ordinary loss of familiarity (capacity estimate only).
+- Respect existing assignments, work schedules, breaks, machine availability, tooling, material readiness, quality holds, and required staffing minimums.
+
+### 21.2 Evidence and data model
+For each employee × operation × machine family (and specific machine when meaningful), retain:
+- Qualification status, effective/expiry dates, required refresher and last practical sign-off.
+- Last **verified productive execution date** and actual time on task; distinguish a badge scan or assignment from meaningful hands-on operation.
+- Comparable historical setup minutes, run minutes per unit, good-unit throughput, learning/reacclimation trajectories, and sample sizes.
+- Part family, routing revision, batch size, complexity, machine condition, tooling, shift, and other relevant context so incomparable jobs are not treated as equal.
+- Verified exclusions/attributions for machine downtime, material shortages, quality holds, training, and other non-employee-controlled losses. Unknown causes remain unknown; never automatically attribute them to the operator.
+- Forecast confidence, model/rule version, data freshness, and subsequent actual results for calibration and audit.
+
+### 21.3 Planning calculations
+Calculate **setup and run time separately**. For a candidate employee `e`, operation `o`, and job `j`:
+
+```
+expected_setup_min(e,o,j) = calibrated_setup_estimate(e,o,j, skill_recency, context)
+expected_run_min_per_good_unit(e,o,j) = calibrated_cycle_estimate(e,o,j, skill_recency, context, verified_yield)
+productive_min = max(0, scheduled_eligible_min - breaks - planned_nonproduction_min)
+forecast_good_units = max(0, floor((productive_min - expected_setup_min) / expected_run_min_per_good_unit))
+```
+
+- Use **operation-specific** historical efficiency and recency, not a universal percentage penalty for being away 30/90/180 days. Any decay curve must be configurable, empirically calibrated, and bounded; do not assume skills decay at a fixed rate.
+- For initial implementation, a transparent configurable heuristic is acceptable; migrate to a statistical model only after sufficient verified observations exist. Prefer ranges (conservative / expected / optimistic) over false precision.
+- Where employee-specific evidence is insufficient, use a conservative, role-appropriate benchmark and mark the estimate **low confidence**. Do not invent personal performance history or silently use a default 100% efficiency.
+- Account for reacclimation as additional setup, supervised familiarization, or a time-varying run rate, rather than multiplying historical efficiency by an arbitrary second penalty. Avoid double-counting training or downtime.
+- Preserve distinct **plant/process first-pass yield** and cause-attributed employee quality metrics from Section 16; proficiency forecasts must not rewrite historical FPY or blame machine-caused defects on employees.
+
+### 21.4 Workforce Intelligence integration
+- Whenever a supervisor explores a reassignment, recalculate the candidate's feasible output **and** the capacity lost at the employee's original work center, including any backfill chain, WIP constraints, supplier promise dates, downstream bottlenecks, and order priorities.
+- Compare alternatives using projected on-time completion, total plant throughput, setup/reacclimation cost, schedule disruption, and confidence. Safety and qualification rules are non-negotiable constraints, not weighted tradeoffs.
+- Present an explanation such as: “Qualified for CNC-2; last verified operation 124 days ago; estimated 68–82 good units this shift after 35 minutes of reacclimation; current department loses 20 units unless backfilled.” These are **illustrative** numbers, not default assumptions.
+- Keep recommendations **advisory**. Supervisors can compare scenarios, view supporting evidence, approve/decline, and record actual outcomes. No automated personnel, compensation, promotion, or disciplinary recommendations.
+- Compare predicted versus actual setup, run rate, and good output after the assignment; calibrate future estimates with human-reviewable corrections and safeguards against noisy or biased data.
+
+### 21.5 User experience
+- In the Workforce `!` recommendation and what-if view, show: **Qualified?**, **Last operated**, **Expected setup**, **Expected good units / range**, **Confidence**, **Required refresher**, and **Impact on originating department**.
+- Display why a candidate is ineligible and allow authorized supervisors to schedule retraining, not bypass required qualifications.
+- Make predicted capacity a **planning estimate**, never an employee performance grade. Do not penalize employees for management decisions that leave skills unused.
+
+### 21.6 WhiskerWorks seeded acceptance tests
+1. Two qualified CNC operators have different recency and verified historical rates: the scheduler predicts distinct capacities and shows evidence.
+2. An employee with excellent past performance but an **expired qualification** is rejected, not recommended.
+3. A qualified employee away from CNC for six months receives a site-required refresher before independent assignment.
+4. An employee returning after an absence has no reliable personal history: Forge uses a labeled conservative range and low-confidence warning.
+5. A reassignment improves CNC output but creates a worse assembly bottleneck: plant-wide comparison reflects the loss and considers alternatives.
+6. A multi-person backfill chain recalculates each person's operation-specific capacity, setup, and safety eligibility.
+7. Machine breakdown and material starvation are excluded from the employee's run-rate estimate but retained in time and equipment reporting.
+8. An unusually difficult part revision is not compared directly with a simple prior job without context adjustment.
+9. The prediction is 72 good units but actual is 90: record the variance, allow cause review, and update future estimates without overwriting historical observations.
+10. Missing material, WIP capacity, and supplier promise-date constraints prevent an otherwise qualified reassignment from generating infeasible output.
+11. Duplicate or overlapping labor events do not inflate recency or historical throughput.
+12. An unauthorized user cannot edit qualification, forecast calibration, or verified history; all changes are audited.
+
+**Implementation direction:** Extend the existing Sprint 10 Workforce Intelligence, Training Command Center, and operation-level performance analytics. Preserve one source of truth, explainability, role permissions, human approval, and deterministic testability. **No separate scheduling engine and no promotion recommendations.**
+
+## 22. Supervisor-Approved Coverage Goals & Cross-Functional Contribution Metrics
+
+**Scope:** Extend Section 21's proficiency-adjusted reassignment forecasts and existing employee development cards. This is evidence-based reporting, **not** automated promotion, compensation, discipline, or termination advice.
+
+### 22.1 Assignment and goal lifecycle
+- A *coverage assignment* is an explicitly identified temporary assignment outside an employee's usual operation or work center, with employee ID, original and destination work centers, operation/machine, work order (where applicable), planned and actual start/end, qualified/safety status, supervisor ID, and reason for coverage.
+- Present the Section 21 forecast (expected good units/range, setup/reacclimation time, confidence, assumptions) to the supervisor. Allow an authorized supervisor to set a **separate, achievable coverage goal** before work begins, with units, planned productive minutes, and rationale. Forecast != goal != actual output.
+- Require employee visibility into the goal and applicable safe-work instructions. Any goal changes after work begins must be timestamped, justified, versioned, and visibly distinguished from the original; do not silently rewrite targets to improve metrics.
+- On completion, reconcile accepted good output to operation-level production transactions and verified direct labor, setup, downtime, material shortages, quality holds, and safety interruptions. Never reward bypassing inspections or safety checks.
+- Permit authorized review of an incorrect goal, cause attribution, or event, including employee-submitted correction requests. Retain original values and full audit history.
+
+### 22.2 Employee card metrics and formulas
+Display for a selected review period (quarter by default, configurable):
+1. **Coverage assignments completed** (count), **coverage hours** (verified hours), and **distinct qualified operations covered** (count).
+2. **Coverage Goal Success Rate** = `100 * count(eligible completed assignments with actual accepted good output >= approved goal) / count(eligible completed assignments with valid positive approved goals)`; display `N/A` rather than 0% when denominator is zero.
+3. **Average Coverage Goal Attainment** = arithmetic mean across comparable eligible assignments of `100 * actual accepted good output / approved goal`. Show sample size, median or distribution where useful; label results above 100% clearly rather than silently capping them. Do not aggregate raw units across unlike operations.
+4. **Forecast Accuracy** separately: show predicted-versus-actual good output and calibration error; do not treat forecast error as employee underperformance.
+5. **Context flags**: verified machine downtime, material starvation, quality holds, shortened assignments, supervised reacclimation, or changed work scope. Include a drill-down to source events.
+6. Optionally show **voluntary coverage accepted** only if the site reliably captures offers and consent; never infer willingness from absence of coverage, protected leave, or declined requests.
+
+### 22.3 Fair comparison and exceptions
+- If a disruption materially reduces productive time, either compute a **reviewed, time-adjusted goal** using the same approved operation standard and remaining eligible productive time, or mark the assignment **not comparable / excluded** from goal-success and attainment denominators. Preserve the original goal and exclusion reason. Never automatically classify a machine-caused shortfall as employee failure.
+- Exclude canceled, unstarted, unapproved, zero-goal, insufficient-duration, and invalid-data assignments from percentage denominators; show counts and reasons so exclusions cannot hide unfavorable results.
+- Use actual accepted **good** units, not gross units, and preserve plant/process FPY and verified defect attribution independently. Do not double count split or overlapping coverage assignments.
+- Provide operation-specific context and confidence, not a universal ranking across employees or departments. Limit access to authorized employee/supervisor/HR viewers; employees can see their own records subject to site policy.
+- Never generate automatic promotion, pay, discipline, or termination recommendations or a single opaque employee score. Safety qualifications remain mandatory, regardless of goal attainment.
+
+### 22.4 Integration and UI
+- Add a **Cross-Functional Contributions** panel to the employee card with success rate, average attainment, assignment count, hours, operations covered, period filter, and expandable assignment history (goal / forecast / actual / cause adjustments / approval audit).
+- Add supervisor workflow in the existing Workforce `!` reassignment view: review forecast -> approve assignment -> set/confirm realistic coverage goal -> share with employee -> track actuals -> close and review exceptions.
+- Use existing workforce, operation-level labor, quality, downtime, work-order, and audit services as authoritative sources. Do not create a second performance calculation or scheduling engine.
+
+### 22.5 WhiskerWorks acceptance tests
+1. Eight eligible assignments, seven goals met: success rate is **87.5%**.
+2. Three comparable assignments with goals 70/120/80 and good output 76/125/72: attainment is the **mean of the three ratios**, not total units divided by total goals.
+3. An employee's CNC goal is 70, actual good units 76, and forecast 72: record goal success and a separate forecast error.
+4. A two-hour machine breakdown reduces productive time: approved adjusted goal or not-comparable status prevents unfair failure; original target remains auditable.
+5. Material shortages and quality holds are recorded separately from employee-controlled run time.
+6. A goal revised after work starts retains original, new value, supervisor identity, time, and reason; unauthorized retroactive editing is rejected.
+7. A canceled or zero-goal assignment is excluded from the denominator and counted in exclusions.
+8. Assignments spanning different operations are normalized by their own goals; raw unit totals are never treated as comparable.
+9. Two overlapping scans or duplicated output transactions cannot inflate coverage hours or achievement.
+10. An employee can view their own card and request a correction; unauthorized users cannot view another employee's protected details.
+11. A qualification lapse blocks coverage assignment even when the employee historically exceeded goals.
+12. No coverage assignments in a quarter yields **N/A**, not a fabricated 0% or 100%.
+
+**Definition of done:** The supervisor can set a realistic goal informed by the Section 21 forecast, employees can see it, the system records accepted good output and verified disruption context, and the employee card presents auditable cross-functional contributions without automated personnel judgments.
