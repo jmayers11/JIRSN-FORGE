@@ -96,20 +96,26 @@ test('S01 healthy-baseline evidence passes only when commissioned machines, read
   const details = {
     machineAssets: Array.from({ length: 24 }, (_, index) => ({ machineCode: `M-${index}`, active: true, assetStatus: 'Active' })),
     machineSignals: Array.from({ length: 24 }, (_, index) => ({ machineCode: `M-${index}`, status: 'ready' })),
+    machineMaintenance: Array.from({ length: 24 }, (_, index) => ({ machineCode: `M-${index}`, overdueWorkOrders: [] })),
     operationBlocks: [], activeHolds: [],
     releasedOrderOperations: [{ orderNumber: 100, operations: [{ sequence: 10, executable: true }] }],
     workers: [{ personId: 'day-1', isActive: true, shiftCode: 'SHIFT-DAY', presenceKind: 'SupervisorConfirmed' }],
     unavailability: [],
   };
   const snapshot = { sources, details, capturedAt: '2026-10-26T12:00:00.000Z' };
-  assert.deepEqual(healthyBaselineAssertions(snapshot).map(assertion => assertion.outcome), ['Pass', 'Pass', 'Pass', 'Pass']);
+  assert.deepEqual(healthyBaselineAssertions(snapshot).map(assertion => assertion.outcome), ['Pass', 'Pass', 'Pass', 'Pass', 'Pass']);
+  details.machineMaintenance[4].overdueWorkOrders.push({ workOrderId: 105, kind: 'Preventive' });
+  assert.equal(healthyBaselineAssertions(snapshot)[1].outcome, 'Fail');
+  details.machineMaintenance[4].overdueWorkOrders = [];
   details.machineSignals[0].status = 'unknown';
   details.activeHolds.push({ kind: 'Quality' });
   details.releasedOrderOperations[0].operations[0].executable = false;
   details.unavailability.push({ personId: 'day-1', startsAt: '2026-10-26T11:00:00.000Z', endsAt: '2026-10-26T13:00:00.000Z' });
-  assert.deepEqual(healthyBaselineAssertions(snapshot).map(assertion => assertion.outcome), ['Fail', 'Fail', 'Fail', 'Fail']);
+  assert.deepEqual(healthyBaselineAssertions(snapshot).map(assertion => assertion.outcome), ['Fail', 'Pass', 'Fail', 'Fail', 'Fail']);
   sources.assets = 'unavailable under current permissions or source state';
   assert.equal(healthyBaselineAssertions(snapshot)[0].outcome, 'Indeterminate');
+  sources.maintenance = 'unavailable under current permissions or source state';
+  assert.equal(healthyBaselineAssertions(snapshot)[1].outcome, 'Indeterminate');
 });
 
 test('sisal replay accepts only known pre-split, interrupted, and completed source states', () => {

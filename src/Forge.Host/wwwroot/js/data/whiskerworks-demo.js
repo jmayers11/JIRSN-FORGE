@@ -126,6 +126,16 @@ export function healthyBaselineAssertions(snapshot) {
     detail: `${activeMachines.length} active machines; ${notReady.length} are not commissioned Active and Ready${notReady.length ? ` (${notReady.map(machine => machine.machineCode).join(', ')})` : ''}.`,
   }))];
 
+  checks.push(result('Preventive maintenance current on all active machines', ['resources', 'maintenance'], () => {
+    const maintenanceByMachine = new Map((details.machineMaintenance ?? []).map(item => [item.machineCode, item]));
+    const missingEvidence = activeMachines.filter(machine => !maintenanceByMachine.has(machine.machineCode));
+    const overdue = activeMachines.flatMap(machine => (maintenanceByMachine.get(machine.machineCode)?.overdueWorkOrders ?? [])
+      .map(order => `${machine.machineCode} WO ${order.workOrderId}`));
+    const complete = activeMachines.length === 24 && missingEvidence.length === 0;
+    return { outcome: complete && overdue.length === 0 ? 'Pass' : 'Fail',
+      detail: `${activeMachines.length} active machines; ${missingEvidence.length} missing maintenance evidence; ${overdue.length} open PM/inspection/calibration items are due${overdue.length ? ` (${overdue.join(', ')})` : ''}.` };
+  }));
+
   checks.push(result('Zero blocking Safety or Quality exceptions', ['operations', 'holds'], () => {
     const blockedDimensions = (details.operationBlocks ?? []).filter(block => ['Safety', 'Quality'].some(name => String(block.dimension).toLowerCase().includes(name.toLowerCase())));
     const activeHolds = (details.activeHolds ?? []).filter(hold => ['Safety', 'Quality'].includes(hold.kind));

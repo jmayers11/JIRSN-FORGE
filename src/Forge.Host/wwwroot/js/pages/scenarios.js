@@ -414,6 +414,10 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
           machineCode: machine.code, active: machine.active === true,
           assetStatus: values.assets.available ? values.assets.value.find(asset => asset.machineCode === machine.code)?.status ?? null : null,
         })) : null,
+        machineMaintenance: values.resources.available && values.maintenance.available ? machineCards.map(card => ({
+          machineCode: card.machine.code,
+          overdueWorkOrders: card.overdueMaintenance.map(order => ({ workOrderId: order.workOrderId, kind: order.kind })),
+        })) : null,
         operationBlocks: values.operations.available ? values.operations.value.filter(operation => !operation.executable)
           .flatMap(operation => (operation.dimensions ?? []).filter(dimension => ['Fail', 'Indeterminate'].includes(dimension.outcome))
             .map(dimension => ({ orderNumber: operation.orderNumber, sequence: operation.sequence, dimension: dimension.name }))) : null,
