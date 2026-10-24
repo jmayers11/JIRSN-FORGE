@@ -116,7 +116,7 @@ async function person(subject, displayName, ...roles) {
 }
 
 async function main() {
-  try { await fetch(`${base}/health/ready`); } catch { throw new Error(`Forge is not running at ${base}. Start run-forge.cmd first.`); }
+  try { await fetch(`${base}/health/ready`); } catch { throw new Error(`Forge is not running at ${base}. Start run-plant1.cmd first.`); }
   const existing = (await get(adminSubject, '/api/kernel/people')).map(p => p.idpSubject);
   await seedWorkforceVisuals();
   if (existing.includes('eng')) {

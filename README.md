@@ -487,10 +487,17 @@ On Windows, double-click `verify.cmd`; results go to `.forge-logs\verify.log`.
 ## Run locally
 
 On Windows with a local PostgreSQL (`forge.local.cmd` set up as above), double-click
-`run-forge.cmd`. It creates a `forge` database if needed, starts Forge and opens
-http://localhost:5080/ in your browser. Keep the window open while you use Forge.
+`run-forge.cmd`. It starts Forge on the **WhiskerWorks** demo plant (WW-P01, a fictional maker of
+giant cat toys; database `forge_whiskerworks_demo`) and opens http://localhost:5080/ in your
+browser. Keep the window open while you use Forge. Sign in as `ww-demo-planner`,
+`ww-demo-supervisor`, `ww-demo-engineer`, `ww-demo-certifier`, `ww-demo-inventory`, an operator
+such as `ww-operator-001`, or `dev-admin`. Demo mode is on: **Scenarios** has the simulated clock,
+**Save baseline** and **Reset demo** (the replaced state is archived, never deleted). To build the
+demo database from scratch, start `run-whiskerworks-demo.cmd` and run
+`node tools/replay-whiskerworks.mjs --base=http://localhost:5090`.
 
-To get something to look at, double-click `seed-sample-plant.cmd` once (Forge must be running).
+The original PLANT1 **Sample Plant** stays in database `forge`; `run-plant1.cmd` starts it instead.
+To populate a fresh PLANT1 database, double-click `seed-sample-plant.cmd` once (with `run-plant1.cmd` running).
 It builds a clearly labeled **Sample Plant** through the ordinary API: seven work centers, six
 machines, a two-person slitting rule, certified workers, a released part, six released orders, a
 machine outage, planned maintenance, a PTO, and a schedule proposed by one planner and approved
