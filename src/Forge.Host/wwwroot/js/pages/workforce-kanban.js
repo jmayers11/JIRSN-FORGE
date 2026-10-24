@@ -666,6 +666,7 @@ export async function workforceKanbanPage(page, ctx) {
       <div class="staff-card-manage-actions">
         ${canTraining ? `<button class="btn small" type="button" data-emp-training="${esc(worker.personId)}">Training &amp; quals</button>` : ''}
         ${canTitle ? `<button class="btn small" type="button" data-emp-title="${esc(worker.personId)}">Edit title</button>` : ''}
+        ${canTitle ? `<button class="btn small" type="button" data-emp-department="${esc(worker.personId)}">Edit department</button>` : ''}
         ${canPhoto ? `<label class="btn small staff-photo-upload-btn">${worker.hasPhoto ? 'Replace photo' : 'Upload photo'}<input type="file" accept="image/png,image/jpeg,image/webp" data-emp-photo-upload="${esc(worker.personId)}" aria-label="Upload photo for ${esc(worker.displayName)}"></label>` : ''}
         ${canPhoto && worker.hasPhoto ? `<button class="btn small ghost" type="button" data-emp-photo-remove="${esc(worker.personId)}">Remove photo</button>` : ''}
         ${canSupervise && !confirmedOnSite(worker) ? `<button class="btn small" type="button" data-emp-presence="${esc(worker.personId)}">Confirm on site</button>` : ''}
@@ -696,7 +697,7 @@ export async function workforceKanbanPage(page, ctx) {
         <button class="btn small" type="button" data-stage-worker="${esc(worker.personId)}">Stage move</button>
       </div></div>`;
     return `<article class="staff-card ${move ? 'is-proposed' : ''} ${confirmedOnSite(worker) ? '' : 'is-preshift'}" draggable="true" data-worker-card="${esc(worker.personId)}" aria-label="${esc(worker.displayName)}${move ? ', proposed move' : ''}">
-      <div class="staff-card-head"><button class="staff-person-toggle" type="button" data-toggle-person="${esc(worker.personId)}" aria-expanded="${expanded}">${workerAvatar(worker)}<span>${esc(worker.displayName)}<small class="staff-job-title">${esc(worker.jobTitle || 'Official title not set')}</small></span></button>${move ? '<span class="pill warn">Proposed</span>' : ''}</div>
+      <div class="staff-card-head"><button class="staff-person-toggle" type="button" data-toggle-person="${esc(worker.personId)}" aria-expanded="${expanded}">${workerAvatar(worker)}<span>${esc(worker.displayName)}<small class="staff-job-title">${esc(worker.jobTitle || 'Official title not set')}${worker.department ? ` · ${esc(worker.department)}` : ''}</small></span></button>${move ? '<span class="pill warn">Proposed</span>' : ''}</div>
       <div class="staff-card-meta"><span class="staff-presence-tag ${confirmedOnSite(worker) ? '' : 'is-not-present'}">${esc(cardStatus)}</span>${worker.shiftCode ? `<span class="staff-shift-tag">${esc(worker.shiftCode)}</span>` : ''}${move ? `<span class="staff-origin-tag">From ${esc(currentWorkCenter?.name ?? 'unassigned')}</span>` : ''}</div>
       ${machineCode ? `<div class="staff-location">${esc(assignedMachine?.name ?? 'Machine')} · ${esc(machineCode)}</div>` : ''}
       ${qualificationGuard.message ? `<div class="notice ${qualificationGuard.blocked ? 'bad' : 'info'} small workforce-qualification-guard" role="${qualificationGuard.blocked ? 'alert' : 'status'}">${esc(qualificationGuard.message)}</div>` : ''}
@@ -711,6 +712,15 @@ export async function workforceKanbanPage(page, ctx) {
       confirmLabel: 'Save title', reasonRequired: true,
       fields: [{ name: 'jobTitle', label: 'Official title', value: worker.jobTitle ?? '', placeholder: 'Production Operator', maxLength: 100 }],
     }, (values, reason) => command(`/api/workforce/workers/${encodeURIComponent(worker.personId)}/job-title`, { jobTitle: values.jobTitle || null }, reason), () => load());
+  }
+
+  function editWorkerDepartment(worker) {
+    formModal({
+      title: `Set ${worker.displayName}'s department`,
+      detail: 'Departments support Workforce filters and employee context. Leave blank to mark the department unassigned.',
+      confirmLabel: 'Save department', reasonRequired: true,
+      fields: [{ name: 'department', label: 'Department', value: worker.department ?? '', placeholder: 'Production', maxLength: 100 }],
+    }, (values, reason) => command(`/api/workforce/workers/${encodeURIComponent(worker.personId)}/department`, { department: values.department || null }, reason), () => load());
   }
 
   function confirmWorkerPresence(worker) {
@@ -1125,6 +1135,10 @@ export async function workforceKanbanPage(page, ctx) {
     $$('[data-emp-title]', page).forEach(button => button.addEventListener('click', () => {
       const worker = state.workers.find(person => person.personId === button.dataset.empTitle);
       if (worker) editWorkerTitle(worker);
+    }));
+    $$('[data-emp-department]', page).forEach(button => button.addEventListener('click', () => {
+      const worker = state.workers.find(person => person.personId === button.dataset.empDepartment);
+      if (worker) editWorkerDepartment(worker);
     }));
     $$('[data-emp-photo-upload]', page).forEach(input => input.addEventListener('change', async () => {
       const file = input.files?.[0];

@@ -9,7 +9,7 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   browser.document.body.append(page);
   const attendanceCalls = [];
   let receiptPreviewRequest;
-  const worker = { personId: 'worker-1', displayName: 'Ari Operator', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY', jobTitle: 'Machine Operator', unavailability: null };
+  const worker = { personId: 'worker-1', displayName: 'Ari Operator', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY', jobTitle: 'Machine Operator', department: 'Production', unavailability: null };
   globalThis.fetch = (path, options = {}) => {
     if (path === '/api/workforce/workers') return Promise.resolve(response([worker]));
     if (path === '/api/resources/') return Promise.resolve(response({
@@ -74,10 +74,11 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   assert.match(page.innerHTML, /Calendar quarter to date/);
   assert.match(page.innerHTML, /data-wi-filter="site"/);
   assert.match(page.innerHTML, /data-wi-filter="machine"/);
+  assert.match(page.innerHTML, /data-wi-filter="department"/);
   assert.match(page.innerHTML, /data-wi-filter="area"/);
   assert.match(page.innerHTML, /data-wi-filter="role"/);
   assert.match(page.innerHTML, /data-wi-filter="qualification"/);
-  assert.match(page.innerHTML, /Department is represented by the plant safety area/);
+  assert.match(page.innerHTML, /Departments are maintained on employee profiles/);
   assert.match(page.innerHTML, /existing workforce content/);
   assert.doesNotMatch(page.innerHTML, /ApprovedPto|protected leave|Medical/i);
 

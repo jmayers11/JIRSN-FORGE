@@ -14,6 +14,8 @@ public sealed record RegisterWorker(PersonId PersonId, string HomeWorkCenterCode
 
 public sealed record SetWorkerJobTitle(PersonId PersonId, string? JobTitle);
 
+public sealed record SetWorkerDepartment(PersonId PersonId, string? Department);
+
 /// <summary>Assign a person to work. Give a machine, or a work center, or just a safety area.</summary>
 public sealed record AssignWork(PersonId PersonId, string? SafetyAreaCode, string? WorkCenterCode, string? MachineCode, string ActivityCode, bool AsTrainee);
 
@@ -44,6 +46,13 @@ public sealed record WorkerRegistered(Guid PersonId, string HomeWorkCenterCode) 
 public sealed record WorkerJobTitleChanged(Guid PersonId, string? PreviousTitle, string? CurrentTitle) : IDomainEvent
 {
     public static string EventType => nameof(WorkerJobTitleChanged);
+
+    public static int SchemaVersion => 1;
+}
+
+public sealed record WorkerDepartmentChanged(Guid PersonId, string? PreviousDepartment, string? CurrentDepartment) : IDomainEvent
+{
+    public static string EventType => nameof(WorkerDepartmentChanged);
 
     public static int SchemaVersion => 1;
 }
@@ -92,6 +101,8 @@ public interface IWorkforceStore
     Task<string?> SetShiftAsync(PersonId person, string? shiftCode, CancellationToken ct);
 
     Task<string?> SetJobTitleAsync(PersonId person, string? jobTitle, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task<string?> SetDepartmentAsync(PersonId person, string? department, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task SetWorkerPhotoAsync(PersonId person, string? sha256, string? contentType, DateTimeOffset at, string actor, CancellationToken ct);
 
@@ -240,6 +251,28 @@ public sealed partial class WorkforceService(CommandPipeline pipeline)
                 CommandResult.Ok(id, title is null ? "Official title cleared." : "Official title updated."),
                 [pipeline.Event(new WorkerJobTitleChanged(c.PersonId.Value, previous, title), context, SourceContext, WorkerEntity, id)],
                 new AuditChange(WorkerEntity, id, CanonicalJson.Serialize(new { jobTitle = previous }), CanonicalJson.Serialize(new { jobTitle = title })));
+        }, ct);
+    }
+
+    public Task<CommandResult> SetWorkerDepartmentAsync(SetWorkerDepartment c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var department = string.IsNullOrWhiteSpace(c.Department) ? null : c.Department.Trim();
+        if (department?.Length > 100 || department?.Any(char.IsControl) == true)
+            throw new CommandRejectedException("invalid_worker_department", "A department must be 100 characters or fewer and contain no control characters.");
+
+        var spec = new CommandSpec(SourceContext, nameof(SetWorkerDepartment), Permissions.WorkforceManage, ResourceRef.Of(WorkerEntity, c.PersonId), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, c with { Department = department }, context, async (uow, now) =>
+        {
+            var previous = await uow.Store<IWorkforceStore>().SetDepartmentAsync(c.PersonId, department, now, context.Actor, ct);
+            if (previous == department)
+                return CommandOutcome.NoChange(CommandResult.NoChange(c.PersonId.ToString(), department is null ? "Department is already blank." : "Department is unchanged."));
+
+            var id = c.PersonId.ToString();
+            return new CommandOutcome(
+                CommandResult.Ok(id, department is null ? "Department cleared." : "Department updated."),
+                [pipeline.Event(new WorkerDepartmentChanged(c.PersonId.Value, previous, department), context, SourceContext, WorkerEntity, id)],
+                new AuditChange(WorkerEntity, id, CanonicalJson.Serialize(new { department = previous }), CanonicalJson.Serialize(new { department })));
         }, ct);
     }
 

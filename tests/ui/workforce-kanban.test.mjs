@@ -118,6 +118,7 @@ test('expanded employee card exposes permission-gated management actions and the
   fire(page.querySelector(`[data-toggle-person="${personId}"]`), 'click');
   assert.ok(page.querySelector(`[data-emp-training="${personId}"]`));
   assert.ok(page.querySelector(`[data-emp-title="${personId}"]`));
+  assert.ok(page.querySelector(`[data-emp-department="${personId}"]`));
   assert.ok(page.querySelector(`[data-emp-photo-upload="${personId}"]`));
   assert.ok(page.querySelector(`[data-emp-photo-remove="${personId}"]`));
   assert.ok(page.querySelector(`[data-emp-presence="${personId}"]`));
@@ -138,6 +139,15 @@ test('expanded employee card exposes permission-gated management actions and the
   fire(modal.querySelector('[data-ok]'), 'click');
   await flush(); await flush();
   assert.deepEqual(calls.find(call => call.path.endsWith('/job-title'))?.body, { jobTitle: 'Lead Slitting Operator', reason: 'Title reviewed by supervisor' });
+
+  fire(page.querySelector(`[data-emp-department="${personId}"]`), 'click');
+  modal = browser.document.querySelector('.modal');
+  assert.equal(modal.querySelector('#f-department').getAttribute('maxlength'), '100');
+  modal.querySelector('#f-department').value = 'Production';
+  modal.querySelector('#reason').value = 'Department confirmed by supervisor';
+  fire(modal.querySelector('[data-ok]'), 'click');
+  await flush(); await flush();
+  assert.deepEqual(calls.find(call => call.path.endsWith('/department'))?.body, { department: 'Production', reason: 'Department confirmed by supervisor' });
 
   fire(page.querySelector(`[data-emp-presence="${personId}"]`), 'click');
   modal = browser.document.querySelector('.modal');

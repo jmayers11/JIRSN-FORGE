@@ -71,8 +71,8 @@ test('evidence links accept only recognized Forge source-reference formats', () 
 test('command-center filters scope workers, qualifications, machine coverage, and review evidence by recorded dimensions', () => {
   const filtered = filterWorkforceIntelligenceInputs({
     workers: [
-      { personId: 'a', displayName: 'Ari', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY', jobTitle: 'Operator' },
-      { personId: 'b', displayName: 'Bo', homeWorkCenterCode: 'WC-B', isActive: true, shiftCode: 'DAY', jobTitle: 'Inspector' },
+      { personId: 'a', displayName: 'Ari', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY', jobTitle: 'Operator', department: 'Production' },
+      { personId: 'b', displayName: 'Bo', homeWorkCenterCode: 'WC-B', isActive: true, shiftCode: 'DAY', jobTitle: 'Inspector', department: 'Quality' },
     ],
     qualifications: [
       { personId: 'a', code: 'WIND', status: 'Qualified' },
@@ -101,7 +101,7 @@ test('command-center filters scope workers, qualifications, machine coverage, an
     readiness: [{ workCenter: 'WC-A', machineCode: 'WD-01' }, { workCenter: 'WC-B', machineCode: 'SL-01' }],
   }, {
     siteCode: 'SITE-A', areaCode: 'AREA-A', shiftCode: 'DAY', workCenterCode: '', machineCode: 'WD-01',
-    roleTitle: 'Operator', qualificationCode: 'WIND', workerStatus: 'active', reviewState: 'PendingReview',
+    roleTitle: 'Operator', department: 'Production', qualificationCode: 'WIND', workerStatus: 'active', reviewState: 'PendingReview',
   });
 
   assert.deepEqual(filtered.workers.map(row => row.personId), ['a']);

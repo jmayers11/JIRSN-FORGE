@@ -73,6 +73,11 @@ public sealed class PlantSetupTests(PostgresFixture postgres)
         var titleNoReason = await Try(plant, e, $"/api/workforce/workers/{operatorId}/job-title", new { jobTitle = "Bonding Operator" });
         Assert.Equal(HttpStatusCode.UnprocessableEntity, titleNoReason.Status);
         await plant.Ok(e, $"/api/workforce/workers/{operatorId}/job-title", new { jobTitle = "Bonding Operator", reason = "HR confirmed official title" });
+        var departmentForbidden = await Try(plant, plant.As("planner"), $"/api/workforce/workers/{operatorId}/department", new { department = "Production", reason = "Set department" });
+        Assert.Equal(HttpStatusCode.Forbidden, departmentForbidden.Status);
+        var departmentNoReason = await Try(plant, e, $"/api/workforce/workers/{operatorId}/department", new { department = "Production" });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, departmentNoReason.Status);
+        await plant.Ok(e, $"/api/workforce/workers/{operatorId}/department", new { department = "Production", reason = "Department confirmed by supervisor" });
 
         await plant.Ok(e, "/api/resources/sites/WEST/edit", new { name = "West campus", timeZone = "America/Denver", reason = "Renamed site" });
         await plant.Ok(e, "/api/resources/work-centers/BOND-WC/edit", new { name = "Bonding line", parent = "BONDING", picture = "assembly", reason = "Clearer name" });
@@ -96,7 +101,9 @@ public sealed class PlantSetupTests(PostgresFixture postgres)
         Assert.Equal("WIND-WC", Find(r, "machines", "LAM-1").GetProperty("workCenterCode").GetString());
         Assert.Equal("WINDING", Find(r, "machines", "LAM-1").GetProperty("safetyAreaCode").GetString());
         var workers = await Get(e, "/api/workforce/workers");
-        Assert.Equal("Bonding Operator", workers.EnumerateArray().Single(w => w.GetProperty("personId").GetGuid() == operatorId).GetProperty("jobTitle").GetString());
+        var worker = workers.EnumerateArray().Single(w => w.GetProperty("personId").GetGuid() == operatorId);
+        Assert.Equal("Bonding Operator", worker.GetProperty("jobTitle").GetString());
+        Assert.Equal("Production", worker.GetProperty("department").GetString());
 
         // A work center with an active machine cannot be retired; retire the machine first.
         var withMachine = await Try(plant, e, "/api/resources/work-centers/WIND-WC/retire", new { reason = "Closing winding" });

@@ -43,7 +43,8 @@ public sealed record WorkerState(
     WorkAssignment? Assignment,
     string? ShiftCode = null,
     string? JobTitle = null,
-    bool HasPhoto = false);
+    bool HasPhoto = false,
+    string? Department = null);
 
 public sealed record WorkerPhotoInfo(string Sha256, string ContentType);
 

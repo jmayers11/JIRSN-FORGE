@@ -247,6 +247,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
   const machineChoices = (options.machines ?? []).map(machine => `<option value="${escapeAttr(machine.code)}" ${options.machineCode === machine.code ? 'selected' : ''}>${esc(machine.code)} · ${esc(machine.name)}</option>`).join('');
   const roleChoices = (options.jobTitles ?? []).map(title => `<option value="${escapeAttr(title)}" ${options.roleTitle === title ? 'selected' : ''}>${esc(title)}</option>`).join('');
   const qualificationChoices = (options.qualificationTypes ?? []).map(type => `<option value="${escapeAttr(type.code)}" ${options.qualificationCode === type.code ? 'selected' : ''}>${esc(type.code)}${type.name ? ` · ${esc(type.name)}` : ''}</option>`).join('');
+  const departmentChoices = (options.departments ?? []).map(department => `<option value="${escapeAttr(department.code)}" ${options.department === department.code ? 'selected' : ''}>${esc(department.name)}</option>`).join('');
   const attendanceCount = value => value == null ? '—' : fmtNumber(value);
   const canSchedule = permissions.has('workforce.attendance-schedule.manage');
   const canPolicy = permissions.has('workforce.attendance-policy.manage');
@@ -308,13 +309,14 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
         <label>Machine<select class="input" data-wi-filter="machine"><option value="">All machines</option>${machineChoices}</select></label>
         <label>Qualification window<select class="input" data-wi-filter="expiry"><option value="30" ${options.expiryDays === 30 ? 'selected' : ''}>30 days</option><option value="60" ${options.expiryDays === 60 ? 'selected' : ''}>60 days</option><option value="90" ${options.expiryDays === 90 ? 'selected' : ''}>90 days</option></select></label>
         <details class="workforce-intelligence-filter-more"><summary>More filters</summary><div>
-          <label>Department / safety area<select class="input" data-wi-filter="area"><option value="">All areas</option>${areaChoices}</select></label>
+          <label>Department<select class="input" data-wi-filter="department"><option value="">All departments</option>${departmentChoices}</select></label>
+          <label>Safety area<select class="input" data-wi-filter="area"><option value="">All areas</option>${areaChoices}</select></label>
           <label>Role / job title<select class="input" data-wi-filter="role"><option value="">All roles</option>${roleChoices}</select></label>
           <label>Training type<select class="input" data-wi-filter="qualification"><option value="">All training</option>${qualificationChoices}</select></label>
           <label>Worker status<select class="input" data-wi-filter="workerStatus"><option value="all" ${options.workerStatus === 'all' ? 'selected' : ''}>All workers</option><option value="active" ${options.workerStatus === 'active' ? 'selected' : ''}>Active</option><option value="inactive" ${options.workerStatus === 'inactive' ? 'selected' : ''}>Inactive</option></select></label>
           <label>Review status<select class="input" data-wi-filter="reviewState"><option value="all" ${options.reviewState === 'all' ? 'selected' : ''}>Pending and disputed</option><option value="PendingReview" ${options.reviewState === 'PendingReview' ? 'selected' : ''}>Pending review</option><option value="Verified" ${options.reviewState === 'Verified' ? 'selected' : ''}>Verified</option><option value="Disputed" ${options.reviewState === 'Disputed' ? 'selected' : ''}>Disputed</option></select></label>
         </div></details></div>
-        <p class="faint workforce-intelligence-filter-note">Roster, coverage, and evidence views follow the selected filters. Attendance totals follow the review period and remain permission-scoped. Department is represented by the plant safety area because employee records do not store a separate department.</p>
+        <p class="faint workforce-intelligence-filter-note">Roster, coverage, and evidence views follow the selected filters. Attendance totals follow the review period and remain permission-scoped. Departments are maintained on employee profiles by Workforce managers.</p>
       </header>
       <div class="kpis kpis-4 workforce-intelligence-kpis">
         <div class="kpi"><div><div class="t">Current qualifications</div><div class="v">${qualificationsKnown ? fmtNumber(summary.qualificationCounts.current) : 'N/A'}</div><div class="why">Verified, unexpired Competency records</div></div></div>
@@ -377,7 +379,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
   const now = new Date();
   const activityFrom = new Date(now.getTime() - 30 * DAY);
   const through = new Date(now.getTime() + 30 * DAY);
-  const current = { expiryDays: 60, siteCode: '', areaCode: '', shiftCode: '', workCenterCode: '', machineCode: '', roleTitle: '', qualificationCode: '', workerStatus: 'all', reviewState: 'all', attendancePeriod: 'quarter' };
+  const current = { expiryDays: 60, siteCode: '', areaCode: '', department: '', shiftCode: '', workCenterCode: '', machineCode: '', roleTitle: '', qualificationCode: '', workerStatus: 'all', reviewState: 'all', attendancePeriod: 'quarter' };
   const periodStart = attendancePeriodStart(current.attendancePeriod, now);
   const reviewFrom = new Date(now.getTime() - 90 * DAY);
   const scheduleFrom = new Date(now.getTime() - 60 * DAY);
@@ -427,6 +429,9 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
   const machines = resources?.machines ?? [];
   const jobTitles = [...new Set((workers ?? []).map(worker => worker.jobTitle?.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const qualificationTypes = typesResult.data ?? [];
+  const departments = [...new Set((workers ?? []).map(worker => worker.department?.trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b)).map(code => ({ code, name: code }));
+  if ((workers ?? []).some(worker => !worker.department?.trim())) departments.push({ code: '__unassigned', name: 'Unassigned' });
   const workerNames = new Map((workers ?? []).map(worker => [worker.personId, worker.displayName]));
   const sources = { workers: workersResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, resources: resourcesResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, workerNames };
   const filteredView = () => {
@@ -455,7 +460,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
       areas: safetyAreas.filter(area => (!current.siteCode || area.siteCode === current.siteCode) && (!current.areaCode || area.code === current.areaCode)),
       machines: machines.filter(machine => (!current.workCenterCode || machine.workCenterCode === current.workCenterCode)
         && (!current.siteCode || scoped.resources?.machines?.some(item => item.code === machine.code))),
-      jobTitles, qualificationTypes };
+      jobTitles, qualificationTypes, departments };
     return render(buildWorkforceIntelligence({ ...scoped, ...current }), filteredSources, options, me, selectedPersonId, personOperationHistory);
   };
   page.innerHTML = renderPanel() + page.innerHTML;
@@ -467,6 +472,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     if (filter === 'center') { current.workCenterCode = event.target.value; current.machineCode = ''; }
     if (filter === 'site') { current.siteCode = event.target.value; current.areaCode = ''; current.workCenterCode = ''; current.machineCode = ''; }
     if (filter === 'area') { current.areaCode = event.target.value; current.workCenterCode = ''; current.machineCode = ''; }
+    if (filter === 'department') current.department = event.target.value;
     if (filter === 'machine') current.machineCode = event.target.value;
     if (filter === 'role') current.roleTitle = event.target.value;
     if (filter === 'qualification') current.qualificationCode = event.target.value;

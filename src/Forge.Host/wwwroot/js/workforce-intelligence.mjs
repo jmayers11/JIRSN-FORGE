@@ -40,6 +40,7 @@ export function filterWorkforceIntelligenceInputs(input = {}, filters = {}) {
       && (!selectedMachineCenter || selectedMachineCenter === center)
       && (!filters.siteCode || allowedCenters.has(center))
       && (!filters.areaCode || area === filters.areaCode)
+      && (!filters.department || (filters.department === '__unassigned' ? !worker.department : worker.department === filters.department))
       && roleMatches(worker)
       && (filters.workerStatus === 'all' || !filters.workerStatus || (filters.workerStatus === 'active' ? worker.isActive : !worker.isActive));
   };

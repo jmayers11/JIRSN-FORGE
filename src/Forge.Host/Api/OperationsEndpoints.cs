@@ -38,6 +38,7 @@ public sealed record PersonQualificationRequest(string Code, string? Evidence, s
 public sealed record WorkerRequest(string HomeWorkCenterCode, string? Reason);
 
 public sealed record WorkerJobTitleRequest(string? JobTitle, string? Reason);
+public sealed record WorkerDepartmentRequest(string? Department, string? Reason);
 
 public sealed record WorkCenterLayoutsRequest(IReadOnlyList<WorkCenterPlacement> Placements, string? Reason);
 
@@ -239,6 +240,8 @@ public static class OperationsEndpoints
             Command(http, b.Reason, c => s.RegisterWorkerAsync(new RegisterWorker(new PersonId(personId), b.HomeWorkCenterCode), c, ct)));
         api.MapPost("/workers/{personId:guid}/job-title", (HttpContext http, Guid personId, WorkerJobTitleRequest b, WorkforceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.SetWorkerJobTitleAsync(new SetWorkerJobTitle(new PersonId(personId), b.JobTitle), c, ct)));
+        api.MapPost("/workers/{personId:guid}/department", (HttpContext http, Guid personId, WorkerDepartmentRequest b, WorkforceService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SetWorkerDepartmentAsync(new SetWorkerDepartment(new PersonId(personId), b.Department), c, ct)));
         api.MapPost("/workers/{personId:guid}/assignment", (HttpContext http, Guid personId, AssignmentRequest b, WorkforceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AssignWorkAsync(new AssignWork(new PersonId(personId), b.SafetyAreaCode, b.WorkCenterCode, b.MachineCode, b.ActivityCode, b.AsTrainee), c, ct)));
         api.MapPost("/workers/{personId:guid}/assignment/end", (HttpContext http, Guid personId, ReasonRequest b, WorkforceService s, CancellationToken ct) =>

@@ -199,6 +199,21 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
         return previous is DBNull ? null : (string)previous;
     }
 
+    public async Task<string?> SetDepartmentAsync(PersonId person, string? department, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE workforce.worker w SET department = $2, updated_at = $3, updated_by = $4 FROM workforce.worker old WHERE old.person_id = w.person_id AND w.person_id = $1 AND w.department IS DISTINCT FROM $2 RETURNING old.department",
+            person.Value, Text(department), at, actor);
+        var previous = await cmd.ExecuteScalarAsync(ct);
+        if (previous is null)
+        {
+            if (!await WorkerExistsAsync(person.Value, ct))
+                throw new CommandRejectedException("worker_not_found", "This person is not a registered worker.");
+            return department;
+        }
+        return previous is DBNull ? null : (string)previous;
+    }
+
     public async Task<IReadOnlyList<UnavailabilityWindow>> ListUnavailabilityAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
     {
         var list = new List<UnavailabilityWindow>();
@@ -229,7 +244,7 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
             SELECT w.person_id, w.display_name, COALESCE(h.work_center, w.home_work_center), p.is_active,
                    pr.kind, pr.valid_until,
                    un.kind,
-                   a.safety_area_code, a.work_center_code, a.machine_code, a.activity_code, a.as_trainee, w.shift_code, w.job_title, w.photo_sha256 IS NOT NULL
+                   a.safety_area_code, a.work_center_code, a.machine_code, a.activity_code, a.as_trainee, w.shift_code, w.job_title, w.photo_sha256 IS NOT NULL, w.department
             FROM workforce.worker w
             JOIN kernel.person p ON p.person_id = w.person_id
             LEFT JOIN LATERAL (
@@ -265,7 +280,8 @@ internal sealed class PostgresWorkforceStore(PostgresUnitOfWork uow) : IWorkforc
                 reader.IsDBNull(7) ? null : ReadAssignment(reader, 7),
                 reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : reader.GetString(13),
-                reader.GetBoolean(14)));
+                reader.GetBoolean(14),
+                reader.IsDBNull(15) ? null : reader.GetString(15)));
         }
 
         return states;
