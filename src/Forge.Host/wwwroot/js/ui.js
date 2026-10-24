@@ -125,7 +125,10 @@ export function fmtTime(iso, opts = {}) {
 }
 export function fmtDateTime(iso) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: zone });
+  const d = new Date(iso);
+  // Show the year whenever it is not this year, so a 2027 expiry never reads like today.
+  const year = date => new Intl.DateTimeFormat('en-US', { year: 'numeric', timeZone: zone }).format(date);
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', ...(year(d) === year(new Date()) ? {} : { year: 'numeric' }), hour: 'numeric', minute: '2-digit', timeZone: zone });
 }
 export function fmtDate(isoOrDateOnly) {
   if (!isoOrDateOnly) return '—';

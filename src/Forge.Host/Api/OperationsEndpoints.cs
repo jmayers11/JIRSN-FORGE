@@ -332,7 +332,7 @@ public static class OperationsEndpoints
             Command(http, b.Reason, c => s.CorrectEventAsync(new CorrectAttendanceIntelligenceEvent(eventId, b.Kind, b.ObservedAt, b.ReasonCode), c, ct)));
         api.MapPost("/my-attendance-events/{eventId:guid}/correction", (HttpContext http, Guid eventId, AttendanceEventCorrectionRequest b, AttendanceIntelligenceService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RequestOwnCorrectionAsync(new RequestOwnAttendanceCorrection(eventId, b.Kind, b.ObservedAt, b.ReasonCode), c, ct)));
-        api.MapGet("/development-nominations", async (HttpContext http, Guid? personId, CancellationToken _) =>
+        api.MapGet("/development-nominations", (HttpContext http, Guid? personId, CancellationToken _) =>
             ReadStore<IWorkforceDevelopmentStore>(http, Permissions.WorkforceNominationRead, async (store, ct) =>
             {
                 var nominations = await store.ListNominationsAsync(personId, ct);

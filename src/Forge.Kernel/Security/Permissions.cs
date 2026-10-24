@@ -360,7 +360,7 @@ public static class Roles
         Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.WorkAssignmentsManage];
         Map[Supervisor] = [.. Map[Supervisor], Permissions.WorkAssignmentsManage];
         Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.DemoControl, Permissions.DemoReset];
-        Map[Planner] = [.. Map[Planner], Permissions.DemoControl];
+        Map[Planner] = [.. Map[Planner], Permissions.DemoControl, Permissions.CompetencyRead];
         Map[Supervisor] = [.. Map[Supervisor], Permissions.DemoControl];
     }
 
