@@ -2,7 +2,25 @@
 
 Date: 2026-10-24
 Specification: `Forge_Sprint_10_Latest.txt` (extends `Forge_Sprint_10_Training_Performance_Workforce_Intelligence.md`)
-Status: The original Sprint 10 source implementation is in place. The 2026-10-24 calculation amendments have deterministic calculation primitives and unit coverage; source-record, persistence, API, transaction, and UI integration remains open. Full Integration.Tests and isolated Sprint 9/Sprint 10 scenario acceptance gates remain open.
+Status: Sections 16–22 are delivered end to end (persisted records, commands, APIs, UI and PostgreSQL integration tests) as of the Claude completion pass below. The WhiskerWorks demo now runs on its own isolated database with a simulated clock, saved baseline and reset. The full verification gate result is recorded in AI_HANDOFF.md.
+
+## Completion pass: Sections 16–22 end to end (Claude, 2026-10-24)
+
+The calculation primitives below are now driven by persisted, reviewed source records and exposed through APIs and screens.
+
+| Section | What was added | Where |
+| --- | --- | --- |
+| §16 Cause-adjusted performance | Coded paid time (Break, Meeting, Material shortage, Machine downtime…) recorded by a supervisor and approved by someone other than the worker; first-pass attribution proposed by Quality and verified by an independent disposition holder; a per-employee report with unadjusted beside adjusted efficiency and official beside employee-attributable FPY | Workforce `CodedTime.cs`, migration `workforce/0011`; Quality `FirstPassAttributionService.cs`, migration `quality/0017`; `Host/Workforce/CauseAdjustedPerformanceService.cs`; `GET /api/workforce/cause-adjusted-performance`; Workforce Intelligence drawer (`cause-performance.js`) |
+| §17 Partial builds | BOM lines name the consuming operation (`consumed_at_sequence`, copied to the order at release). The planner computes per-operation reach from issued + allocated material, finds the blocked operation and the stopping point, and feeds `PartialBuildFeasibilityCalculator`. Approval re-checks material and storage under lock and reserves both atomically; the material engine then gives reserved stock only to that order | migrations `engineering/0017`, `execution/0015`, `inventory/0028`; `Planning/PartialBuildPlanner.cs`; `Inventory/InventoryService.WipStorage.cs`; `POST /api/planning/orders/{n}/partial-build-preview`, `/partial-builds`; order page "Plan partial build…" |
+| §18 WIP storage | Safety-approved capacity per location and part (max units, optional utilization and dwell limits, safety reference), proposed by inventory management and approved by a different safety approver. Free space = floor(max × utilization) − ledger on-hand − reservations; a location holding other parts reports unknown space rather than guessing | `inventory.storage_capacity_rule`; `WipStorageQueries`; `/api/inventory/storage-rules` |
+| §19 Usable dates | Missing material's usable date = promised arrival + planner-supplied receiving/inspection/put-away hours (Forge has no lead-time master data, so without them the date is reported unknown); restart = latest usable date + staging + setup; dwell beyond the storage rule blocks approval; partial-versus-wait explanation | `PartialBuildPlanner` with `MaterialUsableDateCalculator` |
+| §20 Planner scrap | Request → independent Inventory approval or Quality disposition → separate execution; reversals; direct-scrap site rules; scrap preview with order impact | Already reported; `InventoryService.Scrap.cs`, migration `inventory/0027` |
+| §21 Skill capacity | Verified run observations (labor ∪ reports, minus maintenance downtime), quartile ranges with ≥3 runs or a labeled conservative benchmark, refresher policies with reacclimation added to setup | `Planning/SkillCapacity.cs`, Competency `RefresherPolicyService.cs`; `POST /api/readiness/workforce-recovery-capacity` |
+| §22 Coverage | Coverage assignments with a qualification hard gate, versioned goals (original kept; time-adjusted only after completion by a different supervisor), comparability review and metrics on accepted good output | Workforce `Coverage.cs`, migration `workforce/0012`; `/api/workforce/coverage` |
+
+**Tests added:** Planning `PartialBuildPlannerTests` (7) and `SkillEvidenceTests` (6); integration `PartialBuildTests`, `CoverageAssignmentTests`, `CauseAdjustedPerformanceTests`, `InventoryScrapRequestTests` (4), `OpeningBalanceTests`; UI `partial-build`, `skill-capacity-coverage`, `cause-performance`, `inventory-scrap`. Focused run on the device: build 0 warnings/0 errors, Architecture 32/32, Planning 359/359, 26 focused integration tests passed, UI 379/379.
+
+**Known limits:** partial builds hold one approval per order at a time; machine and labor limits in the preview are readiness as of now (time capacity stays with the scheduler); lead times for usable dates are planner inputs; mixed-part storage is reported unknown; scrap has no unit-of-measure conversion and the legacy direct `/api/inventory/scrap` endpoint still exists; first-pass attribution is one cause per inspection (mixed failures are recorded as Mixed).
 
 ## Latest calculation amendments
 
