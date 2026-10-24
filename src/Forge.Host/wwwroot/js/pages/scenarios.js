@@ -2,7 +2,7 @@ import { command, get } from '../api.js';
 import { $, $$, esc, fmtDateTime, toast, confirmWithReason } from '../ui.js';
 import { formModal } from '../forms.js';
 import { scenarioCatalog } from '../data/whiskerworks-scenarios.js';
-import { delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectDayShiftScenarioRoster, sisalQuantityEvidence, sisalSplitSteps } from '../data/whiskerworks-demo.js';
+import { cnc02MaintenanceWindowEvidence, delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectDayShiftScenarioRoster, sisalQuantityEvidence, sisalSplitSteps } from '../data/whiskerworks-demo.js';
 import { armDemoScannerOutage, readDemoScannerOutage } from '../demo-scanner-outage.mjs';
 import { deriveMachineCards } from './machine-kanban.js';
 
@@ -319,6 +319,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       operations: '/api/readiness/operations', activeWork: '/api/readiness/active-work', schedule: '/api/planning/schedules/approved',
       cnc01Readiness: '/api/readiness/machines/CNC-01?activity=CNC_MILL', asm03Readiness: '/api/readiness/machines/ASM-03?activity=ASSEMBLE_HEAVY',
       assets: '/api/maintenance/assets', inventory: '/api/inventory/positions', quality: '/api/quality/due', gauges: '/api/quality/gauges', maintenance: '/api/maintenance/work-orders?includeClosed=false',
+      maintenanceOutages: '/api/maintenance/outages?includeDecided=true',
       downtime: '/api/maintenance/downtime', holds: '/api/holds/?includeReleased=false', unavailability: `/api/workforce/unavailability?from=${encodeURIComponent(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())}&to=${encodeURIComponent(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString())}`,
       handoffs: '/api/execution/shifts/handoffs?workCenter=WC-CNC-MILL&limit=100',
       sisalLedger: '/api/inventory/transactions?part=WW-SISAL-SPOOL-250M&take=200',
@@ -444,6 +445,11 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
           .map(({ code, calibrationDue, certificate }) => ({ code, calibrationDue, certificate })) : null,
         recoveryActions: values.recoveryActions.available ? values.recoveryActions.value : null,
         shiftHandoff: values.s15Handoff.available ? values.s15Handoff.value : null,
+        cnc02PmOutages: values.maintenanceOutages.available ? values.maintenanceOutages.value
+          .filter(outage => outage.machineCode === 'CNC-02')
+          .map(({ outageId, machineCode, workOrderId, status, startsAt, endsAt, proposedBy, decidedBy, downtimeId }) => ({
+            outageId, machineCode, workOrderId, status, startsAt, endsAt, proposedBy, decidedBy, downtimeId,
+          })) : null,
         cascadeMachineReadiness: {
           CNC01: values.cnc01Readiness.available ? values.cnc01Readiness.value.output : null,
           ASM03: values.asm03Readiness.available ? values.asm03Readiness.value.output : null,
@@ -487,6 +493,11 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         }
         if (key === 'CNC-01 downtime is open' && current.sources.downtime === 'available') {
           outcome = current.details.cnc01OpenDowntime ? 'Pass' : 'Fail'; detail = current.details.cnc01OpenDowntime ? 'An open CNC-01 downtime record is present.' : 'No open CNC-01 downtime record was found.';
+        } else if (['CNC-02 PM window is scheduled four hours from proposal time', 'Outage requires independent approval'].includes(key)
+            && current.sources.maintenanceOutages === 'available') {
+          const evidence = cnc02MaintenanceWindowEvidence({ outages: current.details.cnc02PmOutages ?? [], target: event.targetGroups ?? {} });
+          const assertion = key === 'CNC-02 PM window is scheduled four hours from proposal time' ? evidence.window : evidence.approval;
+          outcome = assertion.outcome; detail = assertion.detail;
         } else if (key === 'Sensor purchase promise moved four days' && current.sources.procurement === 'available') {
           const target = event.targetGroups?.purchaseLines?.find(line => line.partNumber === 'WW-SENS-PROX-05') ?? event.targetGroups ?? {};
           const line = current.details.sensorPurchaseLines?.find(row => Number(row.poNumber) === Number(target.poNumber)
@@ -761,10 +772,11 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       && ['Proposed', 'Approved'].includes(outage.status));
     if (prior) {
       return { workOrderId: order.workOrderId, outageId: prior.outageId, startsAt: prior.startsAt, endsAt: prior.endsAt,
-        alreadyProposed: true, status: prior.status };
+        requestedAt: null, alreadyProposed: true, status: prior.status };
     }
 
-    const startsAt = new Date(Date.now() + 4 * 60 * 60 * 1000);
+    const requestedAt = new Date();
+    const startsAt = new Date(requestedAt.getTime() + 4 * 60 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
     await postDemo(`/api/maintenance/work-orders/${order.workOrderId}/schedule`, {
       startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(),
@@ -774,7 +786,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       && outage.status === 'Proposed');
     if (!proposal) throw new Error(`Forge did not return the expected CNC-02 PM outage proposal for work order ${order.workOrderId}.`);
     return { workOrderId: order.workOrderId, outageId: proposal.outageId, startsAt: proposal.startsAt, endsAt: proposal.endsAt,
-      alreadyProposed: false, status: proposal.status };
+      requestedAt: requestedAt.toISOString(), alreadyProposed: false, status: proposal.status };
   }
 
   async function holdMotorLot(reason, code = 'WW-S06-MRB-HOLD') {

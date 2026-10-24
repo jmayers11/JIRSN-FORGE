@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectDayShiftScenarioRoster, selectOpenSensorPromiseLine, sisalQuantityEvidence, sisalSplitSteps } from '../../src/Forge.Host/wwwroot/js/data/whiskerworks-demo.js';
+import { cnc02MaintenanceWindowEvidence, delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectDayShiftScenarioRoster, selectOpenSensorPromiseLine, sisalQuantityEvidence, sisalSplitSteps } from '../../src/Forge.Host/wwwroot/js/data/whiskerworks-demo.js';
 
 test('start-shift roster selection is stable and separates three callouts from two expected absences', () => {
   const workers = [
@@ -49,6 +49,29 @@ test('sensor shortage delay advances exactly four calendar days and rejects inva
   assert.equal(delayedPromiseDate('2028-02-27'), '2028-03-02');
   assert.throws(() => delayedPromiseDate('2026-02-30'), /invalid promised date/);
   assert.throws(() => delayedPromiseDate('2026-10-30', 0), /positive whole-day delay/);
+});
+
+test('CNC-02 maintenance evidence verifies the exact one-hour four-hour-ahead window and pending independent decision', () => {
+  const requestedAt = '2026-10-23T13:00:00.000Z';
+  const target = { outageId: 42, workOrderId: 87, requestedAt, startsAt: '2026-10-23T17:00:00.000Z', endsAt: '2026-10-23T18:00:00.000Z' };
+  const outage = { ...target, machineCode: 'CNC-02', status: 'Proposed', proposedBy: 'planner-1', decidedBy: null, downtimeId: null };
+  const evidence = cnc02MaintenanceWindowEvidence({ outages: [outage], target });
+  assert.equal(evidence.window.outcome, 'Pass');
+  assert.equal(evidence.approval.outcome, 'Pass');
+  assert.match(evidence.approval.detail, /separate authorized person/);
+  assert.equal(cnc02MaintenanceWindowEvidence({ outages: [{ ...outage, workOrderId: 88 }], target }).window.outcome, 'Fail');
+  assert.equal(cnc02MaintenanceWindowEvidence({ outages: [{ ...outage, startsAt: '2026-10-23T16:00:00.000Z' }], target }).window.outcome, 'Fail');
+});
+
+test('CNC-02 maintenance evidence accepts only an independent approval and marks legacy request time unknown', () => {
+  const outage = { outageId: 42, workOrderId: 87, machineCode: 'CNC-02', status: 'Approved',
+    startsAt: '2026-10-23T17:00:00.000Z', endsAt: '2026-10-23T18:00:00.000Z', proposedBy: 'planner-1', decidedBy: 'manager-2', downtimeId: 9 };
+  const target = { ...outage, requestedAt: null };
+  const evidence = cnc02MaintenanceWindowEvidence({ outages: [outage], target });
+  assert.equal(evidence.window.outcome, 'Indeterminate');
+  assert.equal(evidence.approval.outcome, 'Pass');
+  assert.equal(cnc02MaintenanceWindowEvidence({ outages: [{ ...outage, decidedBy: 'planner-1' }], target }).approval.outcome, 'Fail');
+  assert.equal(cnc02MaintenanceWindowEvidence({ outages: [{ ...outage, status: 'Withdrawn' }], target }).approval.outcome, 'Fail');
 });
 
 test('S01 healthy-baseline evidence passes only when commissioned machines, readiness, holds, orders and shift presence agree', () => {

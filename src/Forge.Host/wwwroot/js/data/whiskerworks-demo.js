@@ -45,6 +45,49 @@ export function delayedPromiseDate(promisedDate, delayDays = 4) {
   return date.toISOString().slice(0, 10);
 }
 
+/** Verify the recorded CNC-02 maintenance proposal and any independent decision from source records. */
+export function cnc02MaintenanceWindowEvidence({ outages = [], target = {} } = {}) {
+  const outage = outages.find(row => Number(row.outageId) === Number(target.outageId));
+  if (!outage) return {
+    window: { outcome: 'Fail', detail: `Outage ${target.outageId ?? 'from the scenario record'} is not present in the authorized maintenance read.` },
+    approval: { outcome: 'Fail', detail: 'No source outage exists to verify the independent approval workflow.' },
+  };
+
+  const exactTarget = outage.machineCode === 'CNC-02'
+    && Number(outage.workOrderId) === Number(target.workOrderId)
+    && Date.parse(outage.startsAt) === Date.parse(target.startsAt)
+    && Date.parse(outage.endsAt) === Date.parse(target.endsAt);
+  const oneHour = Date.parse(outage.endsAt) - Date.parse(outage.startsAt) === 60 * 60 * 1000;
+  const requestAt = Date.parse(target.requestedAt);
+  const startAt = Date.parse(outage.startsAt);
+  const exactOffset = Number.isFinite(requestAt) && Number.isFinite(startAt) && startAt - requestAt === 4 * 60 * 60 * 1000;
+  const windowOutcome = !exactTarget || !oneHour ? 'Fail' : Number.isFinite(requestAt) ? (exactOffset ? 'Pass' : 'Fail') : 'Indeterminate';
+  const windowDetail = !exactTarget
+    ? `Outage ${outage.outageId} does not match the recorded CNC-02 work order and proposed interval.`
+    : !oneHour ? `Outage ${outage.outageId} is not exactly one hour long.`
+      : !Number.isFinite(requestAt) ? `Outage ${outage.outageId} matches the saved interval, but the original request time was not retained; the four-hour offset cannot be verified.`
+        : `Outage ${outage.outageId} matches CNC-02 work order ${outage.workOrderId}; it starts four hours after request and lasts one hour.`;
+
+  const proposedBy = String(outage.proposedBy ?? '');
+  const decidedBy = String(outage.decidedBy ?? '');
+  let approvalOutcome = 'Fail';
+  let approvalDetail = `Outage status ${outage.status ?? 'unknown'} is not a valid pending or independently approved state.`;
+  if (exactTarget && outage.status === 'Proposed' && !decidedBy && outage.downtimeId == null) {
+    approvalOutcome = 'Pass';
+    approvalDetail = `Outage ${outage.outageId} remains proposed with no downtime posted; a separate authorized person must review and decide it.`;
+  } else if (exactTarget && outage.status === 'Approved' && proposedBy && decidedBy && proposedBy.toLowerCase() !== decidedBy.toLowerCase() && outage.downtimeId != null) {
+    approvalOutcome = 'Pass';
+    approvalDetail = `Outage ${outage.outageId} was approved by ${decidedBy}, independently of proposer ${proposedBy}, and has downtime record ${outage.downtimeId}.`;
+  } else if (outage.status === 'Approved') {
+    approvalDetail = `Outage ${outage.outageId} does not prove an independent approved decision and corresponding downtime record.`;
+  }
+  return {
+    outage,
+    window: { outcome: windowOutcome, detail: windowDetail },
+    approval: { outcome: approvalOutcome, detail: approvalDetail },
+  };
+}
+
 /** Evaluate only the healthy-baseline claims supported by captured Forge source reads. */
 export function healthyBaselineAssertions(snapshot) {
   const { sources = {}, details = {} } = snapshot ?? {};
