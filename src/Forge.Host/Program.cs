@@ -262,6 +262,7 @@ app.MapKernelEndpoints();
 app.MapScimEndpoints();
 app.MapOperationsEndpoints();
 app.MapPlantVisualEndpoints();
+app.MapScrap();
 app.MapEngineeringEndpoints();
 app.MapDocumentEndpoints();
 app.MapChangeEndpoints();

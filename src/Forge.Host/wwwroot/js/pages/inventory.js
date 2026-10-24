@@ -10,6 +10,7 @@ import { outsideProcessingTab, bindOutsideProcessingTab } from '../outside-proce
 import { mountIdentificationInput, materialPickSelection } from '../identification-input.mjs';
 import { isServiceUnavailable } from '../terminal-state.mjs';
 import { mountLabelsPanel } from '../identification-labels.js';
+import { loadScrap, scrapTab, bindScrapTab, openScrapRequest } from '../scrap.js';
 
 // Inventory (spec §11, §49): every quantity is the sum of ledger entries, and every entry says who,
 // when, why and what it relates to. Adjustments, count variances and quality releases need a second person.
@@ -34,6 +35,7 @@ export async function inventoryPage(page, ctx) {
   const controller = canAction(me, 'inventory.approve');
   const inventoryManager = canAction(me, 'inventory.manage');
   const mroManager = canAction(me, 'inventory.mro.manage');
+  const scrapRequester = canAction(me, 'inventory.scrap.request');
   let tab = ctx.query.get('tab') ?? 'stock';
   let data = {};
   let disposed = false, pageGeneration = 0;
@@ -59,8 +61,9 @@ export async function inventoryPage(page, ctx) {
     if (tab === 'shelf') shelf = await loadShelfLife();
     if (tab === 'receiving') receiving = await loadReceiving();
     if (tab === 'outside') outside = await tryGet('/api/inventory/outside-processing');
+    const scrap = tab === 'scrap' ? await loadScrap() : null;
     if (disposed || generation !== loadGeneration) return;
-    data = { shelf, receiving, outside, summary, locations, requests, ledger, items, orders, mro,
+    data = { shelf, receiving, outside, scrap, summary, locations, requests, ledger, items, orders, mro,
       tasks: taskHistory?.error ? tasks : taskHistory ?? tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
   }
 
@@ -195,6 +198,7 @@ export async function inventoryPage(page, ctx) {
   }, (v, reason) => { const b = locationBody(v); return command(`/api/inventory/locations/${encodeURIComponent(l.code)}`, { ...b, level: b.level ?? l.level, nettable: b.nettable ?? l.nettable }, reason); }, reload);
 
   const actions = {
+    'scrap-request': preset => openScrapRequest({ parts: parts(), locations: locs(), orders: released(), reload, me, preset }),
     receive: () => formModal({
       title: 'Receive material', detail: 'Against a purchase order line, or with a reason (opening balance, customer-supplied).', confirmLabel: 'Receive',
       fields: [
@@ -533,11 +537,11 @@ export async function inventoryPage(page, ctx) {
     const buttons = (ctx.route === 'receiving' ? [handler && ['receive', 'Receive']] : [
       handler && ['receive', 'Receive'], handler && ['issue', 'Issue to order'], handler && ['return', 'Return'], handler && ['move', 'Move'],
       handler && ['produced', 'From production'], handler && ['split', 'Split'], handler && ['merge', 'Merge'], handler && ['request', 'Request material'], handler && ['hold', 'Hold'], controller && ['release', 'Release'], handler && ['scrap', 'Scrap'],
-      handler && ['count', 'Count'], handler && ['adjust', 'Adjust'], inventoryManager && ['location', '+ Location'],
+      handler && ['count', 'Count'], handler && ['adjust', 'Adjust'], scrapRequester && ['scrap-request', 'Scrap inventory…'], inventoryManager && ['location', '+ Location'],
     ]).filter(Boolean);
     const tabOptions = ctx.route === 'receiving' ? [['receiving', 'Receiving']] : [
       ['stock', 'Stock'], ['selection', 'Lot selection'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'],
-      ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`],
+      ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['scrap', 'Scrap requests'], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`],
       ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`],
       ['receiving', `Receiving${data.receiving ? receivingCount(data.receiving) ? ` (${receivingCount(data.receiving)})` : '' : ''}`], ['outside', 'Outside processing'], ['mro', 'MRO levels'],
     ];
@@ -551,7 +555,7 @@ export async function inventoryPage(page, ctx) {
       ${kpis()}
       <section class="panel">
         <header><div class="seg" id="tabs">${tabOptions.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${tab === 'outside' ? outsideProcessingTab(data.outside, me) : tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : tab === 'selection' ? selectionTab() : stockTab()}
+        ${tab === 'outside' ? outsideProcessingTab(data.outside, me) : tab === 'scrap' ? scrapTab(data.scrap, me) : tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : tab === 'selection' ? selectionTab() : stockTab()}
       </section>`;
     enhanceTables(page);
     $('#trace-q', page)?.addEventListener('click', () => { const q = $('#serial-q', page).value.trim(); if (q) traceDrawer({ lot: q.toUpperCase() }); });
@@ -589,6 +593,7 @@ export async function inventoryPage(page, ctx) {
     if (tab === 'shelf') bindShelfLifeTab(page, locs(true, false), reload);
     if (tab === 'receiving') bindReceivingTab(page, locs(), reload, me, data.receiving);
     if (tab === 'outside') bindOutsideProcessingTab(page, data.locations.data ?? [], reload, me);
+    if (tab === 'scrap') bindScrapTab(page, { parts: parts(), locations: locs(), orders: released(), reload, me, scrap: data.scrap });
     $$('[data-mro-set]', page).forEach(b => b.addEventListener('click', () => setMro(b.dataset.mroSet)));
     $$('[data-mro-clear]', page).forEach(b => b.addEventListener('click', async () => {
       const done = await confirmWithReason({ title: `Clear MRO levels for ${b.dataset.mroClear}`, detail: 'MRP stops replenishing it to a maximum. The old levels stay in the history.', confirmLabel: 'Clear' },
@@ -727,7 +732,7 @@ export async function inventoryPage(page, ctx) {
       ${stock.error ? errorBlock(stock.error, 'stock') : stock.data.length ? `<table class="table"><thead><tr><th>Location</th><th>Instance</th><th>Quality</th><th>Custody</th><th>Point of use</th><th>Planning</th><th class="num">Qty</th></tr></thead><tbody>
         ${stock.data.map(b => `<tr><td>${esc(b.locationPath)}</td><td>${b.lotNumber ? `${esc(b.lotNumber)} <span class="faint">${esc(kindOf(b.lotNumber) ?? '')}</span> <button class="btn small ghost" data-trace="${esc(b.lotNumber)}">Trace</button> <button class="btn small ghost" data-lineage="${esc(b.lotNumber)}">Splits</button>${canAction(me, 'identification.read') ? ` <button class="btn small ghost" data-label-lot="${esc(b.lotNumber)}" data-label-location="${esc(b.locationCode)}">Labels</button>` : ''}${handler && divisible && b.custody === 'Company' ? ` <button class="btn small ghost" data-split='${esc(JSON.stringify({ partNumber: part, lotNumber: b.lotNumber, locationCode: b.locationCode, status: b.qualityStatus }))}'>Split</button>` : ''}` : '—'}</td><td><span class="pill ${STATUS_TONE[b.qualityStatus]}">${esc(b.qualityStatus)}</span></td>
           <td>${b.custody === 'Company' ? 'Company' : `<span class="pill warn">${esc(custodyText(b))}</span>`}</td><td>${esc(b.pointOfUseWorkCenter ? `${b.pointOfUseWorkCenter}${b.machineCode ? ` · ${b.machineCode}` : ''}` : '—')}</td>
-          <td>${b.availableForPlanning ? 'Counts' : '<span class="faint">Not counted</span>'}</td><td class="num">${qty(b.quantity)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None on hand.</div>'}
+          <td>${b.availableForPlanning ? 'Counts' : '<span class="faint">Not counted</span>'}</td><td class="num">${qty(b.quantity)}${scrapRequester && b.custody === 'Company' ? ` <button class="btn small ghost" data-scrap-row='${esc(JSON.stringify({ partNumber: part, lotNumber: b.lotNumber ?? '', locationCode: b.locationCode, status: b.qualityStatus }))}'>Scrap…</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None on hand.</div>'}
       ${divisible ? `<div class="notice" style="margin-top:8px">Merging lots: ${p?.allowed ? `allowed${p.sameRevisionRequired ? ', within one revision' : ''}${p.sameSupplierLotRequired ? ', within one supplier lot' : ''}` : 'never'}${p?.setBy && p.setBy !== 'system' ? ` <span class="faint">· set by ${esc(who(p.setBy))}: ${esc(p.reason)}</span>` : ''}
         ${controller ? ' <button class="btn small" data-merge-policy>Change</button>' : ''}</div>` : ''}
       <div class="notice" style="margin-top:8px">Yield tolerance: ${tolerance ? `±${qty(tolerance.percent)}% of what is issued <span class="faint">· set by ${esc(who(tolerance.setBy))}: ${esc(tolerance.reason)}</span>` : 'none — issued and accounted must match exactly'}
@@ -740,6 +745,7 @@ export async function inventoryPage(page, ctx) {
       <div class="faint"><a href="#/material-plan?part=${encodeURIComponent(part)}">Open the material plan for ${esc(part)} →</a></div>`;
     $$('[data-trace]', d.element).forEach(b => b.addEventListener('click', () => traceDrawer({ part, lot: b.dataset.trace })));
     $$('[data-split]', d.element).forEach(b => b.addEventListener('click', () => actions.split(JSON.parse(b.dataset.split))));
+    $$('[data-scrap-row]', d.element).forEach(b => b.addEventListener('click', () => actions['scrap-request'](JSON.parse(b.dataset.scrapRow))));
     $$('[data-label-lot]', d.element).forEach(button => button.addEventListener('click', async () => {
       closeLabelPanels();
       if (disposed || labelContext !== pageGeneration || !d.element.isConnected) return;

@@ -540,6 +540,8 @@ public static class InventoryRegistration
         services.AddForgeMigrations(typeof(InventoryRegistration).Assembly, "inventory");
         services.AddForgeStore<IInventoryStore>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IInventoryLookup>(uow => new PostgresInventoryStore(uow));
+        services.AddForgeStore<IScrapStore>(uow => new PostgresInventoryStore(uow));
+        services.AddForgeStore<IScrapLookup>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IShelfLifeLookup>(uow => new PostgresShelfLifeStore(uow));
         services.AddForgeStore<IShelfLifeStore>(uow => new PostgresShelfLifeStore(uow));
         services.AddForgeStore<IReceivingLookup>(uow => new PostgresInventoryStore(uow));

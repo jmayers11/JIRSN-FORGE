@@ -20,7 +20,9 @@ public sealed class CompetencyAlternativesTests(PostgresFixture postgres)
         });
         await plant.Ok(plant.Engineer, $"/api/competency/people/{learner}/training", new { code = "SHORT-QUAL" });
 
+        // Whole seconds: PostgreSQL keeps microseconds, .NET keeps 100 ns ticks, so a raw UtcNow would not round-trip exactly.
         var fiveDayExpiry = DateTimeOffset.UtcNow.AddDays(5);
+        fiveDayExpiry = fiveDayExpiry.AddTicks(-(fiveDayExpiry.Ticks % TimeSpan.TicksPerSecond));
         await plant.Ok(plant.As("certifier"), $"/api/competency/people/{learner}/certifications", new
         {
             code = "SHORT-QUAL", evidence = "Observed practical assessment", expiresAt = fiveDayExpiry,
