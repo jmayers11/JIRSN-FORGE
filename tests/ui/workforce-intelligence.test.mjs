@@ -115,6 +115,107 @@ test('command-center filters scope workers, qualifications, machine coverage, an
   const summary = buildWorkforceIntelligence({ ...filtered, now });
   assert.equal(summary.capabilityGaps.length, 0, 'selecting a training type does not discard other qualifications from machine authorization checks');
   assert.equal(summary.qualificationCounts.current, 1);
+
+  const unavailable = filterWorkforceIntelligenceInputs({ workers: undefined, qualifications: undefined, resources: undefined });
+  assert.equal(unavailable.workers, undefined);
+  assert.equal(unavailable.resources, undefined);
+  assert.equal(buildWorkforceIntelligence({ ...unavailable, now }).coverage, null, 'unreadable sources stay unknown through the filter layer');
+});
+
+test('upcoming training forecast pairs scheduled learners with matching trainers and shows qualified coverage separately', () => {
+  const start = new Date(now.getTime() + 2 * 86_400_000);
+  const end = new Date(start.getTime() + 8 * 60 * 60_000);
+  const forecastInput = {
+    now,
+    workers: [
+      { personId: 'learner', displayName: 'Taylor Learner', homeWorkCenterCode: 'WC-S', isActive: true, shiftCode: 'DAY' },
+      { personId: 'trainer', displayName: 'Morgan Trainer', homeWorkCenterCode: 'WC-S', isActive: true, shiftCode: 'DAY' },
+    ],
+    qualifications: [
+      { personId: 'learner', code: 'SLIT', status: 'InTraining' },
+      { personId: 'trainer', code: 'SLIT', status: 'Qualified', expiresAt: null },
+      { personId: 'trainer', code: 'SLIT-TRAINER', status: 'Qualified', expiresAt: null },
+    ],
+    qualificationTypes: [
+      { code: 'SLIT', kind: 'Machine', prerequisites: [] },
+      { code: 'SLIT-TRAINER', kind: 'Trainer', prerequisites: ['SLIT'] },
+    ],
+    machineAuthorizations: [],
+    attendanceOpportunities: [
+      { opportunityId: 'learner-shift', personId: 'learner', shiftCode: 'DAY', scheduledStart: start, scheduledEnd: end, state: 'Scheduled' },
+      { opportunityId: 'trainer-shift', personId: 'trainer', shiftCode: 'DAY', scheduledStart: start, scheduledEnd: end, state: 'Scheduled' },
+    ],
+    unavailability: [],
+    resources: {
+      sites: [{ code: 'SITE', name: 'Plant' }], safetyAreas: [{ code: 'AREA', siteCode: 'SITE' }],
+      workCenters: [{ code: 'WC-S', safetyAreaCode: 'AREA' }], machines: [{ code: 'SL-01', workCenterCode: 'WC-S' }],
+      machineActivities: [{ machineCode: 'SL-01', activityCode: 'SLIT', operatorQualifications: ['SLIT'] }],
+      shifts: [{ code: 'DAY', siteCode: 'SITE', name: 'Day' }], workCenterShifts: [{ workCenterCode: 'WC-S', shiftCode: 'DAY' }],
+    },
+    approvedSchedule: { operations: [] },
+  };
+  const summary = buildWorkforceIntelligence(forecastInput);
+  assert.equal(summary.trainingForecast.length, 1);
+  assert.equal(summary.trainingForecast[0].traineeCount, 1);
+  assert.equal(summary.trainingForecast[0].trainerCount, 1);
+  assert.equal(summary.trainingForecast[0].qualifiedCount, 1, 'the trainer also remains visible in independent qualified coverage');
+  assert.equal(summary.trainingForecast[0].largestSharedFreeMinutes, 480);
+  assert.equal(summary.trainingForecast[0].canReviewWindow, true);
+  assert.match(summary.trainingForecast[0].detail, /Review course duration, production demand, crew coverage/);
+
+  const withoutTrainer = buildWorkforceIntelligence({ ...forecastInput, qualifications: forecastInput.qualifications.filter(row => row.personId !== 'trainer' || row.code !== 'SLIT-TRAINER') });
+  assert.equal(withoutTrainer.trainingForecast[0].trainerCount, 0);
+  assert.match(withoutTrainer.trainingForecast[0].detail, /no qualified trainer is scheduled/);
+
+  const unknown = buildWorkforceIntelligence({ ...forecastInput, attendanceOpportunities: undefined });
+  assert.equal(unknown.trainingForecast, null);
+  assert.equal(buildWorkforceIntelligence({ ...forecastInput, approvedSchedule: undefined }).trainingForecast, null);
+});
+
+test('training-window forecast respects approved production assignments and machine load', () => {
+  const start = new Date(now.getTime() + 2 * 86_400_000);
+  const end = new Date(start.getTime() + 8 * 60 * 60_000);
+  const forecastInput = {
+    now,
+    workers: [
+      { personId: 'learner', displayName: 'Taylor Learner', homeWorkCenterCode: 'WC-S', isActive: true, shiftCode: 'DAY' },
+      { personId: 'trainer', displayName: 'Morgan Trainer', homeWorkCenterCode: 'WC-S', isActive: true, shiftCode: 'DAY' },
+    ],
+    qualifications: [
+      { personId: 'learner', code: 'SLIT', status: 'InTraining' },
+      { personId: 'trainer', code: 'SLIT', status: 'Qualified', expiresAt: null },
+      { personId: 'trainer', code: 'SLIT-TRAINER', status: 'Qualified', expiresAt: null },
+    ],
+    qualificationTypes: [
+      { code: 'SLIT', kind: 'Machine', prerequisites: [] },
+      { code: 'SLIT-TRAINER', kind: 'Trainer', prerequisites: ['SLIT'] },
+    ],
+    machineAuthorizations: [],
+    attendanceOpportunities: [
+      { opportunityId: 'learner-shift', personId: 'learner', shiftCode: 'DAY', scheduledStart: start, scheduledEnd: end, state: 'Scheduled' },
+      { opportunityId: 'trainer-shift', personId: 'trainer', shiftCode: 'DAY', scheduledStart: start, scheduledEnd: end, state: 'Scheduled' },
+    ],
+    unavailability: [],
+    resources: {
+      workCenters: [{ code: 'WC-S' }], machines: [{ code: 'SL-01', workCenterCode: 'WC-S' }],
+      machineActivities: [{ machineCode: 'SL-01', activityCode: 'SLIT', operatorQualifications: ['SLIT'] }],
+      workCenterShifts: [{ workCenterCode: 'WC-S', shiftCode: 'DAY' }],
+    },
+    approvedSchedule: { operations: [{ scheduled: true, workCenterCode: 'WC-S', machineCode: 'SL-01',
+      segments: [{ start: new Date(start.getTime() + 60 * 60_000), end: new Date(start.getTime() + 7 * 60 * 60_000), operators: ['trainer'] }] }] },
+  };
+  const forecast = buildWorkforceIntelligence(forecastInput).trainingForecast[0];
+  assert.equal(forecast.plannedOperationCount, 1);
+  assert.equal(forecast.plannedMachineOperationCount, 1);
+  assert.equal(forecast.largestSharedFreeMinutes, 60, 'the six-hour production segment leaves a one-hour shared block at either end');
+  assert.equal(forecast.availableFrom, start.toISOString(), 'equal-sized windows prefer the earlier shift period');
+  assert.match(forecast.detail, /clear of the pair's assigned work and this machine's scheduled work/);
+
+  const fullyBooked = buildWorkforceIntelligence({ ...forecastInput, approvedSchedule: { operations: [{ scheduled: true,
+    workCenterCode: 'WC-S', machineCode: 'SL-01', segments: [{ start, end, operators: ['trainer'] }] }] } }).trainingForecast[0];
+  assert.equal(fullyBooked.canReviewWindow, false);
+  assert.equal(fullyBooked.largestSharedFreeMinutes, 0);
+  assert.match(fullyBooked.detail, /leaves no shared window clear/);
 });
 
 test('material and suspect-scrap disruptions become source-linked workforce alerts without implying disposition', () => {

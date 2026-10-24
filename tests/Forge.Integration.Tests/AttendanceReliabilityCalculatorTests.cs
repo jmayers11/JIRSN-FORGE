@@ -97,6 +97,8 @@ public sealed class AttendanceReliabilityCalculatorTests
         {
             EventId = Guid.Parse("10000000-0000-0000-0000-000000000003"),
             Kind = AttendanceEventKind.ScheduleChange,
+            ReviewState = AttendanceEventReviewState.PendingReview,
+            Source = AttendanceEventSource.Manual,
             SupersedesEventId = prior.EventId,
             RecordedAt = Start.AddHours(1),
         };

@@ -208,6 +208,10 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
     ? `<ul class="workforce-intelligence-list">${summary.expiring.slice(0, 6).map(row => `<li><a href="#/workforce?personId=${encodeURIComponent(row.personId)}"><b>${esc(row.workerName)}</b></a><span>${esc(row.code)} · expires ${formatDate(row.expiresAt)} (${row.daysRemaining}d)</span></li>`).join('')}</ul>`
     : `<p class="faint">${qualificationsKnown ? 'No qualifications expire in this window.' : 'Qualification records are not visible to this account.'}</p>`;
   const trainingRecommendationRows = (summary.trainingRecommendations ?? []).filter(row => !options.qualificationCode || row.qualificationCode === options.qualificationCode).slice(0, 8).map(row => `<li><a href="#/workforce?personId=${encodeURIComponent(row.personId)}"><b>${esc(row.workerName)}</b></a><span>${esc(row.qualificationCode)} · ${esc(row.machineCode)} / ${esc(row.activityCode)} · ${esc(row.workCenterCode)} / ${esc(row.shiftCode)}</span><span>${esc(row.rationale)}</span>${row.evidenceReferences?.length ? `<span>Evidence: ${row.evidenceReferences.map(renderEvidenceReference).join(' · ')}</span>` : ''}</li>`).join('');
+  const trainingForecastRows = summary.trainingForecast?.length
+    ? `<ul class="workforce-intelligence-list">${summary.trainingForecast.slice(0, 10).map(row => `<li><b>${esc(row.date)} · ${esc(row.shiftCode)} · ${esc(row.machineCode)} / ${esc(row.activityCode)}</b><span>${esc(row.workCenterCode)} · ${esc(row.qualificationCode)} · ${row.traineeCount} scheduled learner(s) · ${row.trainerCount} qualified trainer(s) · ${row.qualifiedCount} independently qualified worker(s)</span>${row.canReviewWindow ? `<span>Largest shared production-free block: ${fmtNumber(row.largestSharedFreeMinutes)} min · ${esc(formatMoment(row.availableFrom))}–${esc(formatMoment(row.availableThrough))}</span>` : ''}<span>${esc(row.detail)}</span></li>`).join('')}</ul>`
+    : summary.trainingForecast ? '<p class="faint">No scheduled learner-and-qualification gap pairs were found in the next 14 days.</p>'
+      : '<p class="faint">Training windows are unknown because the approved production schedule, shift schedule, availability, or competency sources are not readable.</p>';
   const qualificationMatrixRows = qualificationsKnown
     ? (sources.workers.data ?? []).map(worker => {
       const rows = (sources.qualifications.data ?? []).filter(record => record.personId === worker.personId);
@@ -328,6 +332,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
         <section><h3>Daily action alerts <span class="badge ${issues.length ? 'orange' : 'gray'}">${issues.length}</span></h3>${alertRows}${materialSourcesKnown ? '' : '<p class="faint">Material task and suspect-report signals are unavailable to this account.</p>'}</section>
         <section><h3>Qualification review</h3>${expiringRows}<p class="faint workforce-intelligence-note">${fmtNumber(summary.qualificationCounts.inTraining)} record(s) are marked In Training. In Training does not grant independent authorization.</p>${trainingRecommendationRows ? `<h4>Human-reviewed training opportunities</h4><ul class="workforce-intelligence-list">${trainingRecommendationRows}</ul>` : ''}</section>
       </div>
+      <details class="workforce-intelligence-forecast"><summary>Upcoming training windows · next 14 days</summary><p class="faint">Forecasts compare scheduled workers and trainer credentials with the approved production schedule to find shared time clear of assigned work on the pair and training machine. A forecast is a review opportunity; it does not book training, estimate course duration, or assume employee interest.</p>${trainingForecastRows}</details>
       ${recoveryRows ? `<section class="workforce-intelligence-recovery"><h3>Safe coverage options</h3><p class="faint">Ranked from current visible workers. The preview checks qualification, machine authorization, active source work, equipment/tooling, and safety composition; it does not commit assignments.</p>${recoveryRows}</section>` : ''}
       <details class="workforce-intelligence-evidence"><summary>Performance and attendance evidence</summary>
         <h3>Recorded operation labor · last 30 days</h3>${laborTable}
@@ -386,7 +391,8 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
   const iso = date => encodeURIComponent(date.toISOString());
   const mePermissions = new Set(me?.permissions ?? []);
   const nominationPermission = mePermissions.has('workforce.development.read');
-  const [workersResult, resourcesResult, typesResult, unavailabilityResult, readinessResult, activityResult, attendanceResult, pendingResult, policiesResult, opportunitiesResult, nominationsResult, materialTasksResult, suspectReportsResult] = await Promise.all([
+  const canReadSchedule = mePermissions.has('planning.schedule.read');
+  const [workersResult, resourcesResult, typesResult, unavailabilityResult, readinessResult, activityResult, attendanceResult, pendingResult, policiesResult, opportunitiesResult, nominationsResult, materialTasksResult, suspectReportsResult, scheduleResult] = await Promise.all([
     tryGet('/api/workforce/workers'),
     tryGet('/api/resources/'),
     tryGet('/api/competency/qualification-types'),
@@ -400,6 +406,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     nominationPermission ? tryGet('/api/workforce/development-nominations') : Promise.resolve({ data: [] }),
     tryGet('/api/inventory/tasks?open=true'),
     tryGet('/api/quality/suspect-scrap'),
+    canReadSchedule ? tryGet('/api/planning/schedules/approved') : Promise.resolve({ error: 'Approved schedule access is unavailable to this account.' }),
   ]);
   const workers = Array.isArray(workersResult.data) ? workersResult.data : undefined;
   const qualificationsResult = workers ? await qualificationRecords(workers) : { error: workersResult.error };
@@ -415,6 +422,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     resources,
     unavailability: unavailabilityResult.data,
     attendanceOpportunities: opportunitiesResult.data,
+    approvedSchedule: Array.isArray(scheduleResult.data?.result?.operations) ? scheduleResult.data.result : null,
     attendanceEvents: pendingResult.data,
     readiness: readinessResult.data,
     activity: activityResult.data,
@@ -433,7 +441,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     .sort((a, b) => a.localeCompare(b)).map(code => ({ code, name: code }));
   if ((workers ?? []).some(worker => !worker.department?.trim())) departments.push({ code: '__unassigned', name: 'Unassigned' });
   const workerNames = new Map((workers ?? []).map(worker => [worker.personId, worker.displayName]));
-  const sources = { workers: workersResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, resources: resourcesResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, workerNames };
+  const sources = { workers: workersResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, resources: resourcesResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, schedule: scheduleResult, workerNames };
   const filteredView = () => {
     const scoped = filterWorkforceIntelligenceInputs(inputs, current);
     const ids = new Set((scoped.workers ?? []).map(worker => worker.personId));

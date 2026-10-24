@@ -21,6 +21,7 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
       workCenterShifts: [{ workCenterCode: 'WC-A', shiftCode: 'DAY' }],
     }));
     if (path === '/api/competency/qualification-types') return Promise.resolve(response([{ code: 'WIND', name: 'Winding' }]));
+    if (path === '/api/planning/schedules/approved') return Promise.resolve(response({ result: { operations: [] } }));
     if (path.startsWith('/api/competency/people/qualifications?')) return Promise.resolve(response([
       { personId: 'worker-1', code: 'WIND', status: 'Qualified', expiresAt: '2026-10-25T23:59:00Z' },
     ]));
@@ -58,6 +59,8 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   page.innerHTML = '<p>existing workforce content</p>';
   await appendWorkforceIntelligence(page, { permissions: ['inventory.read', 'planning.schedule.read'] });
   assert.match(page.innerHTML, /Training &amp; Performance Command Center/);
+  assert.match(page.innerHTML, /Upcoming training windows · next 14 days/);
+  assert.match(page.innerHTML, /No scheduled learner-and-qualification gap pairs/);
   assert.match(page.innerHTML, /Current qualifications[\s\S]*?1/);
   assert.match(page.innerHTML, /expires in 2 days/);
   assert.match(page.innerHTML, /WO 77 · operation 10 is blocked by Workforce/);
@@ -277,8 +280,8 @@ test('employee attendance view is self-scoped and correction requests remain pen
     reason: 'Time clock shows the employee arrived at 8:02',
   });
   assert.equal(eventReads, 2);
-  assert.match(page.innerHTML, /awaiting independent review/);
-  assert.doesNotMatch(page.innerHTML, /data-own-attendance-correction="arrival-correction-1"/);
+  assert.match(page.textContent, /awaiting independent review/);
+  assert.equal(page.querySelector('[data-own-attendance-correction="arrival-correction-1"]'), null);
 });
 
 test('employee-only Workforce route avoids loading the manager command center', async t => {

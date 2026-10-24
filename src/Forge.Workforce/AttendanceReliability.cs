@@ -328,8 +328,8 @@ public sealed class AttendanceIntelligenceService(CommandPipeline pipeline)
     public Task<CommandResult> RecordClassificationAsync(RecordAttendanceClassification c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        if (c.Kind is AttendanceEventKind.Arrival or AttendanceEventKind.ScheduleChange or AttendanceEventKind.ShiftCancelled)
-            throw new CommandRejectedException("invalid_attendance_classification", "Arrival comes from clock-in. Schedule changes use the schedule workflow.");
+        if (c.Kind is AttendanceEventKind.ScheduleChange or AttendanceEventKind.ShiftCancelled)
+            throw new CommandRejectedException("invalid_attendance_classification", "Schedule changes use the schedule workflow.");
         if (c.Kind == AttendanceEventKind.NoShow && c.ObservedAt is null)
             throw new CommandRejectedException("no_show_time_required", "A no-show classification requires the time it was reviewed.");
         var spec = new CommandSpec(SourceContext, nameof(RecordAttendanceClassification), Permissions.AttendanceClassificationRecord,

@@ -15,10 +15,12 @@ public sealed class AttendanceSelfCorrectionTests(PostgresFixture postgres)
         var otherEmployeeId = await plant.Person("s10-other-correction-employee", "Employee");
         var reviewerId = await plant.Person("s10-self-correction-reviewer", "HumanResources");
         var recorderId = await plant.Person("s10-self-correction-recorder", "HumanResources");
+        await plant.Person("s10-self-correction-importer", "AttendanceImporter");
         var employee = plant.As("s10-self-correction-employee");
         var otherEmployee = plant.As("s10-other-correction-employee");
         var reviewer = plant.As("s10-self-correction-reviewer");
         var recorder = plant.As("s10-self-correction-recorder");
+        var importer = plant.As("s10-self-correction-importer");
 
         await plant.Ok(plant.Engineer, $"/api/workforce/workers/{employeeId:D}", new { homeWorkCenterCode = "SLIT-WC" });
         await plant.Ok(plant.Engineer, $"/api/workforce/workers/{otherEmployeeId:D}", new { homeWorkCenterCode = "SLIT-WC" });
@@ -63,9 +65,10 @@ public sealed class AttendanceSelfCorrectionTests(PostgresFixture postgres)
         var eventRange = $"from={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddDays(-2).ToString("O", CultureInfo.InvariantCulture))}&to={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddDays(1).ToString("O", CultureInfo.InvariantCulture))}";
         var employeeObservedAt = employeeOpportunity.GetProperty("scheduledStart").GetDateTimeOffset().AddMinutes(12);
         var otherObservedAt = otherOpportunity.GetProperty("scheduledEnd").GetDateTimeOffset().AddMinutes(5);
-        var original = await plant.Ok(reviewer, $"/api/workforce/attendance-opportunities/{employeeOpportunity.GetProperty("opportunityId").GetGuid():D}/classifications", new
+        var original = await plant.Ok(importer, "/api/workforce/attendance-intelligence/imports", new
         {
-            kind = "Arrival", observedAt = employeeObservedAt, reasonCode = "SOURCE_TIME_ENTRY", reason = "Record acceptance fixture arrival",
+            opportunityId = employeeOpportunity.GetProperty("opportunityId").GetGuid(), kind = "Arrival", observedAt = employeeObservedAt,
+            source = "Nexus", sourceRecordId = "S10-SELF-CORRECTION-NEXUS-001", reason = "Import acceptance fixture Nexus arrival",
         });
         var otherOriginal = await plant.Ok(recorder, $"/api/workforce/attendance-opportunities/{otherOpportunity.GetProperty("opportunityId").GetGuid():D}/classifications", new
         {
@@ -123,17 +126,18 @@ public sealed class AttendanceSelfCorrectionTests(PostgresFixture postgres)
         }))
             Assert.Equal(System.Net.HttpStatusCode.Forbidden, selfReview.StatusCode);
 
-        await plant.Ok(reviewer, $"/api/workforce/attendance-intelligence/events/{correctionId:D}/review", new
+        var correctionReview = await plant.Ok(reviewer, $"/api/workforce/attendance-intelligence/events/{correctionId:D}/review", new
         {
             decision = "Verified", reasonCode = "SOURCE_CHECKED", reason = "Independently verify the employee's correction request",
         });
+        var reviewedCorrectionId = Guid.Parse(correctionReview.GetProperty("entityId").GetString()!);
         using var reviewedEvents = await reviewer.GetAsync($"/api/workforce/attendance-intelligence/events?{eventRange}");
         var reviewedBody = await reviewedEvents.Content.ReadAsStringAsync();
         Assert.True(reviewedEvents.IsSuccessStatusCode, reviewedBody);
         var reviewedCorrection = JsonDocument.Parse(reviewedBody).RootElement.EnumerateArray()
-            .Single(item => item.GetProperty("eventId").GetGuid() == correctionId);
+            .Single(item => item.GetProperty("eventId").GetGuid() == reviewedCorrectionId);
         Assert.Equal("Verified", reviewedCorrection.GetProperty("reviewState").GetString());
-        Assert.Equal(originalId, reviewedCorrection.GetProperty("supersedesEventId").GetGuid());
+        Assert.Equal(correctionId, reviewedCorrection.GetProperty("supersedesEventId").GetGuid());
 
         var scheduleChange = await plant.Ok(otherEmployee, $"/api/workforce/my-attendance-events/{verifiedNoShowId:D}/correction", new
         {

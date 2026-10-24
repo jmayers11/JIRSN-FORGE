@@ -937,6 +937,9 @@ button.pill.linkish:hover { text-decoration: underline; }
 .workforce-intelligence-note { margin: 8px 0 0; font-size: 12px; }
 .workforce-intelligence-evidence { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .workforce-intelligence-evidence > summary { cursor: pointer; font-weight: 700; }
+.workforce-intelligence-forecast { margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
+.workforce-intelligence-forecast > summary { cursor: pointer; font-weight: 700; }
+.workforce-intelligence-forecast .workforce-intelligence-list { margin-top: 8px; }
 .workforce-intelligence-evidence .table-wrap { overflow-x: auto; }
 .workforce-intelligence-attendance { display: grid; gap: 4px; margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); }
 .workforce-intelligence-attendance span { color: var(--muted); font-size: 12px; }

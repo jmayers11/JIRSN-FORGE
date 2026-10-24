@@ -2,7 +2,7 @@
 
 Date: 2026-10-23
 Specification: `Forge_Sprint_10_Training_Performance_Workforce_Intelligence.md`
-Status: Source implementation and available local verification are complete for this pass; full Sprint 9/Sprint 10 acceptance remains open.
+Status: Sprint 10 implementation and focused verification are complete. Full Integration.Tests and the isolated Sprint 9/Sprint 10 scenario acceptance gates remain open.
 
 ## Delivered
 
@@ -20,6 +20,8 @@ Machine capability gaps offer a read-only, ranked list of up to three permission
 
 The Workforce `!` feed now ranks open material tasks by request/custody state and links each task to the affected operation's current readiness blocker, work center, and order due date. It names the next canonical approval, stockroom, receiving, or Inventory Controller action. This prioritized source-action queue does not claim a simulated completion-date delta and does not suggest that moving labor resolves a material blocker.
 
+The Training & Performance Command Center includes filters for plant, shift, department, safety area, work center, role/title, machine, qualification type, worker status, attendance-review status, and review period. Department is a separate optional, reason-audited employee field; existing workers remain unassigned until maintained by a Workforce manager. Its 14-day training-window forecast pairs scheduled learners with matching, scheduled trainer credentials, checks qualification and authorization through shift start, and separately reports independent qualification coverage. It compares the pair's assigned work and training-machine load against the approved finite-capacity schedule, then surfaces the largest shared production-free block for supervisor review. Missing schedule, attendance, availability, qualification, or required authorization sources remain unknown. It does not book training, estimate course duration, calculate an alternate schedule's production delta, or assume employee interest.
+
 For eligible in-transit released-order BOM staging tasks, the `!` alert also offers a permission-gated, read-only receipt impact preview. It assumes an independent receiver accepts the remaining quantity at the current site date, pegs that hypothetical supply to the task's order, and runs the canonical MaterialEngine and finite-capacity scheduler before and after. It shows the target order's material/schedule change and any collateral completion/status changes to other visible orders. It writes no receipt, inventory transaction, assignment, or approval; normal quality, point-of-use, safety, and authorization gates still apply.
 
 The WhiskerWorks roster now extends the original Sprint 9 52-worker seed with eight additional fictional job profiles, preserving the original identity order and IDs. The updated shifts contain 32 Day, 16 Swing, and 12 Weekend workers. `tools/whiskerworks-sprint10-scenarios.mjs` defines all 22 core and 16 material-extension acceptance cases with expected invariants and explicitly pending isolated-database replay status.
@@ -31,7 +33,7 @@ Sprint 10 now has an audited HRIS/Nexus attendance-import endpoint with a narrow
 - Workforce and Competency: `src/Forge.Host/wwwroot/js/pages/workforce-intelligence.js`, `src/Forge.Host/wwwroot/js/workforce-intelligence.mjs`, `src/Forge.Workforce/AttendanceReliability.cs`, `src/Forge.Workforce/DevelopmentNominations.cs`, `src/Forge.Competency/CompetencyService.cs`, `src/Forge.Execution/ProductionLaborMetrics.cs`.
 - Material and quality flow: `src/Forge.Inventory/InventoryService.Tasks.cs`, `src/Forge.Quality/QualityService.cs`, `src/Forge.Host/Api/MaterialsEndpoints.cs`, `src/Forge.Host/Api/QualityEndpoints.cs`, `src/Forge.Host/wwwroot/js/pages/shopfloor.js`, `src/Forge.Host/wwwroot/js/pages/inventory.js`, `src/Forge.Host/wwwroot/js/pages/orders.js`.
 - Planning and alerts: `src/Forge.Planning/MaterialFlow.cs`, `src/Forge.Planning/MaterialReceiptImpactPreview.cs`, `src/Forge.Planning/ShiftFactsProvider.cs`, `src/Forge.Planning/Engines/MaterialEngine.cs`, `src/Forge.Planning/Engines/WorkforceRecoveryEngine.cs`, `src/Forge.Host/Api/ExecutableEndpoints.cs`, `src/Forge.Host/Notifications/NotificationEventSubscriber.cs`, `src/Forge.Host/Notifications/NotificationDelivery.cs`.
-- Additive migrations: Competency `0002`–`0003`; Execution `0012`; Inventory `0022`–`0026`; Kernel/Postgres `0022`–`0029`; Quality `0016`; Resources `0006`–`0008`; Workforce `0006`–`0009`.
+- Additive migrations: Competency `0002`–`0003`; Execution `0012`; Inventory `0022`–`0026`; Kernel/Postgres `0022`–`0029`; Quality `0016`; Resources `0006`–`0008`; Workforce `0006`–`0010`.
 
 ## Data dictionary
 
@@ -54,9 +56,9 @@ The implementation extends canonical Workforce, Competency, Execution, Quality, 
 
 ## Verification and rollout
 
-Latest verification: `node --test tests/ui/*.test.mjs` passed **347/347**; the focused WhiskerWorks Sprint 10/seed checks passed **12/12**; the attendance-focused PostgreSQL regression subset passed **14/14**, including the import API, exact 60-shift history, and database role-permission parity. The isolated Release host and integration-test builds passed with **0 warnings and 0 errors**. Prior unchanged gates remain green: Planning **330/330**, attendance and operation-labor calculations **8/8**, receipt impact calculator **2/2**, workforce recovery engine **5/5**, recovery page **2/2**, and Sprint 9 simulation project compilation with **0 warnings and 0 errors**.
+Latest verification: `node --test tests/ui/*.test.mjs` passed **356/356**. The isolated Release solution build completed with **0 warnings and 0 errors**. Planning passed **331/331**, architecture passed **32/32**, and Kernel passed **44/44**. The selected PostgreSQL attendance and material-demand regressions passed **15/15** across a focused batch and the final rerun of the append-only self-correction case; this includes the HRIS/Nexus import route, 60-shift attendance history, correction ownership/review, and material-demand calculations. These .NET builds and tests used isolated `.forge-logs` output paths because the live preview holds the default Release host DLLs open.
 
-A full `Forge.Integration.Tests` run on local PostgreSQL was started. Its older build exposed the newly added import role's generic-permission parity mismatch; the role map was corrected to preserve import-only authority, and the current-source database parity test passes. The pre-fix broad run was stopped after about 35 minutes without a final summary; the full suite has not been repeated against the fix, so it is not recorded as a passing suite. The integration tests create and drop isolated `forge_test_*` databases. No WhiskerWorks seed was applied to `PLANT1`. Host and test outputs use isolated `.forge-logs` folders because the live preview holds the default Release DLLs open.
+A broad `Forge.Integration.Tests` run was stopped before completion after surfacing failures in a projected-recovery fixture, the Planning-to-Inventory architecture boundary, and attendance correction test assumptions. The fixture/test assumptions were corrected, and the module boundary was fixed by moving the pure shared material-demand calculation into `Forge.Inventory.Contracts`; the affected focused tests now pass. The broad integration suite has not been rerun, so it is not recorded as a pass. PostgreSQL acceptance tests use isolated `forge_test_*` databases. No WhiskerWorks seed or other write was applied to `PLANT1`.
 
 ## Known limits
 

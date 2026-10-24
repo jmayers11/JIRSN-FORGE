@@ -1,6 +1,6 @@
 import { tryGet } from '../api.js';
 import { esc, fmtNumber, errorBlock, emptyBlock } from '../ui.js';
-import { roleTitle } from '../app.js';
+import { roleTitle } from '../roles.js';
 import { appendPresence, appendDocumentTraining } from '../executable.js';
 import { appendWorkforceAdmin } from './workforce-admin.js';
 import { appendOwnAttendanceCorrections, appendWorkforceIntelligence } from './workforce-intelligence.js';

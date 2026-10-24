@@ -59,7 +59,6 @@ public sealed class WorkforceRecoveryEngineTests
                 ? person with
                 {
                     Presence = PresenceKind.Projected,
-                    Assignment = new WorkAssignment("SLITTING", "SLIT-WC", null, "PROJECTED", false),
                 }
                 : person with { Presence = null, Assignment = null }).ToArray(),
         };
@@ -96,7 +95,7 @@ public sealed class WorkforceRecoveryEngineTests
         var result = new WorkforceRecoveryEngine().Evaluate(projected,
             new WorkforceRecoveryRequest(SlitterWork("SLITTER-A"), new HashSet<Guid> { incumbent, operatorToMove, sourceBackfill }, ProjectedShift: true), targetAt).Output;
 
-        var recommendation = Assert.Single(result.Candidates.Where(candidate => candidate.PersonId == operatorToMove));
+        var recommendation = Assert.Single(result.Candidates, candidate => candidate.PersonId == operatorToMove);
         Assert.True(recommendation.RequiresSourceBackfill);
         Assert.Equal(new[] { sourceBackfill, operatorToMove }, recommendation.Moves.Select(move => move.PersonId));
         Assert.Contains(recommendation.SourceImpacts, impact => impact.Work.MachineCode == "PAINT-BOOTH");
