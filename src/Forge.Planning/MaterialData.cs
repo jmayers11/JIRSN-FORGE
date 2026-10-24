@@ -95,7 +95,10 @@ internal static class MaterialData
             }
         }
 
-        return new MaterialSnapshot(await TodayAsync(uow, time, ct), stock, issued, supplies, orders);
+        var reservations = (await WipStorageQueries.OutstandingReservationsAsync(uow, ct))
+            .Select(r => new MaterialReservation("PB" + r.BuildId.ToString(System.Globalization.CultureInfo.InvariantCulture), r.OrderNumber, r.PartNumber, r.Outstanding))
+            .ToList();
+        return new MaterialSnapshot(await TodayAsync(uow, time, ct), stock, issued, supplies, orders, reservations);
     }
 
     /// <summary>MRP inputs. Descriptions of program work the reader cannot see are replaced, never the quantities.</summary>

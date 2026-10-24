@@ -139,7 +139,8 @@ public sealed record RevisionInfo(string PartNumber, string Revision, RevisionSt
 
 /// <summary>A component and how much of it one unit of the parent consumes, before scrap.</summary>
 /// <param name="Policy">How MRP may use approved alternates for this line (V2.6); a setting of its own, changed with approval authority even on a released revision.</param>
-public sealed record BomLineInfo(int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, SubstitutionPolicy Policy = SubstitutionPolicy.Suggest);
+/// <param name="ConsumedAtSequence">The routing operation that consumes the component (Sprint 10 §17); null means from the first operation.</param>
+public sealed record BomLineInfo(int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, SubstitutionPolicy Policy = SubstitutionPolicy.Suggest, int? ConsumedAtSequence = null);
 
 /// <summary>
 /// One routing step. With eligible machines, the operator requirement comes from each machine's

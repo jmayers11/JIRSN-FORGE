@@ -31,8 +31,9 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
     {
         ArgumentNullException.ThrowIfNull(line);
         await using var cmd = uow.Command(
-            "INSERT INTO engineering.bom_line (part_number, revision, line_number, component, quantity_per, scrap_percent) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING",
-            partNumber, revision, line.LineNumber, line.ComponentPartNumber, line.QuantityPer, line.ScrapPercent);
+            "INSERT INTO engineering.bom_line (part_number, revision, line_number, component, quantity_per, scrap_percent, consumed_at_sequence) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
+            partNumber, revision, line.LineNumber, line.ComponentPartNumber, line.QuantityPer, line.ScrapPercent,
+            new Npgsql.NpgsqlParameter { Value = (object?)line.ConsumedAtSequence ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer });
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
@@ -40,8 +41,9 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
     {
         ArgumentNullException.ThrowIfNull(line);
         await using var cmd = uow.Command(
-            "UPDATE engineering.bom_line SET component = $4, quantity_per = $5, scrap_percent = $6 WHERE part_number = $1 AND revision = $2 AND line_number = $3",
-            partNumber, revision, lineNumber, line.ComponentPartNumber, line.QuantityPer, line.ScrapPercent);
+            "UPDATE engineering.bom_line SET component = $4, quantity_per = $5, scrap_percent = $6, consumed_at_sequence = $7 WHERE part_number = $1 AND revision = $2 AND line_number = $3",
+            partNumber, revision, lineNumber, line.ComponentPartNumber, line.QuantityPer, line.ScrapPercent,
+            new Npgsql.NpgsqlParameter { Value = (object?)line.ConsumedAtSequence ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer });
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
@@ -138,8 +140,8 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
         }
 
         var bom = await Read(
-            "SELECT b.line_number, b.component, b.quantity_per, b.scrap_percent, COALESCE((SELECT p.policy FROM engineering.bom_line_policy p WHERE p.part_number = b.part_number AND p.revision = b.revision AND p.line_number = b.line_number ORDER BY p.policy_id DESC LIMIT 1), 'Suggest') FROM engineering.bom_line b WHERE b.part_number = $1 AND b.revision = $2 ORDER BY b.line_number",
-            r => new BomLineInfo(r.GetInt32(0), r.GetString(1), r.GetDecimal(2), r.GetDecimal(3), Enum.Parse<SubstitutionPolicy>(r.GetString(4))),
+            "SELECT b.line_number, b.component, b.quantity_per, b.scrap_percent, COALESCE((SELECT p.policy FROM engineering.bom_line_policy p WHERE p.part_number = b.part_number AND p.revision = b.revision AND p.line_number = b.line_number ORDER BY p.policy_id DESC LIMIT 1), 'Suggest'), b.consumed_at_sequence FROM engineering.bom_line b WHERE b.part_number = $1 AND b.revision = $2 ORDER BY b.line_number",
+            r => new BomLineInfo(r.GetInt32(0), r.GetString(1), r.GetDecimal(2), r.GetDecimal(3), Enum.Parse<SubstitutionPolicy>(r.GetString(4)), r.IsDBNull(5) ? null : r.GetInt32(5)),
             ct,
             partNumber,
             revision);
@@ -229,11 +231,11 @@ internal sealed class PostgresEngineeringStore(PostgresUnitOfWork uow) : IEngine
         var lines = await Read(
             """
             SELECT b.part_number, b.revision, b.line_number, b.component, b.quantity_per, b.scrap_percent,
-                   COALESCE((SELECT p.policy FROM engineering.bom_line_policy p WHERE p.part_number = b.part_number AND p.revision = b.revision AND p.line_number = b.line_number ORDER BY p.policy_id DESC LIMIT 1), 'Suggest')
+                   COALESCE((SELECT p.policy FROM engineering.bom_line_policy p WHERE p.part_number = b.part_number AND p.revision = b.revision AND p.line_number = b.line_number ORDER BY p.policy_id DESC LIMIT 1), 'Suggest'), b.consumed_at_sequence
             FROM engineering.bom_line b JOIN engineering.revision r USING (part_number, revision)
             WHERE r.status = 'Released' ORDER BY b.part_number, b.revision, b.line_number
             """,
-            r => (Part: r.GetString(0), Revision: r.GetString(1), Line: new BomLineInfo(r.GetInt32(2), r.GetString(3), r.GetDecimal(4), r.GetDecimal(5), Enum.Parse<SubstitutionPolicy>(r.GetString(6)))),
+            r => (Part: r.GetString(0), Revision: r.GetString(1), Line: new BomLineInfo(r.GetInt32(2), r.GetString(3), r.GetDecimal(4), r.GetDecimal(5), Enum.Parse<SubstitutionPolicy>(r.GetString(6)), r.IsDBNull(7) ? null : r.GetInt32(7))),
             ct);
         var byRevision = lines.ToLookup(l => (l.Part, l.Revision), l => l.Line);
         return revisions.Select(rev => new RevisionStructure(rev, byRevision[(rev.PartNumber, rev.Revision)].ToList())).ToList();

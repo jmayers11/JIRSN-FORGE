@@ -52,10 +52,11 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         foreach (var m in materials)
         {
             await using var cmd = uow.Command(
-                "INSERT INTO execution.order_material (order_number, line_number, component, component_revision, required_quantity, unit_of_measure) VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO execution.order_material (order_number, line_number, component, component_revision, required_quantity, unit_of_measure, consumed_at_sequence) VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 orderNumber, m.LineNumber, m.ComponentPartNumber,
                 new NpgsqlParameter { Value = (object?)m.ComponentRevision ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text },
-                m.RequiredQuantity, m.UnitOfMeasure);
+                m.RequiredQuantity, m.UnitOfMeasure,
+                new NpgsqlParameter { Value = (object?)m.ConsumedAtSequence ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer });
             await cmd.ExecuteNonQueryAsync(ct);
         }
 
@@ -106,10 +107,11 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         foreach (var m in materials)
         {
             await using var cmd = uow.Command(
-                "INSERT INTO execution.order_material (order_number, line_number, component, component_revision, required_quantity, unit_of_measure) VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO execution.order_material (order_number, line_number, component, component_revision, required_quantity, unit_of_measure, consumed_at_sequence) VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 orderNumber, m.LineNumber, m.ComponentPartNumber,
                 new NpgsqlParameter { Value = (object?)m.ComponentRevision ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text },
-                m.RequiredQuantity, m.UnitOfMeasure);
+                m.RequiredQuantity, m.UnitOfMeasure,
+                new NpgsqlParameter { Value = (object?)m.ConsumedAtSequence ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer });
             await cmd.ExecuteNonQueryAsync(ct);
         }
     }
@@ -131,8 +133,8 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
             ct,
             orderNumber);
         var materials = await Read(
-            "SELECT line_number, component, component_revision, required_quantity, unit_of_measure FROM execution.order_material WHERE order_number = $1 ORDER BY line_number",
-            r => new OrderMaterialInfo(r.GetInt32(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetDecimal(3), r.GetString(4)),
+            "SELECT line_number, component, component_revision, required_quantity, unit_of_measure, consumed_at_sequence FROM execution.order_material WHERE order_number = $1 ORDER BY line_number",
+            r => new OrderMaterialInfo(r.GetInt32(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetDecimal(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetInt32(5)),
             ct,
             orderNumber);
         return order with { Operations = operations, Materials = materials };

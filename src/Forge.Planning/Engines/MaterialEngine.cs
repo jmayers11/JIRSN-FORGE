@@ -16,12 +16,16 @@ public sealed record MaterialSupply(string Key, string PartNumber, decimal Quant
 
 public sealed record MaterialStock(string PartNumber, decimal Available);
 
+/// <summary>Stock an approved partial build holds for its order (Sprint 10 §17): other orders cannot count it.</summary>
+public sealed record MaterialReservation(string Key, long OrderNumber, string PartNumber, decimal Quantity);
+
 public sealed record MaterialSnapshot(
     DateOnly Today,
     IReadOnlyList<MaterialStock> Stock,
     IReadOnlyList<MaterialIssued> Issued,
     IReadOnlyList<MaterialSupply> Supplies,
-    IReadOnlyList<MaterialOrder> Orders);
+    IReadOnlyList<MaterialOrder> Orders,
+    IReadOnlyList<MaterialReservation>? Reservations = null);
 
 public enum MaterialState
 {
@@ -67,6 +71,22 @@ public sealed class MaterialEngine : IEngine<MaterialSnapshot, MaterialRequest, 
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         var stock = snapshot.Stock.GroupBy(s => s.PartNumber, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Sum(s => s.Available), StringComparer.Ordinal);
+        // Reserved stock comes out of the shared pool first; it is given back only to the order that holds it, never beyond what is on hand.
+        var reserved = new Dictionary<(long Order, string Part), (decimal Quantity, string Keys)>();
+        foreach (var group in (snapshot.Reservations ?? []).Where(r => r.Quantity > 0).GroupBy(r => r.PartNumber, StringComparer.Ordinal))
+        {
+            var onHand = stock.GetValueOrDefault(group.Key);
+            foreach (var reservation in group.OrderBy(r => r.Key, StringComparer.Ordinal))
+            {
+                var take = Math.Min(onHand, reservation.Quantity);
+                onHand -= take;
+                var current = reserved.GetValueOrDefault((reservation.OrderNumber, group.Key));
+                reserved[(reservation.OrderNumber, group.Key)] = (current.Quantity + take, current.Keys is null ? reservation.Key : current.Keys + ", " + reservation.Key);
+            }
+
+            stock[group.Key] = onHand;
+        }
+
         var supplies = snapshot.Supplies
             .OrderBy(s => s.DueDate).ThenBy(s => s.Key, StringComparer.Ordinal)
             .Select(s => new Pool(s))
@@ -85,13 +105,22 @@ public sealed class MaterialEngine : IEngine<MaterialSnapshot, MaterialRequest, 
                 var remaining = Math.Max(0, required - issued);
                 var allocations = new List<MaterialAllocation>();
 
-                var onHand = stock.GetValueOrDefault(part);
-                var fromStock = Math.Min(remaining, onHand);
-                stock[part] = onHand - fromStock;
-                if (fromStock > 0)
+                var held = reserved.GetValueOrDefault((order.OrderNumber, part));
+                var fromReserved = Math.Min(remaining, held.Quantity);
+                if (fromReserved > 0)
                 {
-                    allocations.Add(new MaterialAllocation("Stock", "Available stock", fromStock, null));
+                    allocations.Add(new MaterialAllocation("Reserved", $"Reserved stock (partial build {held.Keys})", fromReserved, null));
                 }
+
+                var onHand = stock.GetValueOrDefault(part);
+                var fromShared = Math.Min(remaining - fromReserved, onHand);
+                stock[part] = onHand - fromShared;
+                if (fromShared > 0)
+                {
+                    allocations.Add(new MaterialAllocation("Stock", "Available stock", fromShared, null));
+                }
+
+                var fromStock = fromReserved + fromShared;
 
                 var need = remaining - fromStock;
                 foreach (var pool in supplies.Where(p => p.Supply.PartNumber == part

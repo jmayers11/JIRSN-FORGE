@@ -16,9 +16,10 @@ public sealed record CreateItem(string PartNumber, string Description, string Un
 
 public sealed record CreateRevision(string PartNumber, string Revision);
 
-public sealed record AddBomLine(string PartNumber, string Revision, int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent);
+public sealed record AddBomLine(string PartNumber, string Revision, int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, int? ConsumedAtSequence = null);
 
-public sealed record UpdateBomLine(string PartNumber, string Revision, int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent);
+/// <param name="ConsumedAtSequence">The consuming routing operation; null keeps the current one and 0 clears it (from the first operation).</param>
+public sealed record UpdateBomLine(string PartNumber, string Revision, int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, int? ConsumedAtSequence = null);
 
 public sealed record RemoveBomLine(string PartNumber, string Revision, int LineNumber);
 
@@ -266,7 +267,12 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
                 throw new CommandRejectedException("bom_loop", $"{component} already contains {part} somewhere in its structure; adding it would create a loop.");
             }
 
-            var line = new BomLineInfo(c.LineNumber, component, c.QuantityPer, c.ScrapPercent);
+            if (c.ConsumedAtSequence is < 1 or > 9999)
+            {
+                throw new CommandRejectedException("invalid_consumption_point", "The consuming operation is a routing sequence from 1 to 9999.");
+            }
+
+            var line = new BomLineInfo(c.LineNumber, component, c.QuantityPer, c.ScrapPercent, ConsumedAtSequence: c.ConsumedAtSequence);
             if (!await store.InsertBomLineAsync(part, rev, line, ct))
             {
                 throw new CommandRejectedException("line_exists", $"BOM line {c.LineNumber} already exists.");
@@ -317,7 +323,16 @@ public sealed partial class EngineeringService(CommandPipeline pipeline)
                 throw new CommandRejectedException("bom_loop", $"{component} already contains {part} somewhere in its structure; changing this line would create a loop.");
             }
 
-            var updated = oldLine with { ComponentPartNumber = component, QuantityPer = c.QuantityPer, ScrapPercent = c.ScrapPercent };
+            if (c.ConsumedAtSequence is < 0 or > 9999)
+            {
+                throw new CommandRejectedException("invalid_consumption_point", "The consuming operation is a routing sequence from 1 to 9999, or 0 to clear it.");
+            }
+
+            var updated = oldLine with
+            {
+                ComponentPartNumber = component, QuantityPer = c.QuantityPer, ScrapPercent = c.ScrapPercent,
+                ConsumedAtSequence = c.ConsumedAtSequence switch { null => oldLine.ConsumedAtSequence, 0 => null, var sequence => sequence },
+            };
             if (!await uow.Store<IEngineeringStore>().UpdateBomLineAsync(part, rev, c.LineNumber, updated, ct))
             {
                 throw new CommandRejectedException("line_not_found", $"BOM line {c.LineNumber} does not exist.");

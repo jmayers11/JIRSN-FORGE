@@ -542,6 +542,8 @@ public static class InventoryRegistration
         services.AddForgeStore<IInventoryLookup>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IScrapStore>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IScrapLookup>(uow => new PostgresInventoryStore(uow));
+        services.AddForgeStore<IWipStorageStore>(uow => new PostgresInventoryStore(uow));
+        services.AddForgeStore<IWipStorageLookup>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IShelfLifeLookup>(uow => new PostgresShelfLifeStore(uow));
         services.AddForgeStore<IShelfLifeStore>(uow => new PostgresShelfLifeStore(uow));
         services.AddForgeStore<IReceivingLookup>(uow => new PostgresInventoryStore(uow));

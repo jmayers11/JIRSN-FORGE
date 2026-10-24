@@ -7,6 +7,7 @@ import { appendOrderGenealogy, appendOrderReconciliation } from '../genealogy.js
 import { appendOrderMaterialFlow } from '../materialflow.js';
 import { appendOrderQuantityStates } from '../actuals.js';
 import { appendHolds } from '../executable.js';
+import { openPartialBuild } from '../partial-build.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, tabifyPanels, enhanceTables } from '../ui.js';
 
 const STATUS_TONE = { Planned: 'none', FirmPlanned: 'info', Released: 'ok', Held: 'warn', Cancelled: 'bad', Completed: 'ok' };
@@ -258,8 +259,9 @@ async function orderDetail(page, ctx, number) {
     </section>
       <section class="panel"><header><h2>Bill of materials</h2><span class="spacer"></span><span class="muted">Component revisions and quantities copied at release</span></header>
         ${o.status === 'Released' && o.materials?.length && canAction(me, 'inventory.material-request') ? '<button class="btn small primary" id="stage-remaining-materials" style="margin-bottom:10px">Request remaining BOM materials</button>' : ''}
-        ${o.materials?.length ? `<table class="table"><thead><tr><th>Line</th><th>Component</th><th>Rev</th><th>Required</th></tr></thead><tbody>
-        ${o.materials.map(m => `<tr><td>${m.lineNumber}</td><td>${esc(m.componentPartNumber)}</td><td>${esc(m.componentRevision ?? '—')}</td><td>${fmtNumber(m.requiredQuantity, 3)} ${esc(m.unitOfMeasure)}</td></tr>`).join('')}
+        ${o.status === 'Released' && o.materials?.length && canAction(me, 'planning.schedule.read') ? '<button class="btn small" id="plan-partial-build" style="margin-bottom:10px">Plan partial build…</button>' : ''}
+        ${o.materials?.length ? `<table class="table"><thead><tr><th>Line</th><th>Component</th><th>Rev</th><th>Required</th><th>Consumed at</th></tr></thead><tbody>
+        ${o.materials.map(m => `<tr><td>${m.lineNumber}</td><td>${esc(m.componentPartNumber)}</td><td>${esc(m.componentRevision ?? '—')}</td><td>${fmtNumber(m.requiredQuantity, 3)} ${esc(m.unitOfMeasure)}</td><td>${m.consumedAtSequence ? `op ${m.consumedAtSequence}` : '<span class="faint">first op</span>'}</td></tr>`).join('')}
         </tbody></table>${materialStatus(o, material, issues)}` : emptyBlock('No materials yet', 'Copied from the BOM at release.')}
       </section>`;
 
@@ -342,6 +344,7 @@ async function orderDetail(page, ctx, number) {
       reason => command(`/api/orders/${number}/${act}`, {}, reason));
     if (done) { toast(`Order #${number}: ${b.textContent.toLowerCase()} recorded.`); await orderDetail(page, ctx, number); }
   }));
+  $('#plan-partial-build', page)?.addEventListener('click', () => openPartialBuild(number, me));
   $('#stage-remaining-materials', page)?.addEventListener('click', async () => {
     try {
       const response = await tryGet('/api/inventory/locations');

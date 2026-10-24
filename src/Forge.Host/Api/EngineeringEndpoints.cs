@@ -22,9 +22,9 @@ public sealed record LifecycleRequest(string Manufacturer, string Mpn, Manufactu
 
 public sealed record RevisionRequest(string Revision, string? Reason);
 
-public sealed record BomLineRequest(int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, string? Reason);
+public sealed record BomLineRequest(int LineNumber, string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, string? Reason, int? ConsumedAtSequence = null);
 
-public sealed record UpdateBomLineRequest(string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, string? Reason);
+public sealed record UpdateBomLineRequest(string ComponentPartNumber, decimal QuantityPer, decimal ScrapPercent, string? Reason, int? ConsumedAtSequence = null);
 
 public sealed record OperationRequest(
     int Sequence,
@@ -79,9 +79,9 @@ public static class EngineeringEndpoints
         eng.MapPost("/items/{part}/revisions", (HttpContext http, string part, RevisionRequest b, EngineeringService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CreateRevisionAsync(new CreateRevision(part, b.Revision), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/bom", (HttpContext http, string part, string rev, BomLineRequest b, EngineeringService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.AddBomLineAsync(new AddBomLine(part, rev, b.LineNumber, b.ComponentPartNumber, b.QuantityPer, b.ScrapPercent), c, ct)));
+            Command(http, b.Reason, c => s.AddBomLineAsync(new AddBomLine(part, rev, b.LineNumber, b.ComponentPartNumber, b.QuantityPer, b.ScrapPercent, b.ConsumedAtSequence), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/bom/{line:int}/update", (HttpContext http, string part, string rev, int line, UpdateBomLineRequest b, EngineeringService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.UpdateBomLineAsync(new UpdateBomLine(part, rev, line, b.ComponentPartNumber, b.QuantityPer, b.ScrapPercent), c, ct)));
+            Command(http, b.Reason, c => s.UpdateBomLineAsync(new UpdateBomLine(part, rev, line, b.ComponentPartNumber, b.QuantityPer, b.ScrapPercent, b.ConsumedAtSequence), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/bom/{line:int}/remove", (HttpContext http, string part, string rev, int line, ReasonRequest b, EngineeringService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RemoveBomLineAsync(new RemoveBomLine(part, rev, line), c, ct)));
         eng.MapPost("/items/{part}/revisions/{rev}/routing", (HttpContext http, string part, string rev, OperationRequest b, EngineeringService s, CancellationToken ct) =>

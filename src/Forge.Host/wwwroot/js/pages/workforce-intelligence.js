@@ -596,11 +596,14 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
         let result, capacity = new Map();
         try {
           const withCapacity = await readPost('/api/readiness/workforce-recovery-capacity', { ...request, scheduledMinutes: 480 });
-          result = withCapacity.recovery;
-          capacity = capacityByPerson(withCapacity);
+          if (withCapacity?.recovery?.output) {
+            result = withCapacity.recovery;
+            capacity = capacityByPerson(withCapacity);
+          }
         } catch {
-          result = await readPost('/api/readiness/workforce-recovery-preview', request);
+          // Forecasts are optional context; the ranking below still answers the question.
         }
+        result ??= await readPost('/api/readiness/workforce-recovery-preview', request);
         const summary = result.output;
         if (!summary || !output) throw new Error('The recovery preview returned no result.');
         const sourceImpact = candidate => {

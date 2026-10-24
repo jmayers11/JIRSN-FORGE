@@ -265,6 +265,7 @@ app.MapScimEndpoints();
 app.MapOperationsEndpoints();
 app.MapPlantVisualEndpoints();
 app.MapScrap();
+app.MapPartialBuilds();
 app.MapPerformanceAttribution();
 app.MapSkillCapacity();
 app.MapEngineeringEndpoints();

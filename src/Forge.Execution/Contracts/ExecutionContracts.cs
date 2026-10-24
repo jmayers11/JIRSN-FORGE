@@ -41,7 +41,8 @@ public sealed record OrderOperationInfo(
     decimal? FamilySetupMinutes = null);
 
 /// <summary>A material requirement, copied from the BOM with the component revision in force at release.</summary>
-public sealed record OrderMaterialInfo(int LineNumber, string ComponentPartNumber, string? ComponentRevision, decimal RequiredQuantity, string UnitOfMeasure);
+/// <param name="ConsumedAtSequence">The operation that consumes the component (Sprint 10 §17), copied from the BOM at release; null means from the first operation.</param>
+public sealed record OrderMaterialInfo(int LineNumber, string ComponentPartNumber, string? ComponentRevision, decimal RequiredQuantity, string UnitOfMeasure, int? ConsumedAtSequence = null);
 
 public sealed record OrderInfo(
     long OrderNumber,

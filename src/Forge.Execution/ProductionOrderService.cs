@@ -330,7 +330,7 @@ public sealed class ProductionOrderService(CommandPipeline pipeline)
             var component = await engineering.FindItemAsync(line.ComponentPartNumber, ct);
             var componentRevision = await engineering.GetEffectiveRevisionAsync(line.ComponentPartNumber, now, ct);
             var required = decimal.Round(line.QuantityPer * quantity * (1 + (line.ScrapPercent / 100m)), 6, MidpointRounding.AwayFromZero);
-            materials.Add(new OrderMaterialInfo(line.LineNumber, line.ComponentPartNumber, componentRevision?.Revision, required, component?.UnitOfMeasure ?? "EA"));
+            materials.Add(new OrderMaterialInfo(line.LineNumber, line.ComponentPartNumber, componentRevision?.Revision, required, component?.UnitOfMeasure ?? "EA", line.ConsumedAtSequence));
         }
 
         return (operations, materials);
