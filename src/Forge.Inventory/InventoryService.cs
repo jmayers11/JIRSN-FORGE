@@ -753,6 +753,13 @@ public sealed partial class InventoryService(CommandPipeline pipeline, ProductRe
                 ? new NewTransaction(kind, request.PartNumber, change, null, null, request.LocationCode, request.Status, request.LotNumber, Reason: request.Reason, RequestId: request.RequestId)
                 : new NewTransaction(kind, request.PartNumber, -change, request.LocationCode, request.Status, null, null, request.LotNumber, Reason: request.Reason, RequestId: request.RequestId);
 
+            // A positive adjustment may bring a lot into stock for the first time (an opening balance): record its identity first.
+            if (change > 0 && request.LotNumber is { } lot)
+            {
+                var item = await ItemAsync(uow, request.PartNumber, ct);
+                await store.EnsureLotAsync(request.PartNumber, lot, null, item.Serialized ? IdentityKind.Serial : IdentityKind.Lot, now, request.RequestedBy, ct);
+            }
+
             // The requester is the actor of record; the approver is recorded beside them.
             var txnId = await store.InsertTransactionAsync(txn with { ApprovedBy = context.Actor }, now, request.RequestedBy, ct);
             await store.DecideRequestAsync(request.RequestId, AdjustmentState.Approved, context.Actor, now, txnId, ct);
