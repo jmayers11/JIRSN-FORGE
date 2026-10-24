@@ -70,6 +70,16 @@ public enum LaborRole
     Trainer,
 }
 
+/// <summary>The production phase recorded for an operator interval. Training remains separately visible.</summary>
+public enum LaborPhase
+{
+    Setup,
+    Run,
+    Inspection,
+    Rework,
+    Training,
+}
+
 public sealed record LaborEntry(
     long LaborId,
     Guid PersonId,
@@ -81,7 +91,8 @@ public sealed record LaborEntry(
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
     long? TrainingSessionId,
-    IReadOnlyList<string>? Qualifications = null);
+    IReadOnlyList<string>? Qualifications = null,
+    LaborPhase Phase = LaborPhase.Run);
 
 /// <summary>Quantity reported against an operation. Scrap always carries a reason.</summary>
 public sealed record ProductionReport(

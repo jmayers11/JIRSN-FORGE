@@ -117,8 +117,9 @@ test('resolved operation starts only after explicit selection and Start using th
   fire(h.page.querySelector('[data-identify-use]'), 'click');
   assert.equal(h.calls.filter(c => c.path === '/api/shopfloor/start').length, 0);
   assert.equal(h.page.querySelector('#identified-machine-0').value, 'M2');
+  h.page.querySelector('#identified-phase-0').value = 'Inspection';
   const start = h.page.querySelector('[data-identified-start]'); fire(start, 'click'); fire(start, 'click'); await flush();
-  assert.deepEqual(h.calls.filter(c => c.path === '/api/shopfloor/start').map(c => c.body), [{ badge: 'B-17', orderNumber: 17, sequence: 10, machineCode: 'M2', trainerBadge: null }]);
+  assert.deepEqual(h.calls.filter(c => c.path === '/api/shopfloor/start').map(c => c.body), [{ badge: 'B-17', orderNumber: 17, sequence: 10, machineCode: 'M2', phase: 'Inspection', trainerBadge: null }]);
 });
 
 test('resolving work outside the badged operator queue never grants a Start action', async t => {

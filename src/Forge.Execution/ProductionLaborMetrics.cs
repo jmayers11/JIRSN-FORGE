@@ -12,6 +12,10 @@ public sealed record OperationLaborMetric(
     decimal? PlannedTotalLaborHours,
     int CrewSize,
     decimal RecordedOperatorHours,
+    decimal RecordedSetupHours,
+    decimal RecordedRunHours,
+    decimal RecordedInspectionHours,
+    decimal RecordedReworkHours,
     decimal RecordedTrainingHours,
     decimal ReportedGoodQuantity,
     decimal ReportedScrapQuantity,
@@ -51,6 +55,7 @@ public static class ProductionLaborMetrics
             var entries = labor.Where(entry => entry.OrderNumber == order.OrderNumber && entry.Sequence == operation.Sequence
                 && (entry.EndedAt is null || entry.EndedAt.Value >= entry.StartedAt)).ToArray();
             var operatorHours = entries.Where(entry => entry.Role == LaborRole.Operator).Sum(Hours);
+            decimal PhaseHours(LaborPhase phase) => entries.Where(entry => entry.Phase == phase).Sum(Hours);
             var trainingHours = entries.Where(entry => entry.Role is LaborRole.Trainee or LaborRole.Trainer).Sum(Hours);
             var opReports = reports.Where(report => report.OrderNumber == order.OrderNumber && report.Sequence == operation.Sequence).ToArray();
             var good = opReports.Sum(report => report.GoodQuantity);
@@ -61,7 +66,12 @@ public static class ProductionLaborMetrics
 
             return new OperationLaborMetric(order.OrderNumber, operation.Sequence, operation.WorkCenterCode,
                 setupHours, runHours, totalHours, crew,
-                decimal.Round(operatorHours, 3, MidpointRounding.AwayFromZero), decimal.Round(trainingHours, 3, MidpointRounding.AwayFromZero),
+                decimal.Round(operatorHours, 3, MidpointRounding.AwayFromZero),
+                decimal.Round(PhaseHours(LaborPhase.Setup), 3, MidpointRounding.AwayFromZero),
+                decimal.Round(PhaseHours(LaborPhase.Run), 3, MidpointRounding.AwayFromZero),
+                decimal.Round(PhaseHours(LaborPhase.Inspection), 3, MidpointRounding.AwayFromZero),
+                decimal.Round(PhaseHours(LaborPhase.Rework), 3, MidpointRounding.AwayFromZero),
+                decimal.Round(trainingHours, 3, MidpointRounding.AwayFromZero),
                 good, scrap, null, null, variance,
                 "N/A: operation-scoped quality-accepted quantity is not available; reported good quantity is not assumed accepted.",
                 variance is null

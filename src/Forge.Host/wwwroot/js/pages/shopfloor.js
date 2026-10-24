@@ -439,7 +439,7 @@ export async function shopFloorPage(page, ctx) {
       ${labor ? `
       <section class="panel kiosk-active-work">
         <header><div><span class="eyebrow">ACTIVE PRODUCTION</span><h2>Order #${labor.orderNumber} · operation ${labor.sequence}</h2></div><span class="spacer"></span>
-          <span class="pill ${labor.role === 'Operator' ? 'info' : 'warn'}">${esc(labor.role)}</span></header>
+          <span class="pill ${labor.role === 'Operator' ? 'info' : 'warn'}">${esc(labor.role)}</span><span class="pill">${esc(labor.phase ?? 'Run')}</span></header>
         <div class="kiosk-operator-strip">${operatorAvatar}<div><b>${esc(p.displayName)}</b><small>${esc(myOp ? `${myOp.partNumber} · ${myOp.operation.description}` : 'Work details unavailable')}${labor.machineCode ? ` · ${esc(labor.machineCode)}` : ''} · started ${esc(fmtDateTime(labor.startedAt))}</small></div></div>
         ${myOp ? `<div class="kiosk-progress-strip" role="region" aria-label="Order completion progress">
           <div class="kiosk-progress-bar" aria-hidden="true"><span class="kiosk-progress-good" style="width:${goodPct}%"></span><span class="kiosk-progress-scrap" style="width:${scrapPct}%"></span></div>
@@ -483,6 +483,7 @@ export async function shopFloorPage(page, ctx) {
           <div class="kiosk-dispatch-machine">${q.operation.eligibleMachines.length > 1
             ? `<label class="field"><span>Choose a machine</span><select class="select big" data-machine="${i}" aria-label="Machine for order ${q.orderNumber} operation ${q.operation.sequence}">${q.operation.eligibleMachines.map(machine => `<option ${machine === q.scheduledMachine ? 'selected' : ''}>${esc(machine)}</option>`).join('')}</select></label>`
             : `<span class="pill info">${esc(q.operation.eligibleMachines[0] ?? 'Machine selected by the operation')}</span>`}
+            <label class="field"><span>Labor phase</span><select class="select" data-phase="${i}" aria-label="Labor phase for order ${q.orderNumber} operation ${q.operation.sequence}"><option value="Setup">Setup</option><option value="Run" selected>Run</option><option value="Inspection">Inspection</option><option value="Rework">Rework</option></select></label>
             ${q.scheduledStart ? `<span class="muted">Scheduled ${esc(fmtDateTime(q.scheduledStart))}</span>` : ''}</div>
           ${q.hold ? `<div class="notice bad"><b>Cannot start · order hold</b><div>${esc(q.hold)}</div></div>` : `<div class="kiosk-dispatch-actions"><button class="btn" data-stage-work="${i}" type="button">Stage references</button><button class="btn primary big" data-start="${i}" type="button" ${clocked ? '' : 'disabled title="Clock in first"'}>Start operation</button></div>${!clocked ? '<div class="muted small">Clock in before starting this operation.</div>' : ''}`}
         </article>`).join('')}</div>` : emptyBlock('Nothing to start', 'No released work at your work center, your assignment or in the schedule for you.')}
@@ -660,7 +661,7 @@ export async function shopFloorPage(page, ctx) {
     $$('[data-start]', page).forEach(b => b.addEventListener('click', () => {
       const q = p.queue[Number(b.dataset.start)];
       const sel = $(`[data-machine="${b.dataset.start}"]`, page);
-      start(q, sel ? sel.value : q.operation.eligibleMachines[0] ?? null, null, session);
+      start(q, sel ? sel.value : q.operation.eligibleMachines[0] ?? null, $(`[data-phase="${b.dataset.start}"]`, page)?.value ?? 'Run', null, session);
     }));
     $$('[data-evaluate]', page).forEach(b => b.addEventListener('click', () => evaluate(Number(b.dataset.evaluate), session)));
     if (scanWork && terminal.isCurrent(scanWork.session)) $('[data-scan-session-host]', page)?.append(scanWork.element);
@@ -679,6 +680,7 @@ export async function shopFloorPage(page, ctx) {
         selected.innerHTML = `<div class="notice">Selected work. Choose the operation and press Start.</div>${choices.map((q, i) => `
           <div class="field"><b>Order #${q.orderNumber}, operation ${q.operation.sequence}</b> — ${esc(q.operation.description)}
           ${q.operation.eligibleMachines.length > 1 ? `<label for="identified-machine-${i}">Machine</label><select class="select" id="identified-machine-${i}">${q.operation.eligibleMachines.map(m => `<option ${m === q.scheduledMachine ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>` : ` · ${esc(q.operation.eligibleMachines[0] ?? '—')}`}
+          <label for="identified-phase-${i}">Labor phase</label><select class="select" id="identified-phase-${i}"><option value="Setup">Setup</option><option value="Run" selected>Run</option><option value="Inspection">Inspection</option><option value="Rework">Rework</option></select>
           ${q.hold ? `<span class="pill bad">On hold</span><div class="faint">${esc(q.hold)}</div>` : `<button class="btn" data-identified-stage="${i}">Stage selected operation</button> <button class="btn primary" data-identified-start="${i}" ${clocked ? '' : 'disabled title="Clock in first"'}>Start selected work</button>`}</div>`).join('')}`;
         $$('[data-identified-stage]', selected).forEach(button => button.addEventListener('click', () => { if (!terminal.isCurrent(session) || terminal.busy) return; const index = Number(button.dataset.identifiedStage), q = choices[index]; stageWork(q, session, $(`#identified-machine-${index}`, selected)?.value ?? q.operation.eligibleMachines[0] ?? null); }));
         choices.forEach((q, index) => $(`#identified-machine-${index}`, selected)?.addEventListener('change', event => { if (scanWork?.work.orderNumber === q.orderNumber && scanWork.work.operation.sequence === q.operation.sequence && scanWork.machineCode !== event.target.value) clearScanWork(); }));
@@ -686,8 +688,9 @@ export async function shopFloorPage(page, ctx) {
           if (!terminal.isCurrent(session) || terminal.busy || !workIdentification?.stage.selected) return;
           const index = Number(button.dataset.identifiedStart), q = choices[index];
           const machine = $(`#identified-machine-${index}`, selected)?.value ?? q.operation.eligibleMachines[0] ?? null;
+          const phase = $(`#identified-phase-${index}`, selected)?.value ?? 'Run';
           workIdentification.stage.clear();
-          start(q, machine, null, session);
+          start(q, machine, phase, null, session);
         }));
       },
     });
@@ -736,13 +739,13 @@ export async function shopFloorPage(page, ctx) {
     });
   }
 
-  async function start(q, machine, trainerBadge, session) {
-    const r = await act('/api/shopfloor/start', { badge: session.badge, orderNumber: q.orderNumber, sequence: q.operation.sequence, machineCode: machine, trainerBadge: trainerBadge ?? null }, null, true, session);
+  async function start(q, machine, phase, trainerBadge, session) {
+    const r = await act('/api/shopfloor/start', { badge: session.badge, orderNumber: q.orderNumber, sequence: q.operation.sequence, machineCode: machine, phase, trainerBadge: trainerBadge ?? null }, null, true, session);
     if (!terminal.isCurrent(session)) return;
     if (!(r instanceof Error)) return;
     if (isServiceUnavailable(r)) return;
     const code = r.problem?.code;
-    if (code === 'trainer_required') trainerDialog(q, machine, r.message, session);
+    if (code === 'trainer_required') trainerDialog(q, machine, phase, r.message, session);
     else toast(r.message, true);
   }
 
@@ -769,7 +772,7 @@ export async function shopFloorPage(page, ctx) {
     return { m, close };
   }
 
-  function trainerDialog(q, machine, message, session) {
+  function trainerDialog(q, machine, phase, message, session) {
     if (!terminal.isCurrent(session)) return;
     const { m, close } = modal(`
       <h2>Training supervision required</h2>
@@ -785,7 +788,7 @@ export async function shopFloorPage(page, ctx) {
       input.value = '';
       if (!trainer) return;
       close();
-      await start(q, machine, trainer, session);
+      await start(q, machine, phase, trainer, session);
     });
   }
 

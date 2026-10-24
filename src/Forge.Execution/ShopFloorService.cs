@@ -24,7 +24,7 @@ public sealed record SafetyFinding(bool Blocked, string Detail);
 
 /// <summary>Start (or join) an operation. A trainer badge is given when the operator works under supervision.</summary>
 /// <param name="ToolCode">A tool used for the operation (V3.8): judged valid for the machine and activity at the start, and its use counted.</param>
-public sealed record StartOperation(Secret Badge, long OrderNumber, int Sequence, string? MachineCode, Secret? TrainerBadge, SafetyFinding? Safety = null, string? ToolCode = null);
+public sealed record StartOperation(Secret Badge, long OrderNumber, int Sequence, string? MachineCode, Secret? TrainerBadge, SafetyFinding? Safety = null, string? ToolCode = null, LaborPhase Phase = LaborPhase.Run);
 
 /// <summary>End the badged person's current direct labor.</summary>
 public sealed record StopWork(Secret Badge);
@@ -35,7 +35,7 @@ public sealed record ReportProduction(Secret Badge, long OrderNumber, int Sequen
 /// <summary>A trainer's evaluation, signed with badge and PIN.</summary>
 public sealed record EvaluateTraining(Secret TrainerBadge, Secret Pin, long SessionId, TrainingEvaluation Evaluation, string? Notes);
 
-public sealed record OperationStarted(long OrderNumber, int Sequence, Guid PersonId, string Role, string? MachineCode, long LaborId) : IDomainEvent
+public sealed record OperationStarted(long OrderNumber, int Sequence, Guid PersonId, string Role, string? MachineCode, long LaborId, LaborPhase Phase = LaborPhase.Run) : IDomainEvent
 {
     public static string EventType => nameof(OperationStarted);
 
@@ -80,7 +80,7 @@ public sealed record TrainingEvaluated(long SessionId, Guid TraineeId, Guid Trai
 public interface IShopFloorStore
 {
     /// <param name="qualifications">The qualifications the person held for the operation when starting it (kept with the record, V2.11).</param>
-    Task<long> InsertLaborAsync(Guid person, long orderNumber, int sequence, string workCenter, string? machine, LaborRole role, long? sessionId, IReadOnlyList<string> qualifications, DateTimeOffset at, string actor, CancellationToken ct);
+    Task<long> InsertLaborAsync(Guid person, long orderNumber, int sequence, string workCenter, string? machine, LaborRole role, LaborPhase phase, long? sessionId, IReadOnlyList<string> qualifications, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task<LaborEntry?> FindOpenLaborAsync(Guid person, CancellationToken ct);
 
@@ -132,6 +132,10 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             {
                 throw new CommandRejectedException("operation_complete", $"Operation {id} is already complete.");
             }
+            if (!Enum.IsDefined(c.Phase))
+            {
+                throw new CommandRejectedException("invalid_labor_phase", "Choose setup, run, inspection, or rework for this labor interval.");
+            }
 
             await RequireNoHoldAsync(uow, order, c.Sequence, wholeOrderOnly: false, ct);
 
@@ -181,10 +185,11 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             object audit;
             if (check.Decision == OperatorDecision.Authorized)
             {
-                var laborId = await store.InsertLaborAsync(worker.PersonId, c.OrderNumber, c.Sequence, op.WorkCenterCode, machine, LaborRole.Operator, null, required, now, context.Actor, ct);
-                events.Add(pipeline.Event(new OperationStarted(c.OrderNumber, c.Sequence, worker.PersonId, nameof(LaborRole.Operator), machine, laborId), context, SourceContext, OperationEntity, id, program));
+                var phase = c.Phase == LaborPhase.Training ? LaborPhase.Run : c.Phase;
+                var laborId = await store.InsertLaborAsync(worker.PersonId, c.OrderNumber, c.Sequence, op.WorkCenterCode, machine, LaborRole.Operator, phase, null, required, now, context.Actor, ct);
+                events.Add(pipeline.Event(new OperationStarted(c.OrderNumber, c.Sequence, worker.PersonId, nameof(LaborRole.Operator), machine, laborId, phase), context, SourceContext, OperationEntity, id, program));
                 message = $"{worker.DisplayName} started operation {id}{(machine is null ? string.Empty : " on " + machine)}.";
-                audit = new { person = worker.PersonId, role = nameof(LaborRole.Operator), machine, laborId, check = check.Explanation, readiness = readinessEvidence.Detail, requiredDocuments = readinessEvidence.RequiredDocuments };
+                audit = new { person = worker.PersonId, role = nameof(LaborRole.Operator), phase, machine, laborId, check = check.Explanation, readiness = readinessEvidence.Detail, requiredDocuments = readinessEvidence.RequiredDocuments };
             }
             else
             {
@@ -196,16 +201,16 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
                 }
 
                 var sessionId = await store.InsertTrainingSessionAsync(worker.PersonId, trainerPerson.PersonId, check.Missing, c.OrderNumber, c.Sequence, machine, now, ct);
-                var traineeLabor = await store.InsertLaborAsync(worker.PersonId, c.OrderNumber, c.Sequence, op.WorkCenterCode, machine, LaborRole.Trainee, sessionId, required.Except(check.Missing).ToList(), now, context.Actor, ct);
+                var traineeLabor = await store.InsertLaborAsync(worker.PersonId, c.OrderNumber, c.Sequence, op.WorkCenterCode, machine, LaborRole.Trainee, LaborPhase.Training, sessionId, required.Except(check.Missing).ToList(), now, context.Actor, ct);
                 if (trainerLabor is not null)
                 {
                     await store.EndLaborAsync([trainerLabor.LaborId], now, ct);
                 }
 
-                var trainerLaborId = await store.InsertLaborAsync(trainerPerson.PersonId, c.OrderNumber, c.Sequence, op.WorkCenterCode, machine, LaborRole.Trainer, sessionId, check.Missing, now, context.Actor, ct);
+                var trainerLaborId = await store.InsertLaborAsync(trainerPerson.PersonId, c.OrderNumber, c.Sequence, op.WorkCenterCode, machine, LaborRole.Trainer, LaborPhase.Training, sessionId, check.Missing, now, context.Actor, ct);
                 events.Add(pipeline.Event(new SupervisedTrainingStarted(sessionId, worker.PersonId, trainerPerson.PersonId, check.Missing, c.OrderNumber, c.Sequence), context, SourceContext, TrainingEntity, sessionId.ToString(System.Globalization.CultureInfo.InvariantCulture), program));
-                events.Add(pipeline.Event(new OperationStarted(c.OrderNumber, c.Sequence, worker.PersonId, nameof(LaborRole.Trainee), machine, traineeLabor), context, SourceContext, OperationEntity, id, program));
-                events.Add(pipeline.Event(new OperationStarted(c.OrderNumber, c.Sequence, trainerPerson.PersonId, nameof(LaborRole.Trainer), machine, trainerLaborId), context, SourceContext, OperationEntity, id, program));
+                events.Add(pipeline.Event(new OperationStarted(c.OrderNumber, c.Sequence, worker.PersonId, nameof(LaborRole.Trainee), machine, traineeLabor, LaborPhase.Training), context, SourceContext, OperationEntity, id, program));
+                events.Add(pipeline.Event(new OperationStarted(c.OrderNumber, c.Sequence, trainerPerson.PersonId, nameof(LaborRole.Trainer), machine, trainerLaborId, LaborPhase.Training), context, SourceContext, OperationEntity, id, program));
                 message = $"Supervised training started: {worker.DisplayName} on operation {id} under {trainerPerson.DisplayName}. No qualification is granted by this session.";
                 audit = new { trainee = worker.PersonId, trainer = trainerPerson.PersonId, sessionId, qualifications = check.Missing, machine, check = check.Explanation, readiness = readinessEvidence.Detail, requiredDocuments = readinessEvidence.RequiredDocuments };
             }

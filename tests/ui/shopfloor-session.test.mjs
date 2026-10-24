@@ -53,8 +53,10 @@ test('a required operation cannot dispatch Start with an omitted or unsatisfied 
 
 test('explicit no-adoption summary preserves legacy Start without namespace configuration or scan headers', async t => {
   const h = await harness(t, { adopted: false, required: false, route: path => path === '/api/identification/config' ? response({ detail: 'Identification is not configured.', code: 'identification_not_configured' }, 503) : null });
+  h.page.querySelector('[data-phase]').value = 'Setup';
   fire(h.page.querySelector('[data-start]'), 'click'); await flush(); const start = h.calls.find(call => call.path === '/api/shopfloor/start');
   assert.ok(start); assert.equal(start.headers['X-Forge-Scan-Session'], undefined); assert.equal(h.calls.some(call => call.path === '/api/identification/config'), false);
+  assert.equal(start.body.phase, 'Setup');
   assert.ok(h.calls.some(call => call.path.includes('/requirements?orderNumber=17&sequence=10')));
 });
 

@@ -111,6 +111,7 @@ public sealed class Phase5Tests(PostgresFixture postgres)
         Assert.Equal(f.Plant.People["michael"], session.GetProperty("trainerId").GetGuid());
         var roles = floor.GetProperty("labor").EnumerateArray().Select(l => l.GetProperty("role").GetString()).Order().ToList();
         Assert.Equal(new[] { "Trainee", "Trainer" }, roles);
+        Assert.All(floor.GetProperty("labor").EnumerateArray(), labor => Assert.Equal("Training", labor.GetProperty("phase").GetString()));
 
         // The trainee reports; the trainer cannot report for themselves.
         await f.Plant.Ok(k, "/api/shopfloor/report", new { badge = Alex, orderNumber = order, sequence = 10, good = 4m, scrap = 0m, complete = false });
@@ -159,7 +160,9 @@ public sealed class Phase5Tests(PostgresFixture postgres)
         Assert.Equal(422, down.Status);
         Assert.Contains("SLITTER-B is down", down.Body, StringComparison.Ordinal); // refused by the machine check
 
-        await f.Plant.Ok(k, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" });
+        await f.Plant.Ok(k, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A", phase = "Setup" });
+        var startedFloor = await Get(k, $"/api/orders/{order}/shopfloor");
+        Assert.Equal("Setup", Assert.Single(startedFloor.GetProperty("labor").EnumerateArray()).GetProperty("phase").GetString());
         var twice = await f.Plant.Ok(k, "/api/shopfloor/start", new { badge = Sarah, orderNumber = order, sequence = 10, machineCode = "SLITTER-A" });
         Assert.Equal("no_change", twice.GetProperty("code").GetString());
 

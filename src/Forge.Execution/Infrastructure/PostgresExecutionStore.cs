@@ -201,12 +201,12 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         r => new OpenOperation(r.GetInt64(0), r.GetString(1), r.GetDecimal(2), r.GetFieldValue<DateOnly>(3), r.GetInt32(4), r.IsDBNull(5) ? null : r.GetGuid(5), ReadOperation(r, 6)),
         ct);
 
-    private const string LaborSql = "SELECT labor_id, person_id, order_number, sequence, work_center_code, machine_code, role, started_at, ended_at, training_session_id, qualifications FROM execution.labor";
+    private const string LaborSql = "SELECT labor_id, person_id, order_number, sequence, work_center_code, machine_code, role, started_at, ended_at, training_session_id, qualifications, phase FROM execution.labor";
 
     private static LaborEntry ReadLabor(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetGuid(1), r.GetInt64(2), r.GetInt32(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), Enum.Parse<LaborRole>(r.GetString(6)),
         r.GetFieldValue<DateTimeOffset>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateTimeOffset>(8), r.IsDBNull(9) ? null : r.GetInt64(9),
-        r.IsDBNull(10) ? null : r.GetFieldValue<string[]>(10));
+        r.IsDBNull(10) ? null : r.GetFieldValue<string[]>(10), Enum.Parse<LaborPhase>(r.GetString(11)));
 
     public Task<IReadOnlyList<LaborEntry>> ListOpenLaborAsync(CancellationToken ct) => Read(LaborSql + " WHERE ended_at IS NULL ORDER BY labor_id", ReadLabor, ct);
 
@@ -245,15 +245,15 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         ? Read(SessionSql + " WHERE order_number = $1 ORDER BY session_id", ReadSession, ct, n)
         : Read(SessionSql + " WHERE started_at < $2 AND (ended_at IS NULL OR ended_at > $1) ORDER BY session_id", ReadSession, ct, from, to);
 
-    public async Task<long> InsertLaborAsync(Guid person, long orderNumber, int sequence, string workCenter, string? machine, LaborRole role, long? sessionId, IReadOnlyList<string> qualifications, DateTimeOffset at, string actor, CancellationToken ct)
+    public async Task<long> InsertLaborAsync(Guid person, long orderNumber, int sequence, string workCenter, string? machine, LaborRole role, LaborPhase phase, long? sessionId, IReadOnlyList<string> qualifications, DateTimeOffset at, string actor, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(qualifications);
         await using var cmd = uow.Command(
             """
-            INSERT INTO execution.labor (person_id, order_number, sequence, work_center_code, machine_code, role, started_at, training_session_id, recorded_by, qualifications)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING labor_id
+            INSERT INTO execution.labor (person_id, order_number, sequence, work_center_code, machine_code, role, phase, started_at, training_session_id, recorded_by, qualifications)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING labor_id
             """,
-            person, orderNumber, sequence, workCenter, Text(machine), role.ToString(), at,
+            person, orderNumber, sequence, workCenter, Text(machine), role.ToString(), phase.ToString(), at,
             new NpgsqlParameter { Value = (object?)sessionId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint }, actor, qualifications.Distinct(StringComparer.Ordinal).ToArray());
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
@@ -266,7 +266,7 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         }
 
         return await Read(
-            "UPDATE execution.labor SET ended_at = $2 WHERE labor_id = ANY($1) AND ended_at IS NULL RETURNING labor_id, person_id, order_number, sequence, work_center_code, machine_code, role, started_at, ended_at, training_session_id, qualifications",
+            "UPDATE execution.labor SET ended_at = $2 WHERE labor_id = ANY($1) AND ended_at IS NULL RETURNING labor_id, person_id, order_number, sequence, work_center_code, machine_code, role, started_at, ended_at, training_session_id, qualifications, phase",
             ReadLabor, ct, laborIds.ToArray(), at);
     }
 
