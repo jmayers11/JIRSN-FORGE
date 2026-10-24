@@ -2,7 +2,7 @@ import { command, get } from '../api.js';
 import { $, $$, esc, fmtDateTime, toast, confirmWithReason } from '../ui.js';
 import { formModal } from '../forms.js';
 import { scenarioCatalog } from '../data/whiskerworks-scenarios.js';
-import { delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectDayShiftScenarioRoster, selectOpenSensorPromiseLine, sisalQuantityEvidence, sisalSplitSteps } from '../data/whiskerworks-demo.js';
+import { delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectDayShiftScenarioRoster, sisalQuantityEvidence, sisalSplitSteps } from '../data/whiskerworks-demo.js';
 import { armDemoScannerOutage, readDemoScannerOutage } from '../demo-scanner-outage.mjs';
 import { deriveMachineCards } from './machine-kanban.js';
 
@@ -171,7 +171,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       'WW-S04-CNC-DOWN': { label: 'Report CNC-01 down', permission: 'maintenance.downtime.report' },
       'WW-S05-INSP-SOON': { label: 'Propose CNC-02 PM in 4 hours', permission: 'maintenance.plan', also: ['maintenance.read'] },
       'WW-S06-MRB-HOLD': { label: 'Hold motor demo lot', permission: 'inventory.transact' },
-      'WW-S07-SHORTAGE': { label: 'Delay sensor promise by 4 days', permission: 'procurement.manage', also: ['procurement.read', 'material.plan.read'] },
+      'WW-S07-SHORTAGE': { label: 'Delay sensor and bearing POs by 4 days', permission: 'procurement.manage', also: ['procurement.read', 'material.plan.read'] },
       'WW-S08-LOT-SPLIT': { label: 'Split sisal demo lot', permission: 'inventory.transact' },
       'WW-S11-CAL-EXPIRED': { label: 'Expire torque and optical gauges', permission: 'quality.plan', also: ['quality.read'] },
       'WW-S12-SCAN-OUTAGE': { label: 'Arm scanner / label 503 rehearsal', permission: 'workforce.supervise' },
@@ -206,10 +206,15 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         const s15HandoffEvent = s15Events.find(event => Number.isSafeInteger(Number(event.targetGroups?.handoffId)));
         const s15Acknowledgment = [...s15Events].reverse().find(event => Number.isSafeInteger(Number(event.targetGroups?.incomingPersonId)));
         const s15Acknowledged = !!s15Acknowledgment;
+        const s07Progress = [...demoEvents].reverse().find(event => event.code === 'WW-S07-SHORTAGE');
+        const s07RecordedLines = s07Progress?.targetGroups?.purchaseLines
+          ?? (Number.isSafeInteger(Number(s07Progress?.targetGroups?.poNumber))
+            ? [{ partNumber: 'WW-SENS-PROX-05' }] : []);
+        const s07Complete = s07RecordedLines.length >= 2;
         const alreadyRecorded = scenario.code === 'WW-S03-TWO-PERSON' && demoEvents.some(event => event.code === scenario.code
           && Date.parse(event.targetGroups?.endsAt ?? '') > Date.now())
           || scenario.code === 'WW-S05-INSP-SOON' && demoEvents.some(event => event.code === scenario.code)
-          || scenario.code === 'WW-S07-SHORTAGE' && demoEvents.some(event => event.code === scenario.code)
+          || scenario.code === 'WW-S07-SHORTAGE' && s07Complete
           || scenario.code === 'WW-S11-CAL-EXPIRED' && demoEvents.some(event => event.code === scenario.code)
           || scenario.code === 'WW-S12-SCAN-OUTAGE' && s12RehearsalActive
           || scenario.code === 'WW-S14-RECOVERY-BOARD' && demoEvents.some(event => event.code === scenario.code)
@@ -227,19 +232,23 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
             : scenario.code === 'WW-S14-RECOVERY-BOARD' ? 'Recovery-board action already recorded in this browser session.'
               : scenario.code === 'WW-S15-HANDOFF' ? 'The independent incoming-shift acknowledgment is recorded.'
                 : scenario.code === 'WW-S16-CASCADE' ? 'Cascade source actions were recorded in this browser session.'
-                : 'A sensor promise change is already recorded in this browser session.'
+                : 'The sensor and bearing promise changes are already recorded in this browser session.'
           : sameS15Actor ? 'Sign in as a different incoming worker to acknowledge this reviewed handoff.'
           : missingS15Person ? 'A registered incoming worker identity is required for acknowledgment.'
           : !safeTarget ? 'Requires a dedicated WW-P01 demo shape. This UI check is not tenant isolation.' : `Requires ${missingPermissions.join(', ')}`;
         const actionLabel = scenario.code === 'WW-S15-HANDOFF' && s15HandoffEvent ? 'Acknowledge as incoming shift'
-          : action?.label;
+          : scenario.code === 'WW-S07-SHORTAGE' && s07Progress && !s07Complete ? 'Resume sensor and bearing delay'
+            : action?.label;
         const recordedLabel = scenario.code === 'WW-S03-TWO-PERSON' ? 'Recorded for this shift'
           : scenario.code === 'WW-S05-INSP-SOON' ? 'PM window proposed'
+          : scenario.code === 'WW-S07-SHORTAGE' ? 'Sensor and bearing delays recorded'
           : scenario.code === 'WW-S11-CAL-EXPIRED' ? 'Expiry recorded'
             : scenario.code === 'WW-S14-RECOVERY-BOARD' ? 'Recovery actions recorded'
               : scenario.code === 'WW-S15-HANDOFF' ? 'Handoff acknowledged'
                 : scenario.code === 'WW-S12-SCAN-OUTAGE' ? s12Rehearsal?.scanner?.status === 'failed' && s12Rehearsal?.label?.status === 'reconciled' ? 'Rehearsal complete' : 'Rehearsal in progress'
-                : scenario.code === 'WW-S16-CASCADE' ? 'Cascade recorded' : 'Delay recorded';
+                : scenario.code === 'WW-S16-CASCADE' ? 'Cascade recorded'
+                  : scenario.code === 'WW-S07-SHORTAGE' && s07Progress?.targetGroups?.phase === 'partial' ? 'Resume sensor and bearing delay'
+                    : 'Delay recorded';
         const actionButton = action ? `<button class="btn small primary" data-demo-action="${esc(scenario.code)}" ${actionBlocked ? 'disabled' : ''}>${esc(alreadyRecorded ? recordedLabel : actionLabel)}</button>${actionBlocked ? `<span class="muted small">${esc(actionRequirement)}</span>` : ''}` : '';
         const workflow = {
           'WW-S01-BASELINE': ['#/machine-kanban', 'Review machine readiness'],
@@ -257,6 +266,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         const modeLabel = scenario.code === 'WW-S12-SCAN-OUTAGE' ? 'Local browser fault rehearsal'
           : scenario.code === 'WW-S09-ECN-REV' ? 'Regression authored · revision training gate pending run'
             : scenario.code === 'WW-S05-INSP-SOON' && alreadyRecorded ? 'Audited PM proposal · independent approval required'
+            : scenario.code === 'WW-S07-SHORTAGE' && alreadyRecorded ? 'Two audited PO changes · MRP evidence pending'
             : scenario.code === 'WW-S13-IPC-MISMATCH' ? '12 regressions authored · pending run'
             : action ? 'Audited source command' : preview ? 'Private what-if preview' : workflow ? 'Existing workflow · manual evidence' : 'No executable control';
         const limits = {
@@ -265,7 +275,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
           'WW-S04-CNC-DOWN': 'Reports an unplanned machine-down event through Maintenance. Restore remains a separate authorized source action.',
           'WW-S05-INSP-SOON': 'Schedules the existing CNC-02 preventive-maintenance work order for a one-hour window starting four hours from the recorded proposal time. Forge creates an audited outage proposal; a different authorized person must review its schedule impact before capacity changes. This does not fabricate a five-day qualification expiry; that credential timing remains unseeded.',
           'WW-S06-MRB-HOLD': 'Moves the seeded motor lot to inventory Hold. It does not create an NCR or claim order pegging unless the source records show that impact.',
-          'WW-S07-SHORTAGE': 'Changes the earliest visible approved, open WW-SENS-PROX-05 purchase line by four calendar days through Procurement. The audited date change records the source update; it does not fabricate supplier correspondence or guarantee an MRP shortage.',
+          'WW-S07-SHORTAGE': 'Moves the approved, open WhiskerWorks sensor and 608-bearing purchase lines four calendar days later through audited Procurement commands. The seed gives each part a separate approved supplier. Baseline and post-change MRP snapshots check the exact PO receipts and any `RescheduleIn` evidence; they do not fabricate supplier correspondence or guarantee a shortage when nettable stock covers demand.',
           'WW-S08-LOT-SPLIT': 'Splits and reconciles the 250 m parent into 100/100/45 m child lots and 5 m scrap. Parent-hold propagation is not modeled by this control.',
           'WW-S09-ECN-REV': 'An isolated PostgreSQL end-to-end regression has been authored for ECN-2026-04, WW-PCB-CTRL-200 and WI-ELE-610. It verifies an operator trained only on Rev A is blocked from starting Rev B, then verifies the start succeeds only after Rev B training is recorded. The regression is pending execution; this card opens the engineering workflow and does not create a change or training record.',
           'WW-S11-CAL-EXPIRED': 'Adds a dated calibration event to the existing gauges; readiness derives their expired status from the recorded due date. No site clock or calibration history is deleted.',
@@ -305,6 +315,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     const sources = {
       resources: '/api/resources/', orders: '/api/orders/', workers: '/api/workforce/workers', presence: '/api/readiness/presence', procurement: '/api/procurement/purchase-orders',
       mrp: '/api/planning/mrp?part=WW-SENS-PROX-05',
+      bearingMrp: '/api/planning/mrp?part=WW-BRG-608-2RS',
       operations: '/api/readiness/operations', activeWork: '/api/readiness/active-work', schedule: '/api/planning/schedules/approved',
       cnc01Readiness: '/api/readiness/machines/CNC-01?activity=CNC_MILL', asm03Readiness: '/api/readiness/machines/ASM-03?activity=ASSEMBLE_HEAVY',
       assets: '/api/maintenance/assets', inventory: '/api/inventory/positions', quality: '/api/quality/due', gauges: '/api/quality/gauges', maintenance: '/api/maintenance/work-orders?includeClosed=false',
@@ -381,6 +392,8 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     if (values.downtime.available) metrics.openDowntimeRecords = Array.isArray(values.downtime.value) ? values.downtime.value.filter(item => !item.endsAt).length : 0;
     if (values.procurement.available) metrics.openSensorPurchaseLines = values.procurement.value.flatMap(order => (order.lines ?? [])
       .filter(line => order.status === 'Approved' && line.status === 'Open' && Number(line.open) > 0 && line.partNumber === 'WW-SENS-PROX-05')).length;
+    if (values.procurement.available) metrics.openBearingPurchaseLines = values.procurement.value.flatMap(order => (order.lines ?? [])
+      .filter(line => order.status === 'Approved' && line.status === 'Open' && Number(line.open) > 0 && line.partNumber === 'WW-BRG-608-2RS')).length;
     if (values.holds.available) metrics.activeHolds = Array.isArray(values.holds.value) ? values.holds.value.filter(item => item.active !== false).length : 0;
     if (values.unavailability.available) metrics.unavailabilityWindows = Array.isArray(values.unavailability.value) ? values.unavailability.value.length : 0;
     const motor = values.inventory.available ? values.inventory.value.filter(item => item.partNumber === 'WW-MOT-24V-DC' && item.lotNumber === 'LOT-MOT-24V-881') : [];
@@ -419,6 +432,13 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         sensorMrp: values.mrp.available ? {
           item: values.mrp.value.output?.items?.find(item => item.partNumber === 'WW-SENS-PROX-05') ?? null,
           exceptions: (values.mrp.value.output?.exceptions ?? []).filter(item => item.partNumber === 'WW-SENS-PROX-05'),
+        } : null,
+        bearingPurchaseLines: values.procurement.available ? values.procurement.value.flatMap(order => (order.lines ?? [])
+          .filter(line => line.partNumber === 'WW-BRG-608-2RS')
+          .map(line => ({ poNumber: order.poNumber, orderStatus: order.status, lineNumber: line.lineNumber, status: line.status, open: line.open, promisedDate: line.promisedDate }))) : null,
+        bearingMrp: values.bearingMrp.available ? {
+          item: values.bearingMrp.value.output?.items?.find(item => item.partNumber === 'WW-BRG-608-2RS') ?? null,
+          exceptions: (values.bearingMrp.value.output?.exceptions ?? []).filter(item => item.partNumber === 'WW-BRG-608-2RS'),
         } : null,
         gaugeCalibrations: values.gauges.available ? values.gauges.value.filter(gauge => ['GAUGE-TRQ-04', 'GAUGE-OPT-01'].includes(gauge.code))
           .map(({ code, calibrationDue, certificate }) => ({ code, calibrationDue, certificate })) : null,
@@ -468,7 +488,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         if (key === 'CNC-01 downtime is open' && current.sources.downtime === 'available') {
           outcome = current.details.cnc01OpenDowntime ? 'Pass' : 'Fail'; detail = current.details.cnc01OpenDowntime ? 'An open CNC-01 downtime record is present.' : 'No open CNC-01 downtime record was found.';
         } else if (key === 'Sensor purchase promise moved four days' && current.sources.procurement === 'available') {
-          const target = event.targetGroups ?? {};
+          const target = event.targetGroups?.purchaseLines?.find(line => line.partNumber === 'WW-SENS-PROX-05') ?? event.targetGroups ?? {};
           const line = current.details.sensorPurchaseLines?.find(row => Number(row.poNumber) === Number(target.poNumber)
             && Number(row.lineNumber) === Number(target.lineNumber));
           const pass = line?.orderStatus === 'Approved' && line.status === 'Open' && Number(line.open) > 0 && line.promisedDate === target.promisedTo;
@@ -476,7 +496,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
           detail = line ? `PO ${line.poNumber}/${line.lineNumber} is ${line.orderStatus}/${line.status}, open ${line.open}, promised ${line.promisedDate}; expected ${target.promisedTo}.`
             : `PO ${target.poNumber}/${target.lineNumber} is no longer visible in the current authorized source read.`;
         } else if (key === 'Delayed sensor receipt is reflected in MRP' && current.sources.procurement === 'available' && current.sources.mrp === 'available') {
-          const target = event.targetGroups ?? {};
+          const target = event.targetGroups?.purchaseLines?.find(line => line.partNumber === 'WW-SENS-PROX-05') ?? event.targetGroups ?? {};
           const item = current.details.sensorMrp?.item;
           const receipt = item?.receipts?.find(row => row.key === `PO${target.poNumber}/${target.lineNumber}`);
           const exception = (current.details.sensorMrp?.exceptions ?? []).find(row => row.kind === 'RescheduleIn'
@@ -485,6 +505,26 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
           const pass = receipt?.kind === 'PurchaseOrder' && receipt.dueDate === target.promisedTo && requirementBeforeReceipt && !!exception;
           outcome = pass ? 'Pass' : 'Fail';
           detail = `MRP ${receipt ? `reads PO ${target.poNumber}/${target.lineNumber} for ${receipt.quantity} due ${receipt.dueDate}` : 'does not show the target sensor PO receipt'}; `
+            + `${requirementBeforeReceipt ? 'at least one requirement precedes the receipt' : 'no earlier requirement is established'}; `
+            + `${exception ? 'a RescheduleIn exception cites that exact PO line' : 'no RescheduleIn exception cites that exact PO line'}.`;
+        } else if (key === 'Bearing purchase promise moved four days' && current.sources.procurement === 'available') {
+          const target = event.targetGroups?.purchaseLines?.find(line => line.partNumber === 'WW-BRG-608-2RS');
+          const line = target && current.details.bearingPurchaseLines?.find(row => Number(row.poNumber) === Number(target.poNumber)
+            && Number(row.lineNumber) === Number(target.lineNumber));
+          const pass = line?.orderStatus === 'Approved' && line.status === 'Open' && Number(line.open) > 0 && line.promisedDate === target.promisedTo;
+          outcome = pass ? 'Pass' : 'Fail';
+          detail = line ? `Bearing PO ${line.poNumber}/${line.lineNumber} is ${line.orderStatus}/${line.status}, open ${line.open}, promised ${line.promisedDate}; expected ${target.promisedTo}.`
+            : 'The recorded bearing PO line is not visible in the current authorized procurement read.';
+        } else if (key === 'Delayed bearing receipt is reflected in MRP' && current.sources.procurement === 'available' && current.sources.bearingMrp === 'available') {
+          const target = event.targetGroups?.purchaseLines?.find(line => line.partNumber === 'WW-BRG-608-2RS');
+          const item = current.details.bearingMrp?.item;
+          const receipt = target && item?.receipts?.find(row => row.key === `PO${target.poNumber}/${target.lineNumber}`);
+          const exception = target && (current.details.bearingMrp?.exceptions ?? []).find(row => row.kind === 'RescheduleIn'
+            && row.detail.includes(`PO ${target.poNumber} line ${target.lineNumber}`));
+          const requirementBeforeReceipt = !!receipt && (item?.requirements ?? []).some(row => row.needDate < receipt.dueDate);
+          const pass = receipt?.kind === 'PurchaseOrder' && receipt.dueDate === target.promisedTo && requirementBeforeReceipt && !!exception;
+          outcome = pass ? 'Pass' : 'Fail';
+          detail = `Bearing MRP ${receipt ? `reads PO ${target.poNumber}/${target.lineNumber} for ${receipt.quantity} due ${receipt.dueDate}` : 'does not show the target bearing PO receipt'}; `
             + `${requirementBeforeReceipt ? 'at least one requirement precedes the receipt' : 'no earlier requirement is established'}; `
             + `${exception ? 'a RescheduleIn exception cites that exact PO line' : 'no RescheduleIn exception cites that exact PO line'}.`;
         } else if (key === 'Motor lot is on inventory hold' && current.sources.inventory === 'available') {
@@ -748,21 +788,44 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     return postDemo('/api/inventory/holds', { partNumber: 'WW-MOT-24V-DC', quantity: remaining, locationCode: 'WW-RAW', lotNumber: 'LOT-MOT-24V-881', status: 'Released' }, reason, actionKey(code, 'LOT-MOT-24V-881'));
   }
 
-  async function delaySensorPromise(reason, code = 'WW-S07-SHORTAGE') {
+  async function delayWhiskerWorksPromiseDates(reason, code = 'WW-S07-SHORTAGE') {
     const purchaseOrders = await get('/api/procurement/purchase-orders');
-    const prior = demoEvents.find(event => event.code === code);
-    if (prior) {
-      const target = prior.targetGroups ?? {};
-      const line = purchaseOrders.flatMap(order => (order.lines ?? []).map(candidate => ({ order, line: candidate })))
-        .find(candidate => Number(candidate.order.poNumber) === Number(target.poNumber) && Number(candidate.line.lineNumber) === Number(target.lineNumber));
-      if (line?.line.promisedDate === target.promisedTo) return { ...target, alreadyRecorded: true };
-      throw new Error('A sensor promise-date change is already recorded in this browser session. The source line changed since then; refusing to extend another line.');
+    const previous = [...demoEvents].reverse().find(event => event.code === code);
+    const known = [...(previous?.targetGroups?.purchaseLines ?? [])];
+    if (!known.length && Number.isSafeInteger(Number(previous?.targetGroups?.poNumber))) {
+      known.push({ partNumber: 'WW-SENS-PROX-05', poNumber: Number(previous.targetGroups.poNumber),
+        lineNumber: Number(previous.targetGroups.lineNumber), promisedTo: previous.targetGroups.promisedTo });
     }
-    const { order, line } = selectOpenSensorPromiseLine(purchaseOrders);
-    const promisedTo = delayedPromiseDate(line.promisedDate, 4);
-    await postDemo(`/api/procurement/purchase-orders/${order.poNumber}/lines/${line.lineNumber}/date`, { promisedDate: promisedTo }, reason,
-      `ww-sprint9-${code.toLowerCase()}-po-${order.poNumber}-line-${line.lineNumber}`);
-    return { poNumber: order.poNumber, lineNumber: line.lineNumber, promisedFrom: line.promisedDate, promisedTo };
+    const targets = [
+      ['WW-SENS-PROX-05', 'WW-SUP-009'],
+      ['WW-BRG-608-2RS', 'WW-SUP-010'],
+    ];
+    const rows = purchaseOrders.flatMap(order => (order.lines ?? []).map(line => ({ order, line })));
+    for (const [partNumber, supplierCode] of targets) {
+      const existing = known.find(item => item.partNumber === partNumber);
+      if (existing) {
+        const found = rows.find(candidate => Number(candidate.order.poNumber) === Number(existing.poNumber)
+          && Number(candidate.line.lineNumber) === Number(existing.lineNumber));
+        if (!found || found.order.status !== 'Approved' || found.line.status !== 'Open'
+          || Number(found.line.open) <= 0 || found.line.promisedDate !== existing.promisedTo) {
+          throw new Error(`The recorded ${partNumber} promise no longer matches its approved purchase line; no other line was changed.`);
+        }
+        continue;
+      }
+      const candidates = rows.filter(candidate => candidate.order.supplierCode === supplierCode && candidate.order.status === 'Approved'
+        && candidate.line.partNumber === partNumber && candidate.line.status === 'Open' && Number(candidate.line.open) > 0);
+      if (candidates.length !== 1) throw new Error(`Expected exactly one approved open ${partNumber} purchase line from ${supplierCode}; found ${candidates.length}. No other line was changed.`);
+      const { order, line } = candidates[0];
+      const target = { partNumber, poNumber: Number(order.poNumber), lineNumber: Number(line.lineNumber),
+        promisedFrom: line.promisedDate, promisedTo: delayedPromiseDate(line.promisedDate, 4) };
+      await postDemo(`/api/procurement/purchase-orders/${order.poNumber}/lines/${line.lineNumber}/date`, { promisedDate: target.promisedTo }, reason,
+        `ww-sprint9-${code.toLowerCase()}-${partNumber.toLowerCase()}-po-${order.poNumber}-line-${line.lineNumber}`);
+      known.push(target);
+      recordDemoEvent(code, `${known.length} of ${targets.length} WhiskerWorks supplier promise lines moved four days`, [], [], {
+        phase: 'partial', purchaseLines: known,
+      });
+    }
+    return { purchaseLines: known, alreadyRecorded: previous?.targetGroups?.phase === 'complete' };
   }
 
   async function splitSisalLot(reason, code = 'WW-S08-LOT-SPLIT') {
@@ -1105,11 +1168,14 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         run: async reason => { const value = await holdMotorLot(reason); recordDemoEvent(code, `LOT-MOT-24V-881 held (${value?.message ?? 'already held'})`, ['Motor lot is on inventory hold'], ['WW-MOT-24V-DC/LOT-MOT-24V-881']); },
       },
       'WW-S07-SHORTAGE': {
-        detail: 'Changes the earliest visible approved, open purchase line for WW-SENS-PROX-05 to a date four calendar days later. The Procurement command is audited and source-backed. It does not fabricate supplier correspondence; the subsequent MRP result is captured separately.',
+        detail: 'Moves the isolated demo’s approved sensor and 608-bearing purchase lines four calendar days later. Each audited Procurement update is recorded immediately so a partial run can resume safely. The evidence export checks both exact PO receipts and live MRP; it does not fabricate supplier correspondence or claim a shortage when nettable stock covers demand.',
         run: async reason => {
-          const changed = await delaySensorPromise(reason);
-          if (!changed.alreadyRecorded) recordDemoEvent(code, `PO ${changed.poNumber}/${changed.lineNumber} promise date moved from ${changed.promisedFrom} to ${changed.promisedTo}`,
-            ['Sensor purchase promise moved four days', 'Delayed sensor receipt is reflected in MRP'], [], changed);
+          const changed = await delayWhiskerWorksPromiseDates(reason);
+          recordDemoEvent(code, `${changed.purchaseLines.map(line => `${line.partNumber} PO ${line.poNumber}/${line.lineNumber} ${line.promisedFrom} → ${line.promisedTo}`).join('; ')}`,
+            ['Sensor purchase promise moved four days', 'Delayed sensor receipt is reflected in MRP',
+              'Bearing purchase promise moved four days', 'Delayed bearing receipt is reflected in MRP'],
+            changed.purchaseLines.map(line => `${line.partNumber}/PO${line.poNumber}/${line.lineNumber}`),
+            { ...changed, phase: 'complete' });
         },
       },
       'WW-S08-LOT-SPLIT': {

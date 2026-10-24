@@ -45,3 +45,13 @@ test('S05 offers its CNC-02 PM proposal only to a maintenance planner on the gua
   const denied = await renderWithRoster(t, 60);
   assert.match(denied, /Requires maintenance.plan, maintenance.read/);
 });
+
+test('S07 exposes the audited sensor and bearing promise action only with procurement and MRP access', async t => {
+  const allowed = await renderWithRoster(t, 60, ['procurement.manage', 'procurement.read', 'material.plan.read']);
+  assert.match(allowed, /Delay sensor and bearing POs by 4 days/);
+  assert.match(allowed, /sensor and 608-bearing purchase lines four calendar days later/);
+  assert.match(allowed, /exact PO receipts and live MRP/);
+
+  const denied = await renderWithRoster(t, 60);
+  assert.match(denied, /Requires procurement.manage, procurement.read, material.plan.read/);
+});

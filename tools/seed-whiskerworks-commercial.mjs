@@ -24,6 +24,7 @@ const wwSupplierCodes = new Set(suppliers.map(item => item.code));
 const wwLocationCodes = new Set(operationalLocations.map(item => item.code));
 const wwDocuments = new Set(['WI-CNC-101', 'WI-ELE-610', 'WI-ASM-400']);
 const sensorSupply = { partNumber: 'WW-SENS-PROX-05', supplierCode: 'WW-SUP-009', quantity: 100, unitPrice: 18.5, currency: 'USD' };
+const bearingSupply = { partNumber: 'WW-BRG-608-2RS', supplierCode: 'WW-SUP-010', quantity: 120, unitPrice: 4.25, currency: 'USD' };
 const sensorMpn = { manufacturer: 'Quiet Current Controls', mpn: 'QCC-PX-500', manufacturerRevision: 'A', lifecycle: 'Active', datasheet: null, note: 'Fictional WhiskerWorks demo manufacturer part.' };
 const knownBoms = [
   ...products.map(product => ({ partNumber: product.partNumber, lines: product.bom })),
@@ -88,7 +89,7 @@ if (!apply) {
   console.log('WhiskerWorks commercial seed plan (dry run; no server or database calls made)');
   console.log(`Target: ${site.code} · ${site.name}`);
   console.log(`Catalog: ${allItems.length} items (${components.length} components + ${products.length} finished products), ${knownBoms.length} revision-controlled BOMs, ${knownRoutes.length} routings.`);
-  console.log(`Commercial workload: ${suppliers.length} suppliers, ${customers.length} fictional demand customers, one approved open sensor supply line, ${workload.demandLines.length} open demand lines, ${workload.productionOrders.length} planned/released/held production orders.`);
+  console.log(`Commercial workload: ${suppliers.length} suppliers, ${customers.length} fictional demand customers, approved open sensor and bearing supply lines, ${workload.demandLines.length} open demand lines, ${workload.productionOrders.length} planned/released/held production orders.`);
   console.log(`Material setup: ${operationalLocations.length} locations. Stable demo as-of date: ${asOf}.`);
   console.log(`Maintenance setup: ${machines.length} capacity-bearing machine assets plus ${nonMachineStations.length} fixed support-station assets without machine capacity.`);
   console.log('To apply: pass --apply --base=http://localhost:<port> --subject=<authorized-admin> --reader=<broad-read-user> --as-of=YYYY-MM-DD.');
@@ -179,11 +180,12 @@ async function main() {
   const buyerActor = `person:${buyerProfile.personId}`;
   const approverActor = `person:${approverProfile.personId}`;
 
-  const [resourceState, existingItems, existingSuppliers, existingLocations, existingDemand, existingOrders, existingPlans, existingGauges, existingAssets, existingPmPlans, existingDocuments, programDirectory, existingPurchaseOrders, existingApprovedSources, existingSensorMpns] = await Promise.all([
+  const [resourceState, existingItems, existingSuppliers, existingLocations, existingDemand, existingOrders, existingPlans, existingGauges, existingAssets, existingPmPlans, existingDocuments, programDirectory, existingPurchaseOrders, existingApprovedSources, existingBearingSources, existingSensorMpns] = await Promise.all([
     get('/api/resources/?includeRetired=true', subject), get('/api/engineering/items'), get('/api/procurement/suppliers'), get('/api/inventory/locations'),
     get('/api/planning/demand'), get('/api/orders/', subject), get('/api/quality/plans'), get('/api/quality/gauges'), get('/api/maintenance/assets'), get('/api/maintenance/plans'),
     get('/api/engineering/documents'), get('/api/programs/directory', subject),
     get('/api/procurement/purchase-orders', reader), get(`/api/procurement/approved-sources?part=${encodeURIComponent(sensorSupply.partNumber)}`, reader),
+    get(`/api/procurement/approved-sources?part=${encodeURIComponent(bearingSupply.partNumber)}`, reader),
     get(`/api/engineering/manufacturer-parts?part=${encodeURIComponent(sensorSupply.partNumber)}`, reader),
   ]);
   if (!(resourceState.sites ?? []).some(item => item.code === site.code)) throw new Error(`The WhiskerWorks foundation is missing site ${site.code}; seed the foundation first.`);
@@ -207,7 +209,10 @@ async function main() {
     throw new Error('Refusing a purchase order containing a non-WhiskerWorks part; use a separate demo database.');
   const sensorPos = existingPurchaseOrders.filter(order => order.supplierCode === sensorSupply.supplierCode
     && order.lines?.some(line => line.partNumber === sensorSupply.partNumber));
+  const bearingPos = existingPurchaseOrders.filter(order => order.supplierCode === bearingSupply.supplierCode
+    && order.lines?.some(line => line.partNumber === bearingSupply.partNumber));
   if (sensorPos.length > 1) throw new Error('More than one WhiskerWorks sensor supply order exists; no records were changed.');
+  if (bearingPos.length > 1) throw new Error('More than one WhiskerWorks bearing supply order exists; no records were changed.');
   const originalSensorPromise = addDays(asOf, 10);
   const delayedSensorPromise = addDays(originalSensorPromise, 4);
   if (sensorPos.length === 1) {
@@ -220,10 +225,26 @@ async function main() {
       || order.status === 'Approved' && order.approvedBy !== approverActor)
       throw new Error(`Existing WhiskerWorks sensor supply purchase order ${order.poNumber} differs from the versioned demo definition; no records were changed.`);
   }
+  const originalBearingPromise = addDays(asOf, 12);
+  const delayedBearingPromise = addDays(originalBearingPromise, 4);
+  if (bearingPos.length === 1) {
+    const [order] = bearingPos;
+    const [line] = order.lines ?? [];
+    const allowedDates = new Set([originalBearingPromise, delayedBearingPromise]);
+    if (order.lines?.length !== 1 || !['Draft', 'Approved'].includes(order.status) || line.partNumber !== bearingSupply.partNumber
+      || line.quantity !== bearingSupply.quantity || line.unitPrice !== bearingSupply.unitPrice || line.currency !== bearingSupply.currency
+      || !allowedDates.has(line.promisedDate) || line.status !== 'Open' || order.createdBy !== buyerActor
+      || order.status === 'Approved' && order.approvedBy !== approverActor)
+      throw new Error(`Existing WhiskerWorks bearing supply purchase order ${order.poNumber} differs from the versioned demo definition; no records were changed.`);
+  }
   requireOnly('approved sensor supplier sources', existingApprovedSources,
     new Set([`${sensorSupply.partNumber}|${sensorSupply.supplierCode}`]), item => `${item.partNumber}|${item.supplierCode}`);
   for (const source of existingApprovedSources) if (source.approvedBy !== approverActor)
     throw new Error(`Approved WhiskerWorks sensor source ${source.partNumber}/${source.supplierCode} is owned by another approver; no records were changed.`);
+  requireOnly('approved bearing supplier sources', existingBearingSources,
+    new Set([`${bearingSupply.partNumber}|${bearingSupply.supplierCode}`]), item => `${item.partNumber}|${item.supplierCode}`);
+  for (const source of existingBearingSources) if (source.approvedBy !== approverActor)
+    throw new Error(`Approved WhiskerWorks bearing source ${source.partNumber}/${source.supplierCode} is owned by another approver; no records were changed.`);
   requireOnly('approved sensor manufacturer parts', existingSensorMpns,
     new Set([`${sensorSupply.partNumber}|${sensorMpn.manufacturer}|${sensorMpn.mpn}`]), item => `${item.partNumber}|${item.manufacturer}|${item.mpn}`);
   if (existingSensorMpns.length === 1) {
@@ -389,6 +410,10 @@ async function main() {
   if (!approvedSensorSource) await post(`/api/procurement/items/${encodeURIComponent(sensorSupply.partNumber)}/approved-sources`, {
     supplierCode: sensorSupply.supplierCode, note: 'Fictional WhiskerWorks demo sourcing relationship.',
   }, 'ww-demo-certifier', `approved-source-${sensorSupply.partNumber}-${sensorSupply.supplierCode}`);
+  const approvedBearingSource = existingBearingSources.find(source => source.partNumber === bearingSupply.partNumber && source.supplierCode === bearingSupply.supplierCode);
+  if (!approvedBearingSource) await post(`/api/procurement/items/${encodeURIComponent(bearingSupply.partNumber)}/approved-sources`, {
+    supplierCode: bearingSupply.supplierCode, note: 'Fictional WhiskerWorks demo sourcing relationship.',
+  }, 'ww-demo-certifier', `approved-source-${bearingSupply.partNumber}-${bearingSupply.supplierCode}`);
   let manufacturerPart = existingSensorMpns[0];
   if (!manufacturerPart) {
     await post(`/api/engineering/items/${encodeURIComponent(sensorSupply.partNumber)}/manufacturer-parts`, sensorMpn, 'ww-demo-engineer', `sensor-mpn-${sensorMpn.mpn}`);
@@ -408,6 +433,17 @@ async function main() {
     sensorOrder = { poNumber, status: 'Draft' };
   }
   if (sensorOrder.status === 'Draft') await post(`/api/procurement/purchase-orders/${sensorOrder.poNumber}/approve`, {}, 'ww-demo-certifier', `approve-sensor-po-${sensorOrder.poNumber}`);
+  let bearingOrder = bearingPos[0];
+  if (!bearingOrder) {
+    const created = await post('/api/procurement/purchase-orders', { supplier: bearingSupply.supplierCode, lines: [{
+      partNumber: bearingSupply.partNumber, quantity: bearingSupply.quantity, promisedDate: originalBearingPromise,
+      unitPrice: bearingSupply.unitPrice, currency: bearingSupply.currency,
+    }] }, 'ww-demo-engineer', `bearing-po-${asOf}`);
+    const poNumber = Number(created.entityId);
+    if (!Number.isSafeInteger(poNumber) || poNumber <= 0) throw new Error('WhiskerWorks bearing supply order returned no valid PO number.');
+    bearingOrder = { poNumber, status: 'Draft' };
+  }
+  if (bearingOrder.status === 'Draft') await post(`/api/procurement/purchase-orders/${bearingOrder.poNumber}/approve`, {}, 'ww-demo-certifier', `approve-bearing-po-${bearingOrder.poNumber}`);
 
   const locationRows = new Map(existingLocations.map(item => [item.code, item]));
   for (const location of operationalLocations) {
@@ -576,7 +612,7 @@ async function main() {
     // Orders already progressed beyond the seed state are left alone on reruns.
   }
 
-  console.log(`Seeded WhiskerWorks commercial layer: ${allItems.length} items, ${knownBoms.length} released revisions/BOMs/routings, ${suppliers.length} suppliers, one approved open sensor supply line, ${operationalLocations.length} inventory locations, ${machines.length} production assets, ${nonMachineStations.length} fixed support assets, ${received} bought-part lots, ${opened} audited opening balances for made subassemblies, ${workload.demandLines.length} demand lines and ${workload.productionOrders.length} production orders.`);
+  console.log(`Seeded WhiskerWorks commercial layer: ${allItems.length} items, ${knownBoms.length} released revisions/BOMs/routings, ${suppliers.length} suppliers, approved open sensor and bearing supply lines, ${operationalLocations.length} inventory locations, ${machines.length} production assets, ${nonMachineStations.length} fixed support assets, ${received} bought-part lots, ${opened} audited opening balances for made subassemblies, ${workload.demandLines.length} demand lines and ${workload.productionOrders.length} production orders.`);
   console.log(`Program boundary: WW-DEMO (${programId}); deterministic as-of: ${asOf}.`);
   console.log('All data is fictional and remains inside the designated isolated demo database. No reset/delete was performed.');
 }

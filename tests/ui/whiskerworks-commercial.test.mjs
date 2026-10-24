@@ -77,6 +77,7 @@ test('commercial seed defaults to a network-free dry run and requires explicit w
   assert.match(dryRun.stdout, /dry run; no server or database calls made/);
   assert.match(dryRun.stdout, /95 components/);
   assert.match(dryRun.stdout, /28 open demand lines/);
+  assert.match(dryRun.stdout, /approved open sensor and bearing supply lines/);
   const writeWithoutReader = spawnSync(process.execPath, ['tools/seed-whiskerworks-commercial.mjs', '--apply', '--base=http://127.0.0.1:1', '--subject=dev-admin'], { encoding: 'utf8', timeout: 10_000 });
   assert.equal(writeWithoutReader.status, 1);
   assert.match(writeWithoutReader.stderr, /explicit --base, --subject and --reader/);

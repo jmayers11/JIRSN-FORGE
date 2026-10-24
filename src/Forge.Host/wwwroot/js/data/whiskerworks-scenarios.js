@@ -6,7 +6,7 @@ export const scenarioCatalog = [
   ['WW-S04-CNC-DOWN', 'Unplanned CNC Breakdown', 'Record an unplanned CNC-01 spindle coolant failure.'],
   ['WW-S05-INSP-SOON', 'Upcoming Inspection and PM', 'Set CNC-02 PM due in four hours and one qualification due in five days.'],
   ['WW-S06-MRB-HOLD', 'Motor Lot Quality Hold', 'Hold lot LOT-MOT-24V-881 and expose pegged orders.'],
-  ['WW-S07-SHORTAGE', 'Bearing and Sensor Shortage', 'Delay the WW-SENS-PROX-05 supply by four days.'],
+  ['WW-S07-SHORTAGE', 'Bearing and Sensor Shortage', 'Delay approved WW-SENS-PROX-05 and WW-BRG-608-2RS supply lines by four days and review each part’s MRP response.'],
   ['WW-S08-LOT-SPLIT', 'Master Spool Lot Split and Hold', 'Split 250 m sisal parent into three child lots and reconcile five metres of scrap.'],
   ['WW-S09-ECN-REV', 'Engineering Revision Release', 'Release Rev B and WI-ELE-610 Rev B with training applicability.'],
   ['WW-S10-RUSH-ORDER', 'Rush VIP Customer Order', 'Insert a priority-one order for fifty WW-CAT-2000 units.'],
