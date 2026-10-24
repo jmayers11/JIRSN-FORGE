@@ -1649,3 +1649,7 @@ Added `WhiskerWorksRevisionTrainingTests` to cover the exact Rev A-to-Rev B S09 
 ## Sprint 9 S13 regression-status reconciliation — 2026-10-23
 
 Confirmed the source contains the twelve cross-qualification denial cases in `WhiskerWorksS13QualificationMatrixTests.cs`, plus separate CNC setup alternative and supervised-trainer regressions. Updated the Scenario Center and handoff to say these tests are authored and pending execution; prior wording could be read as evidence that they had already passed. No source behavior or tests were run in this documentation/status correction.
+
+## Sprint 9 S05 maintenance-window implementation — 2026-10-23
+
+Added a role-gated, WW-P01-shape-guarded Scenario Center action to schedule the existing CNC-02 preventive-maintenance work order for a one-hour outage window beginning four hours after the proposal time. It uses Forge's audited work-order scheduling command, a stable idempotency key, and the existing independent outage-approval preview; source evidence is retained in the browser-session action index and the workflow link opens Maintenance for review. Added authored UI coverage for the permission/guard presentation. Updated the handoff and Sprint 10 report to distinguish this implemented PM proposal from the still-missing five-day qualification expiry and simulated-clock/Yellow-to-Red acceptance. No test or build was run, per the owner's sequencing instruction; no database, seed, or preview data was changed.

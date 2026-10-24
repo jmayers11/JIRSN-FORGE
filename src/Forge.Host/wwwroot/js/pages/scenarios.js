@@ -169,6 +169,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       'WW-S02-ABSENCES': { label: 'Start Day Shift', permission: 'workforce.supervise' },
       'WW-S03-TWO-PERSON': { label: 'Record one callout', permission: 'workforce.supervise', also: ['competency.read'] },
       'WW-S04-CNC-DOWN': { label: 'Report CNC-01 down', permission: 'maintenance.downtime.report' },
+      'WW-S05-INSP-SOON': { label: 'Propose CNC-02 PM in 4 hours', permission: 'maintenance.plan', also: ['maintenance.read'] },
       'WW-S06-MRB-HOLD': { label: 'Hold motor demo lot', permission: 'inventory.transact' },
       'WW-S07-SHORTAGE': { label: 'Delay sensor promise by 4 days', permission: 'procurement.manage', also: ['procurement.read', 'material.plan.read'] },
       'WW-S08-LOT-SPLIT': { label: 'Split sisal demo lot', permission: 'inventory.transact' },
@@ -207,6 +208,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         const s15Acknowledged = !!s15Acknowledgment;
         const alreadyRecorded = scenario.code === 'WW-S03-TWO-PERSON' && demoEvents.some(event => event.code === scenario.code
           && Date.parse(event.targetGroups?.endsAt ?? '') > Date.now())
+          || scenario.code === 'WW-S05-INSP-SOON' && demoEvents.some(event => event.code === scenario.code)
           || scenario.code === 'WW-S07-SHORTAGE' && demoEvents.some(event => event.code === scenario.code)
           || scenario.code === 'WW-S11-CAL-EXPIRED' && demoEvents.some(event => event.code === scenario.code)
           || scenario.code === 'WW-S12-SCAN-OUTAGE' && s12RehearsalActive
@@ -219,6 +221,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         const actionBlocked = action && (!safeTarget || missingPermissions.length > 0 || alreadyRecorded || sameS15Actor || missingS15Person);
         const actionRequirement = alreadyRecorded ? scenario.code === 'WW-S03-TWO-PERSON'
           ? `Callout already recorded through ${fmtDateTime(demoEvents.find(event => event.code === scenario.code && Date.parse(event.targetGroups?.endsAt ?? '') > Date.now()).targetGroups.endsAt)}.`
+          : scenario.code === 'WW-S05-INSP-SOON' ? 'The CNC-02 PM window proposal is already recorded in this browser session; review it in Maintenance.'
           : scenario.code === 'WW-S11-CAL-EXPIRED' ? 'Gauge-expiry action already recorded in this browser session.'
             : scenario.code === 'WW-S12-SCAN-OUTAGE' ? s12Rehearsal?.scanner?.status === 'failed' && s12Rehearsal?.label?.status === 'reconciled' ? 'Close the completed local rehearsal on Shop Floor before starting again.' : 'Finish the local fault rehearsal and supervisor reconciliation on Shop Floor.'
             : scenario.code === 'WW-S14-RECOVERY-BOARD' ? 'Recovery-board action already recorded in this browser session.'
@@ -231,6 +234,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         const actionLabel = scenario.code === 'WW-S15-HANDOFF' && s15HandoffEvent ? 'Acknowledge as incoming shift'
           : action?.label;
         const recordedLabel = scenario.code === 'WW-S03-TWO-PERSON' ? 'Recorded for this shift'
+          : scenario.code === 'WW-S05-INSP-SOON' ? 'PM window proposed'
           : scenario.code === 'WW-S11-CAL-EXPIRED' ? 'Expiry recorded'
             : scenario.code === 'WW-S14-RECOVERY-BOARD' ? 'Recovery actions recorded'
               : scenario.code === 'WW-S15-HANDOFF' ? 'Handoff acknowledged'
@@ -239,7 +243,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         const actionButton = action ? `<button class="btn small primary" data-demo-action="${esc(scenario.code)}" ${actionBlocked ? 'disabled' : ''}>${esc(alreadyRecorded ? recordedLabel : actionLabel)}</button>${actionBlocked ? `<span class="muted small">${esc(actionRequirement)}</span>` : ''}` : '';
         const workflow = {
           'WW-S01-BASELINE': ['#/machine-kanban', 'Review machine readiness'],
-          'WW-S05-INSP-SOON': ['#/work-centers?focus=maintenance', 'Open PM and maintenance'],
+          'WW-S05-INSP-SOON': ['#/maintenance', 'Review CNC-02 PM proposal'],
           'WW-S09-ECN-REV': ['#/engineering?part=WW-PCB-CTRL-200', 'Open engineering revision'],
           'WW-S11-CAL-EXPIRED': ['#/work-centers?focus=tools', 'Open calibration records'],
           'WW-S12-SCAN-OUTAGE': ['#/shop-floor', 'Open operator kiosk'],
@@ -247,15 +251,19 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
           'WW-S14-RECOVERY-BOARD': ['#/shift-continuity', 'Open shift actions'],
           'WW-S15-HANDOFF': ['#/shift-continuity', 'Open shift handoff'],
         }[scenario.code];
-        const control = actionButton || (preview ? `<a class="btn small" data-ww-preview href="${esc(href)}">Open private preview form</a>` : workflow ? `<a class="btn small" href="${esc(workflow[0])}">${esc(workflow[1])}</a>` : '<span class="muted small">Source workflow required</span>');
+        const control = actionButton
+          ? `${actionButton}${scenario.code === 'WW-S05-INSP-SOON' && alreadyRecorded ? ` <a class="btn small" href="${esc(workflow[0])}">${esc(workflow[1])}</a>` : ''}`
+          : preview ? `<a class="btn small" data-ww-preview href="${esc(href)}">Open private preview form</a>` : workflow ? `<a class="btn small" href="${esc(workflow[0])}">${esc(workflow[1])}</a>` : '<span class="muted small">Source workflow required</span>';
         const modeLabel = scenario.code === 'WW-S12-SCAN-OUTAGE' ? 'Local browser fault rehearsal'
           : scenario.code === 'WW-S09-ECN-REV' ? 'Regression authored · revision training gate pending run'
+            : scenario.code === 'WW-S05-INSP-SOON' && alreadyRecorded ? 'Audited PM proposal · independent approval required'
             : scenario.code === 'WW-S13-IPC-MISMATCH' ? '12 regressions authored · pending run'
             : action ? 'Audited source command' : preview ? 'Private what-if preview' : workflow ? 'Existing workflow · manual evidence' : 'No executable control';
         const limits = {
           'WW-S02-ABSENCES': 'Creates three audited CallOut windows and leaves two scheduled workers unconfirmed. Any current presence is ended explicitly; no attendance or payroll record is fabricated.',
           'WW-S03-TWO-PERSON': 'Records one demo callout; machine readiness continues to be derived by Forge from the current roster and safety rule.',
           'WW-S04-CNC-DOWN': 'Reports an unplanned machine-down event through Maintenance. Restore remains a separate authorized source action.',
+          'WW-S05-INSP-SOON': 'Schedules the existing CNC-02 preventive-maintenance work order for a one-hour window starting four hours from the recorded proposal time. Forge creates an audited outage proposal; a different authorized person must review its schedule impact before capacity changes. This does not fabricate a five-day qualification expiry; that credential timing remains unseeded.',
           'WW-S06-MRB-HOLD': 'Moves the seeded motor lot to inventory Hold. It does not create an NCR or claim order pegging unless the source records show that impact.',
           'WW-S07-SHORTAGE': 'Changes the earliest visible approved, open WW-SENS-PROX-05 purchase line by four calendar days through Procurement. The audited date change records the source update; it does not fabricate supplier correspondence or guarantee an MRP shortage.',
           'WW-S08-LOT-SPLIT': 'Splits and reconciles the 250 m parent into 100/100/45 m child lots and 5 m scrap. Parent-hold propagation is not modeled by this control.',
@@ -696,6 +704,39 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     return postDemo('/api/maintenance/machines/CNC-01/down', { description: 'Fictional demo event: unplanned spindle coolant failure' }, reason, actionKey(code, 'CNC-01'));
   }
 
+  async function proposeCnc02PmWindow(reason, code = 'WW-S05-INSP-SOON') {
+    const [workOrderRows, outages] = await Promise.all([
+      get('/api/maintenance/work-orders?includeClosed=false'),
+      get('/api/maintenance/outages?includeDecided=true'),
+    ]);
+    const orders = (workOrderRows ?? []).map(row => row.order ?? row);
+    const candidates = orders.filter(order => order.machineCode === 'CNC-02' && order.kind === 'Preventive'
+      && ['Open', 'Scheduled'].includes(order.status)).sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999')
+        || Number(a.workOrderId) - Number(b.workOrderId));
+    if (candidates.length !== 1) {
+      throw new Error(`Expected exactly one open CNC-02 preventive-maintenance work order; found ${candidates.length}. No schedule was proposed.`);
+    }
+    const order = candidates[0];
+    const prior = (outages ?? []).find(outage => Number(outage.workOrderId) === Number(order.workOrderId)
+      && ['Proposed', 'Approved'].includes(outage.status));
+    if (prior) {
+      return { workOrderId: order.workOrderId, outageId: prior.outageId, startsAt: prior.startsAt, endsAt: prior.endsAt,
+        alreadyProposed: true, status: prior.status };
+    }
+
+    const startsAt = new Date(Date.now() + 4 * 60 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
+    await postDemo(`/api/maintenance/work-orders/${order.workOrderId}/schedule`, {
+      startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(),
+    }, reason, actionKey(code, `cnc02-pm-${order.workOrderId}`));
+    const updated = await get('/api/maintenance/outages?includeDecided=true');
+    const proposal = (updated ?? []).find(outage => Number(outage.workOrderId) === Number(order.workOrderId)
+      && outage.status === 'Proposed');
+    if (!proposal) throw new Error(`Forge did not return the expected CNC-02 PM outage proposal for work order ${order.workOrderId}.`);
+    return { workOrderId: order.workOrderId, outageId: proposal.outageId, startsAt: proposal.startsAt, endsAt: proposal.endsAt,
+      alreadyProposed: false, status: proposal.status };
+  }
+
   async function holdMotorLot(reason, code = 'WW-S06-MRB-HOLD') {
     const positions = await get('/api/inventory/positions');
     const lotPositions = positions.filter(item => item.partNumber === 'WW-MOT-24V-DC' && item.lotNumber === 'LOT-MOT-24V-881');
@@ -1049,6 +1090,15 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       'WW-S04-CNC-DOWN': {
         detail: 'Creates an unplanned CNC-01 downtime record through Forge Maintenance.',
         run: async reason => { const value = await reportCncDown(reason); recordDemoEvent(code, `CNC-01 downtime ${value?.entityId ?? 'recorded or already open'}`, ['CNC-01 downtime is open'], ['CNC-01']); },
+      },
+      'WW-S05-INSP-SOON': {
+        detail: 'Schedules the existing CNC-02 preventive-maintenance order four hours ahead. Forge creates a source-audited outage proposal; another authorized person must review its schedule preview before downtime is approved. No credential expiry is fabricated.',
+        run: async reason => {
+          const proposal = await proposeCnc02PmWindow(reason, code);
+          recordDemoEvent(code, `CNC-02 PM work order ${proposal.workOrderId} has ${proposal.status.toLowerCase()} window ${fmtDateTime(proposal.startsAt)}–${fmtDateTime(proposal.endsAt)}`,
+            ['CNC-02 PM window is scheduled four hours from proposal time', 'Outage requires independent approval'],
+            [`work-order:${proposal.workOrderId}`, `outage:${proposal.outageId}`], proposal);
+        },
       },
       'WW-S06-MRB-HOLD': {
         detail: 'Moves the exact seeded 500-unit motor lot from WW-RAW Released to Hold. This does not fabricate an inspection failure or NCR.',
