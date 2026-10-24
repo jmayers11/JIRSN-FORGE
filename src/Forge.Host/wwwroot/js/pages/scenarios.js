@@ -339,13 +339,16 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         const releasedOpenOrders = values.orders.value.filter(order => order.status === 'Released'
           && (order.operations ?? []).some(operation => operation.status !== 'Complete'));
         const reconciliations = [];
-        for (const order of releasedOpenOrders) {
-          const orderNumber = Number(order.orderNumber);
-          if (!Number.isSafeInteger(orderNumber) || orderNumber <= 0) throw new Error('An open released order has an invalid order number.');
-          const reconciliation = await get(`/api/inventory/orders/${orderNumber}/reconciliation`);
-          reconciliations.push({ orderNumber, rows: (reconciliation.rows ?? []).map(({ partNumber, lotNumber, netIssued, accounted, unexplained, status }) => ({
-            orderNumber, partNumber, lotNumber, netIssued, accounted, unexplained, status,
-          })) });
+        for (let offset = 0; offset < releasedOpenOrders.length; offset += 8) {
+          const batch = await Promise.all(releasedOpenOrders.slice(offset, offset + 8).map(async order => {
+            const orderNumber = Number(order.orderNumber);
+            if (!Number.isSafeInteger(orderNumber) || orderNumber <= 0) throw new Error('An open released order has an invalid order number.');
+            const reconciliation = await get(`/api/inventory/orders/${orderNumber}/reconciliation`);
+            return { orderNumber, rows: (reconciliation.rows ?? []).map(({ partNumber, lotNumber, netIssued, accounted, unexplained, status }) => ({
+              orderNumber, partNumber, lotNumber, netIssued, accounted, unexplained, status,
+            })) };
+          }));
+          reconciliations.push(...batch);
         }
         values.wipReconciliation = { available: true, value: reconciliations };
       } catch { values.wipReconciliation = { available: false }; }
