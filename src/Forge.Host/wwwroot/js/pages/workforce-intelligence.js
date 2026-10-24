@@ -1,6 +1,6 @@
 import { tryGet, command, readPost } from '../api.js';
 import { esc, fmtNumber, errorBlock } from '../ui.js';
-import { buildWorkforceIntelligence, renderEvidenceReference } from '../workforce-intelligence.mjs';
+import { buildWorkforceIntelligence, filterWorkforceIntelligenceInputs, renderEvidenceReference } from '../workforce-intelligence.mjs';
 
 const DAY = 86_400_000;
 const formatDate = value => {
@@ -207,9 +207,9 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
   const expiringRows = summary.expiring.length
     ? `<ul class="workforce-intelligence-list">${summary.expiring.slice(0, 6).map(row => `<li><a href="#/workforce?personId=${encodeURIComponent(row.personId)}"><b>${esc(row.workerName)}</b></a><span>${esc(row.code)} · expires ${formatDate(row.expiresAt)} (${row.daysRemaining}d)</span></li>`).join('')}</ul>`
     : `<p class="faint">${qualificationsKnown ? 'No qualifications expire in this window.' : 'Qualification records are not visible to this account.'}</p>`;
-  const trainingRecommendationRows = (summary.trainingRecommendations ?? []).slice(0, 8).map(row => `<li><a href="#/workforce?personId=${encodeURIComponent(row.personId)}"><b>${esc(row.workerName)}</b></a><span>${esc(row.qualificationCode)} · ${esc(row.machineCode)} / ${esc(row.activityCode)} · ${esc(row.workCenterCode)} / ${esc(row.shiftCode)}</span><span>${esc(row.rationale)}</span>${row.evidenceReferences?.length ? `<span>Evidence: ${row.evidenceReferences.map(renderEvidenceReference).join(' · ')}</span>` : ''}</li>`).join('');
+  const trainingRecommendationRows = (summary.trainingRecommendations ?? []).filter(row => !options.qualificationCode || row.qualificationCode === options.qualificationCode).slice(0, 8).map(row => `<li><a href="#/workforce?personId=${encodeURIComponent(row.personId)}"><b>${esc(row.workerName)}</b></a><span>${esc(row.qualificationCode)} · ${esc(row.machineCode)} / ${esc(row.activityCode)} · ${esc(row.workCenterCode)} / ${esc(row.shiftCode)}</span><span>${esc(row.rationale)}</span>${row.evidenceReferences?.length ? `<span>Evidence: ${row.evidenceReferences.map(renderEvidenceReference).join(' · ')}</span>` : ''}</li>`).join('');
   const qualificationMatrixRows = qualificationsKnown
-    ? (sources.workers.data ?? []).filter(worker => worker.isActive).map(worker => {
+    ? (sources.workers.data ?? []).map(worker => {
       const rows = (sources.qualifications.data ?? []).filter(record => record.personId === worker.personId);
       return `<tr><td><a href="#/workforce?personId=${encodeURIComponent(worker.personId)}">${esc(worker.displayName)}</a><div class="faint">${esc(worker.jobTitle ?? worker.homeWorkCenterCode ?? '')}</div></td><td>${rows.length ? rows.map(record => `<span class="pill ${record.status === 'Qualified' ? (record.expiresAt && new Date(record.expiresAt).getTime() <= Date.now() ? 'bad' : 'ok') : record.status === 'InTraining' ? 'warn' : 'none'}">${esc(record.code)} · ${esc(record.status)}${record.expiresAt ? ` · to ${formatDate(record.expiresAt)}` : ''}</span>`).join(' ') : '<span class="faint">No recorded qualifications</span>'}</td></tr>`;
     }).join('')
@@ -242,6 +242,11 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
         </section>`;
   const shiftChoices = options.shifts.map(shift => `<option value="${escapeAttr(shift.code)}" ${options.shiftCode === shift.code ? 'selected' : ''}>${esc(shift.name)}</option>`).join('');
   const centerChoices = options.workCenters.map(center => `<option value="${escapeAttr(center.code)}" ${options.workCenterCode === center.code ? 'selected' : ''}>${esc(center.name)}</option>`).join('');
+  const siteChoices = (options.sites ?? []).map(site => `<option value="${escapeAttr(site.code)}" ${options.siteCode === site.code ? 'selected' : ''}>${esc(site.name)}</option>`).join('');
+  const areaChoices = (options.areas ?? []).map(area => `<option value="${escapeAttr(area.code)}" ${options.areaCode === area.code ? 'selected' : ''}>${esc(area.name)}</option>`).join('');
+  const machineChoices = (options.machines ?? []).map(machine => `<option value="${escapeAttr(machine.code)}" ${options.machineCode === machine.code ? 'selected' : ''}>${esc(machine.code)} · ${esc(machine.name)}</option>`).join('');
+  const roleChoices = (options.jobTitles ?? []).map(title => `<option value="${escapeAttr(title)}" ${options.roleTitle === title ? 'selected' : ''}>${esc(title)}</option>`).join('');
+  const qualificationChoices = (options.qualificationTypes ?? []).map(type => `<option value="${escapeAttr(type.code)}" ${options.qualificationCode === type.code ? 'selected' : ''}>${esc(type.code)}${type.name ? ` · ${esc(type.name)}` : ''}</option>`).join('');
   const attendanceCount = value => value == null ? '—' : fmtNumber(value);
   const canSchedule = permissions.has('workforce.attendance-schedule.manage');
   const canPolicy = permissions.has('workforce.attendance-policy.manage');
@@ -264,7 +269,9 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
     }).join('')
     : '';
   const allEvents = sources.pending?.data ?? [];
-  const pendingEvents = allEvents.filter(item => item.reviewState === 'PendingReview' || item.reviewState === 'Disputed');
+  const pendingEvents = allEvents.filter(item => options.reviewState === 'all'
+    ? item.reviewState === 'PendingReview' || item.reviewState === 'Disputed'
+    : item.reviewState === options.reviewState);
   const supersededEventIds = new Set(allEvents.map(item => item.supersedesEventId).filter(Boolean));
   const currentEventIds = new Set(allEvents.filter(item => !supersededEventIds.has(item.eventId)).map(item => item.opportunityId));
   const missedOpportunities = (sources.opportunities?.data ?? []).filter(item => item.state === 'Scheduled'
@@ -274,7 +281,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
   const pendingRows = pendingEvents.map(item => {
     const name = sources.workerNames.get(item.personId) ?? `Worker ${item.personId.slice(0, 8)}`;
     return `<article class="workforce-intelligence-review-item"><div><b>${esc(name)} · ${esc(item.kind)}</b><span>${esc(item.source)} · recorded ${formatDate(item.recordedAt)} · ${item.observedAt ? `observed ${formatDate(item.observedAt)}` : 'time needs verification'}</span></div>
-      <div class="workforce-intelligence-review-actions">${canReview ? `<button class="btn small primary" type="button" data-wi-review="${escapeAttr(item.eventId)}" data-decision="Verified">Verify</button><button class="btn small" type="button" data-wi-review="${escapeAttr(item.eventId)}" data-decision="Disputed">Dispute</button>` : ''}</div>
+      <div class="workforce-intelligence-review-actions">${canReview && ['PendingReview', 'Disputed'].includes(item.reviewState) ? `<button class="btn small primary" type="button" data-wi-review="${escapeAttr(item.eventId)}" data-decision="Verified">Verify</button><button class="btn small" type="button" data-wi-review="${escapeAttr(item.eventId)}" data-decision="Disputed">Dispute</button>` : item.reviewState === 'Verified' ? '<span class="pill ok">Verified</span>' : ''}</div>
       <details><summary>Submit a correction</summary><div class="workforce-intelligence-correction"><label>Correct classification<select class="input" data-wi-correct-kind="${escapeAttr(item.eventId)}">${correctionKinds.map(kind => `<option value="${kind}" ${kind === item.kind ? 'selected' : ''}>${kind}</option>`).join('')}</select></label><label>Observed at<input class="input" type="datetime-local" data-wi-correct-time="${escapeAttr(item.eventId)}" value="${localDateTime(item.observedAt ?? item.recordedAt)}"></label><label>Audit reason<input class="input" data-wi-correct-reason="${escapeAttr(item.eventId)}" value="Correct source classification" maxlength="240"></label><button class="btn small" type="button" data-wi-correct="${escapeAttr(item.eventId)}">Submit correction</button></div></details>
     </article>`;
   }).join('');
@@ -295,9 +302,19 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
   return `
     <section class="panel workforce-intelligence" aria-labelledby="workforce-intelligence-title">
       <header class="workforce-intelligence-head"><div><h2 id="workforce-intelligence-title"><span aria-hidden="true">!</span> Training &amp; Performance Command Center</h2><p class="faint">Source-backed workforce signals · recommendations require supervisor review</p></div>
-        <div class="workforce-intelligence-filters"><label>Qualification window<select class="input" data-wi-filter="expiry"><option value="30" ${options.expiryDays === 30 ? 'selected' : ''}>30 days</option><option value="60" ${options.expiryDays === 60 ? 'selected' : ''}>60 days</option><option value="90" ${options.expiryDays === 90 ? 'selected' : ''}>90 days</option></select></label>
+        <div class="workforce-intelligence-filters"><label>Plant<select class="input" data-wi-filter="site"><option value="">All plants</option>${siteChoices}</select></label>
         <label>Shift<select class="input" data-wi-filter="shift"><option value="">All shifts</option>${shiftChoices}</select></label>
-        <label>Work center<select class="input" data-wi-filter="center"><option value="">All centers</option>${centerChoices}</select></label></div>
+        <label>Work center<select class="input" data-wi-filter="center"><option value="">All centers</option>${centerChoices}</select></label>
+        <label>Machine<select class="input" data-wi-filter="machine"><option value="">All machines</option>${machineChoices}</select></label>
+        <label>Qualification window<select class="input" data-wi-filter="expiry"><option value="30" ${options.expiryDays === 30 ? 'selected' : ''}>30 days</option><option value="60" ${options.expiryDays === 60 ? 'selected' : ''}>60 days</option><option value="90" ${options.expiryDays === 90 ? 'selected' : ''}>90 days</option></select></label>
+        <details class="workforce-intelligence-filter-more"><summary>More filters</summary><div>
+          <label>Department / safety area<select class="input" data-wi-filter="area"><option value="">All areas</option>${areaChoices}</select></label>
+          <label>Role / job title<select class="input" data-wi-filter="role"><option value="">All roles</option>${roleChoices}</select></label>
+          <label>Training type<select class="input" data-wi-filter="qualification"><option value="">All training</option>${qualificationChoices}</select></label>
+          <label>Worker status<select class="input" data-wi-filter="workerStatus"><option value="all" ${options.workerStatus === 'all' ? 'selected' : ''}>All workers</option><option value="active" ${options.workerStatus === 'active' ? 'selected' : ''}>Active</option><option value="inactive" ${options.workerStatus === 'inactive' ? 'selected' : ''}>Inactive</option></select></label>
+          <label>Review status<select class="input" data-wi-filter="reviewState"><option value="all" ${options.reviewState === 'all' ? 'selected' : ''}>Pending and disputed</option><option value="PendingReview" ${options.reviewState === 'PendingReview' ? 'selected' : ''}>Pending review</option><option value="Verified" ${options.reviewState === 'Verified' ? 'selected' : ''}>Verified</option><option value="Disputed" ${options.reviewState === 'Disputed' ? 'selected' : ''}>Disputed</option></select></label>
+        </div></details></div>
+        <p class="faint workforce-intelligence-filter-note">Department is represented by the plant safety area because employee records do not currently store a separate department. Attendance totals use the selected review period and remain permission-scoped.</p>
       </header>
       <div class="kpis kpis-4 workforce-intelligence-kpis">
         <div class="kpi"><div><div class="t">Current qualifications</div><div class="v">${qualificationsKnown ? fmtNumber(summary.qualificationCounts.current) : 'N/A'}</div><div class="why">Verified, unexpired Competency records</div></div></div>
@@ -330,7 +347,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
           ${canSchedule ? `<form data-wi-schedule-form class="workforce-intelligence-form"><label>From<input class="input" name="from" type="datetime-local" required value="${localDateTime(scheduleFrom)}"></label><label>Through<input class="input" name="through" type="datetime-local" required value="${localDateTime(scheduleThrough)}"></label><label>Audit reason<input class="input" name="reason" required value="Generate dated shift schedule" maxlength="240"></label><button class="btn small primary" type="submit">Generate shift opportunities</button></form>` : ''}
           ${canPolicy ? `<form data-wi-policy-form class="workforce-intelligence-form"><label>Policy code<input class="input" name="policyCode" required value="DEFAULT" maxlength="48"></label><label>Revision<input class="input" name="revision" type="number" min="1" required value="${nextRevision}"></label><label>Effective from<input class="input" name="effectiveFrom" type="datetime-local" required value="${localDateTime(new Date())}"></label><label>Grace minutes<input class="input" name="graceMinutes" type="number" min="0" max="240" required value="5"></label><label class="check"><input type="checkbox" name="includeCallouts"> Include verified call-outs in arrival denominator</label><label>Audit reason<input class="input" name="reason" required value="Publish attendance policy revision" maxlength="240"></label><button class="btn small" type="submit">Publish policy revision</button></form>` : ''}
         </div>
-        ${canReview ? `<div class="workforce-intelligence-review"><h3>Attendance classifications for independent review <span class="badge ${pendingEvents.length ? 'orange' : 'gray'}">${pendingEvents.length}</span></h3>${sources.pending?.error ? errorBlock(sources.pending.error, 'attendance review queue') : pendingRows || '<p class="faint">No pending attendance classifications in this period.</p>'}</div>` : ''}
+        ${canReview ? `<div class="workforce-intelligence-review"><h3>Attendance classifications · ${esc(options.reviewState === 'all' ? 'pending and disputed' : options.reviewState.replaceAll(/([a-z])([A-Z])/g, '$1 $2'))} <span class="badge ${pendingEvents.length ? 'orange' : 'gray'}">${pendingEvents.length}</span></h3>${sources.pending?.error ? errorBlock(sources.pending.error, 'attendance review queue') : pendingRows || '<p class="faint">No matching attendance classifications were found in this period.</p>'}</div>` : ''}
         ${permissions.has('workforce.attendance-classification.record') ? `<div class="workforce-intelligence-review"><h3>Unclassified completed shifts</h3><p class="faint">A missing punch remains unknown. A supervisor must choose a classification and submit it for independent review.</p>${sources.opportunities?.error ? errorBlock(sources.opportunities.error, 'attendance schedule') : missedOpportunities.length ? missedOpportunities.map(item => {
           const name = sources.workerNames.get(item.personId) ?? `Worker ${item.personId.slice(0, 8)}`;
           return `<article class="workforce-intelligence-review-item"><b>${esc(name)} · ${esc(item.shiftCode)} · ${formatDate(item.scheduledStart)}</b><div class="workforce-intelligence-correction"><label>Classification<select class="input" data-wi-classification-kind="${escapeAttr(item.opportunityId)}">${eventKinds.map(kind => `<option value="${kind}" ${kind === 'NoShow' ? 'selected' : ''}>${kind}</option>`).join('')}</select></label><label>Observed at<input class="input" type="datetime-local" data-wi-classification-time="${escapeAttr(item.opportunityId)}" value="${localDateTime(item.scheduledEnd)}"></label><label>Audit reason<input class="input" data-wi-classification-reason="${escapeAttr(item.opportunityId)}" value="Review completed shift record" maxlength="240"></label><button class="btn small" type="button" data-wi-classify="${escapeAttr(item.opportunityId)}">Submit for review</button></div></article>`;
@@ -360,7 +377,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
   const now = new Date();
   const activityFrom = new Date(now.getTime() - 30 * DAY);
   const through = new Date(now.getTime() + 30 * DAY);
-  const current = { expiryDays: 60, shiftCode: '', workCenterCode: '', attendancePeriod: 'quarter' };
+  const current = { expiryDays: 60, siteCode: '', areaCode: '', shiftCode: '', workCenterCode: '', machineCode: '', roleTitle: '', qualificationCode: '', workerStatus: 'all', reviewState: 'all', attendancePeriod: 'quarter' };
   const periodStart = attendancePeriodStart(current.attendancePeriod, now);
   const reviewFrom = new Date(now.getTime() - 90 * DAY);
   const scheduleFrom = new Date(now.getTime() - 60 * DAY);
@@ -405,15 +422,56 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
   };
   const shifts = resources?.shifts ?? [];
   const workCenters = resources?.workCenters ?? [];
+  const sites = resources?.sites ?? [];
+  const safetyAreas = resources?.safetyAreas ?? [];
+  const machines = resources?.machines ?? [];
+  const jobTitles = [...new Set((workers ?? []).map(worker => worker.jobTitle?.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const qualificationTypes = typesResult.data ?? [];
   const workerNames = new Map((workers ?? []).map(worker => [worker.personId, worker.displayName]));
   const sources = { workers: workersResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, resources: resourcesResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, workerNames };
-  page.innerHTML = render(buildWorkforceIntelligence({ ...inputs, ...current }), sources, { ...current, shifts, workCenters }, me, selectedPersonId, personOperationHistory) + page.innerHTML;
+  const filteredView = () => {
+    const scoped = filterWorkforceIntelligenceInputs(inputs, current);
+    const ids = new Set((scoped.workers ?? []).map(worker => worker.personId));
+    const filteredSources = {
+      ...sources,
+      workers: { ...sources.workers, data: scoped.workers },
+      qualifications: { ...sources.qualifications, data: scoped.qualificationRecords },
+      machineAuthorizations: { ...sources.machineAuthorizations, data: scoped.machineAuthorizations },
+      activity: { ...sources.activity, data: scoped.activity },
+      resources: { ...sources.resources, data: scoped.resources },
+      pending: { ...sources.pending, data: (sources.pending.data ?? []).filter(row => ids.has(row.personId)) },
+      opportunities: { ...sources.opportunities, data: (sources.opportunities.data ?? []).filter(row => ids.has(row.personId)) },
+      nominations: { ...sources.nominations, data: (sources.nominations.data ?? []).filter(row => ids.has(row.personId)) },
+      materialTasks: { ...sources.materialTasks, data: scoped.materialTasks },
+      suspectReports: { ...sources.suspectReports, data: scoped.suspectReports },
+      workerNames: new Map(scoped.workers.map(worker => [worker.personId, worker.displayName])),
+    };
+    return { scoped, filteredSources };
+  };
+  const renderPanel = () => {
+    const { scoped, filteredSources } = filteredView();
+    const options = { ...current, shifts: scoped.resources?.shifts ?? shifts, workCenters: scoped.resources?.workCenters ?? workCenters,
+      sites: sites.filter(site => !current.siteCode || site.code === current.siteCode),
+      areas: safetyAreas.filter(area => (!current.siteCode || area.siteCode === current.siteCode) && (!current.areaCode || area.code === current.areaCode)),
+      machines: machines.filter(machine => (!current.workCenterCode || machine.workCenterCode === current.workCenterCode)
+        && (!current.siteCode || scoped.resources?.machines?.some(item => item.code === machine.code))),
+      jobTitles, qualificationTypes };
+    return render(buildWorkforceIntelligence({ ...scoped, ...current }), filteredSources, options, me, selectedPersonId, personOperationHistory);
+  };
+  page.innerHTML = renderPanel() + page.innerHTML;
   page.addEventListener('change', async event => {
     const filter = event.target?.dataset?.wiFilter;
     if (!filter) return;
     if (filter === 'expiry') current.expiryDays = Number(event.target.value);
     if (filter === 'shift') current.shiftCode = event.target.value;
-    if (filter === 'center') current.workCenterCode = event.target.value;
+    if (filter === 'center') { current.workCenterCode = event.target.value; current.machineCode = ''; }
+    if (filter === 'site') { current.siteCode = event.target.value; current.areaCode = ''; current.workCenterCode = ''; current.machineCode = ''; }
+    if (filter === 'area') { current.areaCode = event.target.value; current.workCenterCode = ''; current.machineCode = ''; }
+    if (filter === 'machine') current.machineCode = event.target.value;
+    if (filter === 'role') current.roleTitle = event.target.value;
+    if (filter === 'qualification') current.qualificationCode = event.target.value;
+    if (filter === 'workerStatus') current.workerStatus = event.target.value;
+    if (filter === 'reviewState') current.reviewState = event.target.value;
     const panel = event.target.closest('.workforce-intelligence');
     if (filter === 'period') {
       current.attendancePeriod = event.target.value;
@@ -423,7 +481,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
       sources.attendance = result;
       inputs.attendanceSummary = result.data ?? null;
     }
-    if (panel) panel.outerHTML = render(buildWorkforceIntelligence({ ...inputs, ...current }), sources, { ...current, shifts, workCenters }, me, selectedPersonId, personOperationHistory);
+    if (panel) panel.outerHTML = renderPanel();
   });
   page.addEventListener('submit', async event => {
     const form = event.target.closest('[data-wi-schedule-form], [data-wi-policy-form], [data-wi-nomination-form]');

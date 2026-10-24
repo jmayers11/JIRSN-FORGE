@@ -8,6 +8,93 @@ const isoTime = value => {
 
 const workerCenter = worker => worker.assignment?.workCenterCode || worker.homeWorkCenterCode;
 
+/** Apply only source-backed roster and operations filters; unavailable dimensions stay unfiltered. */
+export function filterWorkforceIntelligenceInputs(input = {}, filters = {}) {
+  const resources = input.resources ?? {};
+  const centers = resources.workCenters ?? [];
+  const areas = resources.safetyAreas ?? [];
+  const areaByCode = new Map(areas.map(area => [area.code, area]));
+  const centerByCode = new Map(centers.map(center => [center.code, center]));
+  const belongsToSite = center => !filters.siteCode || areaByCode.get(center.safetyAreaCode)?.siteCode === filters.siteCode;
+  const belongsToArea = center => !filters.areaCode || center.safetyAreaCode === filters.areaCode;
+  const machineByCode = new Map((resources.machines ?? []).map(machine => [machine.code, machine]));
+  const selectedMachineCenter = filters.machineCode ? machineByCode.get(filters.machineCode)?.workCenterCode : null;
+  const allowedCenters = new Set(centers.filter(center => belongsToSite(center) && belongsToArea(center)
+    && (!filters.workCenterCode || center.code === filters.workCenterCode)
+    && (!selectedMachineCenter || center.code === selectedMachineCenter)).map(center => center.code));
+  const inScopedCenter = centerCode => centerCode
+    ? allowedCenters.has(centerCode)
+    : !filters.siteCode && !filters.areaCode && !filters.workCenterCode;
+  const inMachineScope = (machineCode, workCenterCode) => !filters.machineCode
+    || machineCode === filters.machineCode || (!machineCode && selectedMachineCenter && workCenterCode === selectedMachineCenter);
+  const allowedMachines = new Set((resources.machines ?? []).filter(machine => allowedCenters.has(machine.workCenterCode)
+    && (!filters.machineCode || machine.code === filters.machineCode)).map(machine => machine.code));
+  const sourceWorkers = input.workers;
+  const sourceQualifications = input.qualifications;
+  const roleMatches = worker => !filters.roleTitle || (worker.jobTitle ?? '').trim() === filters.roleTitle;
+  const workerMatches = worker => {
+    const center = workerCenter(worker);
+    const area = centerByCode.get(center)?.safetyAreaCode;
+    return (!filters.shiftCode || worker.shiftCode === filters.shiftCode)
+      && (!filters.workCenterCode || center === filters.workCenterCode)
+      && (!selectedMachineCenter || selectedMachineCenter === center)
+      && (!filters.siteCode || allowedCenters.has(center))
+      && (!filters.areaCode || area === filters.areaCode)
+      && roleMatches(worker)
+      && (filters.workerStatus === 'all' || !filters.workerStatus || (filters.workerStatus === 'active' ? worker.isActive : !worker.isActive));
+  };
+  const workers = Array.isArray(sourceWorkers) ? sourceWorkers.filter(workerMatches) : sourceWorkers;
+  const personIds = new Set((workers ?? []).map(worker => worker.personId));
+  const qualifications = Array.isArray(sourceQualifications) ? sourceQualifications.filter(row => personIds.has(row.personId)) : sourceQualifications;
+  const qualificationRecords = Array.isArray(qualifications) ? qualifications.filter(row => (!filters.qualificationCode || row.code === filters.qualificationCode)
+    && (!filters.qualificationStatus || filters.qualificationStatus === 'all' || row.status === filters.qualificationStatus)) : qualifications;
+  const scopedResources = {
+    ...resources,
+    sites: (resources.sites ?? []).filter(site => !filters.siteCode || site.code === filters.siteCode),
+    safetyAreas: areas.filter(area => (!filters.siteCode || area.siteCode === filters.siteCode) && (!filters.areaCode || area.code === filters.areaCode)),
+    workCenters: centers.filter(center => allowedCenters.has(center.code)),
+    machines: (resources.machines ?? []).filter(machine => allowedMachines.has(machine.code)),
+    machineActivities: (resources.machineActivities ?? []).filter(profile => allowedMachines.has(profile.machineCode)),
+    workCenterShifts: (resources.workCenterShifts ?? []).filter(link => allowedCenters.has(link.workCenterCode)
+      && (!filters.shiftCode || link.shiftCode === filters.shiftCode)),
+    shifts: (resources.shifts ?? []).filter(shift => (!filters.siteCode || shift.siteCode === filters.siteCode)
+      && (!filters.shiftCode || shift.code === filters.shiftCode)),
+  };
+  return {
+    ...input,
+    qualificationCode: filters.qualificationCode ?? input.qualificationCode ?? null,
+    workers,
+    qualifications,
+    qualificationRecords,
+    machineAuthorizations: Array.isArray(input.machineAuthorizations) ? input.machineAuthorizations.filter(row => personIds.has(row.personId)
+      && (!filters.machineCode || row.machineCode === filters.machineCode)) : input.machineAuthorizations,
+    qualificationTypes: input.qualificationTypes ?? [],
+    resources: scopedResources,
+    unavailability: Array.isArray(input.unavailability) ? input.unavailability.filter(row => personIds.has(row.personId)) : input.unavailability,
+    attendanceOpportunities: Array.isArray(input.attendanceOpportunities) ? input.attendanceOpportunities.filter(row => personIds.has(row.personId)) : input.attendanceOpportunities,
+    attendanceEvents: Array.isArray(input.attendanceEvents) ? input.attendanceEvents.filter(row => personIds.has(row.personId)
+      && (!filters.reviewState || filters.reviewState === 'all' || row.reviewState === filters.reviewState)) : input.attendanceEvents,
+    readiness: Array.isArray(input.readiness) ? input.readiness.filter(row => inScopedCenter(row.workCenterCode ?? row.workCenter)
+      && (!filters.machineCode || row.machineCode === filters.machineCode)) : input.readiness,
+    activity: input.activity ? {
+      ...input.activity,
+      labor: (input.activity.labor ?? []).filter(row => personIds.has(row.personId)
+        && inScopedCenter(row.workCenterCode)
+        && inMachineScope(row.machineCode, row.workCenterCode)),
+      reports: (input.activity.reports ?? []).filter(row => inScopedCenter(row.workCenterCode)
+        && inMachineScope(row.machineCode, row.workCenterCode)),
+    } : input.activity,
+    materialTasks: Array.isArray(input.materialTasks) ? input.materialTasks.filter(row => {
+      const operation = (input.readiness ?? []).find(item => item.orderNumber === row.orderNumber
+        && (row.operationSequence == null || item.sequence === row.operationSequence));
+      const center = row.workCenterCode ?? operation?.workCenter;
+      return inScopedCenter(center) && inMachineScope(row.machineCode, center);
+    }) : input.materialTasks,
+    suspectReports: Array.isArray(input.suspectReports) ? input.suspectReports.filter(row => inScopedCenter(row.workCenterCode)
+      && inMachineScope(row.machineCode, row.workCenterCode)) : input.suspectReports,
+  };
+}
+
 function currentQualification(record, now) {
   if (record.status !== 'Qualified') return false;
   if (record.expiresAt == null || record.expiresAt === '') return true;
@@ -237,7 +324,10 @@ export function buildWorkforceIntelligence(input = {}) {
     uniq.add(key);
     return true;
   });
-  const qualified = uniqueQualifications.filter(row => row.status === 'Qualified');
+  const reviewQualifications = input.qualificationCode
+    ? uniqueQualifications.filter(row => row.code === input.qualificationCode)
+    : uniqueQualifications;
+  const qualified = reviewQualifications.filter(row => row.status === 'Qualified');
   const current = qualified.filter(row => currentQualification(row, now));
   const expired = qualified.filter(row => {
     const expiry = isoTime(row.expiresAt);
@@ -372,7 +462,7 @@ export function buildWorkforceIntelligence(input = {}) {
       current: current.length,
       expiring: expiring.length,
       expired: expired.length,
-      inTraining: uniqueQualifications.filter(row => row.status === 'InTraining').length,
+      inTraining: reviewQualifications.filter(row => row.status === 'InTraining').length,
       types: types.length,
     },
     expiring,

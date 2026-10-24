@@ -9,13 +9,14 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   browser.document.body.append(page);
   const attendanceCalls = [];
   let receiptPreviewRequest;
-  const worker = { personId: 'worker-1', displayName: 'Ari Operator', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY', unavailability: null };
+  const worker = { personId: 'worker-1', displayName: 'Ari Operator', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY', jobTitle: 'Machine Operator', unavailability: null };
   globalThis.fetch = (path, options = {}) => {
     if (path === '/api/workforce/workers') return Promise.resolve(response([worker]));
     if (path === '/api/resources/') return Promise.resolve(response({
-      shifts: [{ code: 'DAY', name: 'Day Shift' }, { code: 'NIGHT', name: 'Night Shift' }],
-      workCenters: [{ code: 'WC-A', name: 'Winding' }],
-      machines: [{ code: 'WD-01', workCenterCode: 'WC-A' }],
+      sites: [{ code: 'SITE-A', name: 'Plant A' }], safetyAreas: [{ code: 'AREA-A', siteCode: 'SITE-A', name: 'Winding Area' }],
+      shifts: [{ code: 'DAY', siteCode: 'SITE-A', name: 'Day Shift' }, { code: 'NIGHT', siteCode: 'SITE-A', name: 'Night Shift' }],
+      workCenters: [{ code: 'WC-A', name: 'Winding', safetyAreaCode: 'AREA-A' }],
+      machines: [{ code: 'WD-01', workCenterCode: 'WC-A', name: 'Winder 1' }],
       machineActivities: [{ machineCode: 'WD-01', activityCode: 'WIND', operatorQualifications: ['WIND'] }],
       workCenterShifts: [{ workCenterCode: 'WC-A', shiftCode: 'DAY' }],
     }));
@@ -71,6 +72,12 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   assert.match(page.innerHTML, /Eligible arrivals:[\s\S]*?55/);
   assert.match(page.innerHTML, /Excluded:[\s\S]*?5/);
   assert.match(page.innerHTML, /Calendar quarter to date/);
+  assert.match(page.innerHTML, /data-wi-filter="site"/);
+  assert.match(page.innerHTML, /data-wi-filter="machine"/);
+  assert.match(page.innerHTML, /data-wi-filter="area"/);
+  assert.match(page.innerHTML, /data-wi-filter="role"/);
+  assert.match(page.innerHTML, /data-wi-filter="qualification"/);
+  assert.match(page.innerHTML, /Department is represented by the plant safety area/);
   assert.match(page.innerHTML, /existing workforce content/);
   assert.doesNotMatch(page.innerHTML, /ApprovedPto|protected leave|Medical/i);
 
@@ -78,6 +85,11 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   shift.value = 'NIGHT';
   fire(shift, 'change');
   assert.equal(page.querySelector('[data-wi-filter="shift"]').value, 'NIGHT');
+
+  const role = page.querySelector('[data-wi-filter="role"]');
+  role.value = 'Machine Operator'; fire(role, 'change');
+  assert.equal(page.querySelector('[data-wi-filter="role"]').value, 'Machine Operator');
+  assert.match(page.innerHTML, /Ari Operator/);
 
   const period = page.querySelector('[data-wi-filter="period"]');
   period.value = 'year'; fire(period, 'change'); await flush(); await flush();

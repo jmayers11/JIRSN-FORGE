@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildWorkforceIntelligence, renderEvidenceReference } from '../../src/Forge.Host/wwwroot/js/workforce-intelligence.mjs';
+import { buildWorkforceIntelligence, filterWorkforceIntelligenceInputs, renderEvidenceReference } from '../../src/Forge.Host/wwwroot/js/workforce-intelligence.mjs';
 
 const now = new Date('2026-10-23T12:00:00Z');
 const workers = [
@@ -66,6 +66,55 @@ test('evidence links accept only recognized Forge source-reference formats', () 
   assert.match(renderEvidenceReference('SuspectScrapReport/9'), /href="#\/quality\?tab=suspect"/);
   assert.doesNotMatch(renderEvidenceReference('javascript:alert(1)'), /<a /);
   assert.match(renderEvidenceReference('<script>'), /&lt;script&gt;/);
+});
+
+test('command-center filters scope workers, qualifications, machine coverage, and review evidence by recorded dimensions', () => {
+  const filtered = filterWorkforceIntelligenceInputs({
+    workers: [
+      { personId: 'a', displayName: 'Ari', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY', jobTitle: 'Operator' },
+      { personId: 'b', displayName: 'Bo', homeWorkCenterCode: 'WC-B', isActive: true, shiftCode: 'DAY', jobTitle: 'Inspector' },
+    ],
+    qualifications: [
+      { personId: 'a', code: 'WIND', status: 'Qualified' },
+      { personId: 'a', code: 'FORK', status: 'InTraining' },
+      { personId: 'b', code: 'WIND', status: 'Qualified' },
+    ],
+    machineAuthorizations: [
+      { personId: 'a', machineCode: 'WD-01' }, { personId: 'b', machineCode: 'SL-01' },
+    ],
+    qualificationTypes: [{ code: 'WIND' }, { code: 'FORK' }],
+    resources: {
+      sites: [{ code: 'SITE-A', name: 'Plant A' }, { code: 'SITE-B', name: 'Plant B' }],
+      safetyAreas: [{ code: 'AREA-A', siteCode: 'SITE-A' }, { code: 'AREA-B', siteCode: 'SITE-B' }],
+      workCenters: [{ code: 'WC-A', safetyAreaCode: 'AREA-A' }, { code: 'WC-B', safetyAreaCode: 'AREA-B' }],
+      machines: [{ code: 'WD-01', workCenterCode: 'WC-A' }, { code: 'SL-01', workCenterCode: 'WC-B' }],
+      machineActivities: [{ machineCode: 'WD-01', operatorQualifications: ['WIND'] }, { machineCode: 'SL-01', operatorQualifications: ['SLIT'] }],
+      shifts: [{ code: 'DAY' }, { code: 'NIGHT' }],
+      workCenterShifts: [{ workCenterCode: 'WC-A', shiftCode: 'DAY' }, { workCenterCode: 'WC-B', shiftCode: 'DAY' }],
+    },
+    attendanceEvents: [
+      { eventId: 'pending-a', personId: 'a', reviewState: 'PendingReview' },
+      { eventId: 'verified-a', personId: 'a', reviewState: 'Verified' },
+      { eventId: 'pending-b', personId: 'b', reviewState: 'PendingReview' },
+    ],
+    attendanceOpportunities: [{ personId: 'a' }, { personId: 'b' }],
+    readiness: [{ workCenter: 'WC-A', machineCode: 'WD-01' }, { workCenter: 'WC-B', machineCode: 'SL-01' }],
+  }, {
+    siteCode: 'SITE-A', areaCode: 'AREA-A', shiftCode: 'DAY', workCenterCode: '', machineCode: 'WD-01',
+    roleTitle: 'Operator', qualificationCode: 'WIND', workerStatus: 'active', reviewState: 'PendingReview',
+  });
+
+  assert.deepEqual(filtered.workers.map(row => row.personId), ['a']);
+  assert.deepEqual(filtered.qualifications.map(row => row.code), ['WIND', 'FORK'], 'all evidence remains available to the authorization calculation');
+  assert.deepEqual(filtered.qualificationRecords.map(row => row.code), ['WIND'], 'the selected training type scopes the evidence matrix');
+  assert.deepEqual(filtered.machineAuthorizations.map(row => row.machineCode), ['WD-01']);
+  assert.deepEqual(filtered.resources.machineActivities.map(row => row.machineCode), ['WD-01']);
+  assert.deepEqual(filtered.attendanceEvents.map(row => row.eventId), ['pending-a']);
+  assert.equal(filtered.attendanceOpportunities.length, 1);
+  assert.equal(filtered.readiness.length, 1);
+  const summary = buildWorkforceIntelligence({ ...filtered, now });
+  assert.equal(summary.capabilityGaps.length, 0, 'selecting a training type does not discard other qualifications from machine authorization checks');
+  assert.equal(summary.qualificationCounts.current, 1);
 });
 
 test('material and suspect-scrap disruptions become source-linked workforce alerts without implying disposition', () => {

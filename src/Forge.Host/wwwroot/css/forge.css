@@ -920,6 +920,10 @@ button.pill.linkish:hover { text-decoration: underline; }
 .workforce-intelligence-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
 .workforce-intelligence-filters label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
 .workforce-intelligence-filters .input { min-width: 120px; padding: 6px 8px; }
+.workforce-intelligence-filter-more { flex-basis: 100%; }
+.workforce-intelligence-filter-more > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.workforce-intelligence-filter-more > div { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
+.workforce-intelligence-filter-note { flex-basis: 100%; max-width: 760px; margin: 0; font-size: 11px; }
 .workforce-intelligence-kpis { margin: 12px 0; }
 .workforce-intelligence-columns { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(250px, .8fr); gap: 14px; }
 .workforce-intelligence-columns h3, .workforce-intelligence-evidence h3 { margin: 8px 0; }
@@ -948,6 +952,9 @@ button.pill.linkish:hover { text-decoration: underline; }
   .workforce-intelligence-columns { grid-template-columns: 1fr; }
   .workforce-intelligence-filters { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
   .workforce-intelligence-filters label:first-child { grid-column: 1 / -1; }
+  .workforce-intelligence-filter-more { grid-column: 1 / -1; }
+  .workforce-intelligence-filter-more > div { grid-template-columns: 1fr 1fr; }
+  .workforce-intelligence-filter-note { grid-column: 1 / -1; }
 }
 .machine-board-filters { display: grid; grid-template-columns: minmax(170px, .8fr) minmax(150px, .7fr) minmax(220px, 1.5fr); gap: 12px; align-items: end; }
 .machine-board-filters .field { margin: 0; }
