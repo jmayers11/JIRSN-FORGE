@@ -451,7 +451,12 @@ test('plant map uses the clean reference plan and shows machine signals derived 
     if (path === '/api/competency/qualification-types') return Promise.resolve(response([{ code: 'QUAL-CNC-MILL', name: 'CNC mill operator', kind: 'Machine', prerequisites: [] }]));
     if (path.startsWith('/api/competency/people/qualifications?')) return Promise.resolve(response([{ personId: worker.personId, code: 'QUAL-CNC-MILL', status: 'Qualified', expiresAt: null }]));
     if (path === '/api/planning/schedules/approved') return Promise.resolve(response({ versionId: null, result: { operations: [], orders: [] } }));
-    if (path === '/api/readiness/operations' || path === '/api/readiness/active-work' || path === '/api/maintenance/assets' || path === '/api/maintenance/work-orders?includeClosed=false') return Promise.resolve(response([]));
+    if (path === '/api/readiness/operations') return Promise.resolve(response([{ machine: 'CNC-01', orderNumber: 771, sequence: 10, priority: 1, dueDate: '2030-10-24', partNumber: 'WW-CAT-2000', executable: false, why: 'Material shortfall: one bracket missing', dimensions: [
+      { name: 'Material availability', outcome: 'Fail', detail: 'Short one bracket for this operation.' },
+      { name: 'Safety staffing', outcome: 'Pass', detail: 'SAFE-CNC-01 operator requirement is met.' },
+      { name: 'Quality inspection', outcome: 'Pass', detail: 'No inspection hold applies.' },
+    ] }]));
+    if (path === '/api/readiness/active-work' || path === '/api/maintenance/assets' || path === '/api/maintenance/work-orders?includeClosed=false') return Promise.resolve(response([]));
     if (path.startsWith('/api/maintenance/downtime?')) return Promise.resolve(response([{ machineCode: 'CNC-01', kind: 'Unplanned', startsAt: new Date(Date.now() - 60_000).toISOString(), endsAt: null, reason: 'Coolant pressure fault' }]));
     return Promise.resolve(response([]));
   };
@@ -461,6 +466,9 @@ test('plant map uses the clean reference plan and shows machine signals derived 
   assert.match(page.querySelector('[data-map-canvas]').getAttribute('style'), /100%/);
   fire(page.querySelector('[data-map-zoom="in"]'), 'click');
   assert.match(page.querySelector('[data-map-canvas]').getAttribute('style'), /125%/, 'map zoom enlarges the scrollable canvas');
+  fire(page.querySelector('[data-map-zoom="fit"]'), 'click');
+  assert.match(page.querySelector('[data-map-canvas]').getAttribute('style'), /100%/, 'Fit plant returns the whole site to view');
+  fire(page.querySelector('[data-map-zoom="in"]'), 'click');
   fire(page.querySelector('[data-map-layer="workers"]'), 'click');
   assert.equal(page.querySelector('[data-map-layer="workers"]').getAttribute('aria-pressed'), 'false');
   assert.equal(page.querySelector('.plant-map-pin-avatars'), null, 'the worker layer can be hidden independently');
@@ -474,6 +482,18 @@ test('plant map uses the clean reference plan and shows machine signals derived 
   fire(page.querySelector('[data-map-layer="machines"]'), 'click');
   assert.equal(page.querySelector('[data-map-machine="CNC-01"]'), null, 'machine details can be hidden independently');
   fire(page.querySelector('[data-map-layer="machines"]'), 'click');
+  fire(page.querySelector('[data-map-layer="orders"]'), 'click');
+  assert.match(page.querySelector('[data-map-layer-panel="orders"]').textContent, /Order #771\/Op 10/);
+  fire(page.querySelector('[data-map-layer="materials"]'), 'click');
+  assert.match(page.querySelector('[data-map-layer-panel="materials"]').textContent, /Short one bracket/);
+  fire(page.querySelector('[data-map-layer="quality"]'), 'click');
+  assert.match(page.querySelector('[data-map-layer-panel="quality"]').textContent, /Pass · Quality inspection/);
+  fire(page.querySelector('[data-map-layer="safety"]'), 'click');
+  assert.match(page.querySelector('[data-map-layer-panel="safety"]').textContent, /Pass · Safety staffing/);
+  fire(page.querySelector('[data-map-layer="maintenance"]'), 'click');
+  assert.match(page.querySelector('[data-map-layer-panel="maintenance"]').textContent, /Coolant pressure fault/);
+  fire(page.querySelector('[data-map-layer="bottlenecks"]'), 'click');
+  assert.match(page.querySelector('[data-map-layer-panel="bottlenecks"]').textContent, /blocked|Reported down/);
   fire(page.querySelector('[data-map-machine="CNC-01"]'), 'click');
   assert.match(browser.document.querySelector('.drawer').textContent, /Machine readiness · CNC-01/);
   assert.match(browser.document.querySelector('.drawer').textContent, /Coolant pressure fault/);
@@ -489,6 +509,9 @@ test('plant map uses the clean reference plan and shows machine signals derived 
   assert.match(browser.document.querySelector('.drawer').textContent, /Machine readiness · CNC-02/, 'coverage results open the same machine evidence drawer');
   fire(page.querySelector('[data-map-coverage-clear]'), 'click');
   assert.equal(page.querySelector('.plant-map-coverage-results'), null, 'clear removes stale search results');
+  fire(page.querySelector('[data-map-zoom="reset-view"]'), 'click');
+  assert.equal(page.querySelector('[data-map-layer="materials"]').getAttribute('aria-pressed'), 'false', 'Reset view restores the concise default layer set');
+  assert.equal(page.querySelector('.plant-map-layer-panel'), null, 'Reset view closes expanded map details');
   fire(page.querySelector('[data-board-view="board"]'), 'click');
   fire(page.querySelector('[data-toggle-person="qualified-miller"]'), 'click');
   assert.equal(page.querySelector('[data-draft-activity="qualified-miller"]').value, 'MILL');

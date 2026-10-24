@@ -19,7 +19,8 @@ export async function workforceKanbanPage(page, ctx) {
     errors: {}, refreshedAt: null, department: '', shift: '', query: '', moves: new Map(),
     preview: null, previewError: null, previewBusy: false, staleSchedule: false, expandedPersonId: null,
     layoutEdit: false, layoutDraft: new Map(), layoutBaseline: new Map(), viewMode: 'board', machineCards: [], machineReadAt: null,
-    mapZoom: 1, mapLayers: { workers: true, readiness: true, machines: true }, mapCoverageQuery: '',
+    mapZoom: 1, mapLayers: { workers: true, readiness: true, machines: true, orders: false, materials: false, quality: false, safety: false, maintenance: false, bottlenecks: false }, mapCoverageQuery: '',
+    machineEvidenceErrors: {},
     expandedLanes: new Set(), expandedMapCenter: null, openFloorDetails: new Set(), visualUrls: new Map(), pendingVisuals: new Set(), disposed: false,
   };
 
@@ -108,6 +109,7 @@ export async function workforceKanbanPage(page, ctx) {
     for (const [name, result] of Object.entries({ downtime, assets, workOrders })) {
       if (!result.denied && result.error) errors[name] = result.error;
     }
+    state.machineEvidenceErrors = errors;
     const maintenanceOrders = (workOrders.data ?? []).map(view => ({ ...(view.order ?? {}), runHours: view.runHours, dueByRunHours: view.dueByRunHours, parts: view.parts }));
     state.machineCards = deriveMachineCards({
       machines: state.resources?.machines ?? [], workCenters: state.resources?.workCenters ?? [],
@@ -562,6 +564,87 @@ export async function workforceKanbanPage(page, ctx) {
     return result;
   }
 
+  function mapLayerEvidence(card, layer) {
+    const unavailable = message => ({ state: 'unknown', items: [message] });
+    if (!card) return unavailable('Machine source is unavailable.');
+    if (layer === 'orders') {
+      const operations = (card.operationsForMachine ?? []).slice(0, 3);
+      if (operations.length) return { state: 'reported', items: operations.map(operation =>
+        `Order #${operation.orderNumber}/Op ${operation.sequence} · ${operation.partNumber ?? 'part not returned'} · ${operation.executable === true ? 'readiness passes' : operation.executable === false ? operation.why ?? operation.primaryConstraint ?? 'readiness blocked' : 'readiness unknown'}`) };
+      if (card.nextScheduled) return { state: 'reported', items: [`Next scheduled order #${card.nextScheduled.orderNumber}/Op ${card.nextScheduled.sequence}`] };
+      if (state.machineEvidenceErrors.operations || state.machineEvidenceErrors.activeWork) return unavailable('Order readiness read is unavailable.');
+      return { state: 'clear', items: ['No open machine operation was returned.'] };
+    }
+    if (layer === 'maintenance') {
+      if (card.maintenanceHidden) return { state: 'restricted', items: ['Maintenance details are restricted for this role.'] };
+      if (state.machineEvidenceErrors.downtime || state.machineEvidenceErrors.assets || state.machineEvidenceErrors.workOrders) return unavailable('Maintenance source read is unavailable.');
+      const items = [
+        ...(card.downNow ?? []).map(item => `Down · ${item.reason || item.kind || 'reason not recorded'}`),
+        ...(card.overdueMaintenance ?? []).map(item => `Overdue ${item.kind ?? 'maintenance'} · ${item.workOrderNumber ?? item.workOrderId ?? 'work order'}`),
+        ...(card.futureWindow ? [`Planned downtime · ${fmtDateTime(card.futureWindow.startsAt)}`] : []),
+        ...(!card.downNow?.length && !card.overdueMaintenance?.length && !card.futureWindow && card.nextMaintenance
+          ? [`Next ${card.nextMaintenance.kind ?? 'PM'} · due ${card.nextMaintenance.dueDate ?? 'date not returned'}`] : []),
+      ];
+      return items.length ? { state: 'reported', items } : { state: 'clear', items: ['No active downtime or open maintenance item was returned.'] };
+    }
+    if (layer === 'bottlenecks') {
+      if (['blocked', 'attention'].includes(card.status)) return { state: 'issue', items: [card.summary, ...(card.blockers ?? []).slice(0, 2).map(item => `${item.source}: ${item.text}`)] };
+      if (card.status === 'unknown' || card.error) return unavailable('Readiness is unknown; no clear bottleneck result can be claimed.');
+      return { state: 'clear', items: ['No blocked or attention signal was reported at the last read.'] };
+    }
+
+    const patterns = {
+      materials: /material|inventory|stock|shortage|receipt|lot|part|supply|subassembly/i,
+      quality: /quality|inspection|ncr|mrb|disposition|calibration|gauge/i,
+      safety: /safety|safe-|qualification|authorization|authorized|trainer|two-person|2-person|competenc/i,
+    };
+    const evidence = [
+      ...(card.blockers ?? []).map(item => ({ label: item.source, detail: item.text, outcome: 'Fail' })),
+      ...(card.candidateBlockers ?? []).map(item => ({ label: item.constraint ?? 'Operation readiness', detail: item.why ?? item.primaryConstraint ?? 'Operation is not executable.', outcome: 'Fail' })),
+      ...(card.currentEvaluation?.dimensions ?? []).map(item => ({ label: item.name ?? 'Readiness', detail: item.detail ?? item.outcome ?? 'No detail returned.', outcome: item.outcome })),
+    ];
+    const matching = evidence.filter(item => patterns[layer].test(`${item.label} ${item.detail}`));
+    if (matching.length) {
+      const unique = [...new Map(matching.map(item => [`${item.label}|${item.detail}`, item])).values()];
+      const failing = unique.filter(item => ['Fail', 'Indeterminate'].includes(item.outcome));
+      if (failing.some(item => item.outcome === 'Fail')) return { state: 'issue', items: failing.slice(0, 3).map(item => `${item.label}: ${item.detail}`) };
+      if (failing.length || unique.some(item => !item.outcome || !['Pass', 'Fail', 'Indeterminate'].includes(item.outcome))) {
+        return unavailable(unique.slice(0, 3).map(item => `${item.label}: ${item.detail}`).join(' · '));
+      }
+      if (unique.every(item => item.outcome === 'Pass')) return { state: 'clear', items: unique.slice(0, 3).map(item => `Pass · ${item.label}: ${item.detail}`) };
+    }
+    if (card.error || !card.currentEvaluation) return unavailable(`${layer[0].toUpperCase()}${layer.slice(1)} evidence is not confirmed by a current operation read.`);
+    return { state: 'clear', items: [`No ${layer} blocker surfaced in the evaluated operation.`] };
+  }
+
+  function renderMapLayerBadges(machines) {
+    const layers = [
+      ['orders', 'ORD'], ['materials', 'MAT'], ['quality', 'QLT'], ['safety', 'SAFE'], ['maintenance', 'MNT'], ['bottlenecks', 'BOT'],
+    ].filter(([layer]) => state.mapLayers[layer]);
+    return layers.map(([layer, label]) => {
+      const evidence = machines.map(machine => mapLayerEvidence(state.machineCards.find(card => card.machine.code === machine.code), layer));
+      if (evidence.some(item => item.state === 'restricted')) return '';
+      const unknown = evidence.some(item => item.state === 'unknown');
+      const count = evidence.reduce((total, item) => total + (['issue', 'reported'].includes(item.state) ? item.items.length : 0), 0);
+      const value = unknown && !count ? '?' : String(count);
+      const tone = unknown ? 'unknown' : count ? (layer === 'orders' ? 'info' : 'warn') : 'clear';
+      return `<span class="plant-map-layer-badge ${tone}" title="${esc(`${label} layer · ${unknown ? 'some source facts unavailable' : `${count} reported item(s)`}`)}">${label} ${value}</span>`;
+    }).join('');
+  }
+
+  function renderMapLayerPanels(machines) {
+    const layers = [
+      ['orders', 'Orders'], ['materials', 'Materials'], ['quality', 'Quality'], ['safety', 'Safety'], ['maintenance', 'Maintenance'], ['bottlenecks', 'Bottlenecks'],
+    ].filter(([layer]) => state.mapLayers[layer]);
+    return layers.map(([layer, label]) => {
+      const items = machines.flatMap(machine => {
+        const evidence = mapLayerEvidence(state.machineCards.find(card => card.machine.code === machine.code), layer);
+        return evidence.items.map(detail => ({ machine, detail, state: evidence.state }));
+      });
+      return `<section class="plant-map-layer-panel" data-map-layer-panel="${layer}"><h5>${label}</h5>${items.length ? items.map(item => `<div class="plant-map-layer-item ${item.state}"><b>${esc(item.machine.code)}</b><span>${esc(item.detail)}</span></div>`).join('') : '<p class="muted small">No machine records are configured for this work center.</p>'}</section>`;
+    }).join('');
+  }
+
   function renderFloorMap() {
     const shown = visibleWorkers();
     const positions = state.layoutEdit ? state.layoutDraft : mapPositionsForCenters();
@@ -580,10 +663,12 @@ export async function workforceKanbanPage(page, ctx) {
         const signal = statusOrder.find(status => signals.some(card => card.status === status)) ?? 'unknown';
         const signalLabel = { blocked: 'Blocked', attention: 'Attention', ready: 'Ready', unknown: 'Unknown' }[signal];
         const expanded = state.expandedMapCenter === center.code;
+        const layerBadges = renderMapLayerBadges(machines);
         return `<article class="plant-map-pin ${expanded ? 'is-expanded' : ''} ${state.layoutEdit ? 'is-draggable' : ''}" data-map-pin="${esc(center.code)}" data-drop-lane="${esc(center.code)}" style="--map-x:${position.mapX / 10}%;--map-y:${position.mapY / 10}%" ${state.layoutEdit ? 'draggable="true"' : ''}>
-          <button class="plant-map-pin-toggle" type="button" data-map-toggle="${esc(center.code)}" aria-expanded="${expanded}"><span class="plant-map-pin-heading"><b>${esc(center.name)}</b><small>${esc(center.code)}${state.mapLayers.workers ? ` · ${people.length} on site` : ''}</small></span>${state.mapLayers.readiness ? `<span class="plant-map-pin-status"><i class="machine-signal-dot ${signal}" aria-hidden="true">${signal === 'ready' ? '✓' : signal === 'attention' ? '!' : signal === 'blocked' ? '■' : '?'}</i><span>${signalLabel}</span></span>` : ''}${state.mapLayers.workers ? `<span class="plant-map-pin-avatars">${people.slice(0, 4).map(workerAvatar).join('')}${people.length > 4 ? `<i>+${people.length - 4}</i>` : ''}</span>` : ''}</button>
+          <button class="plant-map-pin-toggle" type="button" data-map-toggle="${esc(center.code)}" aria-expanded="${expanded}"><span class="plant-map-pin-heading"><b>${esc(center.name)}</b><small>${esc(center.code)}${state.mapLayers.workers ? ` · ${people.length} on site` : ''}</small></span>${state.mapLayers.readiness ? `<span class="plant-map-pin-status"><i class="machine-signal-dot ${signal}" aria-hidden="true">${signal === 'ready' ? '✓' : signal === 'attention' ? '!' : signal === 'blocked' ? '■' : '?'}</i><span>${signalLabel}</span></span>` : ''}${state.mapLayers.workers ? `<span class="plant-map-pin-avatars">${people.slice(0, 4).map(workerAvatar).join('')}${people.length > 4 ? `<i>+${people.length - 4}</i>` : ''}</span>` : ''}${layerBadges ? `<span class="plant-map-pin-layer-badges" aria-label="Selected map layer facts">${layerBadges}</span>` : ''}</button>
           ${expanded ? `<div class="plant-map-pin-people">${state.mapLayers.workers ? (people.length ? people.map(worker => workerChip(worker, center)).join('') : '<span class="muted small">No one currently here</span>') : ''}
             ${state.mapLayers.machines && machines.length ? `<div class="plant-map-machine-list" aria-label="Machines in ${esc(center.name)}">${machines.map(machine => { const card = state.machineCards.find(item => item.machine.code === machine.code); const status = card?.status ?? 'unknown'; const icon = status === 'ready' ? '✓' : status === 'attention' ? '!' : status === 'blocked' ? '■' : '?'; return `<button type="button" class="plant-map-machine" data-map-machine="${esc(machine.code)}"><i class="machine-signal-dot ${state.mapLayers.readiness ? status : 'unknown'}" aria-hidden="true">${state.mapLayers.readiness ? icon : '?'}</i><span><b>${esc(machine.code)}</b><small>${state.mapLayers.readiness ? esc(card?.summary ?? 'Readiness not verified') : 'Readiness hidden'}</small></span></button>`; }).join('')}</div>` : ''}
+            ${renderMapLayerPanels(machines)}
             </div>` : ''}
           ${state.layoutEdit ? `<div class="plant-map-move-controls" aria-label="Move ${esc(center.name)} marker"><button type="button" data-map-step="${esc(center.code)}" data-dx="-1" aria-label="Move left">←</button><button type="button" data-map-step="${esc(center.code)}" data-dy="-1" aria-label="Move up">↑</button><button type="button" data-map-step="${esc(center.code)}" data-dy="1" aria-label="Move down">↓</button><button type="button" data-map-step="${esc(center.code)}" data-dx="1" aria-label="Move right">→</button></div>` : ''}
         </article>`;
@@ -596,8 +681,8 @@ export async function workforceKanbanPage(page, ctx) {
     const unassignedOpen = state.openFloorDetails.has('unassigned') || presentUnassigned.some(worker => worker.personId === state.expandedPersonId);
     const offsiteOpen = state.openFloorDetails.has('offsite') || notPresent.some(worker => worker.personId === state.expandedPersonId);
     const coverageMarkup = renderMapCoverageSearch();
-    const layerLabel = { workers: 'Workers', readiness: 'Readiness', machines: 'Machines' };
-    return `<div class="workforce-floor-map"><section class="plant-map-toolbar panel" aria-label="Plant map controls"><div class="plant-map-zoom-controls" role="group" aria-label="Map zoom"><button class="btn small" type="button" data-map-zoom="out" aria-label="Zoom map out" ${state.mapZoom <= .75 ? 'disabled' : ''}>−</button><span data-map-zoom-label>${Math.round(state.mapZoom * 100)}%</span><button class="btn small" type="button" data-map-zoom="in" aria-label="Zoom map in" ${state.mapZoom >= 1.75 ? 'disabled' : ''}>+</button><button class="btn small" type="button" data-map-zoom="reset" ${state.mapZoom === 1 ? 'disabled' : ''}>Reset</button></div><div class="plant-map-layer-controls" role="group" aria-label="Map layers">${Object.entries(layerLabel).map(([key, label]) => `<button type="button" class="btn small ${state.mapLayers[key] ? 'primary' : ''}" data-map-layer="${key}" aria-pressed="${state.mapLayers[key]}">${label}</button>`).join('')}</div></section>${coverageMarkup}${siteCards || emptyBlock('No work centers in this area', 'Set up work centers under Plant Setup.')}
+    const layerLabel = { workers: 'Staffing', readiness: 'Readiness', machines: 'Machines', orders: 'Orders', materials: 'Materials', quality: 'Quality', safety: 'Safety', maintenance: 'Maintenance', bottlenecks: 'Bottlenecks' };
+    return `<div class="workforce-floor-map"><section class="plant-map-toolbar panel" aria-label="Plant map controls"><div class="plant-map-zoom-controls" role="group" aria-label="Map zoom"><button class="btn small" type="button" data-map-zoom="out" aria-label="Zoom map out" ${state.mapZoom <= .75 ? 'disabled' : ''}>−</button><span data-map-zoom-label>${Math.round(state.mapZoom * 100)}%</span><button class="btn small" type="button" data-map-zoom="in" aria-label="Zoom map in" ${state.mapZoom >= 1.75 ? 'disabled' : ''}>+</button><button class="btn small" type="button" data-map-zoom="fit" ${state.mapZoom === 1 ? 'disabled' : ''}>Fit plant</button><button class="btn small" type="button" data-map-zoom="reset-view">Reset view</button></div><div class="plant-map-layer-controls" role="group" aria-label="Map layers">${Object.entries(layerLabel).map(([key, label]) => `<button type="button" class="btn small ${state.mapLayers[key] ? 'primary' : ''}" data-map-layer="${key}" aria-pressed="${state.mapLayers[key]}">${label}</button>`).join('')}</div></section>${coverageMarkup}${siteCards || emptyBlock('No work centers in this area', 'Set up work centers under Plant Setup.')}
       ${presentUnassigned.length ? `<details class="workforce-unassigned-zone" data-floor-details="unassigned" ${unassignedOpen ? 'open' : ''}><summary>On site with no assigned work center · ${presentUnassigned.length}</summary><div class="workforce-floor-people">${presentUnassigned.map(worker => workerChip(worker, null)).join('')}</div></details>` : ''}
       ${notPresent.length ? `<details class="workforce-offsite" data-floor-details="offsite" ${offsiteOpen ? 'open' : ''}><summary>Not currently confirmed on site · ${notPresent.length}</summary><div class="workforce-offsite-list">${notPresent.map(worker => `<div class="workforce-offsite-person">${cardHtml(worker, centerByCode(destination(worker))) }<span class="muted small">${esc(centerByCode(destination(worker))?.name ?? 'No work center recorded')}</span></div>`).join('')}</div></details>` : ''}
     </div>`;
@@ -1079,8 +1164,15 @@ export async function workforceKanbanPage(page, ctx) {
     }));
     $$('[data-map-zoom]', page).forEach(button => button.addEventListener('click', () => {
       const action = button.dataset.mapZoom;
-      state.mapZoom = action === 'reset' ? 1 : Math.min(1.75, Math.max(.75, state.mapZoom + (action === 'in' ? .25 : -.25)));
+      if (action === 'reset-view') {
+        state.mapZoom = 1;
+        state.expandedMapCenter = null;
+        state.mapCoverageQuery = '';
+        state.mapLayers = { workers: true, readiness: true, machines: true, orders: false, materials: false, quality: false, safety: false, maintenance: false, bottlenecks: false };
+      } else if (action === 'fit') state.mapZoom = 1;
+      else state.mapZoom = Math.min(1.75, Math.max(.75, state.mapZoom + (action === 'in' ? .25 : -.25)));
       renderBoardOnly();
+      if (action === 'reset-view') page.querySelectorAll('.plant-map-viewport').forEach(viewport => { viewport.scrollLeft = 0; viewport.scrollTop = 0; });
     }));
     const coverageForm = $('[data-map-coverage-search]', page);
     coverageForm?.addEventListener('submit', event => {
