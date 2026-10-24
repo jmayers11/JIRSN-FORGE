@@ -19,6 +19,7 @@ export async function workforceKanbanPage(page, ctx) {
     errors: {}, refreshedAt: null, department: '', shift: '', query: '', moves: new Map(),
     preview: null, previewError: null, previewBusy: false, staleSchedule: false, expandedPersonId: null,
     layoutEdit: false, layoutDraft: new Map(), layoutBaseline: new Map(), viewMode: 'board', machineCards: [], machineReadAt: null,
+    mapZoom: 1, mapLayers: { workers: true, readiness: true, machines: true }, mapCoverageQuery: '',
     expandedLanes: new Set(), expandedMapCenter: null, openFloorDetails: new Set(), visualUrls: new Map(), pendingVisuals: new Set(), disposed: false,
   };
 
@@ -580,24 +581,45 @@ export async function workforceKanbanPage(page, ctx) {
         const signalLabel = { blocked: 'Blocked', attention: 'Attention', ready: 'Ready', unknown: 'Unknown' }[signal];
         const expanded = state.expandedMapCenter === center.code;
         return `<article class="plant-map-pin ${expanded ? 'is-expanded' : ''} ${state.layoutEdit ? 'is-draggable' : ''}" data-map-pin="${esc(center.code)}" data-drop-lane="${esc(center.code)}" style="--map-x:${position.mapX / 10}%;--map-y:${position.mapY / 10}%" ${state.layoutEdit ? 'draggable="true"' : ''}>
-          <button class="plant-map-pin-toggle" type="button" data-map-toggle="${esc(center.code)}" aria-expanded="${expanded}"><span class="plant-map-pin-heading"><b>${esc(center.name)}</b><small>${esc(center.code)} · ${people.length} on site</small></span><span class="plant-map-pin-status"><i class="machine-signal-dot ${signal}" aria-hidden="true">${signal === 'ready' ? '✓' : signal === 'attention' ? '!' : signal === 'blocked' ? '■' : '?'}</i><span>${signalLabel}</span></span><span class="plant-map-pin-avatars">${people.slice(0, 4).map(workerAvatar).join('')}${people.length > 4 ? `<i>+${people.length - 4}</i>` : ''}</span></button>
-          ${expanded ? `<div class="plant-map-pin-people">${people.length ? people.map(worker => workerChip(worker, center)).join('') : '<span class="muted small">No one currently here</span>'}
-            ${machines.length ? `<div class="plant-map-machine-list" aria-label="Machines in ${esc(center.name)}">${machines.map(machine => { const card = state.machineCards.find(item => item.machine.code === machine.code); const status = card?.status ?? 'unknown'; const icon = status === 'ready' ? '✓' : status === 'attention' ? '!' : status === 'blocked' ? '■' : '?'; return `<button type="button" class="plant-map-machine" data-map-machine="${esc(machine.code)}"><i class="machine-signal-dot ${status}" aria-hidden="true">${icon}</i><span><b>${esc(machine.code)}</b><small>${esc(card?.summary ?? 'Readiness not verified')}</small></span></button>`; }).join('')}</div>` : ''}
+          <button class="plant-map-pin-toggle" type="button" data-map-toggle="${esc(center.code)}" aria-expanded="${expanded}"><span class="plant-map-pin-heading"><b>${esc(center.name)}</b><small>${esc(center.code)}${state.mapLayers.workers ? ` · ${people.length} on site` : ''}</small></span>${state.mapLayers.readiness ? `<span class="plant-map-pin-status"><i class="machine-signal-dot ${signal}" aria-hidden="true">${signal === 'ready' ? '✓' : signal === 'attention' ? '!' : signal === 'blocked' ? '■' : '?'}</i><span>${signalLabel}</span></span>` : ''}${state.mapLayers.workers ? `<span class="plant-map-pin-avatars">${people.slice(0, 4).map(workerAvatar).join('')}${people.length > 4 ? `<i>+${people.length - 4}</i>` : ''}</span>` : ''}</button>
+          ${expanded ? `<div class="plant-map-pin-people">${state.mapLayers.workers ? (people.length ? people.map(worker => workerChip(worker, center)).join('') : '<span class="muted small">No one currently here</span>') : ''}
+            ${state.mapLayers.machines && machines.length ? `<div class="plant-map-machine-list" aria-label="Machines in ${esc(center.name)}">${machines.map(machine => { const card = state.machineCards.find(item => item.machine.code === machine.code); const status = card?.status ?? 'unknown'; const icon = status === 'ready' ? '✓' : status === 'attention' ? '!' : status === 'blocked' ? '■' : '?'; return `<button type="button" class="plant-map-machine" data-map-machine="${esc(machine.code)}"><i class="machine-signal-dot ${state.mapLayers.readiness ? status : 'unknown'}" aria-hidden="true">${state.mapLayers.readiness ? icon : '?'}</i><span><b>${esc(machine.code)}</b><small>${state.mapLayers.readiness ? esc(card?.summary ?? 'Readiness not verified') : 'Readiness hidden'}</small></span></button>`; }).join('')}</div>` : ''}
             </div>` : ''}
           ${state.layoutEdit ? `<div class="plant-map-move-controls" aria-label="Move ${esc(center.name)} marker"><button type="button" data-map-step="${esc(center.code)}" data-dx="-1" aria-label="Move left">←</button><button type="button" data-map-step="${esc(center.code)}" data-dy="-1" aria-label="Move up">↑</button><button type="button" data-map-step="${esc(center.code)}" data-dy="1" aria-label="Move down">↓</button><button type="button" data-map-step="${esc(center.code)}" data-dx="1" aria-label="Move right">→</button></div>` : ''}
         </article>`;
       }).join('');
       return `<section class="workforce-floor-zone plant-map-site"><header class="workforce-floor-zone-head"><div><span class="faint">${site.hasCustomMap ? 'SITE FLOOR PLAN' : 'REFERENCE FLOOR PLAN'}</span><h3>${esc(site.name)}</h3></div><div class="plant-map-actions">${canAction(ctx.me, 'resources.floor-map.manage') ? `<label class="btn small plant-map-upload">${site.hasCustomMap ? 'Replace map' : 'Upload new map'}<input type="file" accept="image/png,image/jpeg,image/webp" data-map-upload="${esc(site.code)}" aria-label="Upload a new ${esc(site.name)} plant map"></label>${site.hasCustomMap ? `<button class="btn small" type="button" data-map-remove="${esc(site.code)}">Use reference map</button>` : ''}` : ''}<span class="pill info">${siteCenters.length} work centers</span></div></header>
-        ${site.hasCustomMap ? '' : '<div class="muted small">Example layout · upload your site floor plan to align centers to your facility.</div>'}<div class="plant-map-canvas" data-map-canvas="${esc(site.code)}"><img class="plant-map-background" src="${esc(image || '/img/plants/sample-plant-floor.png')}" alt="${esc(site.hasCustomMap ? `${site.name} plant floor map` : 'Reference plant floor layout')}" draggable="false">${pins}</div></section>`;
+        ${site.hasCustomMap ? '' : '<div class="muted small">Example layout · upload your site floor plan to align centers to your facility.</div>'}<div class="plant-map-viewport" aria-label="Scrollable plant floor map"><div class="plant-map-canvas" data-map-canvas="${esc(site.code)}" style="--map-zoom:${Math.round(state.mapZoom * 100)}%"><img class="plant-map-background" src="${esc(image || '/img/plants/sample-plant-floor.png')}" alt="${esc(site.hasCustomMap ? `${site.name} plant floor map` : 'Reference plant floor layout')}" draggable="false">${pins}</div></div></section>`;
     }).join('');
     const presentUnassigned = shown.filter(worker => confirmedOnSite(worker) && (!destination(worker) || !centerByCode(destination(worker))));
     const notPresent = shown.filter(worker => !confirmedOnSite(worker));
     const unassignedOpen = state.openFloorDetails.has('unassigned') || presentUnassigned.some(worker => worker.personId === state.expandedPersonId);
     const offsiteOpen = state.openFloorDetails.has('offsite') || notPresent.some(worker => worker.personId === state.expandedPersonId);
-    return `<div class="workforce-floor-map">${siteCards || emptyBlock('No work centers in this area', 'Set up work centers under Plant Setup.')}
+    const coverageMarkup = renderMapCoverageSearch();
+    const layerLabel = { workers: 'Workers', readiness: 'Readiness', machines: 'Machines' };
+    return `<div class="workforce-floor-map"><section class="plant-map-toolbar panel" aria-label="Plant map controls"><div class="plant-map-zoom-controls" role="group" aria-label="Map zoom"><button class="btn small" type="button" data-map-zoom="out" aria-label="Zoom map out" ${state.mapZoom <= .75 ? 'disabled' : ''}>−</button><span data-map-zoom-label>${Math.round(state.mapZoom * 100)}%</span><button class="btn small" type="button" data-map-zoom="in" aria-label="Zoom map in" ${state.mapZoom >= 1.75 ? 'disabled' : ''}>+</button><button class="btn small" type="button" data-map-zoom="reset" ${state.mapZoom === 1 ? 'disabled' : ''}>Reset</button></div><div class="plant-map-layer-controls" role="group" aria-label="Map layers">${Object.entries(layerLabel).map(([key, label]) => `<button type="button" class="btn small ${state.mapLayers[key] ? 'primary' : ''}" data-map-layer="${key}" aria-pressed="${state.mapLayers[key]}">${label}</button>`).join('')}</div></section>${coverageMarkup}${siteCards || emptyBlock('No work centers in this area', 'Set up work centers under Plant Setup.')}
       ${presentUnassigned.length ? `<details class="workforce-unassigned-zone" data-floor-details="unassigned" ${unassignedOpen ? 'open' : ''}><summary>On site with no assigned work center · ${presentUnassigned.length}</summary><div class="workforce-floor-people">${presentUnassigned.map(worker => workerChip(worker, null)).join('')}</div></details>` : ''}
       ${notPresent.length ? `<details class="workforce-offsite" data-floor-details="offsite" ${offsiteOpen ? 'open' : ''}><summary>Not currently confirmed on site · ${notPresent.length}</summary><div class="workforce-offsite-list">${notPresent.map(worker => `<div class="workforce-offsite-person">${cardHtml(worker, centerByCode(destination(worker))) }<span class="muted small">${esc(centerByCode(destination(worker))?.name ?? 'No work center recorded')}</span></div>`).join('')}</div></details>` : ''}
     </div>`;
+  }
+
+  function renderMapCoverageSearch() {
+    const query = state.mapCoverageQuery.trim().toLowerCase();
+    const machines = state.resources?.machines ?? [];
+    const profiles = state.resources?.machineActivities ?? [];
+    const rows = machines.map(machine => {
+      const profile = profiles.find(item => item.machineCode === machine.code);
+      const required = profile?.operatorQualifications ?? [];
+      const center = centerByCode(machine.workCenterCode);
+      const terms = [machine.code, machine.name, machine.workCenterCode, center?.name, profile?.activityCode, ...required].filter(Boolean).join(' ').toLowerCase();
+      const qualified = state.qualificationCoverage === 'ready' && required.length
+        ? visibleWorkers().filter(worker => available(worker) && confirmedOnSite(worker)
+          && required.some(code => currentQualified(worker.personId, code))
+          && currentMachineAuthorized(worker.personId, { machineCode: machine.code, activityCode: profile?.activityCode }))
+        : null;
+      return { machine, profile, required, terms, qualified };
+    }).filter(row => row.required.length > 0 && (query && row.terms.includes(query)));
+    return `<section class="plant-map-coverage panel" aria-label="Qualified machine coverage search"><form data-map-coverage-search><label for="map-coverage-query"><b>Qualified coverage search</b><span class="muted small">Search a machine, work center, activity or qualification to see current on-site coverage within the selected workforce filters.</span></label><div class="plant-map-search-row"><input class="input" id="map-coverage-query" name="query" type="search" value="${esc(state.mapCoverageQuery)}" placeholder="e.g. CNC-02, mill, QUAL-CNC-MILL"><button class="btn primary" type="submit">Search</button>${query ? '<button class="btn" type="button" data-map-coverage-clear>Clear</button>' : ''}</div></form>${state.qualificationCoverage !== 'ready' ? '<p class="muted small" role="status">Qualification coverage is unavailable. Search will not infer worker eligibility.</p>' : query ? rows.length ? `<div class="plant-map-coverage-results" role="list">${rows.map(row => `<button class="plant-map-coverage-result" type="button" role="listitem" data-map-machine="${esc(row.machine.code)}"><span><b>${esc(row.machine.code)} · ${esc(row.machine.name)}</b><small>${esc(row.machine.workCenterCode)}${row.profile?.activityCode ? ` · ${esc(row.profile.activityCode)}` : ''} · Requires ${esc(row.required.join(', '))}</small></span><span class="pill ${row.qualified?.length ? 'ok' : 'warn'}">${row.qualified?.length ?? 0} present · qualified</span></button>`).join('')}</div>` : '<p class="muted small" role="status">No configured machine qualification requirements matched that search.</p>' : '<p class="muted small" role="status">Enter a search to find machines with configured qualification requirements.</p>'}</section>`;
   }
 
   function openMachineReadiness(machineCode) {
@@ -1049,6 +1071,27 @@ export async function workforceKanbanPage(page, ctx) {
       renderBoardOnly();
     }));
     $$('[data-map-machine]', page).forEach(button => button.addEventListener('click', () => openMachineReadiness(button.dataset.mapMachine)));
+    $$('[data-map-layer]', page).forEach(button => button.addEventListener('click', () => {
+      const layer = button.dataset.mapLayer;
+      if (!Object.hasOwn(state.mapLayers, layer)) return;
+      state.mapLayers[layer] = !state.mapLayers[layer];
+      renderBoardOnly();
+    }));
+    $$('[data-map-zoom]', page).forEach(button => button.addEventListener('click', () => {
+      const action = button.dataset.mapZoom;
+      state.mapZoom = action === 'reset' ? 1 : Math.min(1.75, Math.max(.75, state.mapZoom + (action === 'in' ? .25 : -.25)));
+      renderBoardOnly();
+    }));
+    const coverageForm = $('[data-map-coverage-search]', page);
+    coverageForm?.addEventListener('submit', event => {
+      event.preventDefault();
+      state.mapCoverageQuery = $('[name="query"]', coverageForm)?.value?.trim() ?? '';
+      renderBoardOnly();
+    });
+    $('[data-map-coverage-clear]', page)?.addEventListener('click', () => {
+      state.mapCoverageQuery = '';
+      renderBoardOnly();
+    });
     $$('[data-map-pin]', page).forEach(pin => pin.addEventListener('dragstart', event => {
       if (event.target.closest('[data-worker-card]')) return;
       if (!state.layoutEdit) { event.preventDefault(); return; }

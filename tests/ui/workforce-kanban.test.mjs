@@ -435,13 +435,17 @@ test('Facilities Manager can arrange image-map work centers and save with an aud
 test('plant map uses the clean reference plan and shows machine signals derived from Forge readiness records', async t => {
   const browser = installBrowser(t), page = browser.document.createElement('div'); browser.document.body.append(page);
   const machine = { code: 'CNC-01', name: 'Three-axis mill', workCenterCode: 'WC-CNC-MILL' };
+  const secondMachine = { code: 'CNC-02', name: 'Production mill', workCenterCode: 'WC-CNC-MILL' };
   const worker = { personId: 'qualified-miller', displayName: 'Sam Miller', jobTitle: 'CNC Operator', isActive: true, presenceKind: 'ClockedIn', unavailability: null, assignment: null, shiftCode: 'DAY' };
   globalThis.fetch = path => {
     if (path === '/api/resources/') return Promise.resolve(response({
       sites: [{ code: 'WW-P01', name: 'WhiskerWorks — Purrcision Plant 01' }],
       safetyAreas: [{ code: 'CNC', siteCode: 'WW-P01', name: 'CNC Machining' }],
       workCenters: [{ code: 'WC-CNC-MILL', name: 'CNC Machining · Mills', safetyAreaCode: 'CNC' }],
-      machines: [machine], workCenterActivities: [], machineActivities: [{ machineCode: 'CNC-01', activityCode: 'MILL', operatorQualifications: ['QUAL-CNC-MILL', 'QUAL-CNC-SETUP'] }], shifts: [],
+      machines: [machine, secondMachine], workCenterActivities: [], machineActivities: [
+        { machineCode: 'CNC-01', activityCode: 'MILL', operatorQualifications: ['QUAL-CNC-MILL', 'QUAL-CNC-SETUP'] },
+        { machineCode: 'CNC-02', activityCode: 'MILL', operatorQualifications: ['QUAL-CNC-MILL'] },
+      ], shifts: [],
     }));
     if (path === '/api/workforce/workers') return Promise.resolve(response([worker]));
     if (path === '/api/competency/qualification-types') return Promise.resolve(response([{ code: 'QUAL-CNC-MILL', name: 'CNC mill operator', kind: 'Machine', prerequisites: [] }]));
@@ -454,15 +458,37 @@ test('plant map uses the clean reference plan and shows machine signals derived 
   await workforceKanbanPage(page, { me: { personId: 'manager', permissions: ['workforce.supervise', 'resources.floor-map.manage', 'resources.read', 'planning.readiness.read', 'maintenance.read', 'competency.read'] } });
   fire(page.querySelector('[data-board-view="map"]'), 'click');
   assert.match(page.querySelector('.plant-map-background').getAttribute('src'), /sample-plant-floor\.svg$/);
+  assert.match(page.querySelector('[data-map-canvas]').getAttribute('style'), /100%/);
+  fire(page.querySelector('[data-map-zoom="in"]'), 'click');
+  assert.match(page.querySelector('[data-map-canvas]').getAttribute('style'), /125%/, 'map zoom enlarges the scrollable canvas');
+  fire(page.querySelector('[data-map-layer="workers"]'), 'click');
+  assert.equal(page.querySelector('[data-map-layer="workers"]').getAttribute('aria-pressed'), 'false');
+  assert.equal(page.querySelector('.plant-map-pin-avatars'), null, 'the worker layer can be hidden independently');
+  fire(page.querySelector('[data-map-layer="workers"]'), 'click');
   fire(page.querySelector('[data-map-toggle="WC-CNC-MILL"]'), 'click');
   assert.ok(page.querySelector('.plant-map-pin-status .machine-signal-dot.blocked'));
   assert.match(page.querySelector('[data-map-machine="CNC-01"]').textContent, /Reported down/);
+  fire(page.querySelector('[data-map-layer="readiness"]'), 'click');
+  assert.equal(page.querySelector('.plant-map-pin-status'), null, 'readiness signals can be hidden independently');
+  fire(page.querySelector('[data-map-layer="readiness"]'), 'click');
+  fire(page.querySelector('[data-map-layer="machines"]'), 'click');
+  assert.equal(page.querySelector('[data-map-machine="CNC-01"]'), null, 'machine details can be hidden independently');
+  fire(page.querySelector('[data-map-layer="machines"]'), 'click');
   fire(page.querySelector('[data-map-machine="CNC-01"]'), 'click');
   assert.match(browser.document.querySelector('.drawer').textContent, /Machine readiness · CNC-01/);
   assert.match(browser.document.querySelector('.drawer').textContent, /Coolant pressure fault/);
   const stageButton = browser.document.querySelector('[data-machine-stage-person="qualified-miller"]');
   assert.ok(stageButton, 'machine drawer offers a stage action only for an on-site worker with current required qualifications');
   fire(stageButton, 'click');
+  const coverageQuery = page.querySelector('#map-coverage-query');
+  coverageQuery.value = 'CNC-02';
+  fire(page.querySelector('[data-map-coverage-search]'), 'submit');
+  assert.match(page.querySelector('.plant-map-coverage-results').textContent, /CNC-02 · Production mill/);
+  assert.match(page.querySelector('.plant-map-coverage-results').textContent, /1 present · qualified/);
+  fire(page.querySelector('.plant-map-coverage-result'), 'click');
+  assert.match(browser.document.querySelector('.drawer').textContent, /Machine readiness · CNC-02/, 'coverage results open the same machine evidence drawer');
+  fire(page.querySelector('[data-map-coverage-clear]'), 'click');
+  assert.equal(page.querySelector('.plant-map-coverage-results'), null, 'clear removes stale search results');
   fire(page.querySelector('[data-board-view="board"]'), 'click');
   fire(page.querySelector('[data-toggle-person="qualified-miller"]'), 'click');
   assert.equal(page.querySelector('[data-draft-activity="qualified-miller"]').value, 'MILL');

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Forge.Host.History;
 using Forge.Host.Propagation;
+using Forge.Kernel.Postgres;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Forge.Integration.Tests;
