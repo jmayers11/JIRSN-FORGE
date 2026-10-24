@@ -1,6 +1,7 @@
 import { tryGet, command, readPost } from '../api.js';
 import { esc, fmtNumber, errorBlock } from '../ui.js';
 import { buildWorkforceIntelligence, filterWorkforceIntelligenceInputs, renderEvidenceReference } from '../workforce-intelligence.mjs';
+import { openCausePerformance } from '../cause-performance.js';
 
 const DAY = 86_400_000;
 const formatDate = value => {
@@ -361,6 +362,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
         }).join('') : '<p class="faint">No completed, unclassified shifts in the current window.</p>'}</div>` : ''}
       </details>
       ${personHistory}
+      ${selectedWorker ? `<section class="workforce-intelligence-person-history"><header><h3>${esc(selectedWorker.displayName)} · cause-adjusted time and quality</h3><span class="spacer"></span><button class="btn small" data-wi-cause-performance="${escapeAttr(selectedWorker.personId)}" data-wi-cause-name="${escapeAttr(selectedWorker.displayName)}">Open</button></header><p class="faint">Paid time accounted for by labor, verified downtime and approved coded time; official and employee-attributable first-pass yield side by side. Factual reporting only.</p></section>` : ''}
       ${canReadNominations || canNominate ? `<section class="workforce-intelligence-development"><h3>Training and advancement packets</h3><p class="faint">Recommendations require documented human review. Approval does not grant a qualification or machine authorization; those remain in Competency.</p>
         ${canNominate ? `<form class="workforce-intelligence-form" data-wi-nomination-form><label>Employee<select class="input" name="personId" required><option value="">Choose employee</option>${(sources.workers.data ?? []).filter(worker => worker.isActive).map(worker => `<option value="${escapeAttr(worker.personId)}">${esc(worker.displayName)} · ${esc(worker.jobTitle ?? worker.homeWorkCenterCode ?? 'Worker')}</option>`).join('')}</select></label>
           <label>Packet type<select class="input" name="kind" required><option value="AdvancedTraining">Advanced training</option><option value="LeadReadiness">Lead responsibilities</option><option value="PromotionReadiness">Promotion readiness</option>${canReadCompensation ? '<option value="CompensationConsideration">Compensation consideration</option>' : ''}</select></label>
@@ -537,6 +539,8 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     }
   });
   page.addEventListener('click', async event => {
+    const causePerformance = event.target.closest('[data-wi-cause-performance]');
+    if (causePerformance) { await openCausePerformance(causePerformance.dataset.wiCausePerformance, causePerformance.dataset.wiCauseName, me); return; }
     const recovery = event.target.closest('[data-wi-recovery]');
     const materialRecovery = event.target.closest('[data-wi-material-recovery]');
     const review = event.target.closest('[data-wi-review]');

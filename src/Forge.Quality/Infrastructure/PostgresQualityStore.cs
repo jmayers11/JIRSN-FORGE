@@ -360,6 +360,9 @@ public static class QualityRegistration
         services.AddForgeStore<ISuspectScrapReportStore>(uow => new PostgresQualityStore(uow));
         services.AddForgeStore<IWorkHoldLookup>(uow => new PostgresQualityStore(uow));
         services.AddSingleton<QualityService>();
+        services.AddForgeStore<IFirstPassAttributionStore>(uow => new PostgresFirstPassAttributionStore(uow));
+        services.AddForgeStore<IFirstPassAttributionLookup>(uow => new PostgresFirstPassAttributionStore(uow));
+        services.AddSingleton<FirstPassAttributionService>();
         services.AddForgeStore<Forge.Quality.Contracts.IReturnAcceptanceLookup>(uow => new PostgresReturnCohortStore(uow));
         services.AddForgeStore<Forge.Quality.Contracts.IReturnCohortWriter>(uow => new PostgresReturnCohortStore(uow));
         services.AddSingleton<Forge.Quality.Acceptance.ReturnCohortReadService>();
