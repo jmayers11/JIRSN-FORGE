@@ -12,7 +12,7 @@ export const scenarioCatalog = [
   ['WW-S10-RUSH-ORDER', 'Rush VIP Customer Order', 'Insert a priority-one order for fifty WW-CAT-2000 units.'],
   ['WW-S11-CAL-EXPIRED', 'Out-of-Calibration Gauge and PM', 'Expire torque and optical gauges to verify execution interlocks.'],
   ['WW-S12-SCAN-OUTAGE', 'Scanner and Label Printer Outage', 'Exercise the kiosk fail-closed and pending reconciliation path.'],
-  ['WW-S13-IPC-MISMATCH', 'IPC and Machine Qualification Blocks', 'Run the twelve negative competency and trainer coverage cases.'],
+  ['WW-S13-IPC-MISMATCH', 'IPC and Machine Qualification Blocks', 'Twelve cross-qualification assignment denials plus the CNC setup and supervised trainer prerequisite gates.'],
   ['WW-S14-RECOVERY-BOARD', 'Recovery Action Board', 'Create owned, dated actions with blocked dependencies.'],
   ['WW-S15-HANDOFF', 'Shift Handoff Continuity', 'Review and acknowledge open downtime and unconfirmed absences across shifts.'],
   ['WW-S16-CASCADE', 'Multi-Event Cascade', 'Combine ASM-03 absence, CNC-01 breakdown, and the held motor lot.'],
