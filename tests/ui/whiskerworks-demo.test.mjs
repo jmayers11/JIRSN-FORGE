@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cnc02MaintenanceWindowEvidence, delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectDayShiftScenarioRoster, selectOpenSensorPromiseLine, sisalQuantityEvidence, sisalSplitSteps } from '../../src/Forge.Host/wwwroot/js/data/whiskerworks-demo.js';
+import { cnc02MaintenanceWindowEvidence, delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectCnc02ExpiringQualification, selectDayShiftScenarioRoster, selectOpenSensorPromiseLine, sisalQuantityEvidence, sisalSplitSteps } from '../../src/Forge.Host/wwwroot/js/data/whiskerworks-demo.js';
 
 test('start-shift roster selection is stable and separates three callouts from two expected absences', () => {
   const workers = [
@@ -49,6 +49,22 @@ test('sensor shortage delay advances exactly four calendar days and rejects inva
   assert.equal(delayedPromiseDate('2028-02-27'), '2028-03-02');
   assert.throws(() => delayedPromiseDate('2026-02-30'), /invalid promised date/);
   assert.throws(() => delayedPromiseDate('2026-10-30', 0), /positive whole-day delay/);
+});
+
+test('S05 selects only a current five-day CNC-02 mill qualification from an active assigned operator', () => {
+  const now = Date.parse('2026-10-23T13:00:00Z');
+  const workers = [
+    { personId: 'target', displayName: 'CNC Operator', isActive: true, assignment: { machineCode: 'CNC-02' } },
+    { personId: 'other-machine', displayName: 'Other Machine', isActive: true, assignment: { machineCode: 'CNC-01' } },
+    { personId: 'inactive', displayName: 'Inactive Operator', isActive: false, assignment: { machineCode: 'CNC-02' } },
+  ];
+  const qualifications = [
+    { personId: 'target', code: 'QUAL-CNC-MILL', status: 'Qualified', expiresAt: '2026-10-28T13:00:00Z' },
+    { personId: 'other-machine', code: 'QUAL-CNC-MILL', status: 'Qualified', expiresAt: '2026-10-24T13:00:00Z' },
+    { personId: 'inactive', code: 'QUAL-CNC-MILL', status: 'Qualified', expiresAt: '2026-10-24T13:00:00Z' },
+  ];
+  assert.equal(selectCnc02ExpiringQualification(workers, qualifications, now).personId, 'target');
+  assert.throws(() => selectCnc02ExpiringQualification(workers, qualifications.map(row => ({ ...row, expiresAt: '2026-10-29T13:00:00Z' })), now), /within five days/);
 });
 
 test('CNC-02 maintenance evidence verifies the exact one-hour four-hour-ahead window and pending independent decision', () => {

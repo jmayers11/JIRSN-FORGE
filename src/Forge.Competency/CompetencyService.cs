@@ -244,7 +244,18 @@ public sealed class CompetencyService(CommandPipeline pipeline)
                 throw new CommandRejectedException("prerequisites_missing", $"Missing valid prerequisites: {string.Join(", ", missing)}.");
             }
 
-            var expires = type.ValidityDays is { } days ? now.AddDays(days) : (DateTimeOffset?)null;
+            var policyExpires = type.ValidityDays is { } days ? now.AddDays(days) : (DateTimeOffset?)null;
+            if (command.ExpiresAt is { } requestedExpiry && requestedExpiry <= now)
+            {
+                throw new CommandRejectedException("invalid_expiry", "Qualification expiry must be in the future.");
+            }
+
+            if (command.ExpiresAt is { } earlyExpiry && policyExpires is { } policyExpiry && earlyExpiry > policyExpiry)
+            {
+                throw new CommandRejectedException("expiry_exceeds_policy", $"Qualification expiry cannot extend beyond the configured {type.ValidityDays}-day validity period.");
+            }
+
+            var expires = command.ExpiresAt ?? policyExpires;
             var record = new PersonQualification(command.PersonId.Value, code, QualificationStatus.Qualified, now, expires);
             await store.UpsertAsync(record, context.Actor, command.Evidence.Trim(), now, ct);
             var id = Id(command.PersonId, code);

@@ -4,7 +4,7 @@
 // the later tenant-scoped commercial seed and scenario-control work.
 import { createHash } from 'node:crypto';
 import {
-  activities, baselinePresenceByCenter, demoPrincipals, machineActivities, machines, nonMachineStations, qualifications, shifts, site,
+  activities, baselinePresenceByCenter, demoPrincipals, machineActivities, machines, nonMachineStations, qualifications, scenarioQualificationExpiry, shifts, site,
   targets, workCenterActivities, workCenters, workers, zones,
 } from './whiskerworks-plant.mjs';
 
@@ -360,6 +360,10 @@ async function main() {
   }
 
   const employees = [];
+  const scenarioWorker = workers.find(worker => worker.machineCode === scenarioQualificationExpiry.machineCode
+    && worker.qualifications.includes(scenarioQualificationExpiry.qualificationCode));
+  if (!scenarioWorker) throw new Error('The S05 expiring CNC qualification target is missing from the manifest.');
+  const scenarioExpiresAt = new Date(Date.now() + scenarioQualificationExpiry.daysFromSeed * 24 * 60 * 60 * 1000).toISOString();
   const trainingByPerson = new Map();
   for (const worker of workers) {
     const person = await ensurePerson(worker.subject, worker.displayName, ['ShopFloorTerminal']);
@@ -399,13 +403,20 @@ async function main() {
     }
     for (const code of qualificationsForWorker) {
       const record = recorded.find(item => item.code === code);
-      if (record?.status === 'Qualified' && (!record.expiresAt || Date.parse(record.expiresAt) > Date.now())) continue;
+      const scenarioExpiry = worker.code === scenarioWorker.code && code === scenarioQualificationExpiry.qualificationCode ? scenarioExpiresAt : null;
+      if (record?.status === 'Qualified' && (!record.expiresAt || Date.parse(record.expiresAt) > Date.now())) {
+        if (scenarioExpiry && (!record.expiresAt || Date.parse(record.expiresAt) > Date.parse(scenarioExpiry))) {
+          throw new Error(`${worker.displayName} already has a longer ${code} validity than the S05 demo target. Review or recreate the isolated fictional demo rather than rewriting qualification history.`);
+        }
+        continue;
+      }
       if (record && record.status !== 'InTraining') throw new Error(`${worker.displayName} has ${record.status} ${code}; review it instead of overwriting qualification history.`);
       if (!record) await post(`/api/competency/people/${person.personId}/training`, { code }, 'ww-demo-engineer');
       await post(`/api/competency/people/${person.personId}/certifications`, {
         code, evidence: 'Fictional WhiskerWorks demo baseline practical assessment; not a real-world credential.',
+        ...(scenarioExpiry ? { expiresAt: scenarioExpiry } : {}),
       }, certifier.subject);
-      recorded.push({ personId: person.personId, code, status: 'Qualified', expiresAt: null });
+      recorded.push({ personId: person.personId, code, status: 'Qualified', expiresAt: scenarioExpiry });
     }
 
     if (worker.machineCode) {

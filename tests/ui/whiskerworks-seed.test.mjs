@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import {
   baselinePresenceByCenter, demoPrincipals, machineActivities, machines, nonMachineStations, productFamilies, qualifications,
-  shifts, site, targets, workCenters, workers, zones,
+  scenarioQualificationExpiry, shifts, site, targets, workCenters, workers, zones,
 } from '../../tools/whiskerworks-plant.mjs';
 
 test('WhiskerWorks foundation matches its site, asset and roster targets', () => {
@@ -17,6 +17,10 @@ test('WhiskerWorks foundation matches its site, asset and roster targets', () =>
   assert.equal(shifts.length, 3);
   assert.equal(qualifications.length, 23, 'keep named mandatory qualification gates plus Toolpath / First-Article Verification');
   assert.equal(demoPrincipals.length, 6);
+  assert.deepEqual(scenarioQualificationExpiry, { machineCode: 'CNC-02', qualificationCode: 'QUAL-CNC-MILL', daysFromSeed: 5 });
+  assert.equal(workers.filter(worker => worker.machineCode === scenarioQualificationExpiry.machineCode
+    && worker.qualifications.includes(scenarioQualificationExpiry.qualificationCode)).length, 3,
+  'the seed can select a deterministic CNC-02 operator for the individual S05 expiry without changing the qualification type policy');
   const attendanceImporter = demoPrincipals.find(principal => principal.subject === 'ww-demo-attendance-importer');
   assert.deepEqual(attendanceImporter?.roles, ['AttendanceImporter'], 'the HRIS import principal receives only its narrow import permission');
 });

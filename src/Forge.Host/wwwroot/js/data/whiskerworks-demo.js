@@ -34,6 +34,27 @@ export function selectOpenSensorPromiseLine(purchaseOrders) {
   return candidates[0];
 }
 
+/** Select a current CNC-02 mill qualification whose recorded expiry is within the S05 five-day window. */
+export function selectCnc02ExpiringQualification(workers, qualifications, observedAt = Date.now(), windowDays = 5) {
+  if (!Number.isFinite(observedAt) || !Number.isSafeInteger(windowDays) || windowDays <= 0)
+    throw new Error('A valid observation time and positive whole-day window are required.');
+  const workerById = new Map((workers ?? []).filter(worker => worker.isActive && worker.assignment?.machineCode === 'CNC-02')
+    .map(worker => [String(worker.personId), worker]));
+  const candidates = (qualifications ?? []).filter(record => record.code === 'QUAL-CNC-MILL' && record.status === 'Qualified'
+    && workerById.has(String(record.personId)) && Number.isFinite(Date.parse(record.expiresAt))
+    && Date.parse(record.expiresAt) > observedAt && Date.parse(record.expiresAt) <= observedAt + windowDays * 86400000)
+    .sort((a, b) => Date.parse(a.expiresAt) - Date.parse(b.expiresAt) || String(a.personId).localeCompare(String(b.personId)));
+  if (!candidates.length) throw new Error('No current CNC-02 mill operator has a recorded qualification expiry within five days. No PM window was proposed.');
+  const qualification = candidates[0];
+  return {
+    personId: qualification.personId,
+    code: qualification.code,
+    expiresAt: qualification.expiresAt,
+    observedAt: new Date(observedAt).toISOString(),
+    displayName: workerById.get(String(qualification.personId)).displayName,
+  };
+}
+
 export function delayedPromiseDate(promisedDate, delayDays = 4) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(promisedDate)) || !Number.isSafeInteger(delayDays) || delayDays <= 0)
     throw new Error('A valid purchase-line date and positive whole-day delay are required.');

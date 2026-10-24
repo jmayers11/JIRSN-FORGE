@@ -38,12 +38,12 @@ test('the former 52-person Sprint 9 roster cannot enable the expanded Sprint 10 
 });
 
 test('S05 offers its CNC-02 PM proposal only to a maintenance planner on the guarded demo shape', async t => {
-  const allowed = await renderWithRoster(t, 60, ['maintenance.plan', 'maintenance.read']);
+  const allowed = await renderWithRoster(t, 60, ['maintenance.plan', 'maintenance.read', 'competency.read']);
   assert.match(allowed, /Propose CNC-02 PM in 4 hours/);
-  assert.match(allowed, /does not fabricate a five-day qualification expiry/);
+  assert.match(allowed, /records a current CNC-02 qualification expiring within five days/);
 
   const denied = await renderWithRoster(t, 60);
-  assert.match(denied, /Requires maintenance.plan, maintenance.read/);
+  assert.match(denied, /Requires maintenance.plan, maintenance.read, competency.read/);
 });
 
 test('S07 exposes the audited sensor and bearing promise action only with procurement and MRP access', async t => {

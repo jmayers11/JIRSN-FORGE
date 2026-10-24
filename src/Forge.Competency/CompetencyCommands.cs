@@ -12,7 +12,7 @@ public sealed record DefinePrerequisiteAlternatives(string Code, string GroupCod
 
 public sealed record StartTraining(PersonId PersonId, string Code);
 
-public sealed record CertifyQualification(PersonId PersonId, string Code, string Evidence);
+public sealed record CertifyQualification(PersonId PersonId, string Code, string Evidence, DateTimeOffset? ExpiresAt = null);
 
 public sealed record SuspendQualification(PersonId PersonId, string Code);
 

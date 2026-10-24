@@ -7,6 +7,44 @@ namespace Forge.Integration.Tests;
 public sealed class CompetencyAlternativesTests(PostgresFixture postgres)
 {
     [Fact]
+    public async Task Certification_may_shorten_but_cannot_extend_configured_validity()
+    {
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        var plant = new SlittingPlant.Plant(app);
+        await plant.Person("eng", "ManufacturingEngineer", "TrainingCoordinator");
+        await plant.Person("certifier", "Certifier");
+        var learner = await plant.Person("expiry-learner");
+        await plant.Ok(plant.Engineer, "/api/competency/qualification-types", new
+        {
+            code = "SHORT-QUAL", name = "Configured machine qualification", kind = "Machine", validityDays = 30,
+        });
+        await plant.Ok(plant.Engineer, $"/api/competency/people/{learner}/training", new { code = "SHORT-QUAL" });
+
+        var fiveDayExpiry = DateTimeOffset.UtcNow.AddDays(5);
+        await plant.Ok(plant.As("certifier"), $"/api/competency/people/{learner}/certifications", new
+        {
+            code = "SHORT-QUAL", evidence = "Observed practical assessment", expiresAt = fiveDayExpiry,
+            reason = "Apply the documented short-term authorization window",
+        });
+        using (var response = await plant.Engineer.GetAsync($"/api/competency/people/{learner}"))
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.IsSuccessStatusCode, body);
+            using var records = JsonDocument.Parse(body);
+            Assert.Equal(fiveDayExpiry, records.RootElement.EnumerateArray().Single()
+                .GetProperty("expiresAt").GetDateTimeOffset());
+        }
+
+        var beyondPolicy = await plant.Try(plant.As("certifier"), $"/api/competency/people/{learner}/certifications", new
+        {
+            code = "SHORT-QUAL", evidence = "Attempted extension beyond configured validity",
+            expiresAt = DateTimeOffset.UtcNow.AddDays(31), reason = "Policy cap regression",
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, beyondPolicy.StatusCode);
+        Assert.Contains("expiry_exceeds_policy", await beyondPolicy.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CNC_setup_accepts_either_machine_qualification_and_rejects_neither()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());

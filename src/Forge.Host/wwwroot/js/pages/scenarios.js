@@ -2,7 +2,7 @@ import { command, get } from '../api.js';
 import { $, $$, esc, fmtDateTime, toast, confirmWithReason } from '../ui.js';
 import { formModal } from '../forms.js';
 import { scenarioCatalog } from '../data/whiskerworks-scenarios.js';
-import { cnc02MaintenanceWindowEvidence, delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectDayShiftScenarioRoster, sisalQuantityEvidence, sisalSplitSteps } from '../data/whiskerworks-demo.js';
+import { cnc02MaintenanceWindowEvidence, delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectCnc02ExpiringQualification, selectDayShiftScenarioRoster, sisalQuantityEvidence, sisalSplitSteps } from '../data/whiskerworks-demo.js';
 import { armDemoScannerOutage, readDemoScannerOutage } from '../demo-scanner-outage.mjs';
 import { deriveMachineCards } from './machine-kanban.js';
 
@@ -169,7 +169,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       'WW-S02-ABSENCES': { label: 'Start Day Shift', permission: 'workforce.supervise' },
       'WW-S03-TWO-PERSON': { label: 'Record one callout', permission: 'workforce.supervise', also: ['competency.read'] },
       'WW-S04-CNC-DOWN': { label: 'Report CNC-01 down', permission: 'maintenance.downtime.report' },
-      'WW-S05-INSP-SOON': { label: 'Propose CNC-02 PM in 4 hours', permission: 'maintenance.plan', also: ['maintenance.read'] },
+      'WW-S05-INSP-SOON': { label: 'Propose CNC-02 PM in 4 hours', permission: 'maintenance.plan', also: ['maintenance.read', 'competency.read'] },
       'WW-S06-MRB-HOLD': { label: 'Hold motor demo lot', permission: 'inventory.transact' },
       'WW-S07-SHORTAGE': { label: 'Delay sensor and bearing POs by 4 days', permission: 'procurement.manage', also: ['procurement.read', 'material.plan.read'] },
       'WW-S08-LOT-SPLIT': { label: 'Split sisal demo lot', permission: 'inventory.transact' },
@@ -273,7 +273,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
           'WW-S02-ABSENCES': 'Creates three audited CallOut windows and leaves two scheduled workers unconfirmed. Any current presence is ended explicitly; no attendance or payroll record is fabricated.',
           'WW-S03-TWO-PERSON': 'Records one demo callout; machine readiness continues to be derived by Forge from the current roster and safety rule.',
           'WW-S04-CNC-DOWN': 'Reports an unplanned machine-down event through Maintenance. Restore remains a separate authorized source action.',
-          'WW-S05-INSP-SOON': 'Schedules the existing CNC-02 preventive-maintenance work order for a one-hour window starting four hours from the recorded proposal time. Forge creates an audited outage proposal; a different authorized person must review its schedule impact before capacity changes. This does not fabricate a five-day qualification expiry; that credential timing remains unseeded.',
+          'WW-S05-INSP-SOON': 'Schedules the existing CNC-02 preventive-maintenance work order for a one-hour window starting four hours from the recorded proposal time and records a current CNC-02 qualification expiring within five days. The outage requires a separate approval; this action does not change the qualification.',
           'WW-S06-MRB-HOLD': 'Moves the seeded motor lot to inventory Hold. It does not create an NCR or claim order pegging unless the source records show that impact.',
           'WW-S07-SHORTAGE': 'Moves the approved, open WhiskerWorks sensor and 608-bearing purchase lines four calendar days later through audited Procurement commands. The seed gives each part a separate approved supplier. Baseline and post-change MRP snapshots check the exact PO receipts and any `RescheduleIn` evidence; they do not fabricate supplier correspondence or guarantee a shortage when nettable stock covers demand.',
           'WW-S08-LOT-SPLIT': 'Splits and reconciles the 250 m parent into 100/100/45 m child lots and 5 m scrap. Parent-hold propagation is not modeled by this control.',
@@ -493,6 +493,18 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         }
         if (key === 'CNC-01 downtime is open' && current.sources.downtime === 'available') {
           outcome = current.details.cnc01OpenDowntime ? 'Pass' : 'Fail'; detail = current.details.cnc01OpenDowntime ? 'An open CNC-01 downtime record is present.' : 'No open CNC-01 downtime record was found.';
+        } else if (key === 'CNC-02 operator qualification expires within five days' && current.sources.qualifications === 'available') {
+          const target = event.targetGroups?.qualificationExpiry ?? {};
+          const record = (current.details.qualifications ?? []).find(item => String(item.personId).toLowerCase() === String(target.personId).toLowerCase()
+            && item.code === target.code);
+          const observedAt = Date.parse(target.observedAt);
+          const expiry = Date.parse(target.expiresAt);
+          const withinWindow = Number.isFinite(observedAt) && Number.isFinite(expiry) && expiry > observedAt && expiry <= observedAt + 5 * 86400000;
+          const exactSourceRecord = record?.status === 'Qualified' && Date.parse(record.expiresAt) === expiry;
+          outcome = withinWindow && exactSourceRecord ? 'Pass' : 'Fail';
+          detail = exactSourceRecord && withinWindow
+            ? `${target.displayName ?? target.personId}'s ${target.code} source record remains Qualified and expires ${fmtDateTime(record.expiresAt)}, within five days of the recorded observation.`
+            : `The current authorized competency read does not match the recorded five-day CNC-02 qualification evidence for ${target.personId ?? 'the scenario worker'}.`;
         } else if (['CNC-02 PM window is scheduled four hours from proposal time', 'Outage requires independent approval'].includes(key)
             && current.sources.maintenanceOutages === 'available') {
           const evidence = cnc02MaintenanceWindowEvidence({ outages: current.details.cnc02PmOutages ?? [], target: event.targetGroups ?? {} });
@@ -756,6 +768,9 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
   }
 
   async function proposeCnc02PmWindow(reason, code = 'WW-S05-INSP-SOON') {
+    const cnc02Operators = (await get('/api/workforce/workers')).filter(worker => worker.assignment?.machineCode === 'CNC-02');
+    const qualificationExpiry = selectCnc02ExpiringQualification(cnc02Operators,
+      await readDemoQualifications(cnc02Operators), Date.now());
     const [workOrderRows, outages] = await Promise.all([
       get('/api/maintenance/work-orders?includeClosed=false'),
       get('/api/maintenance/outages?includeDecided=true'),
@@ -772,7 +787,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       && ['Proposed', 'Approved'].includes(outage.status));
     if (prior) {
       return { workOrderId: order.workOrderId, outageId: prior.outageId, startsAt: prior.startsAt, endsAt: prior.endsAt,
-        requestedAt: null, alreadyProposed: true, status: prior.status };
+        requestedAt: null, qualificationExpiry, alreadyProposed: true, status: prior.status };
     }
 
     const requestedAt = new Date();
@@ -786,7 +801,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       && outage.status === 'Proposed');
     if (!proposal) throw new Error(`Forge did not return the expected CNC-02 PM outage proposal for work order ${order.workOrderId}.`);
     return { workOrderId: order.workOrderId, outageId: proposal.outageId, startsAt: proposal.startsAt, endsAt: proposal.endsAt,
-      requestedAt: requestedAt.toISOString(), alreadyProposed: false, status: proposal.status };
+      requestedAt: requestedAt.toISOString(), qualificationExpiry, alreadyProposed: false, status: proposal.status };
   }
 
   async function holdMotorLot(reason, code = 'WW-S06-MRB-HOLD') {
@@ -1167,11 +1182,11 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         run: async reason => { const value = await reportCncDown(reason); recordDemoEvent(code, `CNC-01 downtime ${value?.entityId ?? 'recorded or already open'}`, ['CNC-01 downtime is open'], ['CNC-01']); },
       },
       'WW-S05-INSP-SOON': {
-        detail: 'Schedules the existing CNC-02 preventive-maintenance order four hours ahead. Forge creates a source-audited outage proposal; another authorized person must review its schedule preview before downtime is approved. No credential expiry is fabricated.',
+        detail: 'Schedules the existing CNC-02 preventive-maintenance order four hours ahead and records a source-backed CNC-02 qualification expiry within five days. Another authorized person must review the outage; this action does not change qualification data.',
         run: async reason => {
           const proposal = await proposeCnc02PmWindow(reason, code);
           recordDemoEvent(code, `CNC-02 PM work order ${proposal.workOrderId} has ${proposal.status.toLowerCase()} window ${fmtDateTime(proposal.startsAt)}–${fmtDateTime(proposal.endsAt)}`,
-            ['CNC-02 PM window is scheduled four hours from proposal time', 'Outage requires independent approval'],
+            ['CNC-02 PM window is scheduled four hours from proposal time', 'CNC-02 operator qualification expires within five days', 'Outage requires independent approval'],
             [`work-order:${proposal.workOrderId}`, `outage:${proposal.outageId}`], proposal);
         },
       },

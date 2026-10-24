@@ -149,6 +149,10 @@ export const shifts = [
   { code: 'SHIFT-WKD', siteCode: site.code, name: 'Weekend / Overlap', start: '06:00:00', durationMinutes: 720, days: [6, 7] },
 ];
 
+// S05 uses an individual, early qualification expiry to exercise upcoming coverage risk without
+// shortening the global CNC-mill policy or changing other operators' records.
+export const scenarioQualificationExpiry = { machineCode: 'CNC-02', qualificationCode: 'QUAL-CNC-MILL', daysFromSeed: 5 };
+
 const rosterPlans = [
   ['WC-RCV', 3, 'Receiving Associate', 'RECEIVE', [null], ['QUAL-PIT-FORKLIFT']],
   ['WC-RAW', 3, 'Raw Material Handler', 'STOCK', [null], ['QUAL-MAT-KIT']],

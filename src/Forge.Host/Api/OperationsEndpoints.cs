@@ -33,7 +33,7 @@ public sealed record PracticalAssessmentRequest(string QualificationCode, string
 public sealed record MachineAuthorizationRequest(string MachineCode, string ActivityCode, string QualificationCode, Guid AssessmentId, DateTimeOffset? ExpiresAt, string Evidence, string? Restrictions, bool IndependentOperationAllowed, string? Reason);
 public sealed record MachineAuthorizationStatusRequest(MachineAuthorizationStatus Status, string? Reason);
 
-public sealed record PersonQualificationRequest(string Code, string? Evidence, string? Reason);
+public sealed record PersonQualificationRequest(string Code, string? Evidence, string? Reason, DateTimeOffset? ExpiresAt = null);
 
 public sealed record WorkerRequest(string HomeWorkCenterCode, string? Reason);
 
@@ -219,7 +219,7 @@ public static class OperationsEndpoints
         api.MapPost("/people/{personId:guid}/training", (HttpContext http, Guid personId, PersonQualificationRequest b, CompetencyService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.StartTrainingAsync(new StartTraining(new PersonId(personId), b.Code), c, ct)));
         api.MapPost("/people/{personId:guid}/certifications", (HttpContext http, Guid personId, PersonQualificationRequest b, CompetencyService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.CertifyAsync(new CertifyQualification(new PersonId(personId), b.Code, b.Evidence ?? string.Empty), c, ct)));
+            Command(http, b.Reason, c => s.CertifyAsync(new CertifyQualification(new PersonId(personId), b.Code, b.Evidence ?? string.Empty, b.ExpiresAt), c, ct)));
         api.MapPost("/people/{personId:guid}/suspensions", (HttpContext http, Guid personId, PersonQualificationRequest b, CompetencyService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.SuspendAsync(new SuspendQualification(new PersonId(personId), b.Code), c, ct)));
         api.MapPost("/people/{personId:guid}/revocations", (HttpContext http, Guid personId, PersonQualificationRequest b, CompetencyService s, CancellationToken ct) =>
