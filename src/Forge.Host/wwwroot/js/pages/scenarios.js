@@ -333,6 +333,23 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       try { values.qualifications = { available: true, value: await readDemoQualifications(values.workers.value) }; }
       catch { values.qualifications = { available: false }; }
     } else values.qualifications = { available: false };
+    values.wipReconciliation = { available: false };
+    if (values.orders.available && (profile?.permissions ?? []).includes('inventory.read')) {
+      try {
+        const releasedOpenOrders = values.orders.value.filter(order => order.status === 'Released'
+          && (order.operations ?? []).some(operation => operation.status !== 'Complete'));
+        const reconciliations = [];
+        for (const order of releasedOpenOrders) {
+          const orderNumber = Number(order.orderNumber);
+          if (!Number.isSafeInteger(orderNumber) || orderNumber <= 0) throw new Error('An open released order has an invalid order number.');
+          const reconciliation = await get(`/api/inventory/orders/${orderNumber}/reconciliation`);
+          reconciliations.push({ orderNumber, rows: (reconciliation.rows ?? []).map(({ partNumber, lotNumber, netIssued, accounted, unexplained, status }) => ({
+            orderNumber, partNumber, lotNumber, netIssued, accounted, unexplained, status,
+          })) });
+        }
+        values.wipReconciliation = { available: true, value: reconciliations };
+      } catch { values.wipReconciliation = { available: false }; }
+    }
     values.recoveryActions = { available: false };
     if (values.handoffs.available && (profile?.permissions ?? []).some(permission => ['execution.shopfloor.read', 'workforce.read'].includes(permission))) {
       try {
@@ -423,6 +440,10 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
             .map(dimension => ({ orderNumber: operation.orderNumber, sequence: operation.sequence, dimension: dimension.name }))) : null,
         activeHolds: values.holds.available ? values.holds.value.filter(hold => hold.active !== false).map(({ kind, target, reference }) => ({ kind, target, reference })) : null,
         releasedOrderOperations,
+        wipReconciliation: values.wipReconciliation.available ? {
+          orderCount: values.wipReconciliation.value.length,
+          rows: values.wipReconciliation.value.flatMap(order => order.rows),
+        } : null,
         motorLot: values.inventory.available ? motor.map(({ partNumber, lotNumber, locationCode, qualityStatus, quantity }) => ({ partNumber, lotNumber, locationCode, status: qualityStatus, quantity })) : null,
         sisalLots: values.inventory.available ? sisal.filter(item => ['LOT-SISAL-M01', 'LOT-SISAL-M01-A', 'LOT-SISAL-M01-B', 'LOT-SISAL-M01-C'].includes(item.lotNumber)).map(({ lotNumber, locationCode, qualityStatus, quantity }) => ({ lotNumber, locationCode, status: qualityStatus, quantity })) : null,
         sisalPositions: values.inventory.available ? sisal.filter(item => ['LOT-SISAL-M01', 'LOT-SISAL-M01-A', 'LOT-SISAL-M01-B', 'LOT-SISAL-M01-C'].includes(item.lotNumber)).map(({ lotNumber, locationCode, qualityStatus, quantity }) => ({ lotNumber, locationCode, qualityStatus, quantity })) : null,

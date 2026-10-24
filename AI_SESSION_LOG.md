@@ -1677,3 +1677,7 @@ Expanded the map toolbar to cover Staffing, Readiness, Machines, Orders, Materia
 ## Sprint 9 S01 preventive-maintenance baseline follow-up — 2026-10-23
 
 Added a separate healthy-baseline assertion for preventive, inspection, and calibration work on the 24 active machines. It requires the existing maintenance work-order read, verifies that each active machine has captured maintenance evidence, and names any overdue item by machine and work-order ID. Missing source access is Indeterminate; an incomplete machine set or overdue work order fails. The Scenario Center snapshot now exports the source-derived per-machine evidence. Focused UI tests passed 10/10. WIP balance and a persistent clean-state baseline remain unproven; no database or preview data was changed. Commit: pending.
+
+## Sprint 9 S01 issued-material reconciliation follow-up — 2026-10-23
+
+Connected the healthy-baseline snapshot to the existing Inventory reconciliation endpoint for each visible released order with an open operation. The check passes only for nonempty evidence where every issued part/lot row is exactly `Balanced`; missing Inventory access is Indeterminate and an empty reconciliation set is also Indeterminate. Export evidence retains order, part/lot, status, net-issued, accounted, and unexplained quantities. Focused UI tests passed 10/10 for balanced, unexplained, empty, and unavailable-source cases. No order, inventory, seed, or preview data was changed. Commit: pending.

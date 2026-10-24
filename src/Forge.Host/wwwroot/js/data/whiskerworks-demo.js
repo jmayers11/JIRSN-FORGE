@@ -136,6 +136,16 @@ export function healthyBaselineAssertions(snapshot) {
       detail: `${activeMachines.length} active machines; ${missingEvidence.length} missing maintenance evidence; ${overdue.length} open PM/inspection/calibration items are due${overdue.length ? ` (${overdue.join(', ')})` : ''}.` };
   }));
 
+  checks.push(result('Issued WIP material reconciles exactly', ['orders', 'wipReconciliation'], () => {
+    const evidence = details.wipReconciliation ?? {};
+    const rows = evidence.rows ?? [];
+    if (!evidence.orderCount || !rows.length) return { outcome: 'Indeterminate',
+      detail: `${evidence.orderCount ?? 0} released open orders checked; no issued material reconciliation rows were returned.` };
+    const unbalanced = rows.filter(row => row.status !== 'Balanced');
+    return { outcome: unbalanced.length === 0 ? 'Pass' : 'Fail',
+      detail: `${evidence.orderCount} released open orders; ${rows.length} issued part/lot balances; ${unbalanced.length} are not exactly Balanced${unbalanced.length ? ` (${unbalanced.map(row => `${row.orderNumber}/${row.partNumber}/${row.lotNumber ?? 'unlotted'}: ${row.status}, unexplained ${row.unexplained}`).join('; ')})` : ''}.` };
+  }));
+
   checks.push(result('Zero blocking Safety or Quality exceptions', ['operations', 'holds'], () => {
     const blockedDimensions = (details.operationBlocks ?? []).filter(block => ['Safety', 'Quality'].some(name => String(block.dimension).toLowerCase().includes(name.toLowerCase())));
     const activeHolds = (details.activeHolds ?? []).filter(hold => ['Safety', 'Quality'].includes(hold.kind));
