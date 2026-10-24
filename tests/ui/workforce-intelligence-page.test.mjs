@@ -21,10 +21,13 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
     }));
     if (path === '/api/competency/qualification-types') return Promise.resolve(response([{ code: 'WIND', name: 'Winding' }]));
     if (path.startsWith('/api/competency/people/qualifications?')) return Promise.resolve(response([
-      { personId: 'worker-1', code: 'WIND', status: 'Qualified', expiresAt: '2026-10-25T12:00:00Z' },
+      { personId: 'worker-1', code: 'WIND', status: 'Qualified', expiresAt: '2026-10-25T23:59:00Z' },
     ]));
     if (path.startsWith('/api/workforce/unavailability?')) return Promise.resolve(response([
       { personId: 'worker-1', kind: 'ApprovedPto', startsAt: '2026-10-25T00:00:00Z', endsAt: '2026-10-26T00:00:00Z' },
+    ]));
+    if (path.startsWith('/api/workforce/attendance-opportunities?')) return Promise.resolve(response([
+      { opportunityId: 'shift-w1', personId: 'worker-1', shiftCode: 'DAY', scheduledStart: '2026-10-25T10:00:00Z', scheduledEnd: '2026-10-25T18:00:00Z', state: 'Scheduled' },
     ]));
     if (path === '/api/readiness/operations') return Promise.resolve(response([
       { orderNumber: 77, sequence: 10, dueDate: '2026-10-27', workCenter: 'WC-A', executable: false, primaryConstraint: 'Workforce', why: 'No qualified operator.' },
@@ -57,6 +60,8 @@ test('Workforce Command Center uses recorded sources, exposes honest gaps, and k
   assert.match(page.innerHTML, /Current qualifications[\s\S]*?1/);
   assert.match(page.innerHTML, /expires in 2 days/);
   assert.match(page.innerHTML, /WO 77 · operation 10 is blocked by Workforce/);
+  assert.match(page.innerHTML, /WD-01 · WIND has no qualified coverage/);
+  assert.match(page.innerHTML, /private absence details are hidden/);
   assert.match(page.innerHTML, /order due 2026-10-27/);
   assert.match(page.innerHTML, /Floor receiver: independently acknowledge the delivered quantity/);
   assert.match(page.innerHTML, /operation also has a Workforce blocker/);
@@ -125,7 +130,7 @@ test('supervisors can request a read-only ranked recovery preview for a machine 
           evidence: ['Taylor covers the source before Morgan moves.'],
         }],
         limitations: projectedShift
-          ? ['Candidate presence is projected from the selected shift calendar; it is not proof of clock-in.', 'Future source-center production coverage is not evaluated.']
+          ? ['Candidate presence is projected from the selected shift calendar; it is not proof of clock-in.', 'Future source dispatch and workload are not forecasted.']
           : ['Material and due-date effects are not evaluated.'],
       } }));
     }
@@ -157,7 +162,8 @@ test('supervisors can request a read-only ranked recovery preview for a machine 
   });
   const scheduledResult = page.querySelector('[data-wi-recovery-result]').innerHTML;
   assert.match(scheduledResult, /Scheduled candidate/);
-  assert.match(scheduledResult, /Future source-center production coverage is not forecasted/);
+  assert.match(scheduledResult, /Currently open source-work impact: WC-B would be unstaffed unless Taylor is moved first/);
+  assert.match(scheduledResult, /Future source dispatch and workload remain unknown/);
   assert.match(scheduledResult, /not proof of clock-in/);
 });
 

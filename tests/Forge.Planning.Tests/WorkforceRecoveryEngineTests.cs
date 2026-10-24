@@ -47,7 +47,7 @@ public sealed class WorkforceRecoveryEngineTests
     }
 
     [Fact]
-    public void Projected_shift_recovery_uses_scheduled_people_and_discloses_unassessed_source_coverage()
+    public void Projected_shift_recovery_uses_scheduled_people_and_discloses_future_source_load_limits()
     {
         var factory = Slitting();
         var scheduledWorker = factory.Add("Scheduled Operator", null, false, null, SlitII);
@@ -72,8 +72,36 @@ public sealed class WorkforceRecoveryEngineTests
         Assert.True(result.ProjectedShift);
         Assert.Equal(scheduledWorker, candidate.PersonId);
         Assert.Contains("scheduled at the selected shift start", string.Join(" ", candidate.Evidence), StringComparison.Ordinal);
-        Assert.Contains("Future source-center production coverage", candidate.NotEvaluated);
+        Assert.Contains("Future source operation assignments and dispatch load", candidate.NotEvaluated);
         Assert.Contains("not proof of clock-in", string.Join(" ", result.Limitations), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Projected_shift_preview_reports_open_source_work_impact_and_an_ordered_backfill_option()
+    {
+        var factory = Slitting().SlittingAreaRule();
+        var incumbent = factory.Add("Mika", OnSlitter("SLITTER-A"), true, null, SlitII);
+        var operatorToMove = factory.Add("Anna", InPaint(), true, null, SlitII, FirstAid, PaintQual);
+        var sourceBackfill = factory.Add("Ben", null, true, null, PaintQual);
+        var snapshot = factory.Build();
+        var targetAt = Now.AddDays(1);
+        var projected = snapshot with
+        {
+            AsOf = targetAt,
+            People = snapshot.People.Select(person => person.PersonId == incumbent || person.PersonId == operatorToMove || person.PersonId == sourceBackfill
+                ? person with { Presence = PresenceKind.Projected, ActiveOperation = null }
+                : person with { Presence = null, Assignment = null, ActiveOperation = null }).ToArray(),
+        };
+
+        var result = new WorkforceRecoveryEngine().Evaluate(projected,
+            new WorkforceRecoveryRequest(SlitterWork("SLITTER-A"), new HashSet<Guid> { incumbent, operatorToMove, sourceBackfill }, ProjectedShift: true), targetAt).Output;
+
+        var recommendation = Assert.Single(result.Candidates.Where(candidate => candidate.PersonId == operatorToMove));
+        Assert.True(recommendation.RequiresSourceBackfill);
+        Assert.Equal(new[] { sourceBackfill, operatorToMove }, recommendation.Moves.Select(move => move.PersonId));
+        Assert.Contains(recommendation.SourceImpacts, impact => impact.Work.MachineCode == "PAINT-BOOTH");
+        Assert.Contains("Future source operation assignments and dispatch load", recommendation.NotEvaluated);
+        Assert.Contains("Future dispatch, source workload", string.Join(" ", result.Limitations), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

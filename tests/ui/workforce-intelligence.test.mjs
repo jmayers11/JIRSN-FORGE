@@ -167,3 +167,57 @@ test('attendance summary keeps denominators, exclusions, and pending-review coun
   assert.equal(summary.attendance.excludedOpportunities, 5);
   assert.equal(summary.attendance.verifiedLateArrivals, 2);
 });
+
+test('upcoming approved time away warns when it removes the last scheduled qualified machine option without exposing leave details', () => {
+  const scheduledStart = new Date(now.getTime() + 2 * 86_400_000);
+  const scheduledEnd = new Date(scheduledStart.getTime() + 8 * 60 * 60_000);
+  const summary = buildWorkforceIntelligence({
+    now,
+    workers,
+    qualifications,
+    resources,
+    attendanceOpportunities: [
+      { opportunityId: 'op-w1', personId: 'w-1', shiftCode: 'DAY', scheduledStart, scheduledEnd, state: 'Scheduled' },
+      { opportunityId: 'op-w2', personId: 'w-2', shiftCode: 'DAY', scheduledStart, scheduledEnd, state: 'Scheduled' },
+    ],
+    unavailability: [{ personId: 'w-1', kind: 'ApprovedPto', startsAt: scheduledStart, endsAt: scheduledEnd, reason: 'private leave detail' }],
+  });
+  assert.equal(summary.attendanceRisks.length, 1);
+  assert.match(summary.attendanceRisks[0].title, /WD-01 · WIND has no qualified coverage/);
+  assert.match(summary.attendanceRisks[0].detail, /private absence details are hidden/);
+  assert.doesNotMatch(summary.attendanceRisks[0].detail, /ApprovedPto|private leave detail|w-1/);
+  assert.ok(summary.attendanceRisks[0].evidenceReferences.includes('AttendanceOpportunity/op-w1'));
+
+  const withQualifiedBackfill = buildWorkforceIntelligence({
+    now,
+    workers: [...workers, { personId: 'w-3', displayName: 'Cy Qualified', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY' }],
+    qualifications: [...qualifications, { personId: 'w-3', code: 'WIND-II', status: 'Qualified', expiresAt: null }],
+    resources,
+    attendanceOpportunities: [
+      { opportunityId: 'op-w1', personId: 'w-1', shiftCode: 'DAY', scheduledStart, scheduledEnd, state: 'Scheduled' },
+      { opportunityId: 'op-w2', personId: 'w-2', shiftCode: 'DAY', scheduledStart, scheduledEnd, state: 'Scheduled' },
+      { opportunityId: 'op-w3', personId: 'w-3', shiftCode: 'DAY', scheduledStart, scheduledEnd, state: 'Scheduled' },
+    ],
+    unavailability: [{ personId: 'w-1', kind: 'ApprovedPto', startsAt: scheduledStart, endsAt: scheduledEnd }],
+  });
+  assert.equal(withQualifiedBackfill.attendanceRisks.length, 0, 'a qualified, authorized scheduled alternative prevents the coverage alert');
+});
+
+test('reported call-outs and verified no-shows create source-linked coverage alerts without reading absence reasons', () => {
+  const scheduledStart = new Date(now.getTime() - 60 * 60_000);
+  const scheduledEnd = new Date(now.getTime() + 7 * 60 * 60_000);
+  const summary = buildWorkforceIntelligence({
+    now, workers, qualifications, resources,
+    attendanceOpportunities: [
+      { opportunityId: 'op-w1', personId: 'w-1', shiftCode: 'DAY', scheduledStart, scheduledEnd, state: 'Scheduled' },
+      { opportunityId: 'op-w2', personId: 'w-2', shiftCode: 'DAY', scheduledStart, scheduledEnd, state: 'Scheduled' },
+    ],
+    attendanceEvents: [{ eventId: 'callout-event', opportunityId: 'op-w1', personId: 'w-1', kind: 'CallOut', reviewState: 'PendingReview', reasonCode: 'DO_NOT_EXPOSE' }],
+  });
+  const callout = summary.attendanceRisks.find(row => row.evidenceReferences.includes('AttendanceEvent/callout-event'));
+  assert.ok(callout);
+  assert.equal(callout.severity, 'attention');
+  assert.match(callout.title, /WD-01 · WIND has no qualified coverage/);
+  assert.match(callout.detail, /awaiting independent review; missing punches alone are never treated as no-shows/);
+  assert.doesNotMatch(JSON.stringify(callout), /DO_NOT_EXPOSE/);
+});

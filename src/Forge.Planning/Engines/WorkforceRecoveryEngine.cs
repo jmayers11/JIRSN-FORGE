@@ -45,7 +45,7 @@ public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRec
     private static readonly string[] ProjectedShiftLimitations = [
         "Candidate presence is projected from the selected shift calendar and recorded unavailability; it is not proof of clock-in or attendance.",
         "Qualification expiry, machine authorization, equipment/tooling, and safety rules effective at the selected shift start are checked.",
-        "Future source-center production coverage, material, due-date, and cost effects are not evaluated; supervisor review is required before planning the move.",
+        "Currently open source operations are checked with current assignments carried forward to the selected shift. Future dispatch, source workload, material, due-date, and cost effects are not forecasted.",
         "No assignment is written; confirm actual attendance and review source-center coverage before committing a plan.",
     ];
 
@@ -88,7 +88,7 @@ public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRec
                 continue;
 
             var proposed = AssignmentFor(target);
-            var preview = request.ProjectedShift ? null : impact.Evaluate(snapshot, new ReallocationRequest(mover.PersonId, proposed), asOf).Output;
+            var preview = impact.Evaluate(snapshot, new ReallocationRequest(mover.PersonId, proposed), asOf).Output;
             var targetAfter = readiness.Evaluate(snapshot.WithAssignment(mover.PersonId, proposed), target, asOf).Output;
             if (!targetAfter.Executable)
                 continue;
@@ -111,10 +111,10 @@ public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRec
                     [new WorkforceRecoveryMove(mover.PersonId, mover.Name, proposed)],
                     [],
                     request.ProjectedShift
-                        ? [$"{mover.Name} is scheduled at the selected shift start and meets the target qualification, machine-authorization, equipment/tooling, and safety checks.", "The future source-center production assignment is not recorded in Forge, so its coverage is not evaluated."]
+                        ? [$"{mover.Name} is scheduled at the selected shift start and meets the target qualification, machine-authorization, equipment/tooling, and safety checks.", "No currently open source operation is made unready using current assignments carried forward; future source dispatch and workload remain unknown."]
                         : [$"{mover.Name} can cover {target.Describe()} with current verified qualifications and any required machine authorization.", "No currently executable source-center work is stopped."],
                     request.ProjectedShift
-                        ? [.. targetAfter.NotEvaluated, "Future source-center production coverage"]
+                        ? [.. targetAfter.NotEvaluated, "Future source operation assignments and dispatch load"]
                         : targetAfter.NotEvaluated));
                 continue;
             }
@@ -150,7 +150,9 @@ public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRec
                     ],
                     sourceImpacts,
                     [$"Move {replacement.Name} to {stopped.Describe()} first; then move {mover.Name} to {target.Describe()}.", "The ordered two-move preview keeps the source and target work executable at each step."],
-                    targetAfter.NotEvaluated));
+                    request.ProjectedShift
+                        ? [.. targetAfter.NotEvaluated, "Future source operation assignments and dispatch load"]
+                        : targetAfter.NotEvaluated));
                 break;
             }
         }

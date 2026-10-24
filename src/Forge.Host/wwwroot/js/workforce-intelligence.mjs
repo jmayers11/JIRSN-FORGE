@@ -15,11 +15,11 @@ function currentQualification(record, now) {
   return expiry !== null && expiry > now;
 }
 
-function availableForRequirement(worker, qualificationRows, authorizationRows, profile, shiftCode, now) {
-  if (!worker.isActive || worker.unavailability) return false;
+function qualifiedForRequirement(worker, qualificationRows, authorizationRows, profile, shiftCode, at) {
+  if (!worker.isActive) return false;
   if (worker.shiftCode !== shiftCode) return false;
   const codes = qualificationRows
-    .filter(row => row.personId === worker.personId && currentQualification(row, now))
+    .filter(row => row.personId === worker.personId && currentQualification(row, at))
     .map(row => row.code);
   const qualifiedCodes = (profile.operatorQualifications ?? []).filter(code => codes.includes(code));
   if (!qualifiedCodes.length) return false;
@@ -27,9 +27,90 @@ function availableForRequirement(worker, qualificationRows, authorizationRows, p
   return (authorizationRows ?? []).some(row => row.personId === worker.personId && row.machineCode === profile.machineCode
     && row.activityCode === profile.activityCode && row.status === 'Authorized'
     && row.independentOperationAllowed === true
-    && (row.expiresAt == null || row.expiresAt === '' || (isoTime(row.expiresAt) !== null && isoTime(row.expiresAt) > now))
-    && (row.courseExpiresAt == null || row.courseExpiresAt === '' || (isoTime(row.courseExpiresAt) !== null && isoTime(row.courseExpiresAt) > now))
+    && (row.expiresAt == null || row.expiresAt === '' || (isoTime(row.expiresAt) !== null && isoTime(row.expiresAt) > at))
+    && (row.courseExpiresAt == null || row.courseExpiresAt === '' || (isoTime(row.courseExpiresAt) !== null && isoTime(row.courseExpiresAt) > at))
     && qualifiedCodes.includes(row.qualificationCode));
+}
+
+function availableForRequirement(worker, qualificationRows, authorizationRows, profile, shiftCode, now) {
+  return !worker.unavailability && qualifiedForRequirement(worker, qualificationRows, authorizationRows, profile, shiftCode, now);
+}
+
+function attendanceDisruptionRisks(input, now) {
+  const workers = input.workers ?? [];
+  const qualifications = input.qualifications ?? [];
+  const authorizationRows = input.machineAuthorizations ?? [];
+  const opportunities = input.attendanceOpportunities ?? [];
+  const unavailability = input.unavailability ?? [];
+  const events = input.attendanceEvents ?? [];
+  const resources = input.resources;
+  if (!resources || !Array.isArray(input.workers) || !Array.isArray(input.qualifications) || !Array.isArray(input.attendanceOpportunities)) return [];
+  const workerById = new Map(workers.map(worker => [worker.personId, worker]));
+  const machineByCode = new Map((resources.machines ?? []).map(machine => [machine.code, machine]));
+  const absentEventByOpportunity = new Map();
+  for (const event of events) {
+    const isCallOut = event.kind === 'CallOut' && ['PendingReview', 'Verified'].includes(event.reviewState);
+    const isVerifiedNoShow = event.kind === 'NoShow' && event.reviewState === 'Verified';
+    if (isCallOut || isVerifiedNoShow) absentEventByOpportunity.set(event.opportunityId, event);
+  }
+  const overlapping = (personId, start, end) => unavailability.some(row => row.personId === personId
+    && (isoTime(row.startsAt) ?? Infinity) < end && (isoTime(row.endsAt) ?? -Infinity) > start);
+  const emitted = new Set();
+  const coverageOpportunityIds = new Set();
+  const risks = [];
+  for (const opportunity of opportunities) {
+    if (opportunity.state === 'Cancelled') continue;
+    const start = isoTime(opportunity.scheduledStart), end = isoTime(opportunity.scheduledEnd);
+    if (start === null || end === null || end <= now - DAY_MS || start > now + 30 * DAY_MS) continue;
+    const worker = workerById.get(opportunity.personId);
+    if (!worker) continue;
+    if (input.shiftCode && opportunity.shiftCode !== input.shiftCode) continue;
+    if (input.workCenterCode && workerCenter(worker) !== input.workCenterCode) continue;
+    const absenceEvent = absentEventByOpportunity.get(opportunity.opportunityId);
+    if (!absenceEvent && !overlapping(worker.personId, start, end)) continue;
+    const center = workerCenter(worker);
+    for (const profile of resources.machineActivities ?? []) {
+      const machine = machineByCode.get(profile.machineCode);
+      if (!machine || machine.workCenterCode !== center) continue;
+      const shiftConfigured = (resources.workCenterShifts ?? []).some(link => link.workCenterCode === center && link.shiftCode === opportunity.shiftCode);
+      if (!shiftConfigured || !qualifiedForRequirement(worker, qualifications, authorizationRows, profile, opportunity.shiftCode, start)) continue;
+      const scheduled = opportunities.filter(item => item.shiftCode === opportunity.shiftCode
+        && (isoTime(item.scheduledStart) ?? Infinity) < end && (isoTime(item.scheduledEnd) ?? -Infinity) > start);
+      const qualified = scheduled.map(item => ({ item, person: workerById.get(item.personId) }))
+        .filter(candidate => candidate.person && qualifiedForRequirement(candidate.person, qualifications, authorizationRows, profile, opportunity.shiftCode, start));
+      const remaining = qualified.filter(candidate => !overlapping(candidate.person.personId, start, end)
+        && !absentEventByOpportunity.has(candidate.item.opportunityId));
+      if (remaining.length) continue;
+      const key = `${opportunity.opportunityId}/${profile.machineCode}/${profile.activityCode}`;
+      if (emitted.has(key)) continue;
+      emitted.add(key);
+      coverageOpportunityIds.add(opportunity.opportunityId);
+      const date = new Date(start).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+      const sourceStatus = absenceEvent?.reviewState === 'PendingReview' ? 'A reported call-out is awaiting independent review.'
+        : absenceEvent?.kind === 'NoShow' ? 'A verified no-show affects this scheduled shift.'
+          : absenceEvent ? 'A verified call-out affects this scheduled shift.' : 'A scheduled absence affects this shift.';
+      risks.push({ severity: absenceEvent?.reviewState === 'PendingReview' ? 'attention' : 'urgent',
+        title: `${machine.code} · ${profile.activityCode} has no qualified coverage on ${date}`,
+        detail: `${center} · ${opportunity.shiftCode}. ${sourceStatus} No qualified, authorized worker remains scheduled for this activity; private absence details are hidden. Review a safe coverage plan.`,
+        evidenceReferences: [`MachineActivity/${machine.code}/${profile.activityCode}`, `AttendanceOpportunity/${opportunity.opportunityId}`] });
+    }
+  }
+  for (const event of events) {
+    const isCallOut = event.kind === 'CallOut' && ['PendingReview', 'Verified'].includes(event.reviewState);
+    const isVerifiedNoShow = event.kind === 'NoShow' && event.reviewState === 'Verified';
+    if (!isCallOut && !isVerifiedNoShow) continue;
+    if (coverageOpportunityIds.has(event.opportunityId)) continue;
+    const opportunity = opportunities.find(item => item.opportunityId === event.opportunityId);
+    if (!opportunity) continue;
+    const worker = workerById.get(opportunity.personId);
+    if (!worker || (input.shiftCode && opportunity.shiftCode !== input.shiftCode)
+        || (input.workCenterCode && workerCenter(worker) !== input.workCenterCode)) continue;
+    risks.push({ severity: event.reviewState === 'PendingReview' ? 'attention' : 'urgent',
+      title: `${event.kind === 'CallOut' ? 'Call-out' : 'No-show'} · ${worker?.displayName ?? 'Employee'} · ${opportunity.shiftCode}`,
+      detail: `${new Date(opportunity.scheduledStart).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}. ${event.reviewState === 'PendingReview' ? 'This reported call-out is awaiting independent review; missing punches alone are never treated as no-shows.' : 'Verified attendance event. Review current shift coverage and use an authorized recovery plan.'} Private absence details are hidden.`,
+      evidenceReferences: [`AttendanceEvent/${event.eventId}`, `AttendanceOpportunity/${opportunity.opportunityId}`] });
+  }
+  return risks;
 }
 
 function capabilityCoverage({ workers, qualifications, machineAuthorizations, resources, shiftCode, workCenterCode, now }) {
@@ -197,6 +278,7 @@ export function buildWorkforceIntelligence(input = {}) {
     const end = isoTime(row.endsAt);
     return end !== null && end > now;
   });
+  const attendanceRisks = attendanceDisruptionRisks(input, now);
   const operationByOrder = new Map();
   for (const operation of input.readiness ?? []) {
     const operations = operationByOrder.get(operation.orderNumber) ?? [];
@@ -298,6 +380,7 @@ export function buildWorkforceIntelligence(input = {}) {
     capabilityGaps,
     trainingRecommendations,
     blockers,
+    attendanceRisks,
     materialDisruptions: [...materialDisruptions, ...suspectReports].sort((a, b) => (a.severity === 'urgent' ? 0 : 1) - (b.severity === 'urgent' ? 0 : 1)
       || (a.recoveryPriority ?? 99) - (b.recoveryPriority ?? 99) || (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31') || a.title.localeCompare(b.title)),
     upcomingAbsence,
@@ -333,5 +416,6 @@ export function renderEvidenceReference(reference) {
   if (materialTask) return `<a href="#/inventory?tab=tasks">${safeText}</a>`;
   const suspectReport = /^SuspectScrapReport\/(\d{1,18})$/.exec(text);
   if (suspectReport) return `<a href="#/quality?tab=suspect">${safeText}</a>`;
+  if (/^Attendance(?:Event|Opportunity)\/[0-9a-f-]{36}$/i.test(text)) return `<a href="#/workforce">${safeText}</a>`;
   return `<code>${safeText}</code>`;
 }

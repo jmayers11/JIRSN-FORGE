@@ -172,6 +172,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
       evidenceReferences: [`PersonQualification/${row.personId}/${row.code}`],
     })));
   }
+  if (summary.attendanceRisks?.length) issues.push(...summary.attendanceRisks.slice(0, 8));
   if (summary.capabilityGaps.length) {
     issues.push(...summary.capabilityGaps.slice(0, 8).map(row => ({
       severity: 'urgent',
@@ -394,6 +395,8 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     qualificationTypes: typesResult.data,
     resources,
     unavailability: unavailabilityResult.data,
+    attendanceOpportunities: opportunitiesResult.data,
+    attendanceEvents: pendingResult.data,
     readiness: readinessResult.data,
     activity: activityResult.data,
     attendanceSummary: attendanceResult.data,
@@ -491,11 +494,14 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
         const result = await readPost('/api/readiness/workforce-recovery-preview', request);
         const summary = result.output;
         if (!summary || !output) throw new Error('The recovery preview returned no result.');
-        const sourceImpact = candidate => summary.projectedShift
-          ? '<span>Future source-center production coverage is not forecasted.</span>'
-          : candidate.sourceImpacts?.length
-            ? `<span>Source impact: ${candidate.sourceImpacts.map(item => esc(item.detail)).join(' · ')}</span>`
-            : '<span>No currently executable source work is disrupted.</span>';
+        const sourceImpact = candidate => {
+          const known = candidate.sourceImpacts?.length
+            ? `<span>Currently open source-work impact: ${candidate.sourceImpacts.map(item => esc(item.detail)).join(' · ')}</span>`
+            : '<span>No currently open source operation is made unready using current assignments carried forward.</span>';
+          return summary.projectedShift
+            ? `${known}<span>Future source dispatch and workload remain unknown.</span>`
+            : candidate.sourceImpacts?.length ? `<span>Source impact: ${candidate.sourceImpacts.map(item => esc(item.detail)).join(' · ')}</span>` : '<span>No currently executable source work is disrupted.</span>';
+        };
         output.innerHTML = summary.candidates?.length
           ? `<ol class="workforce-intelligence-recovery-list">${summary.candidates.map(candidate => `<li><b>#${candidate.rank} · ${esc(candidate.personName)}</b><span>${summary.projectedShift ? 'Scheduled candidate' : candidate.requiresSourceBackfill ? 'Two-step plan' : 'Direct move'} · ${candidate.moves.map(move => `${esc(move.personName)} → ${esc(move.assignment.machineCode || move.assignment.workCenterCode || move.assignment.safetyAreaCode)} / ${esc(move.assignment.activityCode)}`).join(' · ')}</span>${sourceImpact(candidate)}<span>${candidate.evidence.map(esc).join(' ')}</span></li>`).join('')}</ol><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`
           : `<p class="faint">No ${summary.projectedShift ? 'qualified workers scheduled' : 'safe candidates among visible, currently present workers'} found (${fmtNumber(summary.evaluatedCandidates)} evaluated). ${summary.currentConstraint ? `Current target constraint: ${esc(summary.currentConstraint)}.` : ''}</p><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`;
