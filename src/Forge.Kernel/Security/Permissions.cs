@@ -190,6 +190,12 @@ public static class Permissions
     /// <summary>Ask Forge Analyst. Every answer still needs the read permission of what it is about.</summary>
     public const string AnalystUse = "planning.analyst.use";
 
+    /// <summary>Sprint 9 demo tenant: advance the simulated clock and capture or compare a baseline. Only on a designated demo database.</summary>
+    public const string DemoControl = "demo.control";
+
+    /// <summary>Sprint 9 demo tenant: designate a demo-only database and reset it to its saved baseline (the current state is archived).</summary>
+    public const string DemoReset = "demo.reset";
+
     public const string ProgramsManage = "programs.manage";
     public const string ProgramsRead = "programs.read";
 
@@ -353,6 +359,9 @@ public static class Roles
         Map[Supervisor] = [.. Map[Supervisor], Permissions.NotificationRulesManage];
         Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.WorkAssignmentsManage];
         Map[Supervisor] = [.. Map[Supervisor], Permissions.WorkAssignmentsManage];
+        Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.DemoControl, Permissions.DemoReset];
+        Map[Planner] = [.. Map[Planner], Permissions.DemoControl];
+        Map[Supervisor] = [.. Map[Supervisor], Permissions.DemoControl];
     }
 
     /// <summary>The system role the propagation of a released engineering change acts with (V2.5).</summary>

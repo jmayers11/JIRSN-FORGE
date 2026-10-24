@@ -1,6 +1,7 @@
 import { session, loadConfig, get, tryGet, signedIn, signInDevelopment, signOut, whenSignedOut, beginOidcSignIn, completeOidcSignIn, onCommand } from './api.js';
 import { icon, img } from './icons.js';
 import { esc, $, $$, setTimeZone, closeOverlays, drawer, toast } from './ui.js';
+import { startDemoClock } from './demo-clock.js';
 import { horizonPage } from './pages/horizon.js';
 import { ordersPage } from './pages/orders.js';
 import { schedulingPage } from './pages/scheduling.js';
@@ -211,6 +212,7 @@ function renderShell() {
         <ul class="nav nav-bottom">${navItem(SETTINGS)}</ul>
       </nav>
       <div class="main">
+        <div id="demo-clock" hidden></div>
         <header class="topbar">
           <button class="icon-btn menu-btn" id="menu" aria-label="Menu">${icon('menu')}</button>
           <div class="search">
@@ -353,6 +355,7 @@ async function start() {
   const [resources] = await Promise.all([tryGet('/api/resources/'), loadDirectory()]);
   setTimeZone(resources.data?.sites?.[0]?.timeZone);
   renderShell();
+  await startDemoClock($('#demo-clock'));
   await route();
 }
 

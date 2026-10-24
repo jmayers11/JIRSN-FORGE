@@ -1315,3 +1315,7 @@ button.pill.linkish:hover { text-decoration: underline; }
 .workforce-intelligence-recovery-list li { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .workforce-intelligence-correction { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 8px; }
 .workforce-intelligence-attendance-tools { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+
+/* Sprint 9 simulated demo clock: always visible so simulated time is never mistaken for real time. */
+.demo-clock-banner { padding: 6px 16px; background: #7a4b00; color: #fff; font-size: 13px; letter-spacing: .02em; }
+.demo-clock-banner .faint { color: rgba(255, 255, 255, .8); }

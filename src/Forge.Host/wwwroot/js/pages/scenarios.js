@@ -1,3 +1,4 @@
+import { appendDemoControl } from '../demo-clock.js';
 import { command, get } from '../api.js';
 import { $, $$, esc, fmtDateTime, toast, confirmWithReason } from '../ui.js';
 import { formModal } from '../forms.js';
@@ -111,6 +112,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
   };
   const field = (name, label, type = 'text', required = false, placeholder = '', value = '') => `<label class="field"><span>${label}</span><input class="input" name="${name}" type="${type}" value="${esc(value)}" ${required ? 'required' : ''} ${placeholder ? `placeholder="${placeholder}"` : ''}></label>`;
   const selectField = (name, label, records, value = '', required = false, blank = 'Choose…') => `<label class="field"><span>${label}</span><select class="input" name="${name}" ${required ? 'required' : ''}><option value="">${blank}</option>${records.map(([key, text]) => `<option value="${esc(key)}" ${String(value) === String(key) ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
+  const demoHost = document.createElement('div');
   const render = () => {
     const prefilled = {
       orderNumber: ctx.query.get('order') ?? '', sequence: ctx.query.get('op') ?? '', workCenterCode: ctx.query.get('wc') ?? '',
@@ -158,6 +160,9 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       if (!option) { toast('Choose a recovery option to evaluate.', true); return; }
       evaluateOption(id, option).catch(error => toast(error.message, true));
     }));
+      // Server demo controls (Sprint 9) survive re-renders: the same element is placed back under the page heading.
+    const head = root.querySelector('.page-head');
+    if (typeof head?.after === 'function') head.after(demoHost);
   };
 
   function renderWhiskerWorksCenter() {
@@ -1407,6 +1412,6 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     } catch (error) { toast(error.message, true); }
   }
 
-  try { await read(); render(); }
+  try { await read(); render(); appendDemoControl(demoHost, profile).catch(() => {}); }
   catch (error) { root.innerHTML = `<section class="panel"><h1>Scenarios and recovery</h1><p class="notice bad">${esc(error.message)}</p></section>`; }
 }

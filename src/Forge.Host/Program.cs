@@ -37,7 +37,18 @@ var connectionString = builder.Configuration.GetConnectionString("Forge")
     ?? throw new InvalidOperationException("Connection string 'Forge' is not configured.");
 
 // Bounded contexts in dependency order (migrations run in this order).
+// Sprint 9 demo tenant: only a host started with Forge:Demo:Enabled has a simulated clock, and even then only a designated demo database moves it.
+var demoEnabled = builder.Configuration.GetValue("Forge:Demo:Enabled", false);
+builder.Services.AddSingleton(new Forge.Host.Demo.DemoOptions(demoEnabled, connectionString));
+builder.Services.AddSingleton(_ => new Forge.Host.Demo.DemoClock(TimeProvider.System));
+if (demoEnabled)
+{
+    builder.Services.AddSingleton<TimeProvider>(sp => sp.GetRequiredService<Forge.Host.Demo.DemoClock>());
+}
+
 builder.Services.AddForgeKernel(connectionString);
+builder.Services.AddForgeStore<Forge.Host.Demo.IDemoStore>(uow => new Forge.Host.Demo.DemoStore(uow));
+builder.Services.AddSingleton<Forge.Host.Demo.DemoService>();
 builder.Services.AddForgeStore<INotificationStore>(uow => new NotificationStore(uow));
 builder.Services.AddForgeResources();
 builder.Services.AddForgeCompetency();
@@ -218,6 +229,7 @@ if (app.Configuration.GetValue("Forge:Database:MigrateOnStartup", false))
 
 // Each site's own clock decides "today" (ADR 0057 §1): read the site zones once the schema is in place.
 await app.Services.GetRequiredService<SiteClockLoader>().LoadAsync(CancellationToken.None);
+await app.Services.GetRequiredService<Forge.Host.Demo.DemoService>().LoadClockAsync(CancellationToken.None);
 
 var bootstrapSubject = app.Configuration["Forge:Bootstrap:AdminSubject"];
 if (!string.IsNullOrWhiteSpace(bootstrapSubject))
@@ -266,6 +278,7 @@ app.MapOperationsEndpoints();
 app.MapPlantVisualEndpoints();
 app.MapScrap();
 app.MapPartialBuilds();
+app.MapDemo();
 app.MapPerformanceAttribution();
 app.MapSkillCapacity();
 app.MapEngineeringEndpoints();
