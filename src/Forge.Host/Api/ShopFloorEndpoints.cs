@@ -231,6 +231,7 @@ internal static class ShopFloorEndpoints
 
                 var labor = await exec.ListLaborAsync(DateTimeOffset.MinValue, DateTimeOffset.MaxValue, orderNumber, http.RequestAborted);
                 var reports = await exec.ListReportsAsync(DateTimeOffset.MinValue, DateTimeOffset.MaxValue, orderNumber, http.RequestAborted);
+                var stoppages = await uow.Store<IProductionActualsLookup>().ListOrderStoppagesAsync(orderNumber, http.RequestAborted);
                 return new
                 {
                     orderNumber = order.OrderNumber,
@@ -241,7 +242,7 @@ internal static class ShopFloorEndpoints
                     labor,
                     reports,
                     training = await exec.ListTrainingSessionsAsync(DateTimeOffset.MinValue, DateTimeOffset.MaxValue, orderNumber, http.RequestAborted),
-                    laborMetrics = ProductionLaborMetrics.Calculate(order, labor, reports, time.GetUtcNow()),
+                    laborMetrics = ProductionLaborMetrics.Calculate(order, labor, reports, time.GetUtcNow(), stoppages),
                 };
             })).RequireAuthorization();
 

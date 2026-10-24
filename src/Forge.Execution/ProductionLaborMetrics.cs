@@ -17,6 +17,8 @@ public sealed record OperationLaborMetric(
     decimal RecordedInspectionHours,
     decimal RecordedReworkHours,
     decimal RecordedTrainingHours,
+    decimal RecordedStoppageMinutes,
+    string StoppageContext,
     decimal ReportedGoodQuantity,
     decimal ReportedScrapQuantity,
     decimal? EarnedStandardHours,
@@ -33,7 +35,7 @@ public sealed record OperationLaborMetric(
 public static class ProductionLaborMetrics
 {
     public static IReadOnlyList<OperationLaborMetric> Calculate(OrderInfo order, IReadOnlyCollection<LaborEntry> labor,
-        IReadOnlyCollection<ProductionReport> reports, DateTimeOffset asOf)
+        IReadOnlyCollection<ProductionReport> reports, DateTimeOffset asOf, IReadOnlyCollection<StoppageInfo>? stoppages = null)
     {
         ArgumentNullException.ThrowIfNull(order);
         ArgumentNullException.ThrowIfNull(labor);
@@ -58,6 +60,14 @@ public static class ProductionLaborMetrics
             decimal PhaseHours(LaborPhase phase) => entries.Where(entry => entry.Phase == phase).Sum(Hours);
             var trainingHours = entries.Where(entry => entry.Role is LaborRole.Trainee or LaborRole.Trainer).Sum(Hours);
             var opReports = reports.Where(report => report.OrderNumber == order.OrderNumber && report.Sequence == operation.Sequence).ToArray();
+            var opStoppages = (stoppages ?? []).Where(stoppage => stoppage.OrderNumber == order.OrderNumber && stoppage.Sequence == operation.Sequence).ToArray();
+            var stoppageMinutes = opStoppages.Sum(stoppage => stoppage.Minutes(asOf));
+            var stoppageContext = opStoppages.Length == 0
+                ? "No machine stoppage is linked to this operation."
+                : string.Join("; ", opStoppages.GroupBy(stoppage => (stoppage.Category, stoppage.ReasonCode))
+                    .OrderBy(group => group.Key.Category).ThenBy(group => group.Key.ReasonCode, StringComparer.Ordinal)
+                    .Select(group => $"{group.Key.Category} · {group.Key.ReasonCode} ({group.Sum(stoppage => stoppage.Minutes(asOf)):0.#} min)"))
+                    + ". Reported categories are context, not confirmed root causes.";
             var good = opReports.Sum(report => report.GoodQuantity);
             var scrap = opReports.Sum(report => report.ScrapQuantity);
             decimal? variance = operation.Status == OperationStatus.Complete && totalHours is { } planned
@@ -72,11 +82,13 @@ public static class ProductionLaborMetrics
                 decimal.Round(PhaseHours(LaborPhase.Inspection), 3, MidpointRounding.AwayFromZero),
                 decimal.Round(PhaseHours(LaborPhase.Rework), 3, MidpointRounding.AwayFromZero),
                 decimal.Round(trainingHours, 3, MidpointRounding.AwayFromZero),
+                stoppageMinutes,
+                stoppageContext,
                 good, scrap, null, null, variance,
                 "N/A: operation-scoped quality-accepted quantity is not available; reported good quantity is not assumed accepted.",
                 variance is null
-                    ? "Variance is shown after completion; recorded waits are not yet classified by labor phase."
-                    : "Recorded operator interval minus released routing target; reported downtime/material waits are not yet classified by labor phase.");
+                    ? "Variance is shown after completion."
+                    : "Recorded operator interval minus released routing target.");
         }).ToArray();
     }
 }

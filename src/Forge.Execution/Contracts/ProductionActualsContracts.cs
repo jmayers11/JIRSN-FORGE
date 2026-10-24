@@ -81,6 +81,9 @@ public interface IProductionActualsLookup
     /// <summary>Stoppages overlapping [from, to), oldest first; or every open one when <paramref name="openOnly"/>.</summary>
     Task<IReadOnlyList<StoppageInfo>> ListStoppagesAsync(DateTimeOffset from, DateTimeOffset to, bool openOnly, CancellationToken ct);
 
+    /// <summary>Stoppages explicitly linked to an order operation; the reported reason is not a confirmed root cause.</summary>
+    Task<IReadOnlyList<StoppageInfo>> ListOrderStoppagesAsync(long orderNumber, CancellationToken ct);
+
     Task<StoppageInfo?> FindStoppageAsync(long stoppageId, CancellationToken ct);
 
     /// <summary>Root causes of the given stoppages (all when null), oldest first.</summary>

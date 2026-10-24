@@ -53,6 +53,29 @@ public sealed class ProductionLaborMetricsTests
         Assert.Equal(0m, metric.ReportedScrapQuantity);
     }
 
+    [Fact]
+    public void Linked_machine_stoppages_are_reported_as_context_without_becoming_labor_or_proven_causes()
+    {
+        var order = Order(OperationStatus.Complete);
+        var labor = new[] { Entry("00000000-0000-0000-0000-000000000001", LaborRole.Operator, LaborPhase.Run, Start, Start.AddHours(2)) };
+        var stoppages = new[]
+        {
+            new StoppageInfo(1, "M-1", "WC-A", StoppageCategory.Starved, "MATERIAL_WAIT", order.OrderNumber, 10,
+                null, "Operator did not write a material root cause", Start, "supervisor", Start.AddMinutes(25), "supervisor"),
+            new StoppageInfo(2, "M-1", "WC-A", StoppageCategory.Unplanned, "DRIVE_FAULT", order.OrderNumber, 10,
+                null, "Machine fault report", Start.AddHours(1), "supervisor", Start.AddHours(2).AddMinutes(1), "supervisor"),
+        };
+
+        var metric = Assert.Single(ProductionLaborMetrics.Calculate(order, labor, [], Start.AddHours(3), stoppages));
+
+        Assert.Equal(2m, metric.RecordedOperatorHours);
+        Assert.Equal(86m, metric.RecordedStoppageMinutes);
+        Assert.Contains("Starved · MATERIAL_WAIT (25 min)", metric.StoppageContext, StringComparison.Ordinal);
+        Assert.Contains("Unplanned · DRIVE_FAULT (61 min)", metric.StoppageContext, StringComparison.Ordinal);
+        Assert.Contains("not confirmed root causes", metric.StoppageContext, StringComparison.Ordinal);
+        Assert.DoesNotContain("Operator did not write", metric.StoppageContext, StringComparison.Ordinal);
+    }
+
     private static OrderInfo Order(OperationStatus status) => new(
         1001, "PART-A", "A", 10, new DateOnly(2026, 10, 30), 1, OrderStatus.Released, null, null, Start,
         [new OrderOperationInfo(10, "Assemble", "WC-A", "ASSEMBLE", [], [], 130, 2, status, SetupMinutes: 10)], []);

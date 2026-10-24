@@ -198,6 +198,32 @@ public sealed class Phase5Tests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task Order_labor_detail_shows_linked_stoppage_reason_as_context_not_direct_labor()
+    {
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        var f = await FloorAsync(app);
+        var order = await ReleasedOrderAsync(f, 10m);
+        await f.Plant.Ok(f.Plant.Engineer, "/api/execution/reason-codes", new
+        {
+            code = "LABOR-STARVED", kind = "Downtime", category = "Starved", description = "Upstream material or work not available",
+        });
+        await f.Plant.Ok(f.Plant.Engineer, "/api/execution/stoppages", new
+        {
+            machineCode = "SLITTER-A", category = "Starved", reasonCode = "LABOR-STARVED", orderNumber = order, sequence = 10,
+            startedAt = DateTimeOffset.UtcNow.AddMinutes(-12), note = "Fictional scenario note", reason = "Record a linked operation stoppage",
+        });
+
+        var detail = await Get(f.Plant.Engineer, $"/api/orders/{order}/shopfloor");
+        var metric = detail.GetProperty("laborMetrics").EnumerateArray().Single(item => item.GetProperty("sequence").GetInt32() == 10);
+
+        Assert.Equal(0m, metric.GetProperty("recordedOperatorHours").GetDecimal());
+        Assert.True(metric.GetProperty("recordedStoppageMinutes").GetDecimal() >= 12m);
+        Assert.Contains("Starved · LABOR-STARVED", metric.GetProperty("stoppageContext").GetString(), StringComparison.Ordinal);
+        Assert.Contains("not confirmed root causes", metric.GetProperty("stoppageContext").GetString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Fictional scenario note", metric.GetProperty("stoppageContext").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Attainment_measures_completed_work_against_the_schedule_in_force()
     {
         await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());

@@ -28,6 +28,9 @@ internal sealed class PostgresProductionActualsStore(PostgresUnitOfWork uow) : I
         ? Read(StoppageSql + " WHERE ended_at IS NULL ORDER BY started_at", ReadStoppage, ct)
         : Read(StoppageSql + " WHERE started_at < $2 AND (ended_at IS NULL OR ended_at > $1) ORDER BY started_at, stoppage_id", ReadStoppage, ct, from, to);
 
+    public Task<IReadOnlyList<StoppageInfo>> ListOrderStoppagesAsync(long orderNumber, CancellationToken ct) =>
+        Read(StoppageSql + " WHERE order_number = $1 ORDER BY started_at, stoppage_id", ReadStoppage, ct, orderNumber);
+
     public async Task<StoppageInfo?> FindStoppageAsync(long stoppageId, CancellationToken ct) =>
         (await Read(StoppageSql + " WHERE stoppage_id = $1", ReadStoppage, ct, stoppageId)).SingleOrDefault();
 
