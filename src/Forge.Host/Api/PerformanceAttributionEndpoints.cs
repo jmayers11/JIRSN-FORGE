@@ -17,6 +17,16 @@ public sealed record AttributionBody(DefectCause Cause, bool EmployeeOpportunity
 
 public sealed record AttributionReviewBody(bool Verify, string? Reason);
 
+public sealed record CoverageBody(Guid PersonId, string DestinationWorkCenter, string? MachineCode, string ActivityCode, DateTimeOffset PlannedStart, DateTimeOffset PlannedEnd,
+    string CoverageReason, decimal GoalGoodUnits, int GoalProductiveMinutes, string GoalRationale, string? Reason, long? OrderNumber = null, int? Sequence = null,
+    decimal? ForecastConservative = null, decimal? ForecastExpected = null, decimal? ForecastOptimistic = null, string? ForecastConfidence = null, string? ForecastBasis = null);
+
+public sealed record CoverageGoalBody(decimal GoodUnits, int ProductiveMinutes, string Rationale, string? Reason, bool TimeAdjusted = false);
+
+public sealed record CoverageComparabilityBody(bool Comparable, string? ExclusionReason, string? Reason);
+
+public sealed record CoverageStepBody(string? Reason);
+
 /// <summary>Cause-adjusted performance (Sprint 10 §16): coded time, verified first-pass attribution and the factual report built from them.</summary>
 public static class PerformanceAttributionEndpoints
 {
@@ -43,6 +53,28 @@ public static class PerformanceAttributionEndpoints
                 b.OrderNumber, b.Sequence, b.SupersedesEntryId), c, ct)));
         workforce.MapPost("/coded-time/{id:guid}/review", (HttpContext http, Guid id, CodedTimeReviewBody b, CodedTimeService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReviewAsync(new ReviewCodedTime(id, b.Approve), c, ct)));
+
+        workforce.MapGet("/coverage", async (HttpContext http, Guid personId, DateTimeOffset? from, DateTimeOffset? to, CoverageContributionService service, TimeProvider time, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            var end = to ?? time.GetUtcNow();
+            return Results.Ok(await service.BuildAsync(principal, personId, from ?? end.AddDays(-92), end, ct));
+        });
+        workforce.MapPost("/coverage", (HttpContext http, CoverageBody b, CoverageService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.PlanAsync(new PlanCoverageAssignment(b.PersonId, b.DestinationWorkCenter, b.MachineCode, b.ActivityCode, b.PlannedStart, b.PlannedEnd,
+                b.CoverageReason, b.GoalGoodUnits, b.GoalProductiveMinutes, b.GoalRationale, b.OrderNumber, b.Sequence, b.ForecastConservative, b.ForecastExpected,
+                b.ForecastOptimistic, b.ForecastConfidence, b.ForecastBasis), c, ct)));
+        workforce.MapPost("/coverage/{id:guid}/start", (HttpContext http, Guid id, CoverageStepBody b, CoverageService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.StartAsync(new StartCoverage(id), c, ct)));
+        workforce.MapPost("/coverage/{id:guid}/complete", (HttpContext http, Guid id, CoverageStepBody b, CoverageService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CompleteAsync(new CompleteCoverage(id), c, ct)));
+        workforce.MapPost("/coverage/{id:guid}/cancel", (HttpContext http, Guid id, CoverageStepBody b, CoverageService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CancelAsync(new CancelCoverage(id), c, ct)));
+        workforce.MapPost("/coverage/{id:guid}/goal", (HttpContext http, Guid id, CoverageGoalBody b, CoverageService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReviseGoalAsync(new ReviseCoverageGoal(id, b.GoodUnits, b.ProductiveMinutes, b.Rationale, b.TimeAdjusted), c, ct)));
+        workforce.MapPost("/coverage/{id:guid}/comparability", (HttpContext http, Guid id, CoverageComparabilityBody b, CoverageService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ReviewComparabilityAsync(new ReviewCoverageComparability(id, b.Comparable, b.ExclusionReason), c, ct)));
 
         var quality = app.MapGroup("/api/quality").RequireAuthorization();
         quality.MapGet("/attributions", (HttpContext http, long[]? inspection, CancellationToken _) =>

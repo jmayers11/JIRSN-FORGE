@@ -82,6 +82,7 @@ builder.Services.AddForgeStore<IIdentificationPresentationStore>(uow => new Labe
 builder.Services.AddForgeStore<Forge.Engineering.Contracts.IGeneratedDocumentContentStore>(uow => new GeneratedDocumentContentStore(uow));
 builder.Services.AddScoped<Forge.Host.Workforce.PlantVisualService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.CauseAdjustedPerformanceService>();
+builder.Services.AddSingleton<Forge.Host.Workforce.CoverageContributionService>();
 builder.Services.AddForgeStore<IScanSessionStore>(uow => new PostgresScanSessionStore(uow));
 builder.Services.AddSingleton<PresentationAccess>();
 builder.Services.AddSingleton<LabelRendering>();
@@ -265,6 +266,7 @@ app.MapOperationsEndpoints();
 app.MapPlantVisualEndpoints();
 app.MapScrap();
 app.MapPerformanceAttribution();
+app.MapSkillCapacity();
 app.MapEngineeringEndpoints();
 app.MapDocumentEndpoints();
 app.MapChangeEndpoints();

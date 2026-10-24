@@ -284,6 +284,9 @@ public static class CompetencyRegistration
         services.AddForgeStore<ICompetencyStore>(uow => new PostgresCompetencyStore(uow));
         services.AddForgeStore<ICompetencyLookup>(uow => new PostgresCompetencyStore(uow));
         services.AddSingleton<CompetencyService>();
+        services.AddForgeStore<IRefresherPolicyStore>(uow => new PostgresRefresherPolicyStore(uow));
+        services.AddForgeStore<IRefresherPolicyLookup>(uow => new PostgresRefresherPolicyStore(uow));
+        services.AddSingleton<RefresherPolicyService>();
         return services;
     }
 }

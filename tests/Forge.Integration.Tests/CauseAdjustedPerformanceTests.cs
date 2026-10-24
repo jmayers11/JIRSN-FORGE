@@ -114,7 +114,7 @@ public sealed class CauseAdjustedPerformanceTests(PostgresFixture postgres)
         var correction = Id(await plant.Ok(insp, $"/api/quality/inspections/{inspection}/attribution", new { cause = "Unknown", employeeOpportunity = false, supersedesAttributionId = attribution, evidence = "Knife setup log missing", reason = "Re-review" }));
         await plant.Ok(qe, $"/api/quality/attributions/{correction}/verify", new { verify = true, reason = "Agreed" });
         var history = await Get(qe, $"/api/quality/attributions?inspection={inspection}");
-        Assert.Equal(["Superseded", "Verified"], history.EnumerateArray().Select(a => a.GetProperty("state").GetString()).ToArray());
+        Assert.Equal(new[] { "Superseded", "Verified" }, history.EnumerateArray().Select(a => a.GetProperty("state").GetString()).ToArray());
         Assert.Equal(JsonValueKind.Null, (await Get(sup, url)).GetProperty("firstPass").GetProperty("employeeAttributableFpyPercent").ValueKind);
     }
 }

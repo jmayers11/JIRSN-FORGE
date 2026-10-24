@@ -224,7 +224,7 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
         return (efficiency, scope, outside);
     }
 
-    private async Task<(FirstPassYieldMetrics Metrics, IReadOnlyList<FirstPassCohortView> Cohorts)> FirstPassAsync(IKernelUnitOfWork uow, ForgePrincipal principal,
+    private static async Task<(FirstPassYieldMetrics Metrics, IReadOnlyList<FirstPassCohortView> Cohorts)> FirstPassAsync(IKernelUnitOfWork uow, ForgePrincipal principal,
         IReadOnlyList<LaborEntry> labor, DateTimeOffset from, DateTimeOffset to, decimal minimumCoverage, CancellationToken ct)
     {
         var operations = labor.Where(l => l.Phase is LaborPhase.Run or LaborPhase.Setup or LaborPhase.Rework).Select(l => (l.OrderNumber, l.Sequence)).ToHashSet();

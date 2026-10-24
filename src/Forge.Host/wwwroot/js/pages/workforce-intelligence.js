@@ -2,6 +2,7 @@ import { tryGet, command, readPost } from '../api.js';
 import { esc, fmtNumber, errorBlock } from '../ui.js';
 import { buildWorkforceIntelligence, filterWorkforceIntelligenceInputs, renderEvidenceReference } from '../workforce-intelligence.mjs';
 import { openCausePerformance } from '../cause-performance.js';
+import { candidateCapacityHtml, capacityByPerson } from '../skill-capacity.js';
 
 const DAY = 86_400_000;
 const formatDate = value => {
@@ -539,6 +540,30 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     }
   });
   page.addEventListener('click', async event => {
+    const cover = event.target.closest('[data-wi-cover]');
+    if (cover) {
+      const plan = JSON.parse(cover.dataset.wiCover);
+      const f = plan.forecast;
+      const start = new Date(), end = new Date(start.getTime() + 8 * 3600e3);
+      const { formModal } = await import('../forms.js');
+      await formModal({
+        title: 'Plan coverage', detail: `Forecast: ${f.expectedGoodUnits == null ? 'no estimate' : `${f.conservativeGoodUnits}–${f.optimisticGoodUnits} good units (expected ${f.expectedGoodUnits}, ${f.confidence} confidence)`}. Set a separate, achievable goal; share it and the safe-work instructions with the worker.`,
+        fields: [
+          { name: 'destinationWorkCenter', label: 'Destination work center', value: plan.workCenterCode ?? '', code: true, required: true },
+          { name: 'goalGoodUnits', label: 'Goal (good units)', type: 'number', min: 0, value: f.expectedGoodUnits ?? '', required: true },
+          { name: 'goalProductiveMinutes', label: 'Planned productive minutes', type: 'number', min: 1, value: f.productiveMinutes || 420, required: true },
+          { name: 'goalRationale', label: 'Why this goal', type: 'textarea', required: true },
+          { name: 'coverageReason', label: 'Why coverage is needed', type: 'textarea', required: true },
+        ],
+        confirmLabel: 'Approve coverage', reasonRequired: true,
+      }, (v, reason) => command('/api/workforce/coverage', {
+        personId: plan.personId, destinationWorkCenter: v.destinationWorkCenter, machineCode: plan.machineCode, activityCode: plan.activityCode,
+        plannedStart: start.toISOString(), plannedEnd: end.toISOString(), coverageReason: v.coverageReason, goalGoodUnits: v.goalGoodUnits,
+        goalProductiveMinutes: v.goalProductiveMinutes, goalRationale: v.goalRationale, forecastConservative: f.conservativeGoodUnits,
+        forecastExpected: f.expectedGoodUnits, forecastOptimistic: f.optimisticGoodUnits, forecastConfidence: f.confidence, forecastBasis: f.estimateBasis,
+      }, reason));
+      return;
+    }
     const causePerformance = event.target.closest('[data-wi-cause-performance]');
     if (causePerformance) { await openCausePerformance(causePerformance.dataset.wiCausePerformance, causePerformance.dataset.wiCauseName, me); return; }
     const recovery = event.target.closest('[data-wi-recovery]');
@@ -567,7 +592,15 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
           request.shiftCode = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-shift]')?.value || null;
           if (!request.shiftDate || !request.shiftCode) throw new Error('Choose the plant shift date and shift before previewing scheduled candidates.');
         }
-        const result = await readPost('/api/readiness/workforce-recovery-preview', request);
+        // Section 21: the same ranking with each candidate's capacity forecast; fall back to the plain ranking if forecasts are unavailable.
+        let result, capacity = new Map();
+        try {
+          const withCapacity = await readPost('/api/readiness/workforce-recovery-capacity', { ...request, scheduledMinutes: 480 });
+          result = withCapacity.recovery;
+          capacity = capacityByPerson(withCapacity);
+        } catch {
+          result = await readPost('/api/readiness/workforce-recovery-preview', request);
+        }
         const summary = result.output;
         if (!summary || !output) throw new Error('The recovery preview returned no result.');
         const sourceImpact = candidate => {
@@ -579,7 +612,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
             : candidate.sourceImpacts?.length ? `<span>Source impact: ${candidate.sourceImpacts.map(item => esc(item.detail)).join(' · ')}</span>` : '<span>No currently executable source work is disrupted.</span>';
         };
         output.innerHTML = summary.candidates?.length
-          ? `<ol class="workforce-intelligence-recovery-list">${summary.candidates.map(candidate => `<li><b>#${candidate.rank} · ${esc(candidate.personName)}</b><span>${summary.projectedShift ? 'Scheduled candidate' : candidate.requiresSourceBackfill ? 'Two-step plan' : 'Direct move'} · ${candidate.moves.map(move => `${esc(move.personName)} → ${esc(move.assignment.machineCode || move.assignment.workCenterCode || move.assignment.safetyAreaCode)} / ${esc(move.assignment.activityCode)}`).join(' · ')}</span>${sourceImpact(candidate)}<span>${candidate.evidence.map(esc).join(' ')}</span></li>`).join('')}</ol><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`
+          ? `<ol class="workforce-intelligence-recovery-list">${summary.candidates.map(candidate => `<li><b>#${candidate.rank} · ${esc(candidate.personName)}</b><span>${summary.projectedShift ? 'Scheduled candidate' : candidate.requiresSourceBackfill ? 'Two-step plan' : 'Direct move'} · ${candidate.moves.map(move => `${esc(move.personName)} → ${esc(move.assignment.machineCode || move.assignment.workCenterCode || move.assignment.safetyAreaCode)} / ${esc(move.assignment.activityCode)}`).join(' · ')}</span>${sourceImpact(candidate)}<span>${candidate.evidence.map(esc).join(' ')}</span>${candidateCapacityHtml(capacity.get(candidate.personId))}${capacity.get(candidate.personId)?.atTarget.forecast.isEligible && (me?.permissions ?? []).includes('workforce.supervise') && !summary.projectedShift ? `<button class="btn small" data-wi-cover="${escapeAttr(JSON.stringify({ personId: candidate.personId, workCenterCode: request.workCenterCode, machineCode: request.machineCode, activityCode: request.activityCode, forecast: capacity.get(candidate.personId).atTarget.forecast }))}">Plan coverage with a goal…</button>` : ''}</li>`).join('')}</ol><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`
           : `<p class="faint">No ${summary.projectedShift ? 'qualified workers scheduled' : 'safe candidates among visible, currently present workers'} found (${fmtNumber(summary.evaluatedCandidates)} evaluated). ${summary.currentConstraint ? `Current target constraint: ${esc(summary.currentConstraint)}.` : ''}</p><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`;
         recovery.disabled = false;
         return;

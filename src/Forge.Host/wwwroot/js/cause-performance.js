@@ -58,21 +58,54 @@ export function causePerformanceHtml(report, me) {
       : '<p class="faint">No first-pass inspections of this employee’s operations in the period.</p>'}`;
 }
 
+/** Cross-functional contributions (§22): goal success and attainment beside forecast error, every assignment with goal / forecast / actual. */
+export function coverageHtml(report, me) {
+  const m = report.metrics;
+  const supervise = canAction(me, 'workforce.supervise');
+  const rows = report.assignments.map(v => {
+    const a = v.assignment;
+    const goals = v.goals.map(g => `v${g.version} ${esc(g.kind)}: ${fmtNumber(g.goodUnits, 0)}${g.afterStart ? ' (after start)' : ''}`).join(' → ');
+    const actions = !supervise ? '' : a.state === 'Planned'
+      ? `<button class="btn small" data-cov-step="start|${a.assignmentId}">Start</button> <button class="btn small ghost" data-cov-step="cancel|${a.assignmentId}">Cancel</button> <button class="btn small ghost" data-cov-goal="${a.assignmentId}">Revise goal…</button>`
+      : a.state === 'Started'
+        ? `<button class="btn small" data-cov-step="complete|${a.assignmentId}">Complete</button> <button class="btn small ghost" data-cov-goal="${a.assignmentId}">Revise goal…</button>`
+        : a.state === 'Completed' && a.approvedBy !== `person:${me?.personId}`
+          ? `<button class="btn small ghost" data-cov-review="${a.assignmentId}">Review comparability…</button> <button class="btn small ghost" data-cov-adjust="${a.assignmentId}">Time-adjusted goal…</button>`
+          : '';
+    return `<tr><td>${esc(a.machineCode ?? a.destinationWorkCenter)} / ${esc(a.activityCode)}<div class="faint">${esc(fmtDateTime(a.plannedStart))} · ${esc(a.state)}${a.comparable ? '' : ` · excluded: ${esc(a.exclusionReason)}`}</div></td>
+      <td>${goals || '—'}</td><td class="num">${a.forecastExpected == null ? '—' : fmtNumber(a.forecastExpected, 0)}</td>
+      <td class="num">${v.actualGoodUnits == null ? '—' : fmtNumber(v.actualGoodUnits, 0)}${v.outputAccepted ? '' : ' <span class="pill warn">not accepted</span>'}</td>
+      <td>${v.contextFlags.map(f => `<div class="faint">${esc(f)}</div>`).join('')}</td><td class="nowrap">${actions}</td></tr>`;
+  }).join('');
+  return `<p class="workforce-intelligence-note">${esc(report.basis)}</p>
+    <div class="kpis kpis-4">
+      <div class="kpi"><div><div class="t">Coverage goal success</div><div class="v">${percent(m.coverageGoalSuccessRatePercent)}</div><div class="why">${m.goalSuccessCount} of ${m.goalEligibleAssignmentCount} eligible assignments</div></div></div>
+      <div class="kpi"><div><div class="t">Average goal attainment</div><div class="v">${percent(m.averageCoverageGoalAttainmentPercent)}</div><div class="why">Median ${percent(m.medianCoverageGoalAttainmentPercent)} · mean of each assignment's own ratio</div></div></div>
+      <div class="kpi"><div><div class="t">Coverage</div><div class="v">${m.completedAssignmentCount}</div><div class="why">${fmtNumber(m.verifiedCoverageHours, 2)} h · ${m.distinctQualifiedOperationsCovered} distinct operations</div></div></div>
+      <div class="kpi"><div><div class="t">Forecast error</div><div class="v">${m.meanAbsoluteForecastErrorGoodUnits == null ? 'N/A' : fmtNumber(m.meanAbsoluteForecastErrorGoodUnits, 1)}</div><div class="why">Mean absolute, good units, ${m.forecastComparisonCount} compared · not a measure of the person</div></div></div>
+    </div>
+    <div class="faint">${esc(m.status)}${m.excludedGoalAssignmentCount ? ` ${m.excludedGoalAssignmentCount} excluded: ${m.goalExclusions.map(e => esc(e.reason)).join('; ')}` : ''}</div>
+    ${rows ? `<div class="table-wrap"><table class="table"><thead><tr><th>Assignment</th><th>Goal versions</th><th class="num">Forecast</th><th class="num">Actual good</th><th>Context</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="faint">No coverage assignments in the period (N/A, not 0%).</p>'}`;
+}
+
 /** Opens the employee's cause-adjusted performance in a drawer, with coded-time and attribution actions for those allowed to take them. */
 export async function openCausePerformance(personId, displayName, me, days = 7) {
   const d = drawer(`${displayName} · cause-adjusted time and quality`, '<div class="muted">Loading…</div>');
   const to = new Date();
   const from = new Date(to.getTime() - days * 864e5);
   const load = async () => {
-    const [report, coded] = await Promise.all([
+    const [report, coded, coverage] = await Promise.all([
       tryGet(`/api/workforce/cause-adjusted-performance?personId=${encodeURIComponent(personId)}&from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`),
       tryGet(`/api/workforce/coded-time?personId=${encodeURIComponent(personId)}&from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`),
+      tryGet(`/api/workforce/coverage?personId=${encodeURIComponent(personId)}`),
     ]);
     if (report.error) { d.element.innerHTML = errorBlock(report.error, 'cause-adjusted performance'); return; }
     const pendingCoded = (coded.data ?? []).filter(c => c.state === 'PendingReview');
     d.element.innerHTML = `${causePerformanceHtml(report.data, me)}
       ${pendingCoded.length ? `<h3>Coded time waiting for review</h3><ul>${pendingCoded.map(c => `<li>${esc(CODED_TIME_CODES.find(([k]) => k === c.code)?.[1] ?? c.code)} ${esc(fmtDateTime(c.startsAt))}–${esc(fmtDateTime(c.endsAt))} · ${esc(c.note)}
-        ${canAction(me, 'workforce.supervise') && c.recordedBy !== `person:${me?.personId}` ? ` <button class="btn small primary" data-cp-approve="${esc(c.entryId)}">Approve</button> <button class="btn small" data-cp-decline="${esc(c.entryId)}">Reject</button>` : ' <span class="faint">someone else reviews it</span>'}</li>`).join('')}</ul>` : ''}`;
+        ${canAction(me, 'workforce.supervise') && c.recordedBy !== `person:${me?.personId}` ? ` <button class="btn small primary" data-cp-approve="${esc(c.entryId)}">Approve</button> <button class="btn small" data-cp-decline="${esc(c.entryId)}">Reject</button>` : ' <span class="faint">someone else reviews it</span>'}</li>`).join('')}</ul>` : ''}
+      <h3>Cross-functional contributions</h3>
+      ${coverage.error ? errorBlock(coverage.error, 'coverage assignments') : coverageHtml(coverage.data, me)}`;
     bind();
   };
   const act = async promise => { try { if (await promise) await load(); } catch (error) { toast(error.message, true); } };
@@ -102,6 +135,24 @@ export async function openCausePerformance(personId, displayName, me, days = 7) 
     }, (v, reason) => command(`/api/quality/inspections/${inspectionId}/attribution`, { ...v, supersedesAttributionId }, reason)));
     d.element.querySelectorAll('[data-cp-attribute]').forEach(b => b.addEventListener('click', () => propose(b.dataset.cpAttribute)));
     d.element.querySelectorAll('[data-cp-correct]').forEach(b => b.addEventListener('click', () => { const [inspection, original] = b.dataset.cpCorrect.split('|'); propose(inspection, Number(original)); }));
+    d.element.querySelectorAll('[data-cov-step]').forEach(b => b.addEventListener('click', () => {
+      const [step, id] = b.dataset.covStep.split('|');
+      act(formModal({ title: `${step[0].toUpperCase()}${step.slice(1)} coverage`, fields: [], confirmLabel: step[0].toUpperCase() + step.slice(1), reasonRequired: true },
+        (_, reason) => command(`/api/workforce/coverage/${id}/${step}`, {}, reason)));
+    }));
+    const goalForm = (id, timeAdjusted) => act(formModal({
+      title: timeAdjusted ? 'Reviewed time-adjusted goal' : 'Revise coverage goal',
+      detail: timeAdjusted ? 'Use the same operation standard and the productive time that remained after the verified disruption. The original goal stays in the history.' : 'Every version is kept; a revision after work began is marked as such.',
+      fields: [{ name: 'goodUnits', label: 'Good units', type: 'number', min: 0, required: true }, { name: 'productiveMinutes', label: 'Productive minutes', type: 'number', min: 1, required: true }, { name: 'rationale', label: 'Rationale', type: 'textarea', required: true }],
+      confirmLabel: 'Save goal', reasonRequired: true,
+    }, (v, reason) => command(`/api/workforce/coverage/${id}/goal`, { ...v, timeAdjusted }, reason)));
+    d.element.querySelectorAll('[data-cov-goal]').forEach(b => b.addEventListener('click', () => goalForm(b.dataset.covGoal, false)));
+    d.element.querySelectorAll('[data-cov-adjust]').forEach(b => b.addEventListener('click', () => goalForm(b.dataset.covAdjust, true)));
+    d.element.querySelectorAll('[data-cov-review]').forEach(b => b.addEventListener('click', () => act(formModal({
+      title: 'Review comparability', detail: 'An excluded assignment stays out of goal percentages and is listed with its reason; it is never counted as a failure.',
+      fields: [{ name: 'comparable', label: 'Comparable', type: 'check', text: 'Counts toward goal results', value: true }, { name: 'exclusionReason', label: 'Exclusion reason (when not comparable)', type: 'textarea' }],
+      confirmLabel: 'Record review', reasonRequired: true,
+    }, (v, reason) => command(`/api/workforce/coverage/${b.dataset.covReview}/comparability`, v, reason)))));
     d.element.querySelectorAll('[data-cp-verify],[data-cp-reject]').forEach(b => b.addEventListener('click', () => act(formModal({
       title: b.dataset.cpVerify ? 'Verify attribution' : 'Reject attribution', fields: [], confirmLabel: b.dataset.cpVerify ? 'Verify' : 'Reject', reasonRequired: true,
     }, (_, reason) => command(`/api/quality/attributions/${b.dataset.cpVerify ?? b.dataset.cpReject}/verify`, { verify: !!b.dataset.cpVerify }, reason)))));
