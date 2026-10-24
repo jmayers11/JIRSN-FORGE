@@ -54,6 +54,52 @@ function localDateTime(value) {
   return local.toISOString().slice(0, 16);
 }
 
+async function loadPersonOperationHistory(personId, activityResult, me, asOf) {
+  if (!personId) return null;
+  if (activityResult?.error || !Array.isArray(activityResult?.data?.labor)) return { error: activityResult?.error ?? 'Recorded shop-floor labor is unavailable.' };
+  const permissions = new Set(me?.permissions ?? []);
+  if (!permissions.has('execution.shopfloor.read') || !permissions.has('execution.orders.read'))
+    return { error: 'Shop-floor and work-order read permissions are required to view operation history.' };
+
+  const labor = activityResult.data.labor.filter(entry => entry.personId === personId)
+    .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+  if (!labor.length) return { rows: [], omittedOrders: 0 };
+  const orderNumbers = [...new Set(labor.map(entry => entry.orderNumber))];
+  const visibleOrders = orderNumbers.slice(0, 8);
+  const details = await Promise.all(visibleOrders.map(async orderNumber => [orderNumber, await tryGet(`/api/orders/${encodeURIComponent(orderNumber)}/shopfloor`)]));
+  const byOrder = new Map(details.map(([orderNumber, result]) => [orderNumber, result]));
+  const groups = new Map();
+  for (const entry of labor) {
+    if (!visibleOrders.includes(entry.orderNumber)) continue;
+    const key = `${entry.orderNumber}:${entry.sequence}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+  const rows = [...groups.entries()].map(([key, entries]) => {
+    const [orderNumber, sequence] = key.split(':').map(Number);
+    const result = byOrder.get(orderNumber);
+    const detail = result?.data;
+    const metric = detail?.laborMetrics?.find(item => item.sequence === sequence) ?? null;
+    const duration = entry => {
+      const start = new Date(entry.startedAt).getTime();
+      const end = entry.endedAt ? new Date(entry.endedAt).getTime() : asOf.getTime();
+      return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, (end - start) / 3_600_000) : 0;
+    };
+    const round = value => Math.round(value * 1000) / 1000;
+    const personOperatorHours = entries.filter(entry => entry.role === 'Operator').reduce((sum, entry) => sum + duration(entry), 0);
+    const personTrainingHours = entries.filter(entry => entry.role === 'Trainer' || entry.role === 'Trainee').reduce((sum, entry) => sum + duration(entry), 0);
+    const phases = [...new Set(entries.map(entry => entry.phase ?? 'Run'))].sort().map(phase => [phase,
+      round(entries.filter(entry => (entry.phase ?? 'Run') === phase).reduce((sum, entry) => sum + duration(entry), 0))]);
+    return { orderNumber, sequence, workCenterCode: entries[0]?.workCenterCode ?? metric?.workCenterCode ?? '—',
+      machineCodes: [...new Set(entries.map(entry => entry.machineCode).filter(Boolean))], employeeHours: round(personOperatorHours),
+      trainingHours: round(personTrainingHours), phases, metric,
+      latest: Math.max(...entries.map(entry => new Date(entry.startedAt).getTime()).filter(Number.isFinite)),
+      detailError: result?.error };
+  }).sort((a, b) => b.latest - a.latest);
+  const failed = details.find(([, result]) => result.error)?.[1]?.error;
+  return { rows, error: failed, omittedOrders: Math.max(0, orderNumbers.length - visibleOrders.length) };
+}
+
 function attendancePeriodStart(period, now) {
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
@@ -65,7 +111,7 @@ function attendancePeriodStart(period, now) {
   return start;
 }
 
-function render(summary, sources, options, me) {
+function render(summary, sources, options, me, selectedPersonId = null, personOperationHistory = null) {
   const permissions = new Set(me?.permissions ?? []);
   const canPreviewMaterialImpact = permissions.has('inventory.read') && permissions.has('planning.schedule.read');
   const issues = [];
@@ -125,6 +171,25 @@ function render(summary, sources, options, me) {
   const laborTable = laborRows.length
     ? `<div class="table-wrap"><table class="table"><thead><tr><th>Work order / op</th><th>Work center</th><th>Operator hours</th><th>Training hours</th><th>Good / scrap qty</th><th>Target</th></tr></thead><tbody>${laborRows.map(row => `<tr><td>WO ${row.orderNumber} / ${row.sequence}</td><td>${esc(row.workCenterCode)}</td><td>${fmtNumber(row.operatorHours)}</td><td>${fmtNumber(row.trainingHours)}</td><td>${fmtNumber(row.goodQuantity)} / ${fmtNumber(row.scrapQuantity)}</td><td><span class="pill none">N/A</span></td></tr>`).join('')}</tbody></table></div>`
     : `<p class="faint">${sources.activity ? 'No operation labor was recorded in the last 30 days.' : 'Shop-floor activity is unavailable to this account.'}</p>`;
+  const selectedWorker = (sources.workers.data ?? []).find(worker => worker.personId === selectedPersonId);
+  const personHistory = !selectedPersonId ? '' : !selectedWorker
+    ? `<section class="workforce-intelligence-person-history"><h3>Operation history</h3><p class="faint">The selected worker is not available in the current Workforce scope.</p></section>`
+    : personOperationHistory?.error
+      ? `<section class="workforce-intelligence-person-history"><h3>${esc(selectedWorker.displayName)} · operation history</h3>${errorBlock(personOperationHistory.error, 'operation history')}</section>`
+      : !personOperationHistory?.rows?.length
+        ? `<section class="workforce-intelligence-person-history"><h3>${esc(selectedWorker.displayName)} · operation history</h3><p class="faint">No direct labor entries for this employee were recorded in the last 30 days.</p></section>`
+        : `<section class="workforce-intelligence-person-history"><header><h3>${esc(selectedWorker.displayName)} · operation history</h3><span class="spacer"></span><span class="muted">Last 30 days · recorded labor</span></header>
+          <p class="workforce-intelligence-note">Employee hours come from this person’s recorded intervals. Routing targets and crew actuals describe the whole operation; they are not an individual score. Efficiency stays N/A without reviewed accepted-output evidence.</p>
+          ${personOperationHistory.error ? `<p class="notice warn">Some work-order details could not be read: ${esc(personOperationHistory.error)}</p>` : ''}
+          <div class="table-wrap"><table class="table"><thead><tr><th>Work order / operation</th><th>Employee hours</th><th>Operation target / crew actual</th><th>Reported output</th><th>Machine stops</th></tr></thead><tbody>
+          ${personOperationHistory.rows.map(row => `<tr><td><a href="#/orders?q=${encodeURIComponent(String(row.orderNumber))}">WO ${row.orderNumber} · op ${row.sequence}</a><div class="faint">${esc(row.workCenterCode)}${row.machineCodes.length ? ` · ${row.machineCodes.map(esc).join(', ')}` : ''}</div></td>
+            <td>${fmtNumber(row.employeeHours)} h direct${row.trainingHours ? `<div class="faint">${fmtNumber(row.trainingHours)} h training</div>` : ''}<div class="faint">${row.phases.map(([phase, hours]) => `${esc(phase)} ${fmtNumber(hours)} h`).join(' · ') || 'No phase detail'}</div></td>
+            <td>${row.metric?.plannedTotalLaborHours == null ? 'N/A' : `${fmtNumber(row.metric.plannedTotalLaborHours)} h target`}<div class="faint">${row.metric ? `${fmtNumber(row.metric.recordedOperatorHours)} h crew actual · crew ${row.metric.crewSize}` : 'Operation target unavailable'}</div></td>
+            <td>${row.metric ? `${fmtNumber(row.metric.reportedGoodQuantity, 3)} good / ${fmtNumber(row.metric.reportedScrapQuantity, 3)} scrap` : 'N/A'}<div class="faint">${row.metric?.earnedStandardStatus ? esc(row.metric.earnedStandardStatus) : 'Operation details unavailable'}</div></td>
+            <td>${row.metric ? `${fmtNumber(row.metric.recordedStoppageMinutes)} min` : 'N/A'}<div class="faint">${esc(row.metric?.stoppageContext ?? 'Operation details unavailable')}</div></td></tr>`).join('')}
+          </tbody></table></div>
+          ${personOperationHistory.omittedOrders ? `<p class="faint">Showing recent operations from ${personOperationHistory.rows.length} orders; ${personOperationHistory.omittedOrders} older orders are outside this profile view.</p>` : ''}
+        </section>`;
   const shiftChoices = options.shifts.map(shift => `<option value="${escapeAttr(shift.code)}" ${options.shiftCode === shift.code ? 'selected' : ''}>${esc(shift.name)}</option>`).join('');
   const centerChoices = options.workCenters.map(center => `<option value="${escapeAttr(center.code)}" ${options.workCenterCode === center.code ? 'selected' : ''}>${esc(center.name)}</option>`).join('');
   const attendanceCount = value => value == null ? '—' : fmtNumber(value);
@@ -220,6 +285,7 @@ function render(summary, sources, options, me) {
           return `<article class="workforce-intelligence-review-item"><b>${esc(name)} · ${esc(item.shiftCode)} · ${formatDate(item.scheduledStart)}</b><div class="workforce-intelligence-correction"><label>Classification<select class="input" data-wi-classification-kind="${escapeAttr(item.opportunityId)}">${eventKinds.map(kind => `<option value="${kind}" ${kind === 'NoShow' ? 'selected' : ''}>${kind}</option>`).join('')}</select></label><label>Observed at<input class="input" type="datetime-local" data-wi-classification-time="${escapeAttr(item.opportunityId)}" value="${localDateTime(item.scheduledEnd)}"></label><label>Audit reason<input class="input" data-wi-classification-reason="${escapeAttr(item.opportunityId)}" value="Review completed shift record" maxlength="240"></label><button class="btn small" type="button" data-wi-classify="${escapeAttr(item.opportunityId)}">Submit for review</button></div></article>`;
         }).join('') : '<p class="faint">No completed, unclassified shifts in the current window.</p>'}</div>` : ''}
       </details>
+      ${personHistory}
       ${canReadNominations || canNominate ? `<section class="workforce-intelligence-development"><h3>Training and advancement packets</h3><p class="faint">Recommendations require documented human review. Approval does not grant a qualification or machine authorization; those remain in Competency.</p>
         ${canNominate ? `<form class="workforce-intelligence-form" data-wi-nomination-form><label>Employee<select class="input" name="personId" required><option value="">Choose employee</option>${(sources.workers.data ?? []).filter(worker => worker.isActive).map(worker => `<option value="${escapeAttr(worker.personId)}">${esc(worker.displayName)} · ${esc(worker.jobTitle ?? worker.homeWorkCenterCode ?? 'Worker')}</option>`).join('')}</select></label>
           <label>Packet type<select class="input" name="kind" required><option value="AdvancedTraining">Advanced training</option><option value="LeadReadiness">Lead responsibilities</option><option value="PromotionReadiness">Promotion readiness</option>${canReadCompensation ? '<option value="CompensationConsideration">Compensation consideration</option>' : ''}</select></label>
@@ -239,7 +305,7 @@ function render(summary, sources, options, me) {
     </section>`;
 }
 
-export async function appendWorkforceIntelligence(page, me) {
+export async function appendWorkforceIntelligence(page, me, selectedPersonId = null) {
   const now = new Date();
   const activityFrom = new Date(now.getTime() - 30 * DAY);
   const through = new Date(now.getTime() + 30 * DAY);
@@ -269,6 +335,7 @@ export async function appendWorkforceIntelligence(page, me) {
   const qualificationsResult = workers ? await qualificationRecords(workers) : { error: workersResult.error };
   const machineAuthorizationsResult = workers ? await machineAuthorizationRecords(workers) : { error: workersResult.error };
   const resources = resourcesResult.data ?? undefined;
+  const personOperationHistory = await loadPersonOperationHistory(selectedPersonId, activityResult, me, now);
   const inputs = {
     now,
     workers,
@@ -287,7 +354,7 @@ export async function appendWorkforceIntelligence(page, me) {
   const workCenters = resources?.workCenters ?? [];
   const workerNames = new Map((workers ?? []).map(worker => [worker.personId, worker.displayName]));
   const sources = { workers: workersResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, resources: resourcesResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, workerNames };
-  page.innerHTML = render(buildWorkforceIntelligence({ ...inputs, ...current }), sources, { ...current, shifts, workCenters }, me) + page.innerHTML;
+  page.innerHTML = render(buildWorkforceIntelligence({ ...inputs, ...current }), sources, { ...current, shifts, workCenters }, me, selectedPersonId, personOperationHistory) + page.innerHTML;
   page.addEventListener('change', async event => {
     const filter = event.target?.dataset?.wiFilter;
     if (!filter) return;
@@ -303,7 +370,7 @@ export async function appendWorkforceIntelligence(page, me) {
       sources.attendance = result;
       inputs.attendanceSummary = result.data ?? null;
     }
-    if (panel) panel.outerHTML = render(buildWorkforceIntelligence({ ...inputs, ...current }), sources, { ...current, shifts, workCenters }, me);
+    if (panel) panel.outerHTML = render(buildWorkforceIntelligence({ ...inputs, ...current }), sources, { ...current, shifts, workCenters }, me, selectedPersonId, personOperationHistory);
   });
   page.addEventListener('submit', async event => {
     const form = event.target.closest('[data-wi-schedule-form], [data-wi-policy-form], [data-wi-nomination-form]');

@@ -32,7 +32,7 @@ export async function workforcePage(page, ctx) {
       ${people.data.map(p => `<tr><td>${esc(p.displayName)}</td><td class="mono">${esc(p.idpSubject)}</td><td>${esc(p.roles.map(roleTitle).join(', ') || '—')}</td><td>${p.isActive ? '<span class="pill ok">Active</span>' : '<span class="pill none">Inactive</span>'}</td></tr>`).join('')}
       </tbody></table>`}
     </section>`;
-  await appendWorkforceIntelligence(page, ctx.me);
+  await appendWorkforceIntelligence(page, ctx.me, ctx.query.get('personId'));
   // V3.9: presence levels, and training on controlled documents.
   await appendPresence(page);
   await appendDocumentTraining(page, ctx.me);

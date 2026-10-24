@@ -159,3 +159,58 @@ test('supervisors can request a read-only ranked recovery preview for a machine 
   assert.match(scheduledResult, /Future source-center production coverage is not forecasted/);
   assert.match(scheduledResult, /not proof of clock-in/);
 });
+
+test('employee profile links personal labor intervals to shared operation targets and downtime context', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div');
+  browser.document.body.append(page);
+  const now = Date.now();
+  const worker = { personId: 'worker-profile', displayName: 'Ari Operator', homeWorkCenterCode: 'WC-A', isActive: true, shiftCode: 'DAY' };
+  const startedAt = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+  const endedAt = new Date(now - 60 * 60 * 1000).toISOString();
+  globalThis.fetch = path => {
+    if (path === '/api/workforce/workers') return Promise.resolve(response([worker]));
+    if (path === '/api/resources/') return Promise.resolve(response({ shifts: [], workCenters: [], machines: [], machineActivities: [], workCenterShifts: [] }));
+    if (path.startsWith('/api/shopfloor/activity?')) return Promise.resolve(response({ labor: [
+      { personId: worker.personId, orderNumber: 77, sequence: 10, role: 'Operator', phase: 'Setup', workCenterCode: 'WC-A', machineCode: 'M-1', startedAt, endedAt },
+    ], reports: [], attendance: [] }));
+    if (path === '/api/orders/77/shopfloor') return Promise.resolve(response({
+      labor: [], reports: [], training: [],
+      laborMetrics: [{ sequence: 10, workCenterCode: 'WC-A', plannedTotalLaborHours: 4.5, recordedOperatorHours: 4,
+        crewSize: 2, reportedGoodQuantity: 6, reportedScrapQuantity: 1, recordedStoppageMinutes: 30,
+        stoppageContext: 'Equipment · spindle vibration (30 min). Reported categories are context, not confirmed root causes.',
+        earnedStandardStatus: 'N/A: accepted output has not been verified.' }],
+    }));
+    return Promise.resolve(response([]));
+  };
+
+  await appendWorkforceIntelligence(page, { permissions: ['execution.shopfloor.read', 'execution.orders.read'] }, worker.personId);
+  assert.match(page.innerHTML, /Ari Operator · operation history/);
+  assert.match(page.innerHTML, /WO 77 · op 10/);
+  assert.match(page.innerHTML, /Setup 1 h/);
+  assert.match(page.innerHTML, /4.5 h target/);
+  assert.match(page.innerHTML, /4 h crew actual · crew 2/);
+  assert.match(page.innerHTML, /6 good \/ 1 scrap/);
+  assert.match(page.innerHTML, /spindle vibration/);
+  assert.match(page.innerHTML, /not an individual score/);
+  assert.match(page.innerHTML, /not confirmed root causes/);
+});
+
+test('employee operation history respects separate shop-floor and order read permissions', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div');
+  browser.document.body.append(page);
+  let orderDetailCalls = 0;
+  const worker = { personId: 'worker-profile', displayName: 'Ari Operator', homeWorkCenterCode: 'WC-A', isActive: true };
+  globalThis.fetch = path => {
+    if (path === '/api/workforce/workers') return Promise.resolve(response([worker]));
+    if (path === '/api/resources/') return Promise.resolve(response({ shifts: [], workCenters: [], machines: [], machineActivities: [], workCenterShifts: [] }));
+    if (path.startsWith('/api/shopfloor/activity?')) return Promise.resolve(response({ labor: [
+      { personId: worker.personId, orderNumber: 77, sequence: 10, role: 'Operator', phase: 'Run', workCenterCode: 'WC-A', startedAt: new Date().toISOString() },
+    ], reports: [], attendance: [] }));
+    if (path === '/api/orders/77/shopfloor') orderDetailCalls++;
+    return Promise.resolve(response([]));
+  };
+
+  await appendWorkforceIntelligence(page, { permissions: ['execution.shopfloor.read'] }, worker.personId);
+  assert.match(page.innerHTML, /Shop-floor and work-order read permissions are required/);
+  assert.equal(orderDetailCalls, 0);
+});
