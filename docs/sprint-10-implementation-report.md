@@ -1,8 +1,25 @@
 # Sprint 10 implementation report
 
-Date: 2026-10-23
-Specification: `Forge_Sprint_10_Training_Performance_Workforce_Intelligence.md`
-Status: Sprint 10 implementation and focused verification are complete. Full Integration.Tests and the isolated Sprint 9/Sprint 10 scenario acceptance gates remain open.
+Date: 2026-10-24
+Specification: `Forge_Sprint_10_Latest.txt` (extends `Forge_Sprint_10_Training_Performance_Workforce_Intelligence.md`)
+Status: The original Sprint 10 source implementation is in place. The 2026-10-24 calculation amendments have deterministic calculation primitives and unit coverage; source-record, persistence, API, transaction, and UI integration remains open. Full Integration.Tests and isolated Sprint 9/Sprint 10 scenario acceptance gates remain open.
+
+## Latest calculation amendments
+
+Implemented deterministic calculation primitives for the new Sections 16–19, 21, and 22 in `src/Forge.Execution/CauseAdjustedPerformanceMetrics.cs`, `src/Forge.Planning/WorkforcePerformanceCalculations.cs`, and `src/Forge.Planning/OperationMaterialFeasibilityCalculations.cs`:
+
+- Paid-time reconciliation clips intervals to a shift, counts union time once, and reports gaps, overlaps, and over-accounting. Machine downtime impact uses the assignment/shift/event intersection and subtracts already classified intervals while retaining the event's full machine duration.
+- Labor efficiency reports raw and controllable percentages separately, preserves external-delay hours, and returns N/A when approved earned-standard hours or eligible direct labor time is missing.
+- First-pass yield preserves official process FPY across every inspected unit. A separate employee-attributable diagnostic uses verified, meaningful employee-controlled attribution, excludes independently verified external causes, reports attribution coverage and unassigned quantities, and applies a caller-configured minimum coverage threshold.
+- Skill-capacity forecasts use separately supplied conservative/expected/optimistic setup and run estimates after qualification, refresher, machine authorization, safety, and two-person gates. No fixed recency penalty or invented employee history is applied; calibrated benchmark forecasts are labeled low confidence.
+- Cross-functional coverage metrics use approved positive per-assignment goals, accepted good output, a configured minimum duration, and comparability gates. Attainment is averaged per assignment; goal success, forecast error, exclusions, distinct operations, and deduplicated verified coverage hours remain separate. Empty eligible sets return N/A.
+- Operation-level partial-build quantity takes the minimum of released net material, setup consumption, yield allowance, operation/labor/machine/storage/downstream limits, order balance, pack multiples, minimum batch, readiness gates, and no-partial policy. It returns a proposal only; it creates no reservation or release.
+- WIP storage capacity applies approved utilization and existing occupancy/reservations per physical slot, honors quarantine counted in occupancy only once, excludes slots without approved safety/geometry/handling evidence, and returns a slot allocation preview. Concurrent approval still needs an atomic canonical reservation.
+- Material usable and operation restart dates add receiving, inspection, put-away, staging, and setup durations through a site calendar. A supplier promise alone, an unknown ETA, missing lead-time data, or insufficient pegged quantity leaves the usable date unknown.
+
+These are calculation-layer changes only. Existing sources do not yet provide the authoritative categorized paid-time ledger, reviewed machine/quality cause attribution, context-calibrated employee-by-operation rates, approved coverage-goal assignment lifecycle, or slot-level WIP/storage master and transaction feed needed to populate them in production. The current operation UI therefore continues to show earned hours and efficiency as N/A until accepted-output and approved labor-standard evidence are connected. Sections 17–19 still need source-backed operation-specific inventory feasibility, slot master/occupancy integration, atomic storage/material reservations, reentry planning through scheduling and workforce readiness, API, approvals, and UI. Section 20's planner scrap request/approval/execution workflow remains unimplemented. Do not report the new amendment as fully accepted or imply these calculations are currently visible in the UI.
+
+Validation for this amendment: `dotnet test tests/Forge.Planning.Tests --no-restore` passed **346/346**; `dotnet test tests/Forge.Integration.Tests --no-restore --filter FullyQualifiedName~ProductionLaborMetricsTests` passed **3/3**. No database, seed, migration, or preview data was changed. The full UI suite and isolated Sprint 10 scenario replay were not rerun in this increment.
 
 ## Delivered
 
@@ -30,9 +47,9 @@ Sprint 10 now has an audited HRIS/Nexus attendance-import endpoint with a narrow
 
 ## Source map
 
-- Workforce and Competency: `src/Forge.Host/wwwroot/js/pages/workforce-intelligence.js`, `src/Forge.Host/wwwroot/js/workforce-intelligence.mjs`, `src/Forge.Workforce/AttendanceReliability.cs`, `src/Forge.Workforce/DevelopmentNominations.cs`, `src/Forge.Competency/CompetencyService.cs`, `src/Forge.Execution/ProductionLaborMetrics.cs`.
+- Workforce and Competency: `src/Forge.Host/wwwroot/js/pages/workforce-intelligence.js`, `src/Forge.Host/wwwroot/js/workforce-intelligence.mjs`, `src/Forge.Workforce/AttendanceReliability.cs`, `src/Forge.Workforce/DevelopmentNominations.cs`, `src/Forge.Competency/CompetencyService.cs`, `src/Forge.Execution/ProductionLaborMetrics.cs`, `src/Forge.Execution/CauseAdjustedPerformanceMetrics.cs`.
 - Material and quality flow: `src/Forge.Inventory/InventoryService.Tasks.cs`, `src/Forge.Quality/QualityService.cs`, `src/Forge.Host/Api/MaterialsEndpoints.cs`, `src/Forge.Host/Api/QualityEndpoints.cs`, `src/Forge.Host/wwwroot/js/pages/shopfloor.js`, `src/Forge.Host/wwwroot/js/pages/inventory.js`, `src/Forge.Host/wwwroot/js/pages/orders.js`.
-- Planning and alerts: `src/Forge.Planning/MaterialFlow.cs`, `src/Forge.Planning/MaterialReceiptImpactPreview.cs`, `src/Forge.Planning/ShiftFactsProvider.cs`, `src/Forge.Planning/Engines/MaterialEngine.cs`, `src/Forge.Planning/Engines/WorkforceRecoveryEngine.cs`, `src/Forge.Host/Api/ExecutableEndpoints.cs`, `src/Forge.Host/Notifications/NotificationEventSubscriber.cs`, `src/Forge.Host/Notifications/NotificationDelivery.cs`.
+- Planning and alerts: `src/Forge.Planning/MaterialFlow.cs`, `src/Forge.Planning/MaterialReceiptImpactPreview.cs`, `src/Forge.Planning/ShiftFactsProvider.cs`, `src/Forge.Planning/WorkforcePerformanceCalculations.cs`, `src/Forge.Planning/OperationMaterialFeasibilityCalculations.cs`, `src/Forge.Planning/Engines/MaterialEngine.cs`, `src/Forge.Planning/Engines/WorkforceRecoveryEngine.cs`, `src/Forge.Host/Api/ExecutableEndpoints.cs`, `src/Forge.Host/Notifications/NotificationEventSubscriber.cs`, `src/Forge.Host/Notifications/NotificationDelivery.cs`.
 - Additive migrations: Competency `0002`–`0003`; Execution `0012`; Inventory `0022`–`0026`; Kernel/Postgres `0022`–`0029`; Quality `0016`; Resources `0006`–`0008`; Workforce `0006`–`0010`.
 
 ## Data dictionary
