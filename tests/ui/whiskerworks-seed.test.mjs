@@ -16,7 +16,9 @@ test('WhiskerWorks foundation matches its site, asset and roster targets', () =>
   assert.equal(nonMachineStations.length, 14);
   assert.equal(shifts.length, 3);
   assert.equal(qualifications.length, 23, 'keep named mandatory qualification gates plus Toolpath / First-Article Verification');
-  assert.equal(demoPrincipals.length, 6);
+  assert.equal(demoPrincipals.length, 7);
+  // The seeding administrator's own program access is granted by a separate demo access manager.
+  assert.deepEqual(demoPrincipals.find(principal => principal.subject === 'ww-demo-security')?.roles, ['SecurityAdministrator']);
   assert.deepEqual(scenarioQualificationExpiry, { machineCode: 'CNC-02', qualificationCode: 'QUAL-CNC-MILL', daysFromSeed: 5 });
   assert.equal(workers.filter(worker => worker.machineCode === scenarioQualificationExpiry.machineCode
     && worker.qualifications.includes(scenarioQualificationExpiry.qualificationCode)).length, 3,

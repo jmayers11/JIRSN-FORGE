@@ -26,6 +26,8 @@ const wwDocuments = new Set(['WI-CNC-101', 'WI-ELE-610', 'WI-ASM-400']);
 const sensorSupply = { partNumber: 'WW-SENS-PROX-05', supplierCode: 'WW-SUP-009', quantity: 100, unitPrice: 18.5, currency: 'USD' };
 const bearingSupply = { partNumber: 'WW-BRG-608-2RS', supplierCode: 'WW-SUP-010', quantity: 120, unitPrice: 4.25, currency: 'USD' };
 const sensorMpn = { manufacturer: 'Quiet Current Controls', mpn: 'QCC-PX-500', manufacturerRevision: 'A', lifecycle: 'Active', datasheet: null, note: 'Fictional WhiskerWorks demo manufacturer part.' };
+// The bearing is COTS too: a purchase order needs its approved manufacturer part.
+const bearingMpn = { manufacturer: 'Velvet Spin Bearings', mpn: 'VSB-608-2RS', manufacturerRevision: 'A', lifecycle: 'Active', datasheet: null, note: 'Fictional WhiskerWorks demo manufacturer part.' };
 const knownBoms = [
   ...products.map(product => ({ partNumber: product.partNumber, lines: product.bom })),
   ...subassemblyBoms,
@@ -170,9 +172,11 @@ const validateAssetPreflight = existingAssets => {
 async function main() {
   await get('/health/ready', subject).catch(error => { throw new Error(`Forge is not ready at ${base}: ${error.message}`); });
   const profile = await get('/api/kernel/me', reader);
-  const required = ['engineering.read', 'execution.orders.read', 'inventory.read', 'procurement.read', 'quality.read', 'maintenance.read', 'planning.demand.read', 'programs.directory'];
+  // Demand is read with planning.mrp.read; program codes with programs.read or the narrower programs.directory.
+  const required = ['engineering.read', 'execution.orders.read', 'inventory.read', 'procurement.read', 'quality.read', 'maintenance.read', 'planning.mrp.read', ['programs.read', 'programs.directory']];
   const permissions = new Set(profile.permissions ?? []);
-  const missing = required.filter(permission => !permissions.has(permission));
+  const missing = required.filter(permission => Array.isArray(permission) ? !permission.some(p => permissions.has(p)) : !permissions.has(permission))
+    .map(permission => Array.isArray(permission) ? permission.join(' or ') : permission);
   if (missing.length) throw new Error(`Preflight reader ${reader} is missing required read permissions: ${missing.join(', ')}.`);
   const [buyerProfile, approverProfile] = await Promise.all([
     get('/api/kernel/me', 'ww-demo-engineer'), get('/api/kernel/me', 'ww-demo-certifier'),
@@ -182,7 +186,7 @@ async function main() {
 
   const [resourceState, existingItems, existingSuppliers, existingLocations, existingDemand, existingOrders, existingPlans, existingGauges, existingAssets, existingPmPlans, existingDocuments, programDirectory, existingPurchaseOrders, existingApprovedSources, existingBearingSources, existingSensorMpns] = await Promise.all([
     get('/api/resources/?includeRetired=true', subject), get('/api/engineering/items'), get('/api/procurement/suppliers'), get('/api/inventory/locations'),
-    get('/api/planning/demand'), get('/api/orders/', subject), get('/api/quality/plans'), get('/api/quality/gauges'), get('/api/maintenance/assets'), get('/api/maintenance/plans'),
+    get('/api/planning/demand'), get('/api/orders/'), get('/api/quality/plans'), get('/api/quality/gauges'), get('/api/maintenance/assets'), get('/api/maintenance/plans'),
     get('/api/engineering/documents'), get('/api/programs/directory', subject),
     get('/api/procurement/purchase-orders', reader), get(`/api/procurement/approved-sources?part=${encodeURIComponent(sensorSupply.partNumber)}`, reader),
     get(`/api/procurement/approved-sources?part=${encodeURIComponent(bearingSupply.partNumber)}`, reader),
@@ -254,7 +258,7 @@ async function main() {
       || mpn.status === 'Approved' && mpn.approvedBy !== approverActor)
       throw new Error(`Existing sensor manufacturer part differs from the versioned demo definition; no records were changed.`);
   }
-  if (existingDemand.some(item => !String(item.sourceKey ?? '').startsWith('WW-DEMO-DEMAND-'))) throw new Error('Refusing existing demand without a WhiskerWorks demo source key. Use a separate empty demo database.');
+  if (existingDemand.some(item => !String(item.sourceKey ?? '').startsWith('ww-demo:DEMAND-'))) throw new Error('Refusing existing demand without a WhiskerWorks demo source key. Use a separate empty demo database.');
   const existingProgram = programDirectory.find(item => item.code === 'WW-DEMO');
   if (existingProgram && (existingProgram.name !== 'WhiskerWorks Fictional Demonstration' || existingProgram.status !== 'Active'))
     throw new Error('Existing WW-DEMO program differs from the active WhiskerWorks demo boundary.');
@@ -278,7 +282,8 @@ async function main() {
     const person = peopleBySubject.get(identity);
     if (!person) throw new Error(`Required WhiskerWorks principal ${identity} is missing; seed the foundation first.`);
     const access = await get('/api/kernel/me', identity);
-    if (!(access.programs ?? []).includes(programId)) await post(`/api/kernel/people/${person.personId}/programs`, { programId }, subject);
+    if (!(access.programs ?? []).includes(programId))
+      await post(`/api/kernel/people/${person.personId}/programs`, { programId }, identity === subject ? 'ww-demo-security' : subject);
   }
 
   const itemsByCode = new Map(existingItems.map(item => [item.partNumber, item]));
@@ -337,7 +342,24 @@ async function main() {
     if (documentRevision.status !== 'Released') await post(`/api/engineering/documents/${encodeURIComponent(definition.number)}/revisions/A/release`, { effectiveFrom: null }, 'ww-demo-certifier');
   }
 
-  const makeItems = allItems.filter(item => item.makeBuy === 'Make');
+  // A revision is released only after its components are: bought parts first, then made parts from the bottom of the BOM up.
+  for (const item of allItems.filter(candidate => candidate.makeBuy === 'Buy')) {
+    const revisions = await get(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions`);
+    if (revisions.some(row => row.revision !== 'A')) throw new Error(`Part ${item.partNumber} already has a non-demo revision; no engineering history was changed.`);
+    const revision = revisions.find(row => row.revision === 'A');
+    if (!revision) await post(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions`, { revision: 'A' }, 'ww-demo-engineer');
+    if (revision?.status !== 'Released') await post(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions/A/release`, { effectiveFrom: null }, 'ww-demo-certifier');
+  }
+  const bomOf = new Map(knownBoms.map(row => [row.partNumber, row.lines.map(([component]) => component)]));
+  const depth = new Map();
+  const depthOf = part => {
+    if (depth.has(part)) return depth.get(part);
+    depth.set(part, 0);
+    const value = 1 + Math.max(0, ...(bomOf.get(part) ?? []).filter(component => bomOf.has(component)).map(depthOf));
+    depth.set(part, value);
+    return value;
+  };
+  const makeItems = allItems.filter(item => item.makeBuy === 'Make').sort((a, b) => depthOf(a.partNumber) - depthOf(b.partNumber));
   for (const item of makeItems) {
     let revisions = await get(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions`);
     if (revisions.some(row => row.revision !== 'A')) throw new Error(`Part ${item.partNumber} already has a non-demo revision; no engineering history was changed.`);
@@ -358,7 +380,9 @@ async function main() {
         });
         else if (revision.status !== 'Released') await post(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions/A/bom`, { lineNumber, componentPartNumber, quantityPer, scrapPercent }, 'ww-demo-engineer');
     }
-    if (currentBom.size !== (bom?.lines ?? []).length) throw new Error(`Revision A BOM for ${item.partNumber} has an unexpected line; no change was made.`);
+    // Only lines that already existed can be unexpected; lines this run added are the plan itself.
+    const plannedLines = new Set((bom?.lines ?? []).map((_, index) => (index + 1) * 10));
+    if ([...currentBom.keys()].some(lineNumber => !plannedLines.has(lineNumber))) throw new Error(`Revision A BOM for ${item.partNumber} has an unexpected line; no change was made.`);
     const route = knownRoutes.find(row => row.partNumber === item.partNumber);
     const currentRouting = new Map((detail.routing ?? []).map(operation => [operation.sequence, operation]));
     for (const operation of route?.operations ?? []) {
@@ -375,7 +399,8 @@ async function main() {
         });
         else if (revision.status !== 'Released') await post(`/api/engineering/items/${encodeURIComponent(item.partNumber)}/revisions/A/routing`, operation, 'ww-demo-engineer');
     }
-    if (currentRouting.size !== (route?.operations ?? []).length) throw new Error(`Revision A routing for ${item.partNumber} has an unexpected operation; no change was made.`);
+    const plannedOperations = new Set((route?.operations ?? []).map(operation => operation.sequence));
+    if ([...currentRouting.keys()].some(sequence => !plannedOperations.has(sequence))) throw new Error(`Revision A routing for ${item.partNumber} has an unexpected operation; no change was made.`);
     const documentRequirement = new Map([
       ['WW-PCB-CTRL-200', ['WI-ELE-610', 10]],
       ['WW-CAT-1000', ['WI-CNC-101', 10]], ['WW-CAT-2000', ['WI-ELE-610', 20]],
@@ -422,6 +447,17 @@ async function main() {
   if (manufacturerPart.status === 'Proposed') await post(`/api/engineering/items/${encodeURIComponent(sensorSupply.partNumber)}/manufacturer-parts/approve`, {
     manufacturer: sensorMpn.manufacturer, mpn: sensorMpn.mpn,
   }, 'ww-demo-certifier', `approve-sensor-mpn-${sensorMpn.mpn}`);
+  const bearingMpns = await get(`/api/engineering/manufacturer-parts?part=${encodeURIComponent(bearingSupply.partNumber)}`, reader);
+  if (bearingMpns.some(item => item.manufacturer !== bearingMpn.manufacturer || item.mpn !== bearingMpn.mpn))
+    throw new Error(`${bearingSupply.partNumber} has a manufacturer part that is not in the versioned seed; no change was made.`);
+  let bearingPart = bearingMpns[0];
+  if (!bearingPart) {
+    await post(`/api/engineering/items/${encodeURIComponent(bearingSupply.partNumber)}/manufacturer-parts`, bearingMpn, 'ww-demo-engineer', `bearing-mpn-${bearingMpn.mpn}`);
+    bearingPart = { ...bearingMpn, partNumber: bearingSupply.partNumber, status: 'Proposed' };
+  }
+  if (bearingPart.status === 'Proposed') await post(`/api/engineering/items/${encodeURIComponent(bearingSupply.partNumber)}/manufacturer-parts/approve`, {
+    manufacturer: bearingMpn.manufacturer, mpn: bearingMpn.mpn,
+  }, 'ww-demo-certifier', `approve-bearing-mpn-${bearingMpn.mpn}`);
   let sensorOrder = sensorPos[0];
   if (!sensorOrder) {
     const created = await post('/api/procurement/purchase-orders', { supplier: sensorSupply.supplierCode, lines: [{
@@ -454,8 +490,9 @@ async function main() {
     });
     else await post('/api/inventory/locations', {
       code: location.code, siteCode: site.code, name: location.name, kind: location.kind, level: 'Zone', nettable: location.nettable,
-      workCenterCode: location.workCenterCode,
-    }, 'ww-demo-engineer');
+      // Only point-of-use, production and WIP locations serve a work center; the zone still records where the others are.
+      workCenterCode: ['Production', 'Staging', 'MachineSide', 'WipStorage'].includes(location.kind) ? location.workCenterCode : null,
+    }, 'ww-demo-inventory');
   }
 
   const assetRows = new Map(existingAssets.map(asset => [asset.assetCode, asset]));

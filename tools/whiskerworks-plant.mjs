@@ -51,7 +51,7 @@ export const machines = [
   ['ASM-02', 'Laser and box line', 'WC-ASM-STD', 'ASSEMBLE', ['QUAL-ASM-TORQUE']],
   ['ASM-03', 'Heavy tower rig', 'WC-ASM-HVY', 'ASSEMBLE_HEAVY', ['QUAL-ASM-HVY']],
   ['QAL-CMM-01', 'Coordinate measuring machine', 'WC-QAL', 'INSPECT', ['QUAL-QAL-INSP']],
-  ['TST-MECH-01', 'Cycle and drop rig', 'WC-TST', 'TEST_MECH', []],
+  ['TST-MECH-01', 'Cycle and drop rig', 'WC-TST', 'TEST_MECH', ['QUAL-SITE-SAFE']],
   ['TST-EL-01', 'Energized electrical and laser bench', 'WC-TST', 'TEST_ELECTRICAL', ['QUAL-ELEC-TEST-SAFE']],
   ['TST-REWORK-01', 'Electronics rework bench', 'WC-TST', 'REWORK', ['QUAL-SOLD-AUTH']],
   ['PKG-LINE-01', 'Carton erect and weigh line', 'WC-PKG', 'PACK', ['QUAL-MAT-KIT']],
@@ -240,6 +240,8 @@ export const demoPrincipals = [
   { subject: 'ww-demo-planner', displayName: 'WhiskerWorks Demo Planner', roles: ['Planner', 'ProgramManager'] },
   { subject: 'ww-demo-inventory', displayName: 'WhiskerWorks Demo Inventory Controller', roles: ['InventoryController'] },
   { subject: 'ww-demo-attendance-importer', displayName: 'WhiskerWorks Demo Attendance Importer', roles: ['AttendanceImporter'] },
+  // A second access manager: nobody grants their own program access, including the seeding administrator.
+  { subject: 'ww-demo-security', displayName: 'WhiskerWorks Demo Security Administrator', roles: ['SecurityAdministrator'] },
 ];
 
 export const productFamilies = [

@@ -280,13 +280,6 @@ async function main() {
       existingMachines.set(machine.code, { code: machine.code, name: machine.name, workCenterCode: machine.workCenterCode, active: true });
     }
   }
-  const machineProfiles = new Map((resources.machineActivities ?? []).map(item => [`${item.machineCode}:${item.activityCode}`, item]));
-  for (const profile of machineActivities) {
-    const key = `${profile.machineCode}:${profile.activityCode}`;
-    const existing = machineProfiles.get(key);
-    if (existing) ensureSame('machine activity', key, [...profile.operatorQualifications].sort(), [...(existing.operatorQualifications ?? [])].sort());
-    else await post(`/api/resources/machines/${encodeURIComponent(profile.machineCode)}/activities`, { activityCode: profile.activityCode, operatorQualifications: profile.operatorQualifications }, 'ww-demo-engineer');
-  }
   const centerActivities = new Set((resources.workCenterActivities ?? []).map(item => `${item.workCenterCode}:${item.activityCode}`));
   for (const item of workCenterActivities) {
     const key = `${item.workCenterCode}:${item.activityCode}`;
@@ -359,6 +352,17 @@ async function main() {
     existing.prerequisiteAlternatives = [...groupsByCode.values()];
   }
 
+  // Machine activity profiles name operator qualifications, so they follow the qualification types.
+  const machineProfiles = new Map((resources.machineActivities ?? []).map(item => [`${item.machineCode}:${item.activityCode}`, item]));
+  // A machine whose manifest names no operator qualification (the mechanical cycle rig) gets no machine-specific profile;
+  // Forge requires at least one qualification on a profile, and its work-center activity still applies.
+  for (const profile of machineActivities.filter(item => item.operatorQualifications.length > 0)) {
+    const key = `${profile.machineCode}:${profile.activityCode}`;
+    const existing = machineProfiles.get(key);
+    if (existing) ensureSame('machine activity', key, [...profile.operatorQualifications].sort(), [...(existing.operatorQualifications ?? [])].sort());
+    else await post(`/api/resources/machines/${encodeURIComponent(profile.machineCode)}/activities`, { activityCode: profile.activityCode, operatorQualifications: profile.operatorQualifications }, 'ww-demo-engineer');
+  }
+
   const employees = [];
   const scenarioWorker = workers.find(worker => worker.machineCode === scenarioQualificationExpiry.machineCode
     && worker.qualifications.includes(scenarioQualificationExpiry.qualificationCode));
@@ -415,11 +419,14 @@ async function main() {
       await post(`/api/competency/people/${person.personId}/certifications`, {
         code, evidence: 'Fictional WhiskerWorks demo baseline practical assessment; not a real-world credential.',
         ...(scenarioExpiry ? { expiresAt: scenarioExpiry } : {}),
-      }, certifier.subject);
+      }, certifier.idpSubject);
       recorded.push({ personId: person.personId, code, status: 'Qualified', expiresAt: scenarioExpiry });
     }
 
-    if (worker.machineCode) {
+    // Work on a machine without a machine-specific profile (no operator qualification) is assigned at the work center.
+    const machineProfiled = !!worker.machineCode && machineActivities.some(item => item.machineCode === worker.machineCode
+      && item.activityCode === worker.activityCode && item.operatorQualifications.length > 0);
+    if (machineProfiled) {
       const expectedAssignment = { workCenterCode: worker.workCenterCode, machineCode: worker.machineCode, activityCode: worker.activityCode };
       const actualAssignment = current.assignment ? { workCenterCode: current.assignment.workCenterCode, machineCode: current.assignment.machineCode, activityCode: current.assignment.activityCode } : null;
       if (actualAssignment && !same(expectedAssignment, actualAssignment)) throw new Error(`Existing assignment for ${worker.displayName} differs from the seed plan. No overwrite was attempted.`);
@@ -474,10 +481,10 @@ async function main() {
         code: rule.code, title: rule.title, scopeKind: 'Machine', scopeCode: rule.scopeCode, activityCodes: rule.activityCodes,
         minimumPhysicalPeople: 2, prohibitLoneWork: true,
         slots: [{ name: 'Qualified operator', count: 2, satisfiedBy: [rule.qualification], traineeMayFill: false }],
-      }, engineer.subject);
+      }, engineer.idpSubject);
       draft = { version: Math.max(0, ...versions.map(item => item.version)) + 1 };
     }
-    await post(`/api/safety-rules/${encodeURIComponent(rule.code)}/versions/${draft.version}/publish`, {}, certifier.subject);
+    await post(`/api/safety-rules/${encodeURIComponent(rule.code)}/versions/${draft.version}/publish`, {}, certifier.idpSubject);
   }
 
   console.log(`Seeded the WhiskerWorks foundation into ${site.code}: ${zones.length} zones, ${workCenters.length} work centers, ${machines.length} machines, ${employees.length} workers.`);

@@ -76,7 +76,7 @@ test('Sprint 10 history seeds are network-free by default and reject remote writ
 
   const competency = spawnSync(process.execPath, ['tools/seed-whiskerworks-sprint10-competency.mjs', '--base=https://example.invalid'], { encoding: 'utf8', timeout: 10_000 });
   assert.equal(competency.status, 0, competency.stderr);
-  assert.match(competency.stdout, /practical assessments: 43/);
+  assert.match(competency.stdout, /practical assessments: 45/);
   const competencyRemote = spawnSync(process.execPath, [
     'tools/seed-whiskerworks-sprint10-competency.mjs', '--apply', '--base=https://example.invalid', '--subject=admin', '--reader=reader',
   ], { encoding: 'utf8', timeout: 10_000 });

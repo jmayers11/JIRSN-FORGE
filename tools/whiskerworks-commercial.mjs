@@ -223,7 +223,7 @@ export function createDemoWorkload(asOf) {
     return {
       partNumber: product.partNumber, quantity: 8 + (index % 5) * 4, needDate: addDays(5 + (index % 18)), priority: 2 + index % 6,
       kind: 'CustomerOrder', customer: customer.name, reference: `${customer.code}-SO-${String(index + 1).padStart(4, '0')}`,
-      sourceKey: `WW-DEMO-DEMAND-${String(index + 1).padStart(3, '0')}`,
+      sourceKey: `ww-demo:DEMAND-${String(index + 1).padStart(3, '0')}`,   // Forge demand sources are kind:key
     };
   });
   const productionOrders = Array.from({ length: 42 }, (_, index) => ({

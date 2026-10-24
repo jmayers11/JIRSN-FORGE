@@ -157,7 +157,7 @@ async function main() {
       const created = await post(`/api/competency/people/${personId}/training-course-completions`, {
         courseCode: item.qualificationCode, courseVersion: 'WW-S10-1', expiresAt: null,
         evidence: 'Fictional WhiskerWorks course completion; not a real-world credential.',
-      }, certifier.subject);
+      }, certifier.idpSubject);
       course = { personId, courseCode: item.qualificationCode, completionId: commandId(created), expiresAt: null };
       courseRecords.push(course);
       coursesAdded++;
@@ -168,7 +168,7 @@ async function main() {
       const created = await post(`/api/competency/people/${personId}/practical-assessments`, {
         qualificationCode: item.qualificationCode, machineCode: item.machineCode, activityCode: item.activityCode,
         passed: true, assessmentVersion: 'WW-S10-1', evidence: 'Fictional WhiskerWorks supervised practical; demo evidence only.',
-      }, certifier.subject);
+      }, certifier.idpSubject);
       assessment = { personId, qualificationCode: item.qualificationCode, machineCode: item.machineCode, activityCode: item.activityCode, passed: true, assessmentId: commandId(created) };
       assessmentRecords.push(assessment);
       assessmentsAdded++;
@@ -192,7 +192,7 @@ async function main() {
       machineCode: item.machineCode, activityCode: item.activityCode, qualificationCode: item.qualificationCode,
       assessmentId, expiresAt: null, evidence: 'Fictional WhiskerWorks authorization; demo evidence only.',
       restrictions: null, independentOperationAllowed: true,
-    }, certifier.subject);
+    }, certifier.idpSubject);
     authorizationsAdded++;
   }
 
