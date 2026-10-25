@@ -231,6 +231,137 @@ async function replayS03(simulatedNow) {
     && !!remaining?.presentUntil && Date.parse(remaining.presentUntil) > now, { safetyAfter, partnerPresentUntil: remaining?.presentUntil ?? null });
 }
 
+// Site-local wall-clock time to UTC, iterating on the zone offset (handles DST like the Scenario Center does).
+function localToUtc(date, clock, timeZone) {
+  const [year, month, day] = date.split('-').map(Number);
+  const [hour, minute, second = 0] = String(clock).split(':').map(Number);
+  const target = Date.UTC(year, month - 1, day, hour, minute, second);
+  let guess = target;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(guess));
+    const value = type => Number(parts.find(item => item.type === type)?.value);
+    const correction = target - Date.UTC(value('year'), value('month') - 1, value('day'), value('hour'), value('minute'), value('second'));
+    guess += correction;
+    if (correction === 0) break;
+  }
+  return new Date(guess);
+}
+const siteDate = (at, timeZone) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(at));
+const dateOffset = (date, days) => new Date(Date.parse(`${date}T12:00:00Z`) + days * 864e5).toISOString().slice(0, 10);
+const isoWeekday = date => new Date(`${date}T12:00:00Z`).getUTCDay() || 7;
+
+async function rejection(path, body, who, idempotencyKey) {
+  try { await post(path, body, who, idempotencyKey); return null; } catch (error) { return error.message; }
+}
+
+// S14: a reviewed CNC Mill handoff for the last completed Day Shift gets two owned, dated recovery actions; the second
+// depends on the first, and the server refuses to start it until the first is completed with evidence.
+async function replayS14(simulatedNow, resources) {
+  const supervisor = 'ww-demo-supervisor';
+  const timeZone = resources.sites[0].timeZone;
+  const shift = resources.shifts.find(item => item.code === 'SHIFT-DAY');
+  const workers = await get('/api/workforce/workers', supervisor);
+  const assignee = workers.filter(w => w.isActive && w.homeWorkCenterCode === 'WC-CNC-MILL' && w.shiftCode === 'SHIFT-DAY')
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))[0];
+  const today = siteDate(simulatedNow, timeZone);
+  let completedDate = null;
+  for (let offset = 1; offset <= 8 && !completedDate; offset++) if ((shift?.days ?? []).includes(isoWeekday(dateOffset(today, -offset)))) completedDate = dateOffset(today, -offset);
+  check('S14 has a CNC Mill Day Shift assignee and a completed Day Shift', !!shift && !!assignee && !!completedDate, { assignee: assignee?.displayName ?? null, completedDate });
+  if (!shift || !assignee || !completedDate) return;
+  const shiftFrom = localToUtc(completedDate, shift.start, timeZone);
+  const shiftUntil = new Date(shiftFrom.getTime() + shift.durationMinutes * 60000);
+  const firstDueAt = localToUtc(dateOffset(today, 1), '12:00:00', timeZone).toISOString();
+  const secondDueAt = localToUtc(dateOffset(today, 1), '16:00:00', timeZone).toISOString();
+  const created = await post('/api/execution/shifts/handoffs', { workCenterCode: 'WC-CNC-MILL', shiftCode: 'SHIFT-DAY', shiftFrom: shiftFrom.toISOString(),
+    shiftUntil: shiftUntil.toISOString(), context: 'WW-S14 replay: CNC-01 coolant follow-up and readiness check.', reason: 'S14 replay handoff' }, supervisor);
+  const handoffId = Number(created.entityId);
+  await post(`/api/execution/shifts/handoffs/${handoffId}/review`, { reason: 'S14 replay review' }, supervisor);
+  const actionsPath = `/api/execution/shifts/handoffs/${handoffId}/actions`;
+  const first = Number((await post(actionsPath, { description: 'WW-S14: Inspect CNC-01 coolant follow-up', sourceKind: 'Machine', sourceReference: 'CNC-01',
+    assignee: assignee.personId, dueAt: firstDueAt, blockedByActionIds: [], reason: 'S14 replay action' }, supervisor)).entityId);
+  const second = Number((await post(actionsPath, { description: 'WW-S14: Verify CNC-01 readiness after inspection', sourceKind: 'Machine', sourceReference: 'CNC-01',
+    assignee: assignee.personId, dueAt: secondDueAt, blockedByActionIds: [first], reason: 'S14 replay dependent action' }, supervisor)).entityId);
+  const saved = await get(actionsPath, supervisor);
+  const a = saved.find(x => x.actionId === first), b = saved.find(x => x.actionId === second);
+  check('S14 saves both actions with their due times and the dependency', !!a && !!b && Date.parse(a.dueAt) === Date.parse(firstDueAt)
+    && Date.parse(b.dueAt) === Date.parse(secondDueAt) && (b.blockedByActionIds ?? []).map(Number).includes(first), { first: a, second: b });
+  const status = id => `/api/execution/shifts/actions/${id}/status`;
+  await post(status(second), { expected: 'Assigned', status: 'Acknowledged', reason: 'S14 replay' }, supervisor);
+  const blocked = await rejection(status(second), { expected: 'Acknowledged', status: 'InProgress', reason: 'S14 replay: try before the blocker' }, supervisor);
+  for (const [expected, next] of [['Assigned', 'Acknowledged'], ['Acknowledged', 'InProgress'], ['InProgress', 'Completed']])
+    await post(status(first), { expected, status: next, evidence: next === 'Completed' ? 'Coolant line inspected; no leak (fictional replay evidence)' : undefined, reason: 'S14 replay' }, supervisor);
+  const unblocked = await rejection(status(second), { expected: 'Acknowledged', status: 'InProgress', reason: 'S14 replay: blocker done' }, supervisor);
+  evidence.s14 = { handoffId, actions: [first, second], blocked, unblocked };
+  check('S14 refuses to start the dependent action while its blocker is open', /action_dependencies_open/.test(blocked ?? ''), { blocked });
+  check('S14 allows the dependent action once the blocker is completed with evidence', unblocked === null, { unblocked });
+}
+
+// S15 part 1: a CNC Mill Day Shift worker calls out and leaves while CNC-01 is down (S04).
+async function replayS15Absence(simulatedNow) {
+  const supervisor = 'ww-demo-supervisor';
+  const now = Date.parse(simulatedNow);
+  const workers = await get('/api/workforce/workers', supervisor);
+  const from = new Date(now - 3600e3).toISOString(), to = new Date(now + 9 * 3600e3).toISOString();
+  const unavailability = await get(`/api/workforce/unavailability?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, supervisor);
+  const mill = workers.filter(w => w.isActive && w.shiftCode === 'SHIFT-DAY' && (w.assignment?.workCenterCode ?? w.homeWorkCenterCode) === 'WC-CNC-MILL')
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const worker = mill.find(w => !unavailability.some(u => u.personId === w.personId));
+  if (!worker) return null;
+  await post(`/api/workforce/workers/${worker.personId}/unavailability`, { kind: 'CallOut', startsAt: new Date(now).toISOString(),
+    endsAt: new Date(now + 8 * 3600e3).toISOString(), reason: 'S15 replay: CNC Mill callout' }, supervisor);
+  if (worker.presentUntil && Date.parse(worker.presentUntil) > now)
+    await post(`/api/workforce/workers/${worker.personId}/departure`, { reason: 'S15 replay: callout departure' }, supervisor);
+  return { personId: worker.personId, name: worker.displayName, startsAt: now, endsAt: now + 8 * 3600e3 };
+}
+
+// S15 part 2 (after the clock has moved past that shift): the outgoing handoff carries the open CNC-01 downtime and the
+// recorded callout; its creator cannot acknowledge it, a different incoming operator can.
+async function replayS15Handoff(simulatedNow, resources, absence) {
+  const supervisor = 'ww-demo-supervisor';
+  check('S15 records a CNC Mill callout while CNC-01 is down', !!absence, { absence });
+  if (!absence) return;
+  const timeZone = resources.sites[0].timeZone;
+  const now = Date.parse(simulatedNow);
+  const shifts = resources.shifts.filter(shift => (resources.workCenterShifts ?? []).some(x => x.workCenterCode === 'WC-CNC-MILL' && x.shiftCode === shift.code));
+  const candidates = [];
+  for (let offset = -1; offset <= 1; offset++) {
+    const date = dateOffset(siteDate(absence.startsAt, timeZone), offset);
+    for (const shift of shifts) {
+      if (!(shift.days ?? []).includes(isoWeekday(date))) continue;
+      const shiftFrom = localToUtc(date, shift.start, timeZone);
+      const shiftUntil = new Date(shiftFrom.getTime() + shift.durationMinutes * 60000);
+      if (shiftUntil.getTime() <= now && shiftFrom.getTime() < absence.endsAt && shiftUntil.getTime() > absence.startsAt) candidates.push({ shift, shiftFrom, shiftUntil });
+    }
+  }
+  candidates.sort((x, y) => x.shiftFrom - y.shiftFrom);
+  const selected = candidates[0];
+  check('S15 finds a completed CNC Mill shift that the callout overlapped', !!selected, { candidates: candidates.length });
+  if (!selected) return;
+  const created = await post('/api/execution/shifts/handoffs', { workCenterCode: 'WC-CNC-MILL', shiftCode: selected.shift.code, shiftFrom: selected.shiftFrom.toISOString(),
+    shiftUntil: selected.shiftUntil.toISOString(), context: 'WW-S15 replay: open CNC-01 downtime and recorded absence for the incoming shift.', reason: 'S15 replay handoff' }, supervisor);
+  const handoffId = Number(created.entityId);
+  await post(`/api/execution/shifts/handoffs/${handoffId}/review`, { reason: 'S15 replay review' }, supervisor);
+  const detail = await get(`/api/execution/shifts/handoffs/${handoffId}`, supervisor);
+  const facts = detail.handoff?.facts ?? detail.handoff?.snapshot?.facts ?? [];
+  const openCnc = facts.some(f => f.kind === 'Downtime' && String(f.reference).includes('CNC-01') && f.status === 'Open');
+  const absenceFact = facts.some(f => f.kind === 'WorkerAvailability' && f.status === 'CallOut');
+  check('S15 outgoing handoff carries the open CNC-01 downtime and the recorded callout', openCnc && absenceFact,
+    { handoffId, facts: facts.map(f => ({ kind: f.kind, reference: f.reference, status: f.status })) });
+  const selfAck = await rejection(`/api/execution/shifts/handoffs/${handoffId}/acknowledge`, { note: 'S15 replay: creator tries', reason: 'S15 replay' }, supervisor);
+  check('S15 refuses an acknowledgment by the handoff creator/reviewer', /independent_acknowledgment_required/.test(selfAck ?? ''), { selfAck });
+  const people = await get('/api/kernel/people');
+  const workers = await get('/api/workforce/workers', supervisor);
+  const incomingWorker = workers.filter(w => w.isActive && w.homeWorkCenterCode === 'WC-CNC-MILL' && w.personId !== absence.personId)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName)).find(w => people.some(p => p.personId === w.personId && /^ww-operator-/.test(p.idpSubject)));
+  const incoming = people.find(p => p.personId === incomingWorker?.personId);
+  if (incoming) await post(`/api/execution/shifts/handoffs/${handoffId}/acknowledge`, { note: 'Received; downtime and absence reviewed (replay).', reason: 'S15 replay incoming acknowledgment' }, incoming.idpSubject);
+  const after = await get(`/api/execution/shifts/handoffs/${handoffId}`, supervisor);
+  evidence.s15 = { handoffId, shift: selected.shift.code, shiftFrom: selected.shiftFrom, incoming: incomingWorker?.displayName ?? null, selfAck };
+  check('S15 a different incoming CNC Mill operator acknowledges the reviewed handoff', !!incoming
+    && (after.acknowledgments ?? []).some(x => String(x.personId).toLowerCase() === String(incoming.personId).toLowerCase()), { acknowledgments: after.acknowledgments ?? [] });
+}
+
 async function replayS02(simulatedNow) {
   // Mirrors the Scenario Center's source workflow: three audited callout windows, two scheduled
   // workers without presence, and no fabricated verified attendance/no-show classification.
@@ -414,6 +545,9 @@ async function main() {
   await replayS07();
   const siteZone = sites[0]?.timeZone ?? 'UTC';
   await replayFloorEvents(new Intl.DateTimeFormat('en-CA', { timeZone: siteZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.parse(status.simulatedNow))));
+  const resourcesAll = await get('/api/resources/');
+  await replayS14(status.simulatedNow, resourcesAll);
+  const s15Absence = await replayS15Absence(status.simulatedNow);
 
   // S05: a CNC-02 mill qualification seeded to expire five days out stops counting once the simulated clock passes it.
   const before = await cncMillReadiness();
@@ -426,6 +560,7 @@ async function main() {
   const person = workers.find(w => w.personId === expiring[0]?.personId);
   await post('/api/demo/clock/advance', { minutes: 6 * 24 * 60, reason: 'S05: six days later' }, planner);
   const later = await get('/api/demo/status');
+  await replayS15Handoff(later.simulatedNow, resourcesAll, s15Absence);
   const qualificationsAfter = ids.length
     ? await get(`/api/competency/people/qualifications?${ids.map(id => `personIds=${encodeURIComponent(id)}`).join('&')}`, engineer)
     : [];
