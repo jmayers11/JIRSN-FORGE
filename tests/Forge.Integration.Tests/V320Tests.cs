@@ -39,12 +39,27 @@ public sealed class V320Tests(PostgresFixture postgres)
         Assert.Equal("Assigned", assignment.GetProperty("status").GetString());
         var assignmentId = assignment.GetProperty("assignmentId").GetGuid();
 
+        var mission = await assignee.GetFromJsonAsync<JsonElement>("/api/daily-mission");
+        var missionAssignment = Assert.Single(mission!.GetProperty("items").EnumerateArray(),
+            item => item.GetProperty("sourceType").GetString() == "ProjectReview" && item.GetProperty("sourceId").GetString() == "V320-SELF");
+        Assert.True(mission.GetProperty("isPartial").GetBoolean());
+        Assert.Contains(mission.GetProperty("sources").EnumerateArray(), source => source.GetProperty("code").GetString() == "qualified-workforce-coverage-and-reassignment"
+            && source.GetProperty("status").GetString() == "Limited");
+        Assert.Equal("ProjectReview", missionAssignment.GetProperty("sourceType").GetString());
+        Assert.Equal("WorkAssignment", missionAssignment.GetProperty("sourceLifecycle").GetString());
+        Assert.Equal("Assigned", missionAssignment.GetProperty("sourceStatus").GetString());
+        Assert.Equal("#/projects", missionAssignment.GetProperty("deepLink").GetString());
+
         var skipped = await plant.Try(assignee, $"/api/work-inbox/assignments/{assignmentId:D}/status", new { status = "Completed", reason = "Attempt to skip required steps" });
         Assert.Equal(HttpStatusCode.Conflict, skipped.StatusCode);
         foreach (var status in new[] { "Acknowledged", "InProgress", "Completed" })
             await plant.Ok(assignee, $"/api/work-inbox/assignments/{assignmentId:D}/status", new { status, reason = $"Record {status.ToLowerInvariant()}" });
         var done = await assignee.GetFromJsonAsync<JsonElement>("/api/work-inbox");
         Assert.Equal("Completed", Assert.Single(done!.GetProperty("assignments").EnumerateArray()).GetProperty("status").GetString());
+        var completedMission = await assignee.GetFromJsonAsync<JsonElement>("/api/daily-mission");
+        var completedMissionAssignment = Assert.Single(completedMission!.GetProperty("items").EnumerateArray(),
+            item => item.GetProperty("id").GetString() == $"assignment:{assignmentId:D}");
+        Assert.Equal("Completed", completedMissionAssignment.GetProperty("sourceStatus").GetString());
         await using (var connection = await app.Services.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync())
         await using (var command = new NpgsqlCommand("DELETE FROM kernel.work_assignment_history WHERE assignment_id=$1", connection))
         {

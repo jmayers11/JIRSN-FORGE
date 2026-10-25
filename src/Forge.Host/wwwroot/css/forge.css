@@ -178,6 +178,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .search-results a:hover { background: var(--panel-2); text-decoration: none; }
 .search-results .kind { font-size: 11px; color: var(--muted); width: 74px; flex: none; text-transform: uppercase; letter-spacing: .05em; padding-top: 2px; }
 .search-results .empty { padding: 10px 12px; color: var(--muted); }
+.workspace-switch { width: 175px; flex: none; }
+.workspace-switch .input { height: 36px; padding: 5px 8px; font-size: 12px; }
 .top-icons { display: flex; gap: 6px; margin-left: auto; }
 .icon-btn {
   position: relative; width: 36px; height: 36px; display: grid; place-items: center;
@@ -278,6 +280,76 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .inline { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- Daily Mission: a compact briefing over authoritative source records ---------- */
+.daily-mission-head { align-items: center; justify-content: space-between; }
+.daily-mission-head .eyebrow { margin: 0 0 2px; color: var(--forge-orange); font-size: 10px; font-weight: 700; letter-spacing: .14em; }
+.daily-mission-header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.daily-mission-preferences { margin: -8px 0 14px auto; max-width: 740px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.daily-mission-preferences summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.daily-mission-preference-fields { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; padding-top: 10px; }
+.daily-mission-preference-fields label { display: grid; gap: 4px; min-width: 175px; color: var(--muted); font-size: 11px; }
+.daily-mission-preference-fields small { flex-basis: 100%; color: var(--faint); }
+.daily-mission-welcome { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 12px; padding: 14px 16px; border: 1px solid rgba(249,115,22,.5); border-left: 3px solid var(--forge-orange); border-radius: var(--radius); background: linear-gradient(110deg, rgba(194,65,12,.2), rgba(23,28,34,.96) 58%), var(--panel); }
+.daily-mission-welcome[hidden] { display: none; }
+.daily-mission-welcome h2 { margin: 2px 0; font: 650 19px var(--font-display); }
+.daily-mission-welcome p { margin: 0; color: var(--muted); }
+.daily-mission-welcome-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.daily-mission-welcome .eyebrow { font-size: 10px; }
+.daily-mission-brief { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 16px 18px; border: 1px solid #4a3024; border-left: 3px solid var(--forge-orange); border-radius: var(--radius); background: linear-gradient(115deg, rgba(194,65,12,.13), rgba(23,28,34,.94) 42%), url(/img/brand/card-bg.jpg) center / cover, var(--panel); }
+.daily-mission-brief[data-hawk-accents="off"] { grid-template-columns: minmax(0, 1fr) auto; background: var(--panel); border-color: var(--line); }
+.daily-mission-brief[data-hawk-accents="off"] .daily-mission-brief-mark { display: none; }
+.daily-mission-brief[data-hawk-accents="expressive"] { background: linear-gradient(110deg, rgba(194,65,12,.26), rgba(23,28,34,.9) 52%), url(/img/brand/bg-hero-hawk.jpg) center 44% / cover, var(--panel); }
+.daily-mission-brief-mark { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid rgba(249,115,22,.35); border-radius: 50%; background: rgba(249,115,22,.1); }
+.daily-mission-brief-mark img { width: 28px; height: 28px; object-fit: contain; }
+.daily-mission-brief-copy .eyebrow { color: var(--forge-orange); font-size: 10px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+.daily-mission-brief-copy h2 { margin: 3px 0; font: 650 20px var(--font-display); }
+.daily-mission-brief-copy p { margin: 0; color: var(--muted); }
+.daily-mission-freshness { display: grid; gap: 2px; min-width: 180px; padding-left: 16px; border-left: 1px solid var(--line-strong); }
+.daily-mission-freshness span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+.daily-mission-freshness b { font-size: 12px; }
+.daily-mission-freshness small { color: var(--faint); }
+.daily-mission-warning { font-size: 13px; }
+.daily-mission-list { display: grid; gap: 8px; }
+.daily-mission-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: 5px; background: rgba(12,17,22,.55); }
+.daily-mission-card.priority { border-left: 3px solid var(--forge-orange); }
+.daily-mission-card-main { min-width: 0; }
+.daily-mission-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.daily-mission-group-tag { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.daily-mission-card h3 { margin: 5px 0 2px; font-size: 15px; }
+.daily-mission-card p { margin: 0; color: #C9CDD3; }
+.daily-mission-card-foot { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 6px; color: var(--faint); font-size: 11px; }
+.daily-mission-card-actions { display: grid; justify-items: end; gap: 6px; min-width: 150px; }
+.daily-mission-recovery { grid-column: 1 / -1; width: min(680px, 100%); padding: 10px 12px; border: 1px solid var(--line-strong); border-left: 3px solid var(--info); border-radius: 5px; background: var(--panel-2); text-align: left; }
+.daily-mission-recovery h4 { margin: 0 0 5px; font-size: 13px; }
+.daily-mission-recovery p { margin: 4px 0; color: var(--muted); font-size: 12px; }
+.daily-mission-recovery ol { display: grid; gap: 7px; margin: 8px 0; padding-left: 22px; }
+.daily-mission-recovery li { font-size: 12px; line-height: 1.4; }
+.daily-mission-recovery small { display: block; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.daily-mission-assignment-note { max-width: 190px; color: var(--muted); font-size: 10px; line-height: 1.35; text-align: right; }
+.daily-mission-empty { margin: 0; color: var(--muted); }
+.daily-mission-sources > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; cursor: pointer; }
+.daily-mission-sources > summary span { color: var(--muted); font-size: 12px; }
+.daily-mission-source-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 20px; margin-top: 12px; }
+.daily-mission-source-list > div { display: grid; grid-template-columns: 130px minmax(120px, .5fr) minmax(0, 1fr); gap: 5px 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--line); }
+.daily-mission-source-list > div > span:last-of-type, .daily-mission-source-list small { color: var(--muted); }
+.daily-mission-source-list time { grid-column: 3; color: var(--faint); font-size: 11px; }
+.daily-mission-source-list small { grid-column: 2 / 4; }
+.daily-source-state { color: #FCA5A5; font-size: 11px; font-weight: 700; }
+.daily-source-state.ok { color: #86EFAC; }
+.daily-source-state.warn { color: #FCD34D; }
+@media (max-width: 760px) {
+  .daily-mission-welcome { align-items: stretch; flex-direction: column; }
+  .daily-mission-welcome-actions { justify-content: flex-start; }
+  .daily-mission-header-actions { width: 100%; }
+  .daily-mission-brief { grid-template-columns: 40px minmax(0, 1fr); }
+  .daily-mission-freshness { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line-strong); padding: 9px 0 0; }
+  .daily-mission-card { align-items: flex-start; flex-direction: column; }
+  .daily-mission-card-actions { justify-items: start; min-width: 0; }
+  .daily-mission-recovery { width: 100%; }
+  .daily-mission-assignment-note { max-width: 100%; text-align: left; }
+  .daily-mission-source-list { grid-template-columns: 1fr; }
+}
 .eyebrow { margin: 0 0 4px; color: var(--forge-orange); font: 700 11px var(--font-display); letter-spacing: .14em; text-transform: uppercase; }
 .field-label { font-size: 12px; color: var(--muted); }
 .repeater { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
@@ -459,6 +531,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .shell.nav-open .sidebar { transform: none; box-shadow: 10px 0 40px rgba(0,0,0,.6); }
   .icon-btn.menu-btn { display: grid; }
   .topbar { padding: 10px 16px; gap: 8px; }
+  .workspace-switch { width: 145px; }
   .user-card .who, .user-card > svg { display: none; }
   .user-card { border-left: 0; padding-left: 0; }
   .content { padding: 14px 16px 32px; }

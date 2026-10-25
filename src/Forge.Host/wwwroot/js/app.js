@@ -1,4 +1,4 @@
-import { session, loadConfig, get, tryGet, signedIn, signInDevelopment, signOut, whenSignedOut, beginOidcSignIn, completeOidcSignIn, onCommand } from './api.js';
+import { session, loadConfig, get, tryGet, statePost, signedIn, signInDevelopment, signOut, whenSignedOut, beginOidcSignIn, completeOidcSignIn, onCommand } from './api.js';
 import { icon, img } from './icons.js';
 import { esc, $, $$, setTimeZone, closeOverlays, drawer, toast } from './ui.js';
 import { startDemoClock } from './demo-clock.js';
@@ -38,6 +38,7 @@ import { analystPage } from './pages/analyst.js';
 import { shiftContinuityPage } from './pages/shift-continuity.js';
 import { notificationsPage } from './pages/notifications.js';
 import { workInboxPage } from './pages/work-inbox.js';
+import { dailyMissionPage } from './pages/daily-mission.js';
 import { integrityPage } from './pages/integrity.js';
 import { scenariosPage } from './pages/scenarios.js';
 import { loadDirectory } from './people.js';
@@ -47,6 +48,7 @@ import { filterNavGroups } from './navigation.mjs';
 import { canAction } from './ui-authority.mjs';
 
 const NAV = [
+  { route: 'daily-mission', label: 'Daily Mission', icon: 'dashboard', page: dailyMissionPage },
   { route: 'home', label: 'Home', icon: 'dashboard', page: horizonPage },
   { route: 'supervisor', label: 'Plant Overview', icon: 'dashboard', page: horizonPage },
   { route: 'workforce-kanban', label: 'Workforce Kanban', icon: 'workforce', page: workforceKanbanPage },
@@ -89,6 +91,7 @@ const NAV = [
   { route: 'access', label: 'Access Control', icon: 'access', page: accessPage },
 ];
 const NAV_GROUPS = [
+  ['Daily', ['daily-mission']],
   ['Supervisor', ['supervisor', 'workforce-kanban', 'machine-kanban', 'performance']],
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
   ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'maintenance', 'shipping']],
@@ -187,6 +190,7 @@ function renderLogin(message) {
 let lookups = null; // search index, loaded lazily
 let supervisorKioskMode = null;
 let showAllModules = false;
+let accessibleWorkspaces = [];
 onCommand(() => { lookups = null; $('#search-results')?.classList.add('hidden'); });
 
 function renderShell() {
@@ -223,6 +227,7 @@ function renderShell() {
             <input class="input" id="search" type="search" placeholder="Search orders, parts, employees, machines, or ask Forge…" autocomplete="off" aria-label="Search">
             <div class="search-results hidden" id="search-results"></div>
           </div>
+          <label class="workspace-switch hidden" id="workspace-switch-wrap"><span class="sr-only">Switch workspace</span><select class="input" id="workspace-switcher" aria-label="Switch workspace"></select></label>
           <div class="top-icons">
             <button class="icon-btn" id="bell" aria-label="Open notifications">${icon('bell')}<span class="count hidden" id="bell-count"></span></button>
             <button class="icon-btn" id="help" aria-label="Help">${icon('help')}</button>
@@ -245,6 +250,7 @@ function renderShell() {
     $('#main-nav').innerHTML = groupedNav();
   };
   $('#user-card').onclick = () => { location.hash = '#/settings'; };
+  $('#workspace-switcher').onchange = event => { if (event.target.value) location.hash = `#/${event.target.value}`; };
   $('#bell').onclick = () => { location.hash = '#/notifications'; };
   $('#help').onclick = showHelp;
   wireSearch();
@@ -308,13 +314,18 @@ async function runSearch(text) {
 // ---------------------------------------------------------------- routing
 
 let current = null;
+let routingHash = null;
 async function route() {
   if (!session.me) return;
+  if (location.hash === routingHash) return;
+  routingHash = location.hash;
   closeOverlays();
   $('#shell')?.classList.remove('nav-open');
   const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
   const [name, ...rest] = path.split('/');
   const entry = [...NAV, SETTINGS].find(n => n.route === (name || 'home')) ?? NAV[0];
+  const workspaceSelect = $('#workspace-switcher');
+  if (workspaceSelect && accessibleWorkspaces.some(workspace => workspace.route === entry.route)) workspaceSelect.value = entry.route;
   const supervisorCanToggleKiosk = entry.route === 'shop-floor' && session.me.roles.includes('Supervisor');
   const setKioskMode = value => {
     if (!supervisorCanToggleKiosk) return;
@@ -359,6 +370,25 @@ async function start() {
   setTimeZone(resources.data?.sites?.[0]?.timeZone);
   renderShell();
   await startDemoClock($('#demo-clock'));
+  const [missionSession, workspacePreferences] = await Promise.all([
+    statePost('/api/daily-mission/session').catch(() => null),
+    get('/api/daily-mission/preferences').catch(() => null),
+  ]);
+  if (workspacePreferences?.options) {
+    accessibleWorkspaces = workspacePreferences.options;
+    const switcher = $('#workspace-switcher');
+    if (switcher) {
+      switcher.innerHTML = accessibleWorkspaces.map(workspace => `<option value="${esc(workspace.route)}">${esc(workspace.label)}</option>`).join('');
+      $('#workspace-switch-wrap')?.classList.toggle('hidden', accessibleWorkspaces.length < 2);
+    }
+  }
+  if (missionSession) session.me.dailyMissionSession = missionSession;
+  if (missionSession?.briefing?.shouldShow) {
+    location.hash = '#/daily-mission';
+  } else if (workspacePreferences?.landingRoute && !location.hash.replace(/^#\/?/, '').includes('?')
+      && location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).length <= 1) {
+    location.hash = `#/${workspacePreferences.landingRoute}`;
+  }
   await route();
 }
 

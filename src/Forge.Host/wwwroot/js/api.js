@@ -73,6 +73,15 @@ export async function readPost(path, body) {
   return handle(await fetch(path, { method: 'POST', headers: headers(true), body: JSON.stringify(body) }));
 }
 
+/** Idempotent presentation-state endpoints that are not domain commands. */
+export async function statePost(path, body = {}) {
+  return handle(await fetch(path, { method: 'POST', headers: headers(true), body: JSON.stringify(body) }));
+}
+
+export async function put(path, body) {
+  return handle(await fetch(path, { method: 'PUT', headers: headers(true), body: JSON.stringify(body) }));
+}
+
 /** Sends a command. `reason` is recorded in the audit trail with the change. */
 export async function command(path, body = {}, reason, options = {}) {
   const payload = reason ? { ...body, reason } : body;

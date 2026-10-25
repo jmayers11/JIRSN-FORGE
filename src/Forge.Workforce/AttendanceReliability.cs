@@ -218,6 +218,40 @@ public static class AttendanceReliabilityCalculator
                 : $"On-time arrival percentage is unavailable: {pending} opportunity(ies) need review and {missingPolicy} opportunity(ies) have no unique effective policy.");
     }
 
+    /// <summary>
+    /// Counts only unambiguous, verified ApprovedPto classifications for scheduled opportunities in a shift window.
+    /// Pending/disputed, superseded, conflicting, protected-leave and excused-absence records are not counted.
+    /// </summary>
+    public static int VerifiedApprovedPtoCount(
+        IReadOnlyCollection<ScheduledAttendanceOpportunity> opportunities,
+        IReadOnlyCollection<AttendanceIntelligenceEvent> events,
+        DateTimeOffset periodStart,
+        DateTimeOffset periodEnd)
+    {
+        ArgumentNullException.ThrowIfNull(opportunities);
+        ArgumentNullException.ThrowIfNull(events);
+        if (periodEnd <= periodStart) throw new ArgumentException("Period must end after it starts.", nameof(periodEnd));
+
+        var supersededOpportunities = opportunities.Where(opportunity => opportunity.SupersedesOpportunityId is not null)
+            .Select(opportunity => opportunity.SupersedesOpportunityId!.Value).ToHashSet();
+        var currentEvents = events.Where(item => item.ReviewState != AttendanceEventReviewState.Superseded)
+            .GroupBy(item => item.OpportunityId)
+            .ToDictionary(group => group.Key, group => CurrentEvents(group.ToArray()));
+
+        return opportunities.Count(opportunity =>
+        {
+            if (supersededOpportunities.Contains(opportunity.OpportunityId)
+                || opportunity.State != AttendanceOpportunityState.Scheduled
+                || opportunity.ScheduledStart < periodStart || opportunity.ScheduledStart >= periodEnd)
+                return false;
+
+            var records = currentEvents.GetValueOrDefault(opportunity.OpportunityId) ?? [];
+            if (records.Any(item => item.ReviewState is AttendanceEventReviewState.PendingReview or AttendanceEventReviewState.Disputed)) return false;
+            var verified = records.Where(item => item.ReviewState == AttendanceEventReviewState.Verified && item.PersonId == opportunity.PersonId).ToArray();
+            return verified.Length == 1 && verified[0].Kind == AttendanceEventKind.ApprovedPto;
+        });
+    }
+
     private static AttendanceIntelligenceEvent[] CurrentEvents(AttendanceIntelligenceEvent[] items)
     {
         var superseded = items.Where(item => item.SupersedesEventId is not null).Select(item => item.SupersedesEventId!.Value).ToHashSet();

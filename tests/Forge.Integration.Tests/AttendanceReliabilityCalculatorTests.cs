@@ -110,6 +110,37 @@ public sealed class AttendanceReliabilityCalculatorTests
         Assert.Null(summary.OnTimeArrivalPercent);
     }
 
+    [Fact]
+    public void Approved_pto_count_requires_one_verified_current_classification()
+    {
+        var pto = Opportunity(90, AsOf.AddDays(1));
+        var pendingPto = Opportunity(91, AsOf.AddDays(1));
+        var protectedLeave = Opportunity(92, AsOf.AddDays(1));
+        var conflicting = Opportunity(93, AsOf.AddDays(1));
+        var corrected = Opportunity(94, AsOf.AddDays(1));
+        var priorPto = Event(94, AttendanceEventKind.ApprovedPto);
+        var correction = priorPto with
+        {
+            EventId = Guid.NewGuid(),
+            Kind = AttendanceEventKind.Arrival,
+            ReviewState = AttendanceEventReviewState.PendingReview,
+            SupersedesEventId = priorPto.EventId,
+        };
+        var events = new[]
+        {
+            Event(90, AttendanceEventKind.ApprovedPto),
+            Event(91, AttendanceEventKind.ApprovedPto, state: AttendanceEventReviewState.PendingReview),
+            Event(92, AttendanceEventKind.ProtectedLeave),
+            Event(93, AttendanceEventKind.ApprovedPto),
+            Event(93, AttendanceEventKind.Arrival, AsOf.AddDays(1).AddHours(9)),
+            priorPto,
+            correction,
+        };
+
+        Assert.Equal(1, AttendanceReliabilityCalculator.VerifiedApprovedPtoCount(
+            [pto, pendingPto, protectedLeave, conflicting, corrected], events, AsOf, AsOf.AddDays(2)));
+    }
+
     private static ScheduledAttendanceOpportunity Opportunity(int day, DateTimeOffset? at = null)
     {
         var start = at ?? Start.AddDays(day).AddHours(9);
