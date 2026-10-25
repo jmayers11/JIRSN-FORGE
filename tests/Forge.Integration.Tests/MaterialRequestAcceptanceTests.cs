@@ -57,7 +57,7 @@ public sealed class MaterialRequestAcceptanceTests(PostgresFixture postgres)
             .Where(b => b.GetProperty("locationCode").GetString() == location && b.GetProperty("status").GetString() == status)
             .Sum(b => b.GetProperty("quantity").GetDecimal());
 
-    /// <summary>A released harness order of 20 needing one CONN-8 each, with Sarah running its slitting operation.</summary>
+    /// <summary>A released harness order of 20 needing one CONN-8 each, with Sarah running its operation and the stores balance given.</summary>
     private static async Task<Floor> BuildAsync(ForgeApp app, decimal connectors)
     {
         var (plant, planner) = await SlittingPlant.BuildEngineeredAsync(app);
@@ -88,6 +88,9 @@ public sealed class MaterialRequestAcceptanceTests(PostgresFixture postgres)
         await plant.Ok(stores, "/api/inventory/locations", new { code = "SL-STAGE", siteCode = "PLANT1", name = "Slitting staging", kind = "Staging", workCenterCode = "SLIT-WC" });
         await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "CONN-8", quantity = connectors, locationCode = "STORES", reason = "Opening balance" });
         await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "SLEEVE-2", quantity = 50m, locationCode = "STORES", reason = "Opening balance" });
+        // The line already holds the order's 20 connectors (received straight to staging, so no task or issue covers the demand):
+        // starting work needs them at the point of use.
+        await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "CONN-8", quantity = 20m, locationCode = "SL-STAGE", reason = "Line-side balance" });
         await plant.EnsureCustodyAsync();
 
         var order = Id(await plant.Ok(e, "/api/orders/", new { partNumber = "HARN-1", quantity = 20m, dueDate = DateTime.UtcNow.AddDays(10).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), priority = 3 }));
