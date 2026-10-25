@@ -105,8 +105,7 @@ public sealed class MaterialRequestAcceptanceTests(PostgresFixture postgres)
     [Fact]
     public async Task Suspect_scrap_replacement_retried_requests_and_additional_material_stay_controlled()
     {
-        var errors = new DiagnosticErrors();
-        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync(), services => services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(errors));
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
         var (plant, planner, kiosk, stores, sup, order) = await BuildAsync(app, 30m);
         await plant.Person("qe", "QualityEngineer");
         await plant.Person("ic2", "InventoryController");
@@ -152,11 +151,8 @@ public sealed class MaterialRequestAcceptanceTests(PostgresFixture postgres)
         // WW-S10-28: additional material needs a reason and an independent decision; it cannot be allocated first and never amends the order.
         await Rejected(plant, kiosk, "/api/shopfloor/material-request",
             new { badge = SarahBadge, orderNumber = order, sequence = 10, partNumber = "SLEEVE-2", quantity = 4m, toLocation = "SL-STAGE", reason = "Sleeves for rework" }, "not_on_order");
-        var extraResponse = await plant.Try(kiosk, "/api/shopfloor/material-request",
+        var extra = await plant.Ok(kiosk, "/api/shopfloor/material-request",
             new { badge = SarahBadge, orderNumber = order, sequence = 10, partNumber = "SLEEVE-2", quantity = 4m, toLocation = "SL-STAGE", reason = "Sleeves for rework", allowNonBomMaterial = true });
-        var extraText = await extraResponse.Content.ReadAsStringAsync();
-        Assert.True(extraResponse.IsSuccessStatusCode, extraText + "\n" + string.Join("\n", errors.Lines));
-        var extra = JsonDocument.Parse(extraText).RootElement.Clone();
         var extraId = Id(extra);
         Assert.Contains("awaiting independent", extra.GetProperty("message").GetString(), StringComparison.Ordinal);
         Assert.Equal("ApprovalNeeded", (await TaskById(stores, order, extraId)).GetProperty("status").GetString());
@@ -220,25 +216,5 @@ public sealed class MaterialRequestAcceptanceTests(PostgresFixture postgres)
         Assert.Equal("Cancelled", history[twelve].GetProperty("status").GetString());
         Assert.Equal("Requested", history[rest].GetProperty("status").GetString());
         Assert.Equal((4m, 4m), (await Stock(stores, "CONN-8", "STORES"), await Stock(stores, "CONN-8", "STORES", "Hold")));
-    }
-
-    private sealed class DiagnosticErrors : Microsoft.Extensions.Logging.ILoggerProvider, Microsoft.Extensions.Logging.ILogger
-    {
-        public System.Collections.Concurrent.ConcurrentQueue<string> Lines { get; } = new();
-
-        public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
-
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => logLevel >= Microsoft.Extensions.Logging.LogLevel.Error;
-
-        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        {
-            if (IsEnabled(logLevel)) Lines.Enqueue(formatter(state, exception) + " " + exception);
-        }
-
-        public void Dispose()
-        {
-        }
     }
 }
