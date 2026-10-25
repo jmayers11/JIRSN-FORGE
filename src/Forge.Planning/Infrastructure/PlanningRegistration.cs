@@ -16,10 +16,12 @@ public static class PlanningRegistration
         services.AddForgeStore<Forge.Kernel.Holds.IHoldPropagationLookup>(uow => new HoldPropagationLookup(uow));
         services.AddForgeStore<IDemandStore>(uow => new PostgresDemandStore(uow));
         services.AddForgeStore<IGoalStore>(uow => new PostgresGoalStore(uow));
+        services.AddForgeStore<IMaterialRiskStore>(uow => new PostgresMaterialRiskStore(uow));
         services.AddForgeStore<IPlanningScenarioStore>(uow => new PostgresPlanningScenarioStore(uow));
         services.AddForgeStore<Reporting.IReportDefinitionStore>(uow => new PostgresReportStore(uow));
         services.AddSingleton<DemandService>();
         services.AddSingleton<MaterialPlanningService>();
+        services.AddSingleton<MaterialRiskService>();
         services.AddSingleton<ReadinessService>();
         services.AddSingleton<MaterialReceiptImpactPreviewService>();
         services.AddSingleton<MaterialScrapImpactPreviewService>();

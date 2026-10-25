@@ -95,4 +95,7 @@ public static class SystemActors
 
     /// <summary>Opens training requests for qualifications about to expire.</summary>
     public const string TrainingRequests = "system:training-requests";
+
+    /// <summary>Tells planners when released orders become, or stop being, at risk from material.</summary>
+    public const string MaterialRisk = "system:material-risk";
 }

@@ -200,6 +200,17 @@ public static class MaterialsEndpoints
             return await Command(http, b.Reason, c => s.RaiseAsync(new RaiseRequisition(planned.PartNumber, planned.Quantity, planned.DueDate, source.Kind, source.Key, source.Label, source.DemandId, planned.Key,
                 b.RequiredRevision, b.SupplierCode, program), c, ct));
         });
+        planning.MapPost("/material-risk/scan", (HttpContext http, ReasonRequest b, MaterialRiskService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ScanAsync(new ScanMaterialRisk(), c, ct)));
+        planning.MapGet("/material-risk", (HttpContext http, CancellationToken _) =>
+            Read(http, Permissions.MaterialPlanRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var orders = (await uow.Store<IExecutionLookup>().ListOrdersAsync(http.RequestAborted)).ToDictionary(o => o.OrderNumber);
+                return (await uow.Store<IMaterialRiskStore>().ListOpenAsync(http.RequestAborted))
+                    .Where(r => orders.TryGetValue(r.OrderNumber, out var o) && (o.ProgramId is not { } p || principal.Programs.Contains(new Forge.Kernel.Identity.ProgramId(p))))
+                    .ToList();
+            }));
         planning.MapGet("/material", async (HttpContext http, MaterialPlanningService s, CancellationToken ct) =>
         {
             var principal = await PrincipalAsync(http);

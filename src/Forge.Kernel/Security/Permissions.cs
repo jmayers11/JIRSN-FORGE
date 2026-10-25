@@ -362,6 +362,7 @@ public static class Roles
         [QualityReplan] = [Permissions.ScheduleRead, Permissions.SchedulePropose],
         [WorkforceMoves] = [Permissions.WorkforceRead, Permissions.WorkforceSupervise],
         [TrainingRequests] = [Permissions.WorkforceRead, Permissions.CompetencyRead, Permissions.TrainingRequestsRequest],
+        [MaterialRisk] = [Permissions.MaterialPlanRead, Permissions.ReadinessRead, Permissions.OrdersRead],
     };
 
     static Roles()
@@ -396,6 +397,9 @@ public static class Roles
 
     /// <summary>The system role that opens training requests for qualifications about to expire.</summary>
     public const string TrainingRequests = "system.TrainingRequests";
+
+    /// <summary>The system role that tells planners when released orders become, or stop being, at risk from material (Sprint 10 WW-S10-30).</summary>
+    public const string MaterialRisk = "system.MaterialRisk";
 
     /// <summary>The system role that records a part issued to a work order as installed on its asset (V2.9).</summary>
     public const string MaintenanceInstallation = "system.MaintenanceInstallation";
