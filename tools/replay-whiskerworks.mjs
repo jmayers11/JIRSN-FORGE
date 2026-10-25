@@ -190,6 +190,66 @@ async function replayS07() {
   return results;
 }
 
+async function machineDimension(machineCode, activity, name) {
+  const result = await get(`/api/readiness/machines/${encodeURIComponent(machineCode)}?activity=${encodeURIComponent(activity)}`, engineer);
+  const dimension = ((result.output ?? result).dimensions ?? []).find(d => d.name === name);
+  return { outcome: dimension?.outcome ?? null, detail: dimension?.detail ?? null };
+}
+
+const lotQuantity = (positions, partNumber, lotNumber, status, location = 'WW-RAW') => positions
+  .filter(p => p.partNumber === partNumber && p.lotNumber === lotNumber && p.qualityStatus === status && (!location || p.locationCode === location))
+  .reduce((sum, p) => sum + Number(p.quantity), 0);
+
+// S04, S06, S08 and S11 through the same audited commands the Scenario Center uses, each read back from its source.
+async function replayFloorEvents(siteToday) {
+  // S04: CNC-01 unplanned downtime makes its Equipment readiness fail.
+  const equipmentBefore = await machineDimension('CNC-01', 'CNC_MILL', 'Equipment');
+  await post('/api/maintenance/machines/CNC-01/down', { description: 'Fictional demo event: unplanned spindle coolant failure', reason: 'S04 replay' }, 'ww-demo-supervisor');
+  const now = Date.now();
+  const downtime = await get(`/api/maintenance/downtime?from=${encodeURIComponent(new Date(now - 864e5).toISOString())}&to=${encodeURIComponent(new Date(now + 864e5).toISOString())}`, engineer);
+  const open = downtime.filter(d => d.machineCode === 'CNC-01' && !d.endsAt);
+  const equipmentAfter = await machineDimension('CNC-01', 'CNC_MILL', 'Equipment');
+  evidence.s04 = { equipmentBefore, equipmentAfter, openDowntime: open.length };
+  check('S04 records one open CNC-01 downtime', open.length === 1, { open });
+  check('S04 CNC-01 equipment readiness fails while it is down', equipmentAfter.outcome === 'Fail' && equipmentBefore.outcome !== 'Fail', { equipmentBefore, equipmentAfter });
+
+  // S06: the exact 500-unit motor lot moves from Released to Hold; nothing else changes.
+  const motorBefore = await get('/api/inventory/positions', engineer);
+  const releasedBefore = lotQuantity(motorBefore, 'WW-MOT-24V-DC', 'LOT-MOT-24V-881', 'Released');
+  const heldBefore = lotQuantity(motorBefore, 'WW-MOT-24V-DC', 'LOT-MOT-24V-881', 'Hold');
+  await post('/api/inventory/holds', { partNumber: 'WW-MOT-24V-DC', quantity: 500 - heldBefore, locationCode: 'WW-RAW', lotNumber: 'LOT-MOT-24V-881', status: 'Released', reason: 'S06 replay: suspect motor lot' }, engineer);
+  const motorAfter = await get('/api/inventory/positions', engineer);
+  const held = lotQuantity(motorAfter, 'WW-MOT-24V-DC', 'LOT-MOT-24V-881', 'Hold');
+  const released = lotQuantity(motorAfter, 'WW-MOT-24V-DC', 'LOT-MOT-24V-881', 'Released');
+  evidence.s06 = { releasedBefore, heldBefore, releasedAfter: released, heldAfter: held };
+  check('S06 holds exactly 500 units of LOT-MOT-24V-881', held === 500 && released === releasedBefore - (500 - heldBefore), evidence.s06);
+
+  // S08: 250 m sisal parent splits into 100/100/45 m child lots and the 5 m remnant is scrapped.
+  const children = ['LOT-SISAL-M01-A', 'LOT-SISAL-M01-B', 'LOT-SISAL-M01-C'];
+  const sisalBefore = await get('/api/inventory/positions', engineer);
+  const parentBefore = lotQuantity(sisalBefore, 'WW-SISAL-SPOOL-250M', 'LOT-SISAL-M01', 'Released');
+  check('S08 starts from one 250 m released sisal parent lot', parentBefore === 250, { parentBefore });
+  if (parentBefore === 250) {
+    await post('/api/inventory/splits', { partNumber: 'WW-SISAL-SPOOL-250M', lotNumber: 'LOT-SISAL-M01', locationCode: 'WW-RAW', status: 'Released',
+      results: [{ lotNumber: children[0], quantity: 100 }, { lotNumber: children[1], quantity: 100 }, { lotNumber: children[2], quantity: 45 }], reason: 'S08 replay: cut to order lengths' }, engineer);
+    await post('/api/inventory/scrap', { partNumber: 'WW-SISAL-SPOOL-250M', quantity: 5, locationCode: 'WW-RAW', lotNumber: 'LOT-SISAL-M01', status: 'Released', reason: 'S08 replay: 5 m remnant' }, engineer);
+  }
+  const sisalAfter = await get('/api/inventory/positions', engineer);
+  const childQuantities = children.map(lot => lotQuantity(sisalAfter, 'WW-SISAL-SPOOL-250M', lot, 'Released'));
+  const parentAfter = lotQuantity(sisalAfter, 'WW-SISAL-SPOOL-250M', 'LOT-SISAL-M01', 'Released');
+  evidence.s08 = { parentBefore, parentAfter, children: Object.fromEntries(children.map((lot, i) => [lot, childQuantities[i]])) };
+  check('S08 child lots are 100/100/45 m and the parent is consumed', childQuantities.join('/') === '100/100/45' && parentAfter === 0, evidence.s08);
+
+  // S11: fictional past-due calibrations for the torque and optical gauges, read back from Quality.
+  const calibratedOn = new Date(Date.parse(`${siteToday}T12:00:00Z`) - 2 * 864e5).toISOString().slice(0, 10);
+  const dueDate = new Date(Date.parse(`${siteToday}T12:00:00Z`) - 864e5).toISOString().slice(0, 10);
+  for (const code of ['GAUGE-TRQ-04', 'GAUGE-OPT-01'])
+    await post(`/api/quality/gauges/${code}/calibrations`, { calibratedOn, dueDate, certificate: 'WW-DEMO-EXPIRED-CALIBRATION', reason: 'S11 replay: past-due calibration' }, engineer);
+  const gauges = (await get('/api/quality/gauges', engineer)).filter(g => ['GAUGE-TRQ-04', 'GAUGE-OPT-01'].includes(g.code));
+  evidence.s11 = { siteToday, gauges: gauges.map(g => ({ code: g.code, calibrationDue: g.calibrationDue })) };
+  check('S11 torque and optical gauges are past due at the site date', gauges.length === 2 && gauges.every(g => g.calibrationDue < siteToday), evidence.s11);
+}
+
 async function main() {
   await ready();
   let status = await get('/api/demo/status');
@@ -232,6 +292,8 @@ async function main() {
   check('The S01 baseline has released work', baselineKpis.releasedOrders > 0, { releasedOrders: baselineKpis.releasedOrders });
 
   await replayS07();
+  const siteZone = sites[0]?.timeZone ?? 'UTC';
+  await replayFloorEvents(new Intl.DateTimeFormat('en-CA', { timeZone: siteZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.parse(status.simulatedNow))));
 
   // S05: a CNC-02 mill qualification seeded to expire five days out stops counting once the simulated clock passes it.
   const before = await cncMillReadiness();

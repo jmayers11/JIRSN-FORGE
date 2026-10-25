@@ -1,5 +1,11 @@
 # AI_HANDOFF.md
 
+## Claude: Training & Performance, training requests, Workforce Records (2026-10-25)
+
+Owner requests after the completion pass, all committed: a **Training & Performance** page in the Supervisor menu (alphabetical employee roster on the right, the chosen employee's review/training/attendance/labor/development in the centre, Command Center plus Training queue and New employee training when nobody is chosen); quarterly/annual **review cards** with published green/yellow/red thresholds, reasons, gray for thin evidence, and printing; **supervisors read attendance rates**; **new-employee training** (onboarding requirements per plant/work center, requests opened on worker registration) and **training requests** from expiring qualifications, supervisors and approved development packets; a **Technical Trainer** role notified to schedule them (delivery certifies nothing); and **Workforce Records** in Admin replacing the old Workforce page. Details, files, permissions and verification are in `docs/sprint-10-implementation-report.md` ("Training & Performance, training requests and Workforce Records"). Migrations: kernel `0035`, workforce `0013` (count 162). Demo sign-ins: `ww-demo-manager`, `ww-demo-trainer`.
+
+Codex's 2026-10-25 work (S05/S07 replay checks, 17/17; `verify.cmd` isolated output) was reviewed and merged into this record; the full `verify.cmd` rerun with that fix is the next verification step (see the completion-pass section below for its result once recorded).
+
 ## Claude: Sprint 9 and Sprint 10 completion pass (updated 2026-10-25)
 
 The owner asked for everything still unbuilt in Sprints 9 and 10 to be built and committed, choosing Sprint 10 §16–22, the Sprint 9 demo clock (demo databases only), baseline and reset, and scenario replay.
