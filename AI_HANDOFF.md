@@ -1,5 +1,12 @@
 # AI_HANDOFF.md
 
+## Claude: Daily Mission verified and committed; Sprint 9 replay completed (2026-10-25)
+
+- **Daily Mission (Codex) verified on PostgreSQL and committed** (`feat: Daily Mission and role workspaces`): migration 0036 applies (163 migrations), `DailyMission*`, `V320`, attendance calculator, `KernelRoundTrip`/`V328` tests and the UI suite pass. `OperationalDayResolver` now builds shift starts to the minute like `WorkCalendar` and the attendance schedule (a shift stored with seconds missed its attendance opportunity); covered by a new resolver test.
+- **WhiskerWorks replay now 47/47** (`.forge-logs/whiskerworks-replay-20261025h.json`) against the demo on port 5080, resetting to baseline at the end. Added: **S03** (ASM-03 two-person Safety Pass → Fail after one callout, partner still present), **S10** (private PriorityChange what-if returns impacts/options, invisible to another analyst user, no order or approved-schedule change), **S14** (dated recovery actions; dependent action refused with `action_dependencies_open` until the blocker is completed with evidence), **S15** (callout while CNC-01 is down; after the clock passes the shift, the reviewed handoff carries both facts, the creator cannot acknowledge, a different CNC Mill operator does), **S16** (with S03/S04/S06 in force every open ASM-03 operation is blocked by Safety/Workforce; motor shortages show on order readiness; the baseline has no open CNC-01 operation, so S04 is evidenced by CNC-01 machine readiness instead).
+- **Sprint 9 scenario status:** S01–S08, S10, S11, S14–S16 replayed; S09 and S13 covered by their PostgreSQL regressions (passed in the full run); S12 is a browser-only rehearsal covered by UI tests (no live scanner/printer). Interactive Scenario Center evidence for S07 remains a manual walkthrough.
+- **Next:** the 38 Sprint 10 acceptance cases (`tools/whiskerworks-sprint10-scenarios.mjs`) — map each to confirmed passing tests/replay checks, then automate the genuine gaps.
+
 ## Codex: Daily Mission safe coverage preview and ready-operation queue — 2026-10-25
 
 Continued the owner-approved Daily Mission implementation. Added a **Ready to Execute** section from the existing order-readiness results for up to five open released operations at the authenticated worker's site. Each card states that all current readiness dimensions pass, while making clear that it does not reserve finite capacity, imply an approved schedule/dispatch, or start work.
