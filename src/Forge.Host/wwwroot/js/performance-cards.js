@@ -159,16 +159,24 @@ function contributionsHtml(card) {
     : '<p class="faint">No completed operations, coverage or training were recorded in this period.</p>';
 }
 
-export function cardHtml(card, grading, period) {
+const PILL = { good: 'ok', watch: 'warn', concern: 'bad', na: 'none' };
+const SHORT = { efficiency: 'Eff', firstPass: 'FPY', attendance: 'On-time', coverage: 'Cover', qualifications: 'Quals' };
+
+/** One employee: a collapsed row (name, status, every figure as a colored chip) that opens into the full review card. */
+export function cardHtml(card, grading, period, open = false) {
   const subtitle = [card.jobTitle, card.department, card.homeWorkCenterCode, card.shiftCode].filter(Boolean).map(esc).join(' · ');
-  return `<article class="perf-card ${grading.overall}" data-perf-card="${esc(card.personId)}">
-    <header><div><a href="#/workforce?personId=${encodeURIComponent(card.personId)}"><b>${esc(card.displayName)}</b></a><span class="faint">${subtitle}</span></div><span class="pill ${grading.overall === 'good' ? 'ok' : grading.overall === 'watch' ? 'warn' : grading.overall === 'concern' ? 'bad' : 'none'}">${esc(GRADE_LABEL[grading.overall])}</span></header>
-    <div class="perf-period faint">${esc(period?.kind ?? 'Review')} performance summary · ${esc(period?.label ?? '')}</div>
+  const chips = grading.metrics.map(metric => `<span class="perf-chip ${metric.grade}" title="${esc(`${metric.label}: ${metric.reason}`)}"><span class="perf-dot ${metric.grade}" aria-hidden="true"></span>${esc(SHORT[metric.key] ?? metric.label)} <b>${esc(metric.display)}</b></span>`).join('');
+  return `<details class="perf-card ${grading.overall}" data-perf-card="${esc(card.personId)}" ${open ? 'open' : ''}>
+    <summary><span class="perf-card-head"><span class="perf-card-name"><b>${esc(card.displayName)}</b><span class="faint">${subtitle}</span></span><span class="pill ${PILL[grading.overall]}">${esc(GRADE_LABEL[grading.overall])}</span></span>
+      <span class="perf-chips">${chips}</span></summary>
+    <div class="perf-card-body">
+    <div class="perf-period faint">${esc(period?.kind ?? 'Review')} performance summary · ${esc(period?.label ?? '')} · <a href="#/performance?personId=${encodeURIComponent(card.personId)}">operation history</a></div>
     <div class="perf-tiles">${grading.metrics.map(tile).join('')}</div>
     <div class="perf-contributions"><b>Documented contributions</b>${contributionsHtml(card)}</div>
     <details class="perf-evidence"><summary>Why these colors · evidence and context</summary>${evidenceHtml(card, grading)}</details>
     <footer><span class="faint">Every figure comes from recorded source data and is for a reviewer to discuss, not a decision.</span><button class="btn small" type="button" data-perf-print="${esc(card.personId)}">Print</button></footer>
-  </article>`;
+    </div>
+  </details>`;
 }
 
 const GROUPS = {
@@ -194,7 +202,7 @@ export function boardHtml(data, state, periods) {
     ${(data?.restrictions ?? []).map(line => `<p class="notice warn">${esc(line)}</p>`).join('')}
     <div class="perf-board">${columns.map(([key, label]) => {
       const items = graded.filter(item => group.of(item) === key).sort(byGrade);
-      return `<section class="perf-column ${state.groupBy === 'status' || !state.groupBy ? key : ''}"><h3>${esc(label)} <span class="badge gray">${items.length}</span></h3>${items.map(item => cardHtml(item.card, item.grading, period)).join('') || '<p class="faint">No employees.</p>'}</section>`;
+      return `<section class="perf-column ${state.groupBy === 'status' || !state.groupBy ? key : ''}"><h3>${esc(label)} <span class="badge gray">${items.length}</span></h3>${items.map(item => cardHtml(item.card, item.grading, period, state.open?.has(item.card.personId))).join('') || '<p class="faint">No employees.</p>'}</section>`;
     }).join('')}</div>
     <details class="perf-legend"><summary>How the colors are set</summary><div>${legend}</div><p class="faint">${(data?.basis ?? []).map(esc).join(' ')}</p></details>`;
 }
@@ -204,7 +212,7 @@ export function controlsHtml(state, periods) {
     <label>Review period<select class="input" data-perf-control="period">${periods.map(period => `<option value="${esc(period.key)}" ${period.key === state.periodKey ? 'selected' : ''}>${esc(period.label)}</option>`).join('')}</select></label>
     <label>Group by<select class="input" data-perf-control="group">${Object.entries(GROUPS).map(([key, group]) => `<option value="${key}" ${key === (state.groupBy ?? 'status') ? 'selected' : ''}>${esc(group.label)}</option>`).join('')}</select></label>
     <label>Find employee<input class="input" type="search" data-perf-control="search" value="${esc(state.search ?? '')}" placeholder="Name"></label>
-    <span class="spacer"></span><button class="btn small primary" type="button" data-perf-print="all">Print full summary</button></div>`;
+    <span class="spacer"></span><button class="btn small" type="button" data-perf-expand="open">Expand all</button><button class="btn small" type="button" data-perf-expand="close">Collapse all</button><button class="btn small primary" type="button" data-perf-print="all">Print full summary</button></div>`;
 }
 
 const PRINT_CSS = `body{font:12px/1.4 "Segoe UI",system-ui,sans-serif;color:#111;margin:18px}h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:18px 0 6px}h4{margin:10px 0 4px}
@@ -242,6 +250,11 @@ export function mountPerformanceCards(root, { get, personIds = null, now = new D
   state.groupBy ??= 'status';
   let data = null;
   const period = () => periods.find(item => item.key === state.periodKey) ?? periods[0];
+  const isOpen = card => card.open === true || (card.open === undefined && !!card.attributes?.has?.('open'));
+  const remember = () => {
+    const board = root.querySelector('[data-perf-board]');
+    if (board) state.open = new Set(Array.from(board.querySelectorAll('details.perf-card')).filter(isOpen).map(card => card.dataset.perfCard));
+  };
   const draw = () => {
     const board = root.querySelector('[data-perf-board]');
     if (board) board.innerHTML = data?.error ? `<p class="notice warn">${esc(data.error)}</p>` : data ? boardHtml(data, state, periods) : '<p class="faint">Gathering verified evidence for every employee…</p>';
@@ -261,15 +274,25 @@ export function mountPerformanceCards(root, { get, personIds = null, now = new D
   root.innerHTML = `${controlsHtml(state, periods)}<div data-perf-board></div>`;
   root.addEventListener('change', event => {
     const control = event.target?.dataset?.perfControl;
-    if (control === 'period') { state.periodKey = event.target.value; load(); }
-    if (control === 'group') { state.groupBy = event.target.value; draw(); }
+    if (control === 'period') { remember(); state.periodKey = event.target.value; load(); }
+    if (control === 'group') { remember(); state.groupBy = event.target.value; draw(); }
   });
   root.addEventListener('input', event => {
     if (event.target?.dataset?.perfControl !== 'search') return;
+    remember();
     state.search = event.target.value;
     draw();
   });
   root.addEventListener('click', event => {
+    const expand = event.target.closest?.('[data-perf-expand]');
+    if (expand) {
+      const open = expand.dataset.perfExpand === 'open';
+      for (const card of Array.from(root.querySelectorAll('details.perf-card'))) {
+        card.open = open;
+      }
+      remember();
+      return;
+    }
     const print = event.target.closest?.('[data-perf-print]');
     if (!print || !data || data.error) return;
     const visible = { ...data, cards: (data.cards ?? []).filter(card => !state.visibleIds || state.visibleIds.has(card.personId)) };

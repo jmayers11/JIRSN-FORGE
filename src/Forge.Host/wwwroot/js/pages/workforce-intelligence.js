@@ -404,7 +404,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
     </section>`;
 }
 
-export async function appendWorkforceIntelligence(page, me, selectedPersonId = null) {
+export async function appendWorkforceIntelligence(page, me, selectedPersonId = null, { after = false } = {}) {
   const now = new Date();
   const activityFrom = new Date(now.getTime() - 30 * DAY);
   const through = new Date(now.getTime() + 30 * DAY);
@@ -515,7 +515,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     for (const section of panel.querySelectorAll('[data-wi-panel]')) section.hidden = section.dataset.wiPanel !== key;
     if (key === 'employees' && panel.querySelector('[data-wi-employee-cards]')?.getAttribute('data-mounted') !== 'true') mountCards();
   };
-  page.innerHTML = renderPanel() + page.innerHTML;
+  page.innerHTML = after ? page.innerHTML + renderPanel() : renderPanel() + page.innerHTML;
   if (current.tab === 'employees') mountCards();
   page.addEventListener('keydown', event => {
     const tab = event.target?.closest?.('[data-wi-tab]');

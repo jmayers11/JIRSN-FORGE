@@ -137,3 +137,37 @@ test('the Command Center is tabbed and gathers employee cards only when the Empl
   assert.equal(paths.filter(path => path.startsWith('/api/workforce/performance-cards')).length, 1);
   assert.match(page.querySelector('[data-perf-board]').innerHTML, /Ari Operator/);
 });
+
+test('each employee is a collapsed row of colored figures that opens into the full card; expand and collapse all', async t => {
+  const browser = installBrowser(t);
+  const root = browser.document.createElement('div');
+  browser.document.body.append(root);
+  const weak = { ...strong, personId: 'p-2', displayName: 'Bo Trainee', efficiency: { ...strong.efficiency, controllablePercent: 70 } };
+  mountPerformanceCards(root, { get: async () => ({ data: { cards: [strong, weak], restrictions: [], basis: [], expiringWithinDays: 30 } }), now: new Date(2026, 9, 24) });
+  await flush();
+  const board = root.querySelector('[data-perf-board]');
+  assert.match(board.innerHTML, /<details class="perf-card concern" data-perf-card="p-2" >/);
+  assert.match(board.innerHTML, /perf-chip concern[^>]*><span class="perf-dot concern" aria-hidden="true"><\/span>Eff <b>70%<\/b>/);
+  assert.match(board.innerHTML, /perf-chip good[^>]*>.*?On-time <b>100%<\/b>/s);
+  fire(root.querySelector('[data-perf-expand="open"]'), 'click');
+  assert.ok(root.querySelectorAll('details.perf-card').every(card => card.open));
+  // Opened cards stay open when the board is regrouped.
+  const group = root.querySelector('[data-perf-control="group"]');
+  group.value = 'shift';
+  fire(group, 'change');
+  assert.match(root.querySelector('[data-perf-board]').innerHTML, /data-perf-card="p-1" open>/);
+  fire(root.querySelector('[data-perf-expand="close"]'), 'click');
+  fire(group, 'change');
+  assert.doesNotMatch(root.querySelector('[data-perf-board]').innerHTML, /data-perf-card="p-1" open>/);
+});
+
+test('Training & Performance has its own page with the Command Center under the page heading', async t => {
+  const { performancePage } = await import('../../src/Forge.Host/wwwroot/js/pages/performance.js');
+  const browser = installBrowser(t);
+  const page = browser.document.createElement('div');
+  browser.document.body.append(page);
+  globalThis.fetch = path => Promise.resolve(response(path === '/api/resources/' ? { sites: [], shifts: [], workCenters: [], machines: [] } : []));
+  await performancePage(page, { me: { permissions: ['workforce.read'] }, query: new URLSearchParams('') });
+  assert.ok(page.innerHTML.indexOf('<h1>Training &amp; Performance</h1>') < page.innerHTML.indexOf('Training &amp; Performance Command Center'));
+  assert.equal(page.querySelector('[data-wi-panel="overview"]').hidden, false);
+});
