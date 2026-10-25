@@ -56,7 +56,7 @@ public sealed class OperationalDayResolverTests
     [Fact]
     public void A_shift_start_with_seconds_resolves_to_the_minute_like_the_work_calendar()
     {
-        var shift = new ShiftInfo("DAY", "PLANT1", "Day", new TimeOnly(16, 17, 23), 480, [0, 1, 2, 3, 4, 5, 6]);
+        var shift = new ShiftInfo("DAY", "PLANT1", "Day", new TimeOnly(16, 17, 23), 480, [1, 2, 3, 4, 5, 6, 7]);
 
         var resolved = OperationalDayResolver.Resolve(shift, "UTC", new DateTimeOffset(2026, 10, 25, 17, 17, 0, TimeSpan.Zero));
 
