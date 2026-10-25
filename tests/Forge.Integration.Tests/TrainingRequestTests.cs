@@ -86,6 +86,7 @@ public sealed class TrainingRequestTests(PostgresFixture postgres)
 
         // Supervisors ask; trainers schedule. Scheduling clears the trainers' notice; nothing is certified by delivering training.
         var firstAidId = firstAid.GetProperty("requestId").GetString();
+        clock.Advance(TimeSpan.FromMinutes(5)); // history is ordered by time; the fixed test clock would tie the steps
         var start = clock.GetUtcNow().AddDays(2);
         Assert.Equal(HttpStatusCode.Forbidden, (await plant.Try(sup, $"/api/workforce/training-requests/{firstAidId}/schedule", new { startsAt = start, endsAt = start.AddHours(4), reason = "x" })).StatusCode);
         Assert.Contains("separation_of_duties", await (await plant.Try(trainer, $"/api/workforce/training-requests/{firstAidId}/schedule", new { trainerPersonId = newbie, startsAt = start, endsAt = start.AddHours(4), reason = "x" })).Content.ReadAsStringAsync(), StringComparison.Ordinal);

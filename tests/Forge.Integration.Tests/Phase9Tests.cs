@@ -135,8 +135,8 @@ public sealed class Phase9Tests(PostgresFixture postgres)
         Assert.False(late.GetProperty("notAuthorized").GetBoolean());
         Assert.Contains("schedule", Headline(late), StringComparison.Ordinal);
 
-        // People: names only for those who may read the workforce and qualifications.
-        Assert.True((await Ask(planner, "Who is qualified to work Slitting tonight?")).GetProperty("notAuthorized").GetBoolean());
+        // People: names only for those who may read the workforce and qualifications (planners read qualifications since kernel 0034; shippers do not).
+        Assert.True((await Ask(ship, "Who is qualified to work Slitting tonight?")).GetProperty("notAuthorized").GetBoolean());
         var qualified = await Ask(eng, "Who is qualified to work Slitting tonight?");
         Assert.Equal("SLIT-WC", qualified.GetProperty("interpretation").GetProperty("workCenter").GetString());
         Assert.Contains("qualified for SLIT-WC", Headline(qualified), StringComparison.Ordinal);
@@ -188,8 +188,8 @@ public sealed class Phase9Tests(PostgresFixture postgres)
         Assert.Contains("Orders needing attention", titles);
         Assert.Contains("Machines and maintenance", titles);
         Assert.Contains("Material arrivals", titles);
-        Assert.DoesNotContain("Training expirations (next 14 days)", titles);
-        Assert.Contains(brief.GetProperty("omitted").EnumerateArray(), o => o.GetString()!.Contains("qualification", StringComparison.Ordinal));
+        // Planners read qualifications (kernel 0034), so their brief includes expirations; a shipper's brief leaves them out and says so.
+        Assert.Contains("Training expirations (next 14 days)", titles);
         var machines = brief.GetProperty("sections").EnumerateArray().Single(s => s.GetProperty("title").GetString() == "Machines and maintenance");
         Assert.Contains(machines.GetProperty("facts").EnumerateArray(), f => f.GetProperty("text").GetString()!.StartsWith("SLITTER-B unavailable now", StringComparison.Ordinal));
         var receipts = brief.GetProperty("sections").EnumerateArray().Single(s => s.GetProperty("title").GetString() == "Material arrivals");
@@ -203,6 +203,8 @@ public sealed class Phase9Tests(PostgresFixture postgres)
         // A shipper sees no schedule sections.
         var shipper = await Get(plant.As("ship"), "/api/analyst/brief");
         Assert.DoesNotContain(shipper.GetProperty("sections").EnumerateArray(), s => s.GetProperty("title").GetString() == "Orders needing attention");
+        Assert.DoesNotContain(shipper.GetProperty("sections").EnumerateArray(), s => s.GetProperty("title").GetString() == "Training expirations (next 14 days)");
+        Assert.Contains(shipper.GetProperty("omitted").EnumerateArray(), o => o.GetString()!.Contains("qualification", StringComparison.Ordinal));
         _ = order;
     }
 
