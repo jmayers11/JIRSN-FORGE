@@ -57,6 +57,7 @@ const CALC = I + 'AttendanceReliabilityCalculatorTests.';
 const READY = P + 'ReadinessTests.Machine_specific_practical_authorization_is_required_in_addition_to_the_qualification';
 const TRAIN = I + 'TrainingRequestTests.New_hires_supervisors_expiring_qualifications_and_approved_packets_open_requests_that_trainers_schedule';
 const RECOVERY = P + 'WorkforceRecoveryEngineTests.';
+const REWORK = I + 'ReworkPlanTests.Approved_rework_adds_operations_inspection_labor_demand_and_training_without_changing_the_disposition';
 const V319 = I + 'V319Tests.Notification_rules_deduplicate_resolve_respect_current_program_access_and_delivery_failure_is_separate';
 export const sprint10Evidence = {
   'WW-S10-01': ['Covered', [I + 'Phase4Tests.Spec_81_approved_pto_surfaces_before_the_absence_with_alternatives', P + 'SchedulingTests.Spec_81_future_pto_interrupts_work_and_makes_the_order_late',
@@ -80,8 +81,8 @@ export const sprint10Evidence = {
   'WW-S10-12': ['Partial', [TRAIN], 'A packet needs a rationale and expected plant benefit and is decided by a human; prerequisites are checked for trainers and authorizations, but are not listed on the packet before nomination.'],
   'WW-S10-13': ['Covered', [RECOVERY + 'Ranked_two_step_option_backfills_the_source_work_before_moving_the_operator',
     P + 'ReallocationTests.A_cascading_plan_rechecks_the_next_move_against_the_previous_move_and_does_not_change_source', P + 'CompositionTests.Every_applicable_rule_must_pass'], 'Proven on the slitting/paint fixture.'],
-  'WW-S10-14': ['Open', [I + 'V35Tests.Rework_and_repair_take_output_back_without_rewriting_history_and_quantity_states_follow'],
-    'Rework keeps history and quantity states, but adding solder/test work to an order (operations, qualifications, labor hours) is not implemented.'],
+  'WW-S10-14': ['Covered', [REWORK, I + 'V35Tests.Rework_and_repair_take_output_back_without_rewriting_history_and_quantity_states_follow', 'ui:rework-plans.test.mjs the rework row shows what its plans add'],
+    'An approved rework plan adds solder and retest operations with their own labor standard and qualifications; the NCR disposition, rework record and existing lines are unchanged.'],
   'WW-S10-15': ['Covered', [I + 'AttendanceSixtyShiftHistoryTests.Sixty_reviewed_shift_history_preserves_denominator_and_protected_exclusions', CALC + 'Quarter_excludes_verified_pto_and_protected_leave_and_explains_the_denominator'], ''],
   'WW-S10-16': ['Covered', [I + 'AttendanceSelfCorrectionTests.Employee_can_request_only_own_attendance_correction_and_reviewer_keeps_independent_decision', CALC + 'Approved_correction_supersedes_prior_event_without_deleting_it'], ''],
   'WW-S10-17': ['Partial', ['ui:performance-cards.test.mjs cards load per review period on demand'],
@@ -103,7 +104,7 @@ export const sprint10Evidence = {
     'Allocation never exceeds unreserved released stock and a short pick leaves the rest as open demand that can be requested again; there is no explicit backorder status.'],
   'WW-S10-27': ['Covered', [MAT_B, I + 'InventoryScrapRequestTests.Concurrent_requests_never_claim_the_same_units', 'Forge.Simulation.Tests.SimulationScenarios.S16_concurrent_transactions_on_the_same_material_apply_exactly_once'], ''],
   'WW-S10-28': ['Covered', [MAT_A], 'The PostgreSQL test found additional-material requests could not be saved; fixed by inventory migration 0029.'],
-  'WW-S10-29': ['Open', [], 'Approved rework does not yet add operations, inspection steps, labor standards, MRP demand or training requirements to an order.'],
+  'WW-S10-29': ['Covered', [REWORK], 'Approval adds the connector (released demand MRP plans to buy), an inspection step, the labor standard and training requests for the people named; the proposer cannot approve.'],
   'WW-S10-30': ['Partial', [V319], 'Rules deduplicate, deep-link and recheck permission before email; no projected-shortage event or seeded planner rule exists yet.'],
   'WW-S10-31': ['Partial', [V319], 'Alerts deduplicate and resolve when the source clears; escalation at the configured threshold is not asserted.'],
   'WW-S10-32': ['Covered', [V319, 'Forge.Simulation.Tests.SimulationScenarios.S15_lost_responses_and_concurrent_retries_apply_once'], ''],

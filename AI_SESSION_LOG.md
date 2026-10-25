@@ -1828,3 +1828,7 @@ Followed the handoff: ran the Daily Mission PostgreSQL tests Codex could not run
 
 Mapped all 38 Sprint 10 cases to named passing checks or gaps (26 Covered / 10 Partial / 2 Open). Wrote `MaterialRequestAcceptanceTests`; it found that additional (non-BOM) material requests failed on PostgreSQL, fixed by inventory migration 0029 (164 migrations). Added a sibling-machine authorization assertion and a packet self-decision check. Focused runs: integration 14/14, Planning `ReadinessTests` 28/28, UI Sprint 10 catalog 6/6.
 
+## Claude: rework routing expansion — 2026-10-25
+
+Built WW-S10-14/29 on the owner's go-ahead: rework plans proposed by order setup and approved by a different Quality approver add operations (labor standard, qualifications, inspection steps), released material demand and training requests to the order, reopen a completed order, and leave the NCR disposition and rework record untouched. Added work is excluded from routing first/last semantics and blocks rework close until done. 167 migrations. `ReworkPlanTests` passes; neighbouring integration 22/22, Planning 364/364, Architecture 32/32, UI suite green. Sprint 10 matrix now 28 Covered / 10 Partial.
+

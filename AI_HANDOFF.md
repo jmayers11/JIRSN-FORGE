@@ -1,10 +1,17 @@
 # AI_HANDOFF.md
 
+## Claude: rework routing expansion built (2026-10-25)
+
+- Owner approved building WW-S10-14/29. `Forge.Host/Quality/ReworkPlanService.cs` (host-level because it spans Quality, Execution and Workforce): propose = `execution.orders.manage`, decide = `quality.approve` by a different person. Approval appends operations/material lines marked with `rework_id`, reopens a completed order, opens `Rework` training requests. `OrderRouting.Routed()` (Execution contracts) is the routing without added rework work; use it wherever "first/last operation" means the routing. Readiness: added work waits only for its own rework's earlier steps. `ReworkService.CloseAsync` refuses while added work is open.
+- Migrations 167 (execution 0016, quality 0018, workforce 0014). Verified: `ReworkPlanTests` 1/1; 22/22 neighbouring integration tests (V35, Phase6, PartialBuild, CauseAdjusted, material, training, migrations); Planning 364/364; Architecture 32/32; UI all.
+- Sprint 10 matrix: **28 Covered, 10 Partial, 0 Open.** Remaining Partial candidates as listed below still need the owner's go-ahead.
+- Known limit: the scheduler chains added work after the order's last routed operation (conservative); no notification yet tells Quality a plan awaits a decision (it shows on the order's Quantity states panel).
+
 ## Claude: Sprint 10 acceptance matrix mapped; non-BOM review defect fixed (2026-10-25)
 
 - Every WW-S10 case now carries `evidence: { status, checks, note }` in `tools/whiskerworks-sprint10-scenarios.mjs`: **26 Covered, 10 Partial, 2 Open (14, 29)**. `tests/ui/whiskerworks-sprint10.test.mjs` fails if a named test is renamed or removed. Summary table in `docs/sprint-10-implementation-report.md`.
 - New `MaterialRequestAcceptanceTests` (PostgreSQL, 2/2) cover cases 23, 25, 27, 28, 33, 34, 35 and 38's role checks. They exposed a real defect: additional-material requests could not be saved (500, `material_task_check2`). Fixed by inventory migration 0029; migration count is **164** (`KernelRoundTripTests`, `V328Tests` updated; 14/14 with `TrainingRequestTests` and the material tests).
-- **Next candidates (need the owner's go-ahead, they are new behavior):** rework routing expansion (14, 29); a projected-shortage planner notification (30); attendance summary defaulting to the calendar quarter (17); an "inaccurate standard" review flag (10); a quality trend view with equipment/material context (9).
+- **Next candidates (need the owner's go-ahead, they are new behavior):** a projected-shortage planner notification (30); attendance summary defaulting to the calendar quarter (17); an "inaccurate standard" review flag (10); a quality trend view with equipment/material context (9).
 
 ## Claude: Daily Mission verified and committed; Sprint 9 replay completed (2026-10-25)
 
