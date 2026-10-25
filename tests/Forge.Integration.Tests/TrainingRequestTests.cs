@@ -112,6 +112,9 @@ public sealed class TrainingRequestTests(PostgresFixture postgres)
         }));
         await plant.Ok(e, $"/api/workforce/development-nominations/{packet}/advance", new { status = "Submitted", note = "Ready", reason = "Ready" });
         await plant.Ok(hr, $"/api/workforce/development-nominations/{packet}/advance", new { status = "InReview", note = "Reviewing", reason = "Reviewing" });
+        // The packet is advisory: whoever wrote it cannot decide it, and nothing is opened until another person approves it.
+        Assert.Contains("independent_review_required", await (await plant.Try(e, $"/api/workforce/development-nominations/{packet}/advance", new { status = "Approved", note = "My own packet", reason = "Self" })).Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Empty((await Get(trainer, $"/api/workforce/training-requests?personId={michael}&open=true")).EnumerateArray());
         await plant.Ok(hr, $"/api/workforce/development-nominations/{packet}/advance", new { status = "Approved", note = "Approved for Q1", reason = "Approved" });
         var development = Assert.Single((await Get(trainer, $"/api/workforce/training-requests?personId={michael}&open=true")).EnumerateArray());
         Assert.Equal("Development", development.GetProperty("source").GetString());
