@@ -22,6 +22,10 @@ public sealed record ReworkRequest(ReworkKind Kind, long OrderNumber, int Sequen
 
 public sealed record ReworkCloseRequest(decimal GoodQuantity, decimal ScrapQuantity, string Note, string? Reason);
 
+public sealed record ReworkPlanRequest(IReadOnlyList<ReworkPlanOperation> Operations, IReadOnlyList<ReworkPlanMaterial>? Materials, IReadOnlyList<Guid>? Trainees, string Rationale, string? Reason);
+
+public sealed record ReworkPlanDecisionRequest(bool Approve, string Note, string? Reason);
+
 /// <summary>V3.5: reason codes, stoppages and root causes; rework and repair; an order's quantity states.</summary>
 internal static class ProductionActualsEndpoints
 {
@@ -70,6 +74,31 @@ internal static class ProductionActualsEndpoints
             Command(http, b.Reason, c => s.OpenAsync(new OpenRework(b.Kind, b.OrderNumber, b.Sequence, b.Quantity, b.Instructions, b.NcrId, b.ReasonCode), c, ct)));
         quality.MapPost("/rework/{id:long}/close", (HttpContext http, long id, ReworkCloseRequest b, ReworkService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CloseAsync(new CloseRework(id, b.GoodQuantity, b.ScrapQuantity, b.Note), c, ct)));
+
+        quality.MapGet("/rework-plans", (HttpContext http, long? order, CancellationToken _) =>
+            Read(http, Permissions.ShopFloorRead, async principal =>
+            {
+                await using var uow = await http.RequestServices.GetRequiredService<Forge.Kernel.Access.IKernelUnitOfWorkFactory>().BeginSnapshotAsync(http.RequestAborted);
+                var orders = uow.Store<IExecutionLookup>();
+                var visible = new Dictionary<long, bool>();
+                var list = new List<ReworkPlan>();
+                foreach (var plan in await uow.Store<IReworkPlanStore>().ListPlansAsync(order, http.RequestAborted))
+                {
+                    if (!visible.TryGetValue(plan.OrderNumber, out var ok))
+                    {
+                        var o = await orders.FindOrderAsync(plan.OrderNumber, http.RequestAborted);
+                        visible[plan.OrderNumber] = ok = o is not null && (o.ProgramId is not { } p || principal.Programs.Contains(new Forge.Kernel.Identity.ProgramId(p)));
+                    }
+
+                    if (ok) list.Add(plan);
+                }
+
+                return list;
+            }));
+        quality.MapPost("/rework/{id:long}/plans", (HttpContext http, long id, ReworkPlanRequest b, Forge.Host.Quality.ReworkPlanService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ProposeAsync(new Forge.Host.Quality.ProposeReworkPlan(id, b.Operations ?? [], b.Materials, b.Trainees, b.Rationale), c, ct)));
+        quality.MapPost("/rework-plans/{planId:guid}/decide", (HttpContext http, Guid planId, ReworkPlanDecisionRequest b, Forge.Host.Quality.ReworkPlanService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.DecideAsync(new Forge.Host.Quality.DecideReworkPlan(planId, b.Approve, b.Note), c, ct)));
 
         app.MapGet("/api/orders/{order:long}/quantity-states", async (HttpContext http, long order, ProductionActualsQueries q, CancellationToken ct) =>
         {

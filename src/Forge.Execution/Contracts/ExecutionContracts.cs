@@ -21,7 +21,10 @@ public enum OperationStatus
     Complete,
 }
 
-/// <summary>An order operation, copied from the routing when the order is released.</summary>
+/// <summary>
+/// An order operation, copied from the routing when the order is released, or added to the order by an approved rework plan
+/// (<paramref name="ReworkId"/> names the rework record; <paramref name="PlannedQuantity"/> is the quantity that rework took back).
+/// </summary>
 public sealed record OrderOperationInfo(
     int Sequence,
     string Description,
@@ -38,11 +41,28 @@ public sealed record OrderOperationInfo(
     DateTimeOffset? CompletedAt = null,
     decimal? SetupMinutes = null,
     string? SetupFamily = null,
-    decimal? FamilySetupMinutes = null);
+    decimal? FamilySetupMinutes = null,
+    long? ReworkId = null,
+    decimal? PlannedQuantity = null)
+{
+    /// <summary>The quantity this operation is planned for: the rework quantity for added rework work, otherwise the order quantity.</summary>
+    public decimal QuantityFor(decimal orderQuantity) => PlannedQuantity ?? orderQuantity;
+}
+
+/// <summary>An order's own routing, without the operations approved rework added: what "first" and "last operation" mean for quantities.</summary>
+public static class OrderRouting
+{
+    public static IReadOnlyList<OrderOperationInfo> Routed(this OrderInfo order)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        return order.Operations.Where(operation => operation.ReworkId is null).OrderBy(operation => operation.Sequence).ToList();
+    }
+}
 
 /// <summary>A material requirement, copied from the BOM with the component revision in force at release.</summary>
 /// <param name="ConsumedAtSequence">The operation that consumes the component (Sprint 10 §17), copied from the BOM at release; null means from the first operation.</param>
-public sealed record OrderMaterialInfo(int LineNumber, string ComponentPartNumber, string? ComponentRevision, decimal RequiredQuantity, string UnitOfMeasure, int? ConsumedAtSequence = null);
+/// <param name="ReworkId">Set when an approved rework plan added this requirement; it is released demand like any other line.</param>
+public sealed record OrderMaterialInfo(int LineNumber, string ComponentPartNumber, string? ComponentRevision, decimal RequiredQuantity, string UnitOfMeasure, int? ConsumedAtSequence = null, long? ReworkId = null);
 
 public sealed record OrderInfo(
     long OrderNumber,

@@ -70,6 +70,35 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task AddReworkWorkAsync(long orderNumber, IReadOnlyList<OrderOperationInfo> operations, IReadOnlyList<OrderMaterialInfo> materials, CancellationToken ct)
+    {
+        foreach (var op in operations)
+        {
+            await using var cmd = uow.Command(
+                """
+                INSERT INTO execution.order_operation (order_number, sequence, description, work_center_code, activity_code, eligible_machines,
+                    required_qualifications, planned_minutes, crew_size, status, setup_minutes, rework_id, planned_quantity)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Pending', $10, $11, $12)
+                """,
+                orderNumber, op.Sequence, op.Description, op.WorkCenterCode, op.ActivityCode, TextArray(op.EligibleMachines),
+                TextArray(op.RequiredQualifications), op.PlannedMinutes, op.CrewSize, Numeric(op.SetupMinutes),
+                new NpgsqlParameter { Value = (object?)op.ReworkId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint }, Numeric(op.PlannedQuantity));
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        foreach (var m in materials)
+        {
+            await using var cmd = uow.Command(
+                "INSERT INTO execution.order_material (order_number, line_number, component, component_revision, required_quantity, unit_of_measure, consumed_at_sequence, rework_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                orderNumber, m.LineNumber, m.ComponentPartNumber,
+                new NpgsqlParameter { Value = (object?)m.ComponentRevision ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text },
+                m.RequiredQuantity, m.UnitOfMeasure,
+                new NpgsqlParameter { Value = (object?)m.ConsumedAtSequence ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer },
+                new NpgsqlParameter { Value = (object?)m.ReworkId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint });
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
+
     public async Task ReplaceReleasedCopyAsync(long orderNumber, IReadOnlyList<OrderOperationInfo> operations, IReadOnlyList<OrderMaterialInfo> materials, CancellationToken ct)
     {
         await using (var started = uow.Command("SELECT count(*) FROM execution.order_operation WHERE order_number = $1 AND status <> 'Pending'", orderNumber))
@@ -133,8 +162,8 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
             ct,
             orderNumber);
         var materials = await Read(
-            "SELECT line_number, component, component_revision, required_quantity, unit_of_measure, consumed_at_sequence FROM execution.order_material WHERE order_number = $1 ORDER BY line_number",
-            r => new OrderMaterialInfo(r.GetInt32(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetDecimal(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetInt32(5)),
+            "SELECT line_number, component, component_revision, required_quantity, unit_of_measure, consumed_at_sequence, rework_id FROM execution.order_material WHERE order_number = $1 ORDER BY line_number",
+            r => new OrderMaterialInfo(r.GetInt32(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetDecimal(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetInt32(5), r.IsDBNull(6) ? null : r.GetInt64(6)),
             ct,
             orderNumber);
         return order with { Operations = operations, Materials = materials };
@@ -181,7 +210,7 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         reader => new OrderCommitment(reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetFieldValue<DateTimeOffset>(3), reader.GetString(4)), ct, at);
 
     private const string OperationColumns =
-        "sequence, description, work_center_code, activity_code, eligible_machines, required_qualifications, planned_minutes, crew_size, status, good_quantity, scrap_quantity, started_at, completed_at, setup_minutes, setup_family, family_setup_minutes";
+        "sequence, description, work_center_code, activity_code, eligible_machines, required_qualifications, planned_minutes, crew_size, status, good_quantity, scrap_quantity, started_at, completed_at, setup_minutes, setup_family, family_setup_minutes, rework_id, planned_quantity";
 
     private static NpgsqlParameter Numeric(decimal? value) => new() { Value = (object?)value ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Numeric };
 
@@ -191,7 +220,8 @@ internal sealed class PostgresExecutionStore(PostgresUnitOfWork uow) : IExecutio
         r.GetInt32(o), r.GetString(o + 1), r.GetString(o + 2), r.GetString(o + 3), r.GetFieldValue<string[]>(o + 4), r.GetFieldValue<string[]>(o + 5),
         r.GetDecimal(o + 6), r.GetInt32(o + 7), Enum.Parse<OperationStatus>(r.GetString(o + 8)), r.GetDecimal(o + 9), r.GetDecimal(o + 10),
         r.IsDBNull(o + 11) ? null : r.GetFieldValue<DateTimeOffset>(o + 11), r.IsDBNull(o + 12) ? null : r.GetFieldValue<DateTimeOffset>(o + 12),
-        r.IsDBNull(o + 13) ? null : r.GetDecimal(o + 13), r.IsDBNull(o + 14) ? null : r.GetString(o + 14), r.IsDBNull(o + 15) ? null : r.GetDecimal(o + 15));
+        r.IsDBNull(o + 13) ? null : r.GetDecimal(o + 13), r.IsDBNull(o + 14) ? null : r.GetString(o + 14), r.IsDBNull(o + 15) ? null : r.GetDecimal(o + 15),
+        r.IsDBNull(o + 16) ? null : r.GetInt64(o + 16), r.IsDBNull(o + 17) ? null : r.GetDecimal(o + 17));
 
     public Task<IReadOnlyList<OpenOperation>> ListOpenOperationsAsync(CancellationToken ct) => Read(
         $"""

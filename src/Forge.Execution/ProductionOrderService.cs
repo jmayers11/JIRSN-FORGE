@@ -73,6 +73,9 @@ public interface IExecutionStore
 
     Task SetRevisionAsync(long orderNumber, string revision, DateTimeOffset at, string actor, CancellationToken ct);
 
+    /// <summary>Adds the operations and material lines of an approved rework plan to a released order; existing lines are never changed.</summary>
+    Task AddReworkWorkAsync(long orderNumber, IReadOnlyList<OrderOperationInfo> operations, IReadOnlyList<OrderMaterialInfo> materials, CancellationToken ct);
+
     /// <summary>Replaces the released copy of an order nothing has started on (operations and materials).</summary>
     Task ReplaceReleasedCopyAsync(long orderNumber, IReadOnlyList<OrderOperationInfo> operations, IReadOnlyList<OrderMaterialInfo> materials, CancellationToken ct);
 }

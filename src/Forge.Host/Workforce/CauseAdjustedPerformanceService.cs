@@ -228,7 +228,7 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
             }
 
             var setup = operation.SetupMinutes ?? 0m;
-            var runPerUnit = Math.Max(0m, operation.PlannedMinutes - setup) / order.Quantity;
+            var runPerUnit = Math.Max(0m, operation.PlannedMinutes - setup) / operation.QuantityFor(order.Quantity);
             var earned = ((op.Any(l => l.Phase == LaborPhase.Setup) ? setup : 0m) + runPerUnit * good) / 60m;
             var intervals = op.Select(l => new PerformanceInterval(l.StartedAt, l.EndedAt!.Value)).Where(i => i.EndsAt > i.StartsAt).ToList();
             var hours = PerformanceIntervalMath.UnionMinutes(intervals) / 60m;

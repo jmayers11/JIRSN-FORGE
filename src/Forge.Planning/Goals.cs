@@ -147,7 +147,7 @@ public static class GoalAttainmentEngine
             if (g.OrderNumber is { } orderNumber)
             {
                 var order = orders.GetValueOrDefault(orderNumber);
-                var last = order?.Operations.OrderBy(o => o.Sequence).LastOrDefault();
+                var last = order?.Routed().LastOrDefault();
                 target = order?.Quantity ?? 0;
                 completed = last?.GoodQuantity ?? 0;
                 remaining = order is null ? 0 : order.Operations.Where(o => o.Status != OperationStatus.Complete)

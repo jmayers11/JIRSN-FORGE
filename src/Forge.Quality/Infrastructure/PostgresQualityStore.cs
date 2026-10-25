@@ -379,6 +379,7 @@ public static class QualityRegistration
         services.AddSingleton<Forge.Quality.Contracts.IAcceptanceSourceAccess>(sp => sp.GetRequiredService<Forge.Quality.Acceptance.ProductAcceptanceService>());
         services.AddForgeStore<IReworkLookup>(uow => new PostgresReworkStore(uow));
         services.AddForgeStore<IReworkStore>(uow => new PostgresReworkStore(uow));
+        services.AddForgeStore<IReworkPlanStore>(uow => new PostgresReworkPlanStore(uow));
         services.AddSingleton<ReworkService>();
         services.AddForgeStore<IDeterminationLookup>(uow => new PostgresDeterminationStore(uow));
         services.AddForgeStore<IDeterminationStore>(uow => new PostgresDeterminationStore(uow));

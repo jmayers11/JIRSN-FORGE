@@ -312,12 +312,16 @@ public sealed class ShopFloorService(CommandPipeline pipeline, OperatorAuthoriza
             }
 
             var good = op.GoodQuantity + c.GoodQuantity;
-            if (good > order.Quantity)
+            var planned = op.QuantityFor(order.Quantity);
+            if (good > planned)
             {
-                throw new CommandRejectedException("over_reported", $"That would make {good:0.###} good against an order quantity of {order.Quantity:0.###}. Check the count.");
+                throw new CommandRejectedException("over_reported", op.ReworkId is null
+                    ? $"That would make {good:0.###} good against an order quantity of {order.Quantity:0.###}. Check the count."
+                    : $"That would make {good:0.###} good on rework operation {id}, which carries {planned:0.###} taken back for rework. Check the count.");
             }
 
-            var final = order.Operations.Max(o => o.Sequence) == c.Sequence;
+            // Rework operations an approved plan added are never the order's final operation: output is counted at its own routing.
+            var final = op.ReworkId is null && order.Routed().Max(o => o.Sequence) == c.Sequence;
             var reportId = await store.InsertReportAsync(c.OrderNumber, c.Sequence, op.WorkCenterCode, worker.PersonId, c.GoodQuantity, c.ScrapQuantity, reason, reasonCode, c.CompleteOperation, final, now, context.Actor, ct);
             await store.AddQuantitiesAsync(c.OrderNumber, c.Sequence, c.GoodQuantity, c.ScrapQuantity, ct);
             var events = new List<EventEnvelope>

@@ -94,6 +94,7 @@ builder.Services.AddSingleton<IdentificationResolver>();
 builder.Services.AddForgeStore<IIdentificationPresentationStore>(uow => new LabelStore(uow));
 builder.Services.AddForgeStore<Forge.Engineering.Contracts.IGeneratedDocumentContentStore>(uow => new GeneratedDocumentContentStore(uow));
 builder.Services.AddScoped<Forge.Host.Workforce.PlantVisualService>();
+builder.Services.AddScoped<Forge.Host.Quality.ReworkPlanService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.CauseAdjustedPerformanceService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.CoverageContributionService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.EmployeePerformanceCardService>();

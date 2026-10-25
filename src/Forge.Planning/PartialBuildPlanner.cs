@@ -78,7 +78,7 @@ public static class PartialBuildPlanner
         ArgumentNullException.ThrowIfNull(answers);
         ArgumentNullException.ThrowIfNull(storage);
         ArgumentNullException.ThrowIfNull(options);
-        var ops = order.Operations.OrderBy(o => o.Sequence).ToList();
+        var ops = order.Routed().ToList(); // a partial build is planned along the routing; added rework work is outside it
         var notes = new List<string>();
         var blockers = new List<string>();
         if (ops.Count == 0 || order.Quantity <= 0)

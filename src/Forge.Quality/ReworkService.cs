@@ -22,6 +22,14 @@ public sealed record ReworkChanged(long ReworkId, long OrderNumber, int Sequence
     public static int SchemaVersion => 1;
 }
 
+/// <summary>A rework plan was proposed, approved or rejected (Sprint 10 WW-S10-14/29).</summary>
+public sealed record ReworkPlanChanged(Guid PlanId, long ReworkId, long OrderNumber, string Status, string Message) : IDomainEvent
+{
+    public static string EventType => nameof(ReworkPlanChanged);
+
+    public static int SchemaVersion => 1;
+}
+
 /// <summary>
 /// Rework and repair (V3.5, V3 brief K). Rework brings output back to the drawing; repair, approved on an NCR,
 /// makes it usable without conforming. Both take good output back from an order operation without touching the
@@ -109,10 +117,17 @@ public sealed class ReworkService(CommandPipeline pipeline)
         {
             var rework = (await uow.Store<IReworkLookup>().ListReworkAsync(null, false, ct)).FirstOrDefault(r => r.ReworkId == c.ReworkId)
                 ?? throw new CommandRejectedException("rework_not_found", $"Rework {key} does not exist.");
-            var (_, program) = await OrderAsync(uow, context, rework.OrderNumber, ct);
+            var (order, program) = await OrderAsync(uow, context, rework.OrderNumber, ct);
             if (!rework.Open)
             {
                 throw new CommandRejectedException("rework_closed", $"Rework {key} was closed at {rework.ClosedAt:u}.");
+            }
+
+            // Work an approved rework plan added to the order is done before the rework says what came out of it.
+            var unfinished = order.Operations.Where(o => o.ReworkId == rework.ReworkId && o.Status != OperationStatus.Complete).Select(o => o.Sequence).ToList();
+            if (unfinished.Count > 0)
+            {
+                throw new CommandRejectedException("rework_work_open", $"Rework {key} still has added operation(s) {string.Join(", ", unfinished)} to complete on order {order.OrderNumber}.");
             }
 
             if (c.GoodQuantity < 0 || c.ScrapQuantity < 0 || c.GoodQuantity + c.ScrapQuantity != rework.Quantity)

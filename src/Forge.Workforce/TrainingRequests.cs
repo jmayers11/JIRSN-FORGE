@@ -11,7 +11,7 @@ using Forge.Workforce.Contracts;
 
 namespace Forge.Workforce;
 
-public enum TrainingRequestSource { Onboarding, Expiry, Supervisor, Development }
+public enum TrainingRequestSource { Onboarding, Expiry, Supervisor, Development, Rework }
 public enum TrainingRequestStatus { Requested, Scheduled, Completed, Cancelled }
 
 /// <summary>Training every new employee must complete: plant-wide when <see cref="WorkCenterCode"/> is null, otherwise for new hires in that work center.</summary>
@@ -367,6 +367,29 @@ public sealed class TrainingRequestService(CommandPipeline pipeline)
         return Requested(pipeline, request, worker.DisplayName, context);
     }
 
+    /// <summary>
+    /// An approved rework plan needs a named worker trained for a qualification its added work requires, inside the approval command.
+    /// Nothing happens for a worker who already holds it, is inactive, or already has an open request for it.
+    /// </summary>
+    public static async Task<EventEnvelope?> OpenReworkAsync(CommandPipeline pipeline, IKernelUnitOfWork uow, Guid personId, string qualificationCode,
+        string sourceKey, string reason, DateOnly? dueOn, DateTimeOffset now, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(pipeline);
+        ArgumentNullException.ThrowIfNull(uow);
+        var worker = (await uow.Store<IWorkforceLookup>().GetWorkerStatesAsync(now, ct)).FirstOrDefault(w => w.PersonId == personId);
+        if (worker is not { IsActive: true }) return null;
+        var store = uow.Store<ITrainingRequestStore>();
+        if ((await store.ListRequestsAsync(personId, true, ct)).Any(r => string.Equals(r.QualificationCode, qualificationCode, StringComparison.OrdinalIgnoreCase)))
+            return null;
+        var name = (await uow.Store<ICompetencyLookup>().ListTypesAsync(ct)).FirstOrDefault(t => string.Equals(t.Code, qualificationCode, StringComparison.OrdinalIgnoreCase))?.Name ?? qualificationCode;
+        var id = ForgeIds.New(pipeline.Time);
+        var request = NewRequest(id, personId, TrainingRequestSource.Rework, sourceKey, qualificationCode, Clip($"{name} ({qualificationCode})", 200), Clip(reason, 800), dueOn, context, now);
+        if (!await store.InsertRequestAsync(request, ct)) return null;
+        await store.InsertRequestEventAsync(new TrainingRequestEvent(ForgeIds.New(pipeline.Time), id, null, TrainingRequestStatus.Requested, request.Reason,
+            context.Actor, PersonOf(context), now), ct);
+        return Requested(pipeline, request, worker.DisplayName, context);
+    }
+
     private Task<CommandResult> ChangeAsync<TCommand>(string commandType, Guid requestId, TCommand command, CommandContext context,
         Func<IKernelUnitOfWork, TrainingRequest, DateTimeOffset, string, Task<(TrainingRequest Next, string Message, bool Handled)>> change, CancellationToken ct)
     {
@@ -403,6 +426,7 @@ public sealed class TrainingRequestService(CommandPipeline pipeline)
             TrainingRequestSource.Onboarding => "new employee training",
             TrainingRequestSource.Expiry => "qualification expiring",
             TrainingRequestSource.Development => "approved development packet",
+            TrainingRequestSource.Rework => "approved rework plan",
             _ => "requested by a supervisor",
         };
         var due = request.DueOn is { } d ? $", due {Day(d)}" : "";

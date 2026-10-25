@@ -644,7 +644,7 @@ public sealed partial class InventoryService(CommandPipeline pipeline, ProductRe
                     ?? throw new CommandRejectedException("item_not_found", $"Part {order.PartNumber} does not exist.");
                 var store = uow.Store<IInventoryStore>();
                 await store.LockPartAsync(item.PartNumber, ct);
-                var last = order.Operations.Count == 0 ? null : order.Operations.OrderBy(o => o.Sequence).Last();
+                var last = order.Routed().LastOrDefault();
                 var good = last?.GoodQuantity ?? 0;
 
                 // V3.5: good taken back from the last operation for rework or repair is not there to receive until it comes back.

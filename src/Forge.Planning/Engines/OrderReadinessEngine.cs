@@ -112,7 +112,9 @@ public sealed class OrderReadinessEngine : IEngine<SiteSnapshot, OrderReadinessR
         var nodes = new List<EvidenceNode>();
         foreach (var op in order.Operations.OrderBy(o => o.Sequence))
         {
-            var unfinished = order.Operations.Where(o => o.Sequence < op.Sequence && o.Status != OperationStatus.Complete).Select(o => o.Sequence).ToList();
+            // Routed work waits only for earlier routed work; added rework work waits only for the earlier steps of the same rework (the output it
+            // takes back was already produced). Neither holds the other up.
+            var unfinished = order.Operations.Where(o => o.Sequence < op.Sequence && o.Status != OperationStatus.Complete && o.ReworkId == op.ReworkId).Select(o => o.Sequence).ToList();
             var predecessor = op.Status == OperationStatus.Complete
                 ? new ReadinessDimension("Predecessor", EvidenceOutcome.Info, "Operation already complete.")
                 : unfinished.Count == 0

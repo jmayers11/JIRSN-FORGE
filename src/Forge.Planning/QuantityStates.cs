@@ -43,7 +43,7 @@ public sealed record OrderQuantityStates(long OrderNumber, string PartNumber, st
         ArgumentNullException.ThrowIfNull(partLedger);
         ArgumentNullException.ThrowIfNull(partPositions);
         var notes = new List<string>();
-        var ops = order.Operations.OrderBy(o => o.Sequence).ToList();
+        var ops = order.Routed().ToList(); // added rework operations are not the routing's first or last operation
         var mine = rework.Where(r => r.OrderNumber == order.OrderNumber).ToList();
         decimal Taken(int sequence) => mine.Where(r => r.Sequence == sequence).Sum(r => r.Open ? r.Quantity : r.ScrapQuantity ?? 0);
 

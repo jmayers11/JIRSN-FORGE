@@ -255,3 +255,57 @@ public interface IReworkStore
 
     Task CloseReworkAsync(long reworkId, decimal good, decimal scrap, string note, DateTimeOffset at, string actor, CancellationToken ct);
 }
+
+public enum ReworkPlanStatus { Proposed, Approved, Rejected }
+
+/// <summary>One step a rework plan adds to the order: work or an inspection, with its own labor standard and required qualifications.</summary>
+public sealed record ReworkPlanOperation(
+    int Sequence,
+    string Description,
+    string WorkCenterCode,
+    string ActivityCode,
+    IReadOnlyList<string> EligibleMachines,
+    IReadOnlyList<string> RequiredQualifications,
+    decimal SetupMinutes,
+    decimal RunMinutesPerUnit,
+    int CrewSize,
+    bool Inspection);
+
+/// <summary>Material the added work consumes: released demand on the order once the plan is approved.</summary>
+public sealed record ReworkPlanMaterial(string PartNumber, decimal Quantity, int ConsumedAtSequence);
+
+/// <summary>
+/// What carrying out a rework record adds to its order (Sprint 10 WW-S10-14/29): operations, inspection steps, material and the people
+/// to train. Proposed by one person and approved by another; approval adds the lines to the order and asks for the training. The NCR
+/// disposition and the rework record are never changed by a plan.
+/// </summary>
+public sealed record ReworkPlan(
+    Guid PlanId,
+    long ReworkId,
+    long OrderNumber,
+    ReworkPlanStatus Status,
+    IReadOnlyList<ReworkPlanOperation> Operations,
+    IReadOnlyList<ReworkPlanMaterial> Materials,
+    IReadOnlyList<Guid> Trainees,
+    string Rationale,
+    string ProposedBy,
+    Guid? ProposedByPersonId,
+    DateTimeOffset ProposedAt,
+    string? DecidedBy = null,
+    Guid? DecidedByPersonId = null,
+    DateTimeOffset? DecidedAt = null,
+    string? DecisionNote = null,
+    int Version = 1);
+
+public interface IReworkPlanStore
+{
+    Task<IReadOnlyList<ReworkPlan>> ListPlansAsync(long? orderNumber, CancellationToken ct);
+
+    Task<ReworkPlan?> FindPlanAsync(Guid planId, CancellationToken ct);
+
+    /// <summary>False when the rework already has a proposed plan.</summary>
+    Task<bool> InsertPlanAsync(ReworkPlan plan, CancellationToken ct);
+
+    /// <summary>Decides a proposed plan; false when someone else changed it first.</summary>
+    Task<bool> DecidePlanAsync(ReworkPlan plan, int expectedVersion, CancellationToken ct);
+}

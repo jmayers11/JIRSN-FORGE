@@ -512,7 +512,7 @@ public sealed class SchedulingEngine : IEngine<SiteSnapshot, ScheduleRequest, Sc
             return op.PlannedMinutes;
         }
 
-        var left = Math.Clamp(1 - (op.GoodQuantity / order.Quantity), 0m, 1m);
+        var left = Math.Clamp(1 - (op.GoodQuantity / op.QuantityFor(order.Quantity)), 0m, 1m);
         return decimal.Round(op.PlannedMinutes * left, 4);
     }
 

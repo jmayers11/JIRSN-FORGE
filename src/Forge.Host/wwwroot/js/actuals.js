@@ -109,7 +109,9 @@ export async function appendOrderQuantityStates(page, order, me) {
   page.appendChild(section);
   const supervisor = canAction(me, 'execution.shopfloor.record');
   const load = async () => {
-    const [states, rework, reasons] = await Promise.all([tryGet(`/api/orders/${order.orderNumber}/quantity-states`), tryGet(`/api/quality/rework?order=${order.orderNumber}`), tryGet('/api/execution/reason-codes')]);
+    const [states, rework, reasons, planResult] = await Promise.all([tryGet(`/api/orders/${order.orderNumber}/quantity-states`), tryGet(`/api/quality/rework?order=${order.orderNumber}`),
+      tryGet('/api/execution/reason-codes'), tryGet(`/api/quality/rework-plans?order=${order.orderNumber}`)]);
+    const plans = Array.isArray(planResult.data) ? planResult.data : [];
     if (states.error) { section.innerHTML = `<header><h2>Quantity states</h2></header>${errorBlock(states.error, 'quantity states')}`; return; }
     const q = states.data;
     const row = s => `<tr><td>${esc(s.state)}</td><td class="num"><b>${qty(s.quantity)}</b></td><td class="faint">${esc(s.explanation)}</td></tr>`;
@@ -120,9 +122,10 @@ export async function appendOrderQuantityStates(page, order, me) {
         <div><h3 style="margin:0">Now</h3><table class="table"><tbody>${q.states.filter(s => s.kind === 'Now').map(row).join('')}</tbody></table></div>
       </div>
       ${q.notes.map(n => `<div class="faint">${esc(n)}</div>`).join('')}
-      ${list.length ? `<h3 style="margin:8px 0 0">Rework and repair</h3><table class="table"><thead><tr><th>#</th><th>Kind</th><th>Op</th><th class="num">Qty</th><th>Why</th><th>Opened</th><th>Outcome</th><th></th></tr></thead><tbody>
+      ${list.length ? `<h3 style="margin:8px 0 0">Rework and repair</h3><table class="table"><thead><tr><th>#</th><th>Kind</th><th>Op</th><th class="num">Qty</th><th>Why</th><th>Opened</th><th>Added work</th><th>Outcome</th><th></th></tr></thead><tbody>
         ${list.map(r => `<tr><td>${r.reworkId}</td><td><span class="pill ${r.kind === 'Repair' ? 'warn' : 'info'}">${esc(r.kind)}</span></td><td>${r.sequence}</td><td class="num">${qty(r.quantity)}</td>
           <td>${r.ncrId ? `NCR ${r.ncrId}` : esc(r.reasonCode ?? '')}<div class="faint">${esc(r.instructions)}</div></td><td class="nowrap">${esc(fmtDateTime(r.openedAt))}<br><span class="faint">${esc(who(r.openedBy))}</span></td>
+          <td>${reworkPlanCell(r, plans.filter(p => p.reworkId === r.reworkId), me)}</td>
           <td>${r.closedAt ? `${qty(r.goodQuantity)} good · ${qty(r.scrapQuantity)} scrap<div class="faint">${esc(r.closeNote ?? '')}</div>` : '<span class="pill warn">Open</span>'}</td>
           <td>${!r.closedAt && supervisor ? `<button class="btn small" data-close-rework="${r.reworkId}">Close</button>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
       <div class="faint" style="margin-top:6px">Production reports are never changed: rework and repair take good output back, and closing says what came out good and what was scrapped.</div>`;
@@ -137,6 +140,17 @@ export async function appendOrderQuantityStates(page, order, me) {
         { name: 'instructions', label: 'Instructions', type: 'textarea', required: true },
       ],
     }, (v, reason) => command('/api/quality/rework', { ...v, orderNumber: order.orderNumber, sequence: Number(v.sequence) }, reason), load)));
+    $$('[data-plan-rework]', section).forEach(b => b.addEventListener('click', () => proposeReworkPlan(order, list.find(x => x.reworkId === Number(b.dataset.planRework)), load)));
+    $$('[data-decide-plan]', section).forEach(b => b.addEventListener('click', () => {
+      const plan = plans.find(p => p.planId === b.dataset.decidePlan);
+      const approve = b.dataset.approve === 'true';
+      formModal({
+        title: `${approve ? 'Approve' : 'Reject'} the rework plan for rework ${plan.reworkId}`,
+        detail: approve ? 'Approval adds these operations and materials to the order, opens a completed order again and asks the technical trainers to train the people named. The NCR disposition and the rework record stay as they are.' : 'The order stays as it is; the plan stays in the history.',
+        confirmLabel: approve ? 'Approve' : 'Reject', reasonRequired: true,
+        fields: [{ name: 'note', label: 'Decision note', type: 'textarea', required: true }],
+      }, (v, reason) => command(`/api/quality/rework-plans/${plan.planId}/decide`, { approve, note: v.note }, reason), load);
+    }));
     $$('[data-close-rework]', section).forEach(b => b.addEventListener('click', () => {
       const r = list.find(x => x.reworkId === Number(b.dataset.closeRework));
       formModal({
@@ -151,3 +165,59 @@ export async function appendOrderQuantityStates(page, order, me) {
   };
   await load();
 }
+
+const PLAN_TONE = { Proposed: 'warn', Approved: 'ok', Rejected: 'bad' };
+
+/** What a rework's plans added (or would add) to the order, and the actions the viewer may take. */
+export function reworkPlanCell(rework, plans, me) {
+  const proposed = plans.find(p => p.status === 'Proposed');
+  const rows = plans.map(p => `<div><span class="pill ${PLAN_TONE[p.status] ?? 'info'}">${esc(p.status)}</span>
+    ${p.operations.map(o => `${o.sequence} ${esc(o.description)}${o.inspection ? ' (inspection)' : ''}`).join(' · ')}
+    ${p.materials.length ? `<div class="faint">${p.materials.map(m => `${qty(m.quantity)} ${esc(m.partNumber)} at ${m.consumedAtSequence}`).join(' · ')}</div>` : ''}
+    <div class="faint">${esc(p.rationale)}${p.decisionNote ? ` — ${esc(p.decisionNote)}` : ''}</div>
+    ${p.status === 'Proposed' && canAction(me, 'quality.approve') ? `<button class="btn small" data-decide-plan="${esc(p.planId)}" data-approve="true">Approve</button> <button class="btn small" data-decide-plan="${esc(p.planId)}" data-approve="false">Reject</button>` : ''}</div>`).join('');
+  const add = !rework.closedAt && !proposed && canAction(me, 'execution.orders.manage') ? `<button class="btn small" data-plan-rework="${rework.reworkId}">Plan added work</button>` : '';
+  return rows || add ? `${rows}${add}` : '<span class="faint">None</span>';
+}
+
+const csv = value => (value ?? '').split(',').map(x => x.trim()).filter(Boolean);
+
+/** The engineer's form for work, inspections, material and trainees a rework adds to its order. */
+async function proposeReworkPlan(order, rework, reload) {
+  const [workers, resources] = await Promise.all([tryGet('/api/workforce/workers'), tryGet('/api/resources/')]);
+  const people = (Array.isArray(workers.data) ? workers.data : []).filter(w => w.isActive !== false).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const centers = (resources.data?.workCenters ?? []).map(c => [c.code, `${c.code} — ${c.name}`]);
+  const next = Math.ceil((Math.max(0, ...order.operations.map(o => o.sequence)) + 1) / 10) * 10;
+  formModal({
+    title: `Plan the work rework ${rework.reworkId} adds to order ${order.orderNumber}`,
+    detail: `${qty(rework.quantity)} went back from operation ${rework.sequence}. Added steps come after everything on the order and carry their own labor standard and qualifications. Someone with Quality approval authority decides the plan; nothing changes until then.`,
+    confirmLabel: 'Propose', reasonRequired: true,
+    fields: [
+      { name: 'operations', label: 'Operations', type: 'repeater', required: true, minRows: 1, rowLabel: 'operation', value: [{ sequence: next, setupMinutes: 0, runMinutesPerUnit: 0, crewSize: 1 }],
+        columns: [
+          { name: 'sequence', label: 'Seq', type: 'number', min: 1, max: 9999, required: true },
+          { name: 'description', label: 'Description', required: true },
+          { name: 'workCenterCode', label: 'Work center', type: 'select', options: centers, required: true },
+          { name: 'activityCode', label: 'Activity', code: true, required: true },
+          { name: 'requiredQualifications', label: 'Qualifications (comma)', code: true },
+          { name: 'setupMinutes', label: 'Setup min', type: 'number', min: 0, step: 'any', required: true },
+          { name: 'runMinutesPerUnit', label: 'Run min/unit', type: 'number', min: 0, step: 'any', required: true },
+          { name: 'crewSize', label: 'Crew', type: 'number', min: 1, max: 20, required: true },
+          { name: 'inspection', label: 'Inspection', type: 'check' },
+        ] },
+      { name: 'materials', label: 'Material', type: 'repeater', minRows: 0, rowLabel: 'material line',
+        columns: [
+          { name: 'partNumber', label: 'Part', code: true, required: true },
+          { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true },
+          { name: 'consumedAtSequence', label: 'Used at seq', type: 'number', min: 1, required: true },
+        ] },
+      { name: 'trainees', label: 'People to train', type: 'repeater', minRows: 0, rowLabel: 'person',
+        columns: [{ name: 'personId', label: 'Person', type: 'select', blank: '—', options: people.map(w => [w.personId, w.displayName]), required: true }] },
+      { name: 'rationale', label: 'Why this work', type: 'textarea', required: true },
+    ],
+  }, (v, reason) => command(`/api/quality/rework/${rework.reworkId}/plans`, {
+    operations: v.operations.map(o => ({ ...o, eligibleMachines: [], requiredQualifications: csv(o.requiredQualifications), inspection: !!o.inspection })),
+    materials: v.materials, trainees: v.trainees.map(t => t.personId), rationale: v.rationale,
+  }, reason), reload);
+}
+

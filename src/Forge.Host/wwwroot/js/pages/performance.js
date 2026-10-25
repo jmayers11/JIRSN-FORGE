@@ -9,7 +9,7 @@ import { openCausePerformance } from '../cause-performance.js';
 import { gradeCard, reviewPeriods, printDocument, tile, evidenceHtml, contributionsHtml, GRADE_LABEL, GRADE_ORDER, PILL, SHORT } from '../performance-cards.js';
 
 const DAY = 86_400_000;
-const SOURCE_LABEL = { Onboarding: 'New employee', Expiry: 'Expiring', Supervisor: 'Requested', Development: 'Development' };
+const SOURCE_LABEL = { Onboarding: 'New employee', Expiry: 'Expiring', Supervisor: 'Requested', Development: 'Development', Rework: 'Rework' };
 const attr = value => esc(value).replaceAll('"', '&quot;');
 const initials = name => String(name ?? '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?';
 const localInput = date => {
