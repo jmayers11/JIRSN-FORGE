@@ -1,8 +1,8 @@
 # Sprint 10 implementation report
 
-Date: 2026-10-24
+Date: 2026-10-25
 Specification: `Forge_Sprint_10_Latest.txt` (extends `Forge_Sprint_10_Training_Performance_Workforce_Intelligence.md`)
-Status: Sections 16–22 are delivered end to end (persisted records, commands, APIs, UI and PostgreSQL integration tests) as of the Claude completion pass below. The WhiskerWorks demo now runs on its own isolated database with a simulated clock, saved baseline and reset. Current-source focused checks on 2026-10-24 passed Planning 359/359, Architecture 13/13, UI 387/387 and 12 selected PostgreSQL regressions. The isolated WhiskerWorks demo replay passed 9/9 assertions, including a direct persisted qualification-expiry check at simulated time; the full Sprint 9/10 scenario replay remains open, and this nine-assertion replay is not the complete acceptance gate.
+Status: Sections 16–22 are delivered end to end (persisted records, commands, APIs, UI and PostgreSQL integration tests) as of the Claude completion pass below. The WhiskerWorks demo now runs on its own isolated database with a simulated clock, saved baseline and reset. On 2026-10-25, the current-source isolated Release solution build passed with 0 warnings/errors; Planning passed 359/359, Architecture 32/32, and UI 387/387. Twelve selected PostgreSQL regressions passed on 2026-10-24, and 28 cases in the broader integration suite passed before that lengthy run was stopped. The isolated WhiskerWorks replay passed 17/17 assertions on 2026-10-25, including direct S05 expiry evidence and S07's exact delayed PO/MRP causation; the full Sprint 9/10 scenario replay remains open and these focused checks do not constitute the complete acceptance gate. `verify.cmd` now uses an isolated output path to avoid locking conflicts with an open preview, but the full script has not yet been rerun with that change.
 
 ## Completion pass: Sections 16–22 end to end (Claude, 2026-10-24)
 
