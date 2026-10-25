@@ -1832,3 +1832,7 @@ Mapped all 38 Sprint 10 cases to named passing checks or gaps (26 Covered / 10 P
 
 Built WW-S10-14/29 on the owner's go-ahead: rework plans proposed by order setup and approved by a different Quality approver add operations (labor standard, qualifications, inspection steps), released material demand and training requests to the order, reopen a completed order, and leave the NCR disposition and rework record untouched. Added work is excluded from routing first/last semantics and blocks rework close until done. 167 migrations. `ReworkPlanTests` passes; neighbouring integration 22/22, Planning 364/364, Architecture 32/32, UI suite green. Sprint 10 matrix now 28 Covered / 10 Partial.
 
+## Claude: full verify, material risk notices, escalation proof — 2026-10-25
+
+Ran the full `verify.cmd` uninterrupted: PASS, 843 tests and all UI checks. Built WW-S10-30 (hourly/on-demand material due-date risk check, one deduplicated, permission-checked planner notice per at-risk order, cleared when covered; 168 migrations) and proved WW-S10-31 (escalation once at threshold, resolve on fulfilment). New tests with V319/KernelRoundTrip/V328: 15/15. Sprint 10 matrix 30 Covered / 8 Partial.
+
