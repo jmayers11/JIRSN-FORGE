@@ -119,7 +119,7 @@ public sealed class ReworkPlanTests(PostgresFixture postgres)
         await Rejected(plant, mq, plans, Plan([Solder(), Retest(["TEST-INSP"])], consumedAt: 99), "unknown_operation");
         var proposed = await plant.Ok(mq, plans, Plan([Solder(), Retest(["TEST-INSP"])]));
         var planId = proposed.GetProperty("entityId").GetString()!;
-        Assert.Contains("75 planned minutes", proposed.GetProperty("message").GetString(), StringComparison.Ordinal); // 15 + 3x10 + 2x10
+        Assert.Contains("65 planned minutes", proposed.GetProperty("message").GetString(), StringComparison.Ordinal); // 15 + 3x10, then 2x10
         await Rejected(plant, mq, plans, Plan([Solder(), Retest(["TEST-INSP"])]), "plan_already_proposed");
         Assert.Equal(2, (await Get(planner, $"/api/orders/{order}")).GetProperty("operations").GetArrayLength());
 
