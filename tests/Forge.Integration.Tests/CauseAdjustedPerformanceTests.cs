@@ -118,9 +118,13 @@ public sealed class CauseAdjustedPerformanceTests(PostgresFixture postgres)
         Assert.Equal(100m, card.GetProperty("firstPass").GetProperty("employeeAttributablePercent").GetDecimal());
         Assert.Equal(1, card.GetProperty("efficiency").GetProperty("operationsInScope").GetInt32());
         Assert.Equal(3m, card.GetProperty("paidHours").GetDecimal());
-        Assert.Equal(JsonValueKind.Null, card.GetProperty("attendance").ValueKind);
+        // Supervisors run the reviews, attendance included; a training coordinator's cards name attendance as hidden.
+        Assert.Equal(JsonValueKind.Object, card.GetProperty("attendance").ValueKind);
         Assert.Equal(JsonValueKind.Object, card.GetProperty("competency").ValueKind);
-        Assert.Contains(cards.GetProperty("restrictions").EnumerateArray(), r => r.GetString()!.StartsWith("Attendance is hidden", StringComparison.Ordinal));
+        await plant.Person("tc2", "TrainingCoordinator");
+        var coordinatorCards = await Get(plant.As("tc2"), cardsUrl);
+        Assert.Equal(JsonValueKind.Null, coordinatorCards.GetProperty("cards")[0].GetProperty("attendance").ValueKind);
+        Assert.Contains(coordinatorCards.GetProperty("restrictions").EnumerateArray(), r => r.GetString()!.StartsWith("Attendance is hidden", StringComparison.Ordinal));
         Assert.Contains(card.GetProperty("contributions").EnumerateArray(), c => c.GetString()!.StartsWith("Completed 1 operation(s) with accepted output", StringComparison.Ordinal));
         await plant.Person("hr", "HumanResources");
         var hrCard = (await Get(plant.As("hr"), cardsUrl)).GetProperty("cards")[0];

@@ -110,6 +110,18 @@ public static class Permissions
     public const string BadgesManage = "workforce.badges.manage";
     public const string AttendanceRecord = "workforce.attendance.record";
     public const string AttendanceIntelligenceRead = "workforce.attendance-intelligence.read";
+
+    /// <summary>Reads training requests and new-employee training checklists.</summary>
+    public const string TrainingRequestsRead = "workforce.training-requests.read";
+
+    /// <summary>Asks for training to be scheduled for a person (supervisors, HR, trainers).</summary>
+    public const string TrainingRequestsRequest = "workforce.training-requests.request";
+
+    /// <summary>Schedules, completes or cancels training requests (technical trainers, training coordinators).</summary>
+    public const string TrainingRequestsManage = "workforce.training-requests.manage";
+
+    /// <summary>Defines the training every new employee (or every new employee in a work center) must complete.</summary>
+    public const string OnboardingManage = "workforce.onboarding.manage";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -222,6 +234,9 @@ public static class Roles
     public const string Auditor = "Auditor";
     public const string ManufacturingEngineer = "ManufacturingEngineer";
     public const string TrainingCoordinator = "TrainingCoordinator";
+
+    /// <summary>Schedules and delivers training and is notified when someone needs it; certification stays with Competency roles.</summary>
+    public const string TechnicalTrainer = "TechnicalTrainer";
     public const string Certifier = "Certifier";
     public const string SafetyEngineer = "SafetyEngineer";
     public const string SafetyApprover = "SafetyApprover";
@@ -315,6 +330,7 @@ public static class Roles
         [MaintenancePlanner] = [Permissions.HoldsRead, Permissions.ToolsManage, Permissions.ToolsHandle, Permissions.RootCauseConfirm, Permissions.OutageApprove, Permissions.AssetsManage, Permissions.MroManage, Permissions.ObsolescenceRecord, Permissions.MaintenanceProgram, Permissions.InventoryRead, Permissions.MaintenanceApprove, Permissions.MaintenancePlan, Permissions.MaintenanceRead, Permissions.DowntimeReport, Permissions.ResourcesRead, Permissions.ScheduleRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.CotsPropose, Permissions.EngineeringRead, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.AlternatesPropose, Permissions.MaintenanceAlternatesApprove, Permissions.RequisitionRaise, Permissions.DemandManage, Permissions.ProjectsRead, Permissions.ProjectsManage],
         [ProgramManager] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.GoalsManage, Permissions.ProgramsManage, Permissions.ProgramsRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.MaterialPlanRead, Permissions.ScheduleRead, Permissions.InventoryRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.RequisitionRaise, Permissions.ProjectsRead],
         [EngineeringApprover] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.EngineeringRelease, Permissions.EngineeringRead, Permissions.ResourcesRead, Permissions.CotsManage, Permissions.DocumentsApprove, Permissions.DocumentsRelease, Permissions.OrdersRead, Permissions.ProgramsRead, Permissions.ChangesReview, Permissions.ChangesApprove, Permissions.AlternatesApprove],
+        [TechnicalTrainer] = [Permissions.WorkforceRead, Permissions.CompetencyRead, Permissions.ResourcesRead, Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest, Permissions.TrainingRequestsManage, Permissions.OnboardingManage],
         [TrainingCoordinator] = [Permissions.CompetencyManage, Permissions.CompetencyRead, Permissions.CompetencyMachineAuthorize, Permissions.WorkforceRead, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationReview, Permissions.WorkforceNominationRead, Permissions.ResourcesRead, Permissions.EngineeringRead],
         [Certifier] = [Permissions.CompetencyCertify, Permissions.CompetencyRead, Permissions.CompetencyMachineAuthorize],
         [SafetyEngineer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.SafetyRulesDraft, Permissions.SafetyRulesRead, Permissions.ResourcesRead, Permissions.CompetencyRead],
@@ -345,6 +361,7 @@ public static class Roles
         [ChangePropagation] = [Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.OrdersManage, Permissions.OrdersRelease, Permissions.PurchasingRead, Permissions.WorkforceRead, Permissions.ChangesManage],
         [QualityReplan] = [Permissions.ScheduleRead, Permissions.SchedulePropose],
         [WorkforceMoves] = [Permissions.WorkforceRead, Permissions.WorkforceSupervise],
+        [TrainingRequests] = [Permissions.WorkforceRead, Permissions.CompetencyRead, Permissions.TrainingRequestsRequest],
     };
 
     static Roles()
@@ -362,6 +379,10 @@ public static class Roles
         Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.DemoControl, Permissions.DemoReset];
         Map[Planner] = [.. Map[Planner], Permissions.DemoControl, Permissions.CompetencyRead];
         Map[Supervisor] = [.. Map[Supervisor], Permissions.DemoControl];
+        // Supervisors run quarterly and annual reviews (attendance included) and ask for training; trainers and coordinators schedule it.
+        Map[Supervisor] = [.. Map[Supervisor], Permissions.AttendanceIntelligenceRead, Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest];
+        Map[TrainingCoordinator] = [.. Map[TrainingCoordinator], Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest, Permissions.TrainingRequestsManage, Permissions.OnboardingManage];
+        Map[HumanResources] = [.. Map[HumanResources], Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest];
     }
 
     /// <summary>The system role the propagation of a released engineering change acts with (V2.5).</summary>
@@ -372,6 +393,9 @@ public static class Roles
 
     /// <summary>The system role that reminds supervisors of temporary moves ending and returns workers when they run out (ADR 0057 §5).</summary>
     public const string WorkforceMoves = "system.WorkforceMoves";
+
+    /// <summary>The system role that opens training requests for qualifications about to expire.</summary>
+    public const string TrainingRequests = "system.TrainingRequests";
 
     /// <summary>The system role that records a part issued to a work order as installed on its asset (V2.9).</summary>
     public const string MaintenanceInstallation = "system.MaintenanceInstallation";

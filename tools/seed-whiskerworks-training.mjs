@@ -4,8 +4,8 @@
 //
 //   node tools/seed-whiskerworks-training.mjs --base=http://localhost:5080 [--admin=dev-admin] [--save-baseline]
 //
-// It also adds ww-demo-manager (Supervisor + Human Resources): the one demo sign-in that sees every figure on the Command Center's
-// employee review cards, attendance rates included (those are Human Resources only).
+// It also adds ww-demo-manager (Supervisor + Human Resources) and ww-demo-trainer (Technical Trainer), the new-employee training
+// requirements, a training request for everyone in cross-training, and reassessment requests for qualifications expiring soon.
 // With --save-baseline the demo baseline is saved again afterwards, so "Reset demo" returns to the plan as well.
 import { randomUUID } from 'node:crypto';
 
@@ -18,6 +18,13 @@ if (!['localhost', '127.0.0.1', '::1'].includes(new URL(base).hostname)) throw n
 const coordinator = 'ww-demo-engineer';
 const admin = value('admin') ?? 'dev-admin';
 const manager = { subject: 'ww-demo-manager', displayName: 'WhiskerWorks Demo Plant Manager', roles: ['Supervisor', 'HumanResources'] };
+const trainer = { subject: 'ww-demo-trainer', displayName: 'WhiskerWorks Demo Technical Trainer', roles: ['TechnicalTrainer'] };
+// New-employee training: everyone gets site safety in their first week; assembly and CNC hires get their station qualification.
+const onboarding = [
+  { workCenterCode: null, qualificationCode: 'QUAL-SITE-SAFE', dueDays: 7, note: 'Before working on the floor' },
+  { workCenterCode: 'WC-ASM-HVY', qualificationCode: 'QUAL-ASM-HVY', dueDays: 30, note: '' },
+  { workCenterCode: 'WC-CNC-MILL', qualificationCode: 'QUAL-CNC-MILL', dueDays: 45, note: '' },
+];
 // Which qualification each uncovered shift needs, and how many people to start on it. Work centers are where the trainees come from.
 const crossTraining = [
   { qualification: 'QUAL-ASM-TORQUE', shift: 'SHIFT-SWG', from: ['WC-ASM-HVY', 'WC-PKG', 'WC-KIT'], count: 2 },
@@ -37,25 +44,27 @@ async function request(method, path, who, body) {
 
 const rank = (plan, worker) => { const index = plan.from.indexOf(worker.homeWorkCenterCode); return index < 0 ? plan.from.length : index; };
 
-async function ensureManager() {
+async function ensurePerson(identity) {
   const people = await request('GET', '/api/kernel/people', admin);
-  let person = people.find(item => item.idpSubject === manager.subject);
-  const reason = 'WhiskerWorks demo plant manager for the employee review cards';
+  let person = people.find(item => item.idpSubject === identity.subject);
+  const reason = `WhiskerWorks demo identity: ${identity.displayName}`;
   if (!person) {
-    const created = await request('POST', '/api/kernel/people', admin, { idpSubject: manager.subject, displayName: manager.displayName, reason });
+    const created = await request('POST', '/api/kernel/people', admin, { idpSubject: identity.subject, displayName: identity.displayName, reason });
     person = { personId: created.entityId, roles: [] };
   }
   const id = person.personId ?? person.id;
-  const missing = manager.roles.filter(role => !(person.roles ?? []).includes(role));
+  const missing = identity.roles.filter(role => !(person.roles ?? []).includes(role));
   for (const role of missing) await request('POST', `/api/kernel/people/${id}/roles`, admin, { role, reason });
-  return missing.length ? `${manager.subject}: added ${missing.join(', ')}` : null;
+  return missing.length ? `${identity.subject}: added ${missing.join(', ')}` : null;
 }
 
 async function main() {
   const sites = (await request('GET', '/api/resources/', coordinator)).sites ?? [];
   if (sites.length !== 1 || sites[0].code !== 'WW-P01') throw new Error('Expected the isolated WW-P01 demo plant only; nothing was written.');
-  const managerChange = await ensureManager();
-  if (managerChange) console.log(managerChange);
+  for (const identity of [manager, trainer]) {
+    const change = await ensurePerson(identity);
+    if (change) console.log(change);
+  }
   const workers = await request('GET', '/api/workforce/workers', coordinator);
   const query = workers.map(worker => `personIds=${encodeURIComponent(worker.personId)}`).join('&');
   const records = await request('GET', `/api/competency/people/qualifications?${query}`, coordinator);
@@ -80,8 +89,26 @@ async function main() {
   }
 
   console.log(started.length ? `Started cross-training:\n- ${started.join('\n- ')}` : 'Cross-training plan already in place; nothing changed.');
+
+  // New-employee training requirements, training requests for everyone in cross-training, and reassessment requests for
+  // qualifications expiring soon. Technical trainers see them in the Training queue (and as notifications).
+  const requirements = await request('GET', '/api/workforce/onboarding-requirements', trainer.subject);
+  for (const item of onboarding) {
+    if (requirements.some(r => r.qualificationCode === item.qualificationCode && (r.workCenterCode ?? null) === item.workCenterCode)) continue;
+    await request('POST', '/api/workforce/onboarding-requirements', trainer.subject, { ...item, reason: 'WhiskerWorks new-employee training' });
+    console.log(`Onboarding requirement: ${item.qualificationCode} for ${item.workCenterCode ?? 'every new employee'}`);
+  }
+  const openRequests = await request('GET', '/api/workforce/training-requests?open=true', trainer.subject);
+  const fresh = await request('GET', `/api/competency/people/qualifications?${query}`, coordinator);
+  for (const record of fresh.filter(r => r.status === 'InTraining')) {
+    if (openRequests.some(r => r.personId === record.personId && r.qualificationCode === record.code)) continue;
+    const due = new Date(Date.now() + 21 * 864e5).toISOString().slice(0, 10);
+    await request('POST', '/api/workforce/training-requests', 'ww-demo-supervisor', { personId: record.personId, qualificationCode: record.code, dueOn: due, reason: 'Cross-training plan for shift coverage' });
+    console.log(`Training requested: ${workers.find(w => w.personId === record.personId)?.displayName} → ${record.code}`);
+  }
+  console.log((await request('POST', '/api/workforce/training-requests/expiry-scan', trainer.subject, { reason: 'WhiskerWorks reassessment check' })).message);
   if (args.includes('--save-baseline')) {
-    const result = await request('POST', '/api/demo/baseline', 'ww-demo-planner', { reason: 'S01 baseline with the cross-training plan' });
+    const result = await request('POST', '/api/demo/baseline', 'ww-demo-planner', { reason: 'S01 baseline with the cross-training plan and training queue' });
     console.log(result.message);
   }
 }

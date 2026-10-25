@@ -1363,3 +1363,53 @@ button.pill.linkish:hover { text-decoration: underline; }
 .perf-table { font-size: 12px; }
 .perf-card footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; }
 .perf-legend { margin-top: 10px; } .perf-legend div { display: grid; gap: 4px; font-size: 12px; margin-top: 6px; }
+
+/* Training & Performance page: employee detail in the centre, alphabetical roster on the right (like the Workforce Kanban rail). */
+.tp-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: start; }
+.tp-center { min-width: 0; }
+.tp-roster { position: sticky; top: 120px; max-height: calc(100vh - 140px); display: flex; flex-direction: column; padding: 12px; }
+.tp-roster-head { display: grid; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.tp-roster-head h2 { margin: 0; font-size: 15px; }
+.tp-filters { display: flex; flex-wrap: wrap; gap: 4px; }
+.tp-filter { font-size: 11.5px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-strong); background: transparent; color: var(--muted); cursor: pointer; }
+.tp-filter.on { border-color: var(--forge-orange); color: var(--text); background: rgba(249,115,22,.12); }
+.tp-roster-list { overflow-y: auto; padding-top: 4px; }
+.tp-letter { margin: 10px 4px 4px; font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+.tp-person { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; padding: 6px; border: 1px solid transparent; border-radius: var(--radius); background: transparent; color: var(--text); cursor: pointer; }
+.tp-person:hover { background: var(--panel-2); }
+.tp-person.on { background: var(--panel-2); border-color: var(--forge-orange); }
+.tp-person.inactive { opacity: .6; }
+.tp-person-text { display: grid; min-width: 0; } .tp-person-text b, .tp-person-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-person-text small { color: var(--muted); font-size: 11.5px; }
+.tp-person-side { display: flex; align-items: center; gap: 6px; }
+.tp-dots { display: inline-flex; gap: 3px; }
+.tp-avatar { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; font: 700 12px var(--font-display); background: var(--panel-2); border: 2px solid var(--none); color: var(--text); flex: none; }
+.tp-avatar.good { border-color: var(--ok); } .tp-avatar.watch { border-color: var(--warn); } .tp-avatar.concern { border-color: var(--bad); }
+.tp-avatar.big { width: 48px; height: 48px; font-size: 16px; }
+.tp-employee { padding: 14px; }
+.tp-emp-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.tp-emp-name h2 { margin: 0; }
+.tp-emp-why { margin: 10px 0 0; padding: 8px 10px; border-left: 4px solid var(--none); background: var(--panel-2); border-radius: 4px; font-size: 13px; }
+.tp-emp-why.good { border-left-color: var(--ok); } .tp-emp-why.watch { border-left-color: var(--warn); } .tp-emp-why.concern { border-left-color: var(--bad); }
+.tp-panel { padding: 14px 2px 4px; display: grid; gap: 14px; }
+.tp-panel h3 { margin: 0 0 6px; font-size: 14px; }
+.tp-tiles { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.tp-metric { max-width: 520px; }
+.tp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.tp-stats div { border: 1px solid var(--line); border-radius: 4px; padding: 8px; display: grid; } .tp-stats b { font: 700 20px var(--font-display); } .tp-stats span { color: var(--muted); font-size: 12px; }
+.tp-progress { height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; } .tp-progress span { display: block; height: 100%; background: var(--ok); }
+.tp-checklist { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 6px; }
+.tp-request { border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: var(--radius); padding: 8px 10px; background: var(--panel); display: grid; gap: 4px; margin-bottom: 8px; }
+.tp-request.scheduled { border-left-color: var(--info); } .tp-request.completed { border-left-color: var(--ok); } .tp-request.cancelled { border-left-color: var(--none); opacity: .75; }
+.tp-request.overdue { border-left-color: var(--bad); } .tp-request.highlight { box-shadow: 0 0 0 2px var(--forge-orange); }
+.tp-request-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tp-request-actions { display: grid; gap: 6px; } .tp-request-actions summary { cursor: pointer; color: var(--forge-orange); font-size: 12.5px; }
+.tp-inline-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-top: 6px; }
+.tp-inline-form label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); } .tp-inline-form label.grow { flex: 1 1 220px; }
+.tp-request-form { padding-top: 8px; border-top: 1px solid var(--line); }
+.tp-queue-head { display: flex; gap: 12px; align-items: start; justify-content: space-between; flex-wrap: wrap; }
+.tp-queue { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-top: 10px; }
+.tp-queue-col { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
+.tp-queue-col h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.linkish { background: none; border: 0; padding: 0; color: var(--forge-orange); cursor: pointer; font: inherit; }
+@media (max-width: 1100px) { .tp-layout { grid-template-columns: 1fr; } .tp-roster { position: static; max-height: 420px; order: -1; } }

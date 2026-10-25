@@ -65,7 +65,7 @@ public sealed class EmployeePerformanceCardService(IKernelUnitOfWorkFactory unit
         var canAttendance = Can(principal, Permissions.AttendanceIntelligenceRead, "Workforce");
         var canCompetency = Can(principal, Permissions.CompetencyRead, "Competency");
         var canQuality = Can(principal, Permissions.QualityRead, "Quality");
-        if (!canAttendance) restrictions.Add("Attendance is hidden: reading attendance rates needs the attendance-intelligence permission (Human Resources).");
+        if (!canAttendance) restrictions.Add("Attendance is hidden: reading attendance rates needs the attendance-intelligence permission (supervisors and Human Resources).");
         if (!canCompetency) restrictions.Add("Qualifications and training are hidden: they need competency read access.");
         if (!canQuality) restrictions.Add("First-pass yield is hidden: it needs quality read access.");
 

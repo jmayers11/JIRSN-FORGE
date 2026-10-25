@@ -13,7 +13,7 @@ export const THRESHOLDS = Object.freeze({
 });
 
 export const GRADE_LABEL = { good: 'On track', watch: 'Watch', concern: 'Needs review', na: 'Not enough evidence' };
-const GRADE_ORDER = { concern: 0, watch: 1, good: 2, na: 3 };
+export const GRADE_ORDER = { concern: 0, watch: 1, good: 2, na: 3 };
 const DAY = 86_400_000;
 
 const pct = value => value == null ? 'N/A' : `${fmtNumber(Math.round(Number(value) * 10) / 10)}%`;
@@ -62,7 +62,7 @@ function firstPassMetric(f) {
 
 function attendanceMetric(a) {
   const t = THRESHOLDS.attendance;
-  if (!a) return { key: 'attendance', label: t.label, display: 'Hidden', grade: 'na', reason: 'Attendance rates are visible to Human Resources only.' };
+  if (!a) return { key: 'attendance', label: t.label, display: 'Hidden', grade: 'na', reason: 'Attendance rates are visible to supervisors and Human Resources.' };
   const context = `${fmtNumber(a.onTime)} on time of ${fmtNumber(a.eligible)} eligible arrival(s) · ${fmtNumber(a.verifiedLate)} verified late · ${fmtNumber(a.verifiedCallOuts)} call-out(s) · ${fmtNumber(a.verifiedNoShows)} no-show(s) · ${fmtNumber(a.excluded)} excluded (approved leave) · ${fmtNumber(a.pendingReview)} pending review.`;
   if (a.onTimePercent == null || a.eligible < t.minimumArrivals)
     return { key: 'attendance', label: t.label, value: a.onTimePercent, display: pct(a.onTimePercent), grade: 'na',
@@ -134,13 +134,13 @@ export function reviewPeriods(now = new Date()) {
   return periods.sort((a, b) => b.from - a.from || (a.kind === 'Annual' ? 1 : -1));
 }
 
-function tile(metric) {
+export function tile(metric) {
   return `<div class="perf-tile ${metric.grade}" title="${esc(metric.reason)}">
     <div class="perf-tile-value">${esc(metric.display)}</div><div class="perf-tile-label">${esc(metric.label)}</div>
     <div class="perf-tile-why"><span class="perf-dot ${metric.grade}" aria-hidden="true"></span>${esc(metric.reason)}</div></div>`;
 }
 
-function evidenceHtml(card, grading) {
+export function evidenceHtml(card, grading) {
   const q = card.competency;
   const qualificationRows = q?.qualifications?.length
     ? `<table class="table perf-table"><thead><tr><th>Qualification</th><th>Status</th><th>Certified</th><th>Expires</th></tr></thead><tbody>${q.qualifications.map(row => `<tr><td>${esc(row.code)}<div class="faint">${esc(row.name)}</div></td><td><span class="pill ${row.status === 'Qualified' ? 'ok' : row.status === 'Expired' ? 'bad' : row.status === 'InTraining' ? 'warn' : 'none'}">${esc(row.status === 'InTraining' ? 'In training' : row.status)}</span></td><td>${row.certifiedAt ? esc(day(row.certifiedAt)) : '—'}</td><td>${row.expiresAt ? esc(day(row.expiresAt)) : 'No expiry'}</td></tr>`).join('')}</tbody></table>` : '';
@@ -153,14 +153,14 @@ function evidenceHtml(card, grading) {
     ${qualificationRows ? `<h4>Qualifications</h4>${qualificationRows}` : ''}${authorizationRows ? `<h4>Machine authorizations</h4>${authorizationRows}` : ''}${courseRows ? `<h4>Training completed in this period</h4>${courseRows}` : ''}`;
 }
 
-function contributionsHtml(card) {
+export function contributionsHtml(card) {
   return card.contributions?.length
     ? `<ul class="perf-list">${card.contributions.map(line => `<li>${esc(line)}</li>`).join('')}</ul>`
     : '<p class="faint">No completed operations, coverage or training were recorded in this period.</p>';
 }
 
-const PILL = { good: 'ok', watch: 'warn', concern: 'bad', na: 'none' };
-const SHORT = { efficiency: 'Eff', firstPass: 'FPY', attendance: 'On-time', coverage: 'Cover', qualifications: 'Quals' };
+export const PILL = { good: 'ok', watch: 'warn', concern: 'bad', na: 'none' };
+export const SHORT = { efficiency: 'Eff', firstPass: 'FPY', attendance: 'On-time', coverage: 'Cover', qualifications: 'Quals' };
 
 /** One employee: a collapsed row (name, status, every figure as a colored chip) that opens into the full review card. */
 export function cardHtml(card, grading, period, open = false) {

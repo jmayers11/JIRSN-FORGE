@@ -157,9 +157,12 @@ public sealed partial class WorkforceService(CommandPipeline pipeline)
             }
 
             var id = c.PersonId.ToString();
+            // A new hire's onboarding training opens with the registration, and technical trainers are notified.
+            var onboarding = await TrainingRequestService.OpenOnboardingAsync(pipeline, uow, c.PersonId.Value, person.DisplayName, home,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase), now, context, ct);
             return new CommandOutcome(
-                CommandResult.Ok(id, $"{person.DisplayName} registered as a worker in {home}."),
-                [pipeline.Event(new WorkerRegistered(c.PersonId.Value, home), context, SourceContext, WorkerEntity, id)],
+                CommandResult.Ok(id, $"{person.DisplayName} registered as a worker in {home}.{(onboarding.Count > 0 ? $" {onboarding.Count} new-employee training request(s) opened." : "")}"),
+                [pipeline.Event(new WorkerRegistered(c.PersonId.Value, home), context, SourceContext, WorkerEntity, id), .. onboarding],
                 new AuditChange(WorkerEntity, id, null, CanonicalJson.Serialize(new { homeWorkCenter = home })));
         }, ct);
     }

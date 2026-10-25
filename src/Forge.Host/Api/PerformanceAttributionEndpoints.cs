@@ -27,6 +27,16 @@ public sealed record CoverageComparabilityBody(bool Comparable, string? Exclusio
 
 public sealed record CoverageStepBody(string? Reason);
 
+public sealed record OnboardingRequirementBody(string? WorkCenterCode, string QualificationCode, int DueDays, string? Note, string? Reason);
+
+public sealed record TrainingRequestBody(Guid PersonId, string? QualificationCode, string? Title, DateOnly? DueOn, string? Reason);
+
+public sealed record TrainingScheduleBody(Guid? TrainerPersonId, DateTimeOffset StartsAt, DateTimeOffset EndsAt, string? Location, string? Reason);
+
+public sealed record TrainingNoteBody(string Note);
+
+public sealed record TrainingScanBody(int? WithinDays, string? Reason);
+
 /// <summary>Cause-adjusted performance (Sprint 10 §16): coded time, verified first-pass attribution and the factual report built from them.</summary>
 public static class PerformanceAttributionEndpoints
 {
@@ -84,6 +94,30 @@ public static class PerformanceAttributionEndpoints
             Command(http, b.Reason, c => s.ReviseGoalAsync(new ReviseCoverageGoal(id, b.GoodUnits, b.ProductiveMinutes, b.Rationale, b.TimeAdjusted), c, ct)));
         workforce.MapPost("/coverage/{id:guid}/comparability", (HttpContext http, Guid id, CoverageComparabilityBody b, CoverageService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReviewComparabilityAsync(new ReviewCoverageComparability(id, b.Comparable, b.ExclusionReason), c, ct)));
+
+        // New-employee training and training requests: supervisors ask, technical trainers are notified and schedule.
+        workforce.MapGet("/onboarding-requirements", (HttpContext http, CancellationToken _) =>
+            ReadStore<ITrainingRequestStore>(http, Permissions.TrainingRequestsRead, async (s, ct) => await s.ListRequirementsAsync(true, ct)));
+        workforce.MapPost("/onboarding-requirements", (HttpContext http, OnboardingRequirementBody b, TrainingRequestService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.DefineRequirementAsync(new DefineOnboardingRequirement(b.WorkCenterCode, b.QualificationCode, b.DueDays, b.Note), c, ct)));
+        workforce.MapPost("/onboarding-requirements/{id:guid}/retire", (HttpContext http, Guid id, CoverageStepBody b, TrainingRequestService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RetireRequirementAsync(new RetireOnboardingRequirement(id), c, ct)));
+        workforce.MapPost("/workers/{personId:guid}/onboarding", (HttpContext http, Guid personId, CoverageStepBody b, TrainingRequestService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.StartOnboardingAsync(new StartOnboarding(personId), c, ct)));
+        workforce.MapGet("/training-requests", (HttpContext http, Guid? personId, bool? open, CancellationToken _) =>
+            ReadStore<ITrainingRequestStore>(http, Permissions.TrainingRequestsRead, async (s, ct) => await s.ListRequestsAsync(personId, open ?? false, ct)));
+        workforce.MapGet("/training-requests/{id:guid}/history", (HttpContext http, Guid id, CancellationToken _) =>
+            ReadStore<ITrainingRequestStore>(http, Permissions.TrainingRequestsRead, async (s, ct) => await s.ListRequestEventsAsync(id, ct)));
+        workforce.MapPost("/training-requests", (HttpContext http, TrainingRequestBody b, TrainingRequestService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RequestAsync(new RequestTraining(b.PersonId, b.QualificationCode, b.Title, b.DueOn), c, ct)));
+        workforce.MapPost("/training-requests/{id:guid}/schedule", (HttpContext http, Guid id, TrainingScheduleBody b, TrainingRequestService s, CancellationToken ct) =>
+            Command(http, b.Reason ?? "Training scheduled", c => s.ScheduleAsync(new ScheduleTraining(id, b.TrainerPersonId, b.StartsAt, b.EndsAt, b.Location), c, ct)));
+        workforce.MapPost("/training-requests/{id:guid}/complete", (HttpContext http, Guid id, TrainingNoteBody b, TrainingRequestService s, CancellationToken ct) =>
+            Command(http, b.Note, c => s.CompleteAsync(new CompleteTraining(id, b.Note), c, ct)));
+        workforce.MapPost("/training-requests/{id:guid}/cancel", (HttpContext http, Guid id, TrainingNoteBody b, TrainingRequestService s, CancellationToken ct) =>
+            Command(http, b.Note, c => s.CancelAsync(new CancelTraining(id, b.Note), c, ct)));
+        workforce.MapPost("/training-requests/expiry-scan", (HttpContext http, TrainingScanBody b, TrainingRequestService s, CancellationToken ct) =>
+            Command(http, b.Reason ?? "Check for expiring qualifications", c => s.OpenExpiryRequestsAsync(new OpenExpiryTrainingRequests(b.WithinDays ?? TrainingRequestService.DefaultExpiryWindowDays), c, ct)));
 
         var quality = app.MapGroup("/api/quality").RequireAuthorization();
         quality.MapGet("/attributions", (HttpContext http, long[]? inspection, CancellationToken _) =>

@@ -142,6 +142,7 @@ builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Installation.InstallationSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Replanning.QualityReplanSubscriber>();
 builder.Services.AddSingleton<Forge.Host.Moves.TemporaryMoveReconciler>();
+builder.Services.AddSingleton<Forge.Host.Training.TrainingExpiryScanner>();
 
 var sentinelEventsEndpoint = builder.Configuration["Forge:Sentinel:SecurityEventsEndpoint"];
 if (!string.IsNullOrWhiteSpace(sentinelEventsEndpoint))
@@ -180,6 +181,7 @@ if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
     builder.Services.AddHostedService<Forge.Host.Propagation.PropagationRetryService>();
     builder.Services.AddHostedService<NotificationDeliveryWorker>();
     builder.Services.AddHostedService<Forge.Host.Moves.TemporaryMoveMonitor>();
+    builder.Services.AddHostedService<Forge.Host.Training.TrainingExpiryMonitor>();
 }
 
 builder.Services.AddSingleton<RequestPrincipal>();

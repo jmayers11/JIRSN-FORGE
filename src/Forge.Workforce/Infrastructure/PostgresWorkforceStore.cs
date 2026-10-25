@@ -459,6 +459,8 @@ public static class WorkforceRegistration
         services.AddForgeStore<ICoverageLookup>(uow => new PostgresCoverageStore(uow));
         services.AddSingleton<CoverageService>();
         services.AddSingleton<DevelopmentNominationService>();
+        services.AddForgeStore<ITrainingRequestStore>(uow => new PostgresTrainingRequestStore(uow));
+        services.AddSingleton<TrainingRequestService>();
         services.AddForgeStore<IAttendanceReliabilityStore>(uow => new PostgresAttendanceReliabilityStore(uow));
         services.AddSingleton<IBadgePinVerifier, PostgresBadgePinVerifier>();
         services.AddSingleton<WorkforceService>();

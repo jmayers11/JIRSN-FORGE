@@ -49,7 +49,7 @@ test('green, yellow and red follow the published thresholds and say why; thin or
   assert.ok(thin.metrics.every(m => m.grade === 'na'));
   assert.match(thin.metrics[0].reason, /at least 8 h are needed/);
   assert.match(thin.metrics[1].reason, /below 80%/);
-  assert.match(thin.metrics[2].reason, /Human Resources only/);
+  assert.match(thin.metrics[2].reason, /supervisors and Human Resources/);
 });
 
 test('the board groups employees by status, filters to the visible roster and prints a review summary', () => {
@@ -161,13 +161,56 @@ test('each employee is a collapsed row of colored figures that opens into the fu
   assert.doesNotMatch(root.querySelector('[data-perf-board]').innerHTML, /data-perf-card="p-1" open>/);
 });
 
-test('Training & Performance has its own page with the Command Center under the page heading', async t => {
+test('Training & Performance lists employees alphabetically on the right and fills the centre with the chosen employee', async t => {
   const { performancePage } = await import('../../src/Forge.Host/wwwroot/js/pages/performance.js');
   const browser = installBrowser(t);
   const page = browser.document.createElement('div');
   browser.document.body.append(page);
-  globalThis.fetch = path => Promise.resolve(response(path === '/api/resources/' ? { sites: [], shifts: [], workCenters: [], machines: [] } : []));
-  await performancePage(page, { me: { permissions: ['workforce.read'] }, query: new URLSearchParams('') });
-  assert.ok(page.innerHTML.indexOf('<h1>Training &amp; Performance</h1>') < page.innerHTML.indexOf('Training &amp; Performance Command Center'));
-  assert.equal(page.querySelector('[data-wi-panel="overview"]').hidden, false);
+  const bo = { ...strong, personId: 'p-2', displayName: 'Bo Trainee', homeWorkCenterCode: 'WC-SEW', efficiency: { ...strong.efficiency, controllablePercent: 70 } };
+  const posts = [];
+  globalThis.fetch = (path, options = {}) => {
+    if (options.method === 'POST') { posts.push([path, JSON.parse(options.body)]); return Promise.resolve(response({ succeeded: true, code: 'ok', message: 'Done.' })); }
+    if (path === '/api/workforce/workers') return Promise.resolve(response([
+      { personId: 'p-2', displayName: 'Bo Trainee', homeWorkCenterCode: 'WC-SEW', isActive: true, shiftCode: 'SHIFT-DAY' },
+      { personId: 'p-1', displayName: 'Ari Operator', homeWorkCenterCode: 'WC-SEW', isActive: true, shiftCode: 'SHIFT-DAY', jobTitle: 'Machine Operator' },
+    ]));
+    if (path === '/api/competency/qualification-types') return Promise.resolve(response([{ code: 'QUAL-SAFE', name: 'Site safety' }, { code: 'QUAL-SEW', name: 'Sewing' }]));
+    if (path === '/api/resources/') return Promise.resolve(response({ sites: [], shifts: [], workCenters: [{ code: 'WC-SEW', name: 'Sewing' }], machines: [] }));
+    if (path.startsWith('/api/workforce/performance-cards?')) return Promise.resolve(response({ cards: [strong, bo], restrictions: [], basis: [], expiringWithinDays: 30 }));
+    if (path === '/api/workforce/training-requests') return Promise.resolve(response([
+      { requestId: 'r-1', personId: 'p-2', source: 'Onboarding', qualificationCode: 'QUAL-SAFE', title: 'Site safety (QUAL-SAFE)', reason: 'New employee training (every new hire).', dueOn: '2099-01-10', status: 'Requested', requestedAt: '2026-10-20T12:00:00Z', updatedAt: '2026-10-20T12:00:00Z' },
+    ]));
+    if (path === '/api/workforce/onboarding-requirements') return Promise.resolve(response([{ requirementId: 'q-1', workCenterCode: null, qualificationCode: 'QUAL-SAFE', dueDays: 14, note: '' }]));
+    return Promise.resolve(response([]));
+  };
+  await performancePage(page, { me: { permissions: ['workforce.read', 'workforce.training-requests.read', 'workforce.training-requests.request', 'workforce.training-requests.manage', 'workforce.onboarding.manage'] }, query: new URLSearchParams('') });
+  const roster = page.querySelector('[data-tp-roster]');
+  const names = roster.querySelectorAll('.tp-person').map(button => button.dataset.tpPerson);
+  assert.deepEqual(names, ['p-1', 'p-2'], 'alphabetical');
+  assert.match(roster.innerHTML, /tp-avatar concern/);
+  assert.equal(page.querySelector('[data-tp-employee]').hidden, true);
+  assert.match(page.querySelector('[data-tp-plant]').innerHTML, /data-wi-tab="queue"/);
+  assert.doesNotMatch(page.querySelector('[data-tp-plant]').innerHTML, /data-wi-tab="employees"/);
+
+  fire(roster.querySelector('[data-tp-filter="training"]'), 'click');
+  assert.deepEqual(page.querySelector('[data-tp-roster]').querySelectorAll('.tp-person').map(button => button.dataset.tpPerson), ['p-2']);
+
+  fire(page.querySelector('[data-tp-roster]').querySelector('[data-tp-person="p-2"]'), 'click');
+  const employee = page.querySelector('[data-tp-employee]');
+  assert.equal(employee.hidden, false);
+  assert.equal(page.querySelector('[data-tp-plant]').hidden, true);
+  assert.match(employee.innerHTML, /<h2>Bo Trainee<\/h2>/);
+  assert.match(employee.innerHTML, /Labor efficiency: Below 85%/);
+  fire(employee.querySelector('[data-tp-tab="training"]'), 'click');
+  const training = page.querySelector('[data-tp-employee]').querySelector('[data-tp-panel="training"]');
+  assert.equal(training.hidden, false);
+  const html = page.querySelector('[data-tp-employee]').innerHTML;
+  assert.match(html, /Needs scheduling · due/);
+  assert.match(html, /0 of 1 certified/);
+  const schedule = training.querySelector('[data-tp-schedule="r-1"]');
+  fire(schedule, 'submit', { preventDefault() {} });
+  await flush(); await flush();
+  assert.equal(posts[0][0], '/api/workforce/training-requests/r-1/schedule');
+  assert.equal(posts[0][1].trainerPersonId, null);
+  assert.equal(new Date(posts[0][1].endsAt) - new Date(posts[0][1].startsAt), 2 * 3_600_000);
 });

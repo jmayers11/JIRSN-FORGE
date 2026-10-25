@@ -119,9 +119,15 @@ public sealed class DevelopmentNominationService(CommandPipeline pipeline)
             var entry = new DevelopmentNominationEvent(ForgeIds.New(pipeline.Time), c.NominationId, prior.Status, c.Status,
                 BusinessCode.RequireName(c.Note, "Review note"), context.Actor, context.Principal.PersonId.Value, now);
             await store.InsertNominationEventAsync(entry, ct);
+            // An approved packet needs its training scheduled: technical trainers get a request.
+            var training = c.Status == DevelopmentNominationStatus.Approved
+                ? await TrainingRequestService.OpenDevelopmentAsync(pipeline, uow, prior, entry.Note, now, context, ct)
+                : null;
+            var events = new List<EventEnvelope> { pipeline.Event(new DevelopmentNominationChanged(c.NominationId, prior.PersonId, prior.Kind.ToString(), c.Status.ToString()), context, SourceContext, "DevelopmentNomination", key) };
+            if (training is not null) events.Add(training);
             return new CommandOutcome(
-                CommandResult.Ok(key, $"Development packet {key} moved to {c.Status}; the decision remains a human-reviewed recommendation."),
-                [pipeline.Event(new DevelopmentNominationChanged(c.NominationId, prior.PersonId, prior.Kind.ToString(), c.Status.ToString()), context, SourceContext, "DevelopmentNomination", key)],
+                CommandResult.Ok(key, $"Development packet {key} moved to {c.Status}; the decision remains a human-reviewed recommendation.{(training is null ? "" : " Technical trainers were asked to schedule the training.")}"),
+                events,
                 new AuditChange("DevelopmentNomination", key, CanonicalJson.Serialize(prior), CanonicalJson.Serialize(next)));
         }, ct);
     }

@@ -92,4 +92,7 @@ public static class SystemActors
 
     /// <summary>Reminds supervisors of temporary moves ending and returns workers when they run out (ADR 0057 §5).</summary>
     public const string WorkforceMoves = "system:workforce-moves";
+
+    /// <summary>Opens training requests for qualifications about to expire.</summary>
+    public const string TrainingRequests = "system:training-requests";
 }

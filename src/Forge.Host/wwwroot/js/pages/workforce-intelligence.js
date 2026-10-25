@@ -381,7 +381,8 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
       </section>` : '';
   const tabs = [
     { key: 'overview', label: 'Overview', badge: issues.length, html: overview },
-    { key: 'employees', label: 'Employees', badge: null, html: '<div data-wi-employee-cards><p class="faint">Open this tab to gather each employee’s review card.</p></div>' },
+    ...(options.extraTabs ?? []).map(tab => ({ key: tab.key, label: tab.label, badge: tab.badge ?? null, html: `<div data-wi-extra="${escapeAttr(tab.key)}"></div>` })),
+    ...(options.employeesTab === false ? [] : [{ key: 'employees', label: 'Employees', badge: null, html: '<div data-wi-employee-cards><p class="faint">Open this tab to gather each employee’s review card.</p></div>' }]),
     { key: 'training', label: 'Training & qualifications', badge: summary.trainingRecommendations?.length || null, html: training },
     { key: 'coverage', label: 'Coverage', badge: canRecoverCoverage && coverageKnown ? summary.capabilityGaps.length : null, html: coverage },
     { key: 'attendance', label: 'Attendance', badge: canReview ? pendingEvents.length : null, html: attendanceTab },
@@ -404,11 +405,11 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
     </section>`;
 }
 
-export async function appendWorkforceIntelligence(page, me, selectedPersonId = null, { after = false } = {}) {
+export async function appendWorkforceIntelligence(page, me, selectedPersonId = null, { after = false, employeesTab = true, extraTabs = [], tab = null } = {}) {
   const now = new Date();
   const activityFrom = new Date(now.getTime() - 30 * DAY);
   const through = new Date(now.getTime() + 30 * DAY);
-  const current = { tab: selectedPersonId ? 'labor' : 'overview', expiryDays: 60, siteCode: '', areaCode: '', department: '', shiftCode: '', workCenterCode: '', machineCode: '', roleTitle: '', qualificationCode: '', workerStatus: 'all', reviewState: 'all', attendancePeriod: 'quarter' };
+  const current = { tab: tab ?? (selectedPersonId ? 'labor' : 'overview'), expiryDays: 60, siteCode: '', areaCode: '', department: '', shiftCode: '', workCenterCode: '', machineCode: '', roleTitle: '', qualificationCode: '', workerStatus: 'all', reviewState: 'all', attendancePeriod: 'quarter' };
   const periodStart = attendancePeriodStart(current.attendancePeriod, now);
   const reviewFrom = new Date(now.getTime() - 90 * DAY);
   const scheduleFrom = new Date(now.getTime() - 60 * DAY);
@@ -493,11 +494,18 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
       machines: machines.filter(machine => (!current.workCenterCode || machine.workCenterCode === current.workCenterCode)
         && (!current.siteCode || scoped.resources?.machines?.some(item => item.code === machine.code))),
       jobTitles, qualificationTypes, departments };
-    return render(buildWorkforceIntelligence({ ...scoped, ...current }), filteredSources, options, me, selectedPersonId, personOperationHistory);
+    return render(buildWorkforceIntelligence({ ...scoped, ...current }), filteredSources, { ...options, employeesTab, extraTabs }, me, selectedPersonId, personOperationHistory);
   };
   // Employees tab: review cards are gathered only when the tab is opened (one read per review period, cached across filter changes).
   const cardState = {}, cardCache = new Map();
+  // Tabs a host page adds (e.g. the training queue) render their own content when opened.
+  const mountExtra = () => {
+    const extra = extraTabs.find(item => item.key === current.tab);
+    const host = extra && page.querySelector(`[data-wi-extra="${extra.key}"]`);
+    if (host) extra.mount(host);
+  };
   const mountCards = () => {
+    mountExtra();
     const host = page.querySelector('[data-wi-employee-cards]');
     if (!host || current.tab !== 'employees') return;
     cardState.visibleIds = new Set((filteredView().scoped.workers ?? []).map(worker => worker.personId));
@@ -514,9 +522,10 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     }
     for (const section of panel.querySelectorAll('[data-wi-panel]')) section.hidden = section.dataset.wiPanel !== key;
     if (key === 'employees' && panel.querySelector('[data-wi-employee-cards]')?.getAttribute('data-mounted') !== 'true') mountCards();
+    if (extraTabs.some(item => item.key === key)) mountExtra();
   };
   page.innerHTML = after ? page.innerHTML + renderPanel() : renderPanel() + page.innerHTML;
-  if (current.tab === 'employees') mountCards();
+  mountCards();
   page.addEventListener('keydown', event => {
     const tab = event.target?.closest?.('[data-wi-tab]');
     if (!tab || !['ArrowRight', 'ArrowLeft'].includes(event.key)) return;
@@ -730,4 +739,5 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
       item?.append(alert);
     }
   });
+  return { selectTab, refreshExtra: mountExtra };
 }
