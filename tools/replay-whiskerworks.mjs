@@ -118,10 +118,26 @@ async function main() {
   const person = workers.find(w => w.personId === expiring[0]?.personId);
   await post('/api/demo/clock/advance', { minutes: 6 * 24 * 60, reason: 'S05: six days later' }, planner);
   const later = await get('/api/demo/status');
+  const qualificationsAfter = ids.length
+    ? await get(`/api/competency/people/qualifications?${ids.map(id => `personIds=${encodeURIComponent(id)}`).join('&')}`, engineer)
+    : [];
+  const targetQualificationAfter = qualificationsAfter.find(record => record.personId === expiring[0]?.personId
+    && record.code === scenarioQualificationExpiry.qualificationCode && record.expiresAt);
+  const qualificationExpiredAtSimulatedTime = !!targetQualificationAfter
+    && Date.parse(targetQualificationAfter.expiresAt) <= Date.parse(later.simulatedNow);
   const after = await cncMillReadiness();
-  evidence.s05 = { person: person?.displayName ?? null, before, after, simulatedNow: later.simulatedNow };
+  evidence.s05 = {
+    person: person?.displayName ?? null,
+    qualification: targetQualificationAfter ? { code: targetQualificationAfter.code, expiresAt: targetQualificationAfter.expiresAt } : null,
+    qualificationExpiredAtSimulatedTime,
+    before,
+    after,
+    simulatedNow: later.simulatedNow,
+  };
   check('The simulated clock moved six days', later.offsetSeconds - baselineOffset === 6 * 24 * 3600, { offsetSeconds: later.offsetSeconds });
-  check('After expiry the CNC-02 mill readiness no longer counts that operator',
+  check('The persisted S05 mill qualification expired at simulated time', qualificationExpiredAtSimulatedTime,
+    { personId: expiring[0]?.personId ?? null, qualification: targetQualificationAfter ?? null, simulatedNow: later.simulatedNow });
+  check('CNC-02 mill readiness no longer counts the operator after the clock advance',
     !!person && !(after.detail ?? '').includes(person.displayName), { detail: after.detail });
 
   evidence.comparison = await get('/api/demo/compare', planner);
