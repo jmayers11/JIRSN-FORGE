@@ -2,8 +2,10 @@
 // qualifications their shift has no qualified holder of, so the Training & Performance Command Center shows real training work.
 // In Training grants nothing; certification stays an independent Competency step. Idempotent: existing records are left alone.
 //
-//   node tools/seed-whiskerworks-training.mjs --base=http://localhost:5080 [--save-baseline]
+//   node tools/seed-whiskerworks-training.mjs --base=http://localhost:5080 [--admin=dev-admin] [--save-baseline]
 //
+// It also adds ww-demo-manager (Supervisor + Human Resources): the one demo sign-in that sees every figure on the Command Center's
+// employee review cards, attendance rates included (those are Human Resources only).
 // With --save-baseline the demo baseline is saved again afterwards, so "Reset demo" returns to the plan as well.
 import { randomUUID } from 'node:crypto';
 
@@ -14,6 +16,8 @@ if (!base) throw new Error('Pass --base=http://localhost:<port>.');
 if (!['localhost', '127.0.0.1', '::1'].includes(new URL(base).hostname)) throw new Error('Refusing a non-local target.');
 
 const coordinator = 'ww-demo-engineer';
+const admin = value('admin') ?? 'dev-admin';
+const manager = { subject: 'ww-demo-manager', displayName: 'WhiskerWorks Demo Plant Manager', roles: ['Supervisor', 'HumanResources'] };
 // Which qualification each uncovered shift needs, and how many people to start on it. Work centers are where the trainees come from.
 const crossTraining = [
   { qualification: 'QUAL-ASM-TORQUE', shift: 'SHIFT-SWG', from: ['WC-ASM-HVY', 'WC-PKG', 'WC-KIT'], count: 2 },
@@ -33,9 +37,25 @@ async function request(method, path, who, body) {
 
 const rank = (plan, worker) => { const index = plan.from.indexOf(worker.homeWorkCenterCode); return index < 0 ? plan.from.length : index; };
 
+async function ensureManager() {
+  const people = await request('GET', '/api/kernel/people', admin);
+  let person = people.find(item => item.idpSubject === manager.subject);
+  const reason = 'WhiskerWorks demo plant manager for the employee review cards';
+  if (!person) {
+    const created = await request('POST', '/api/kernel/people', admin, { idpSubject: manager.subject, displayName: manager.displayName, reason });
+    person = { personId: created.entityId, roles: [] };
+  }
+  const id = person.personId ?? person.id;
+  const missing = manager.roles.filter(role => !(person.roles ?? []).includes(role));
+  for (const role of missing) await request('POST', `/api/kernel/people/${id}/roles`, admin, { role, reason });
+  return missing.length ? `${manager.subject}: added ${missing.join(', ')}` : null;
+}
+
 async function main() {
   const sites = (await request('GET', '/api/resources/', coordinator)).sites ?? [];
   if (sites.length !== 1 || sites[0].code !== 'WW-P01') throw new Error('Expected the isolated WW-P01 demo plant only; nothing was written.');
+  const managerChange = await ensureManager();
+  if (managerChange) console.log(managerChange);
   const workers = await request('GET', '/api/workforce/workers', coordinator);
   const query = workers.map(worker => `personIds=${encodeURIComponent(worker.personId)}`).join('&');
   const records = await request('GET', `/api/competency/people/qualifications?${query}`, coordinator);

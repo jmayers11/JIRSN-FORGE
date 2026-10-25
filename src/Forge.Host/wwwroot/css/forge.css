@@ -1319,3 +1319,37 @@ button.pill.linkish:hover { text-decoration: underline; }
 /* Sprint 9 simulated demo clock: always visible so simulated time is never mistaken for real time. */
 .demo-clock-banner { padding: 6px 16px; background: #7a4b00; color: #fff; font-size: 13px; letter-spacing: .02em; }
 .demo-clock-banner .faint { color: rgba(255, 255, 255, .8); }
+
+/* Command Center tabs and employee review cards. Green / yellow / red follow the published thresholds; gray means not enough evidence. */
+.workforce-intelligence-tabs .workspace-tablist { position: static; margin: 12px 0 0; }
+.workforce-intelligence-panel { padding: 14px 2px 4px; }
+.workforce-intelligence-panel > section + section { margin-top: 16px; }
+.perf-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 12px; }
+.perf-controls label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.perf-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.perf-count { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line-strong); font-weight: 600; font-size: 12px; }
+.perf-count.concern { border-color: var(--bad); color: #FCA5A5; } .perf-count.watch { border-color: var(--warn); color: #FCD34D; }
+.perf-count.good { border-color: var(--ok); color: #86EFAC; } .perf-count.na { color: var(--muted); }
+.perf-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(330px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
+.perf-column { background: var(--panel-2); border: 1px solid var(--line); border-top: 4px solid var(--line-strong); border-radius: var(--radius); padding: 10px; display: grid; gap: 10px; }
+.perf-column h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.perf-column.concern { border-top-color: var(--bad); } .perf-column.watch { border-top-color: var(--warn); } .perf-column.good { border-top-color: var(--ok); } .perf-column.na { border-top-color: var(--none); }
+.perf-card { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--none); border-radius: var(--radius); padding: 12px; display: grid; gap: 8px; }
+.perf-card.good { border-left-color: var(--ok); } .perf-card.watch { border-left-color: var(--warn); } .perf-card.concern { border-left-color: var(--bad); }
+.perf-card header { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+.perf-card header > div { display: grid; gap: 2px; } .perf-card header a b { color: var(--text); font-size: 15px; }
+.perf-period { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.perf-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.perf-tile { border: 1px solid var(--line); border-top: 4px solid var(--none); border-radius: 4px; padding: 8px; background: var(--panel-2); min-width: 0; }
+.perf-tile.good { border-top-color: var(--ok); } .perf-tile.watch { border-top-color: var(--warn); } .perf-tile.concern { border-top-color: var(--bad); }
+.perf-tile-value { font: 700 22px/1.1 var(--font-display); }
+.perf-tile.good .perf-tile-value { color: #86EFAC; } .perf-tile.watch .perf-tile-value { color: #FCD34D; } .perf-tile.concern .perf-tile-value { color: #FCA5A5; } .perf-tile.na .perf-tile-value { color: var(--muted); }
+.perf-tile-label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.perf-tile-why { font-size: 11.5px; margin-top: 6px; color: var(--text); display: flex; gap: 6px; align-items: baseline; }
+.perf-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--none); } .perf-dot.good { background: var(--ok); } .perf-dot.watch { background: var(--warn); } .perf-dot.concern { background: var(--bad); }
+.perf-contributions b { font-size: 12px; } .perf-list { margin: 4px 0 0 18px; padding: 0; display: grid; gap: 4px; font-size: 12.5px; }
+.perf-context { list-style: none; margin-left: 0; } .perf-context li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.perf-evidence summary { cursor: pointer; color: var(--forge-orange); font-size: 12.5px; } .perf-evidence h4 { margin: 10px 0 4px; font-size: 12px; }
+.perf-table { font-size: 12px; }
+.perf-card footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; }
+.perf-legend { margin-top: 10px; } .perf-legend div { display: grid; gap: 4px; font-size: 12px; margin-top: 6px; }

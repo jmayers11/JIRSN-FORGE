@@ -491,7 +491,8 @@ On Windows with a local PostgreSQL (`forge.local.cmd` set up as above), double-c
 giant cat toys; database `forge_whiskerworks_demo`) and opens http://localhost:5080/ in your
 browser. Keep the window open while you use Forge. Sign in as `ww-demo-planner`,
 `ww-demo-supervisor`, `ww-demo-engineer`, `ww-demo-certifier`, `ww-demo-inventory`, an operator
-such as `ww-operator-001`, or `dev-admin`. Demo mode is on: **Scenarios** has the simulated clock,
+such as `ww-operator-001`, or `dev-admin`; `ww-demo-manager` (Supervisor + Human Resources) sees every figure on the
+Command Center's **Employees** review cards, attendance included. Demo mode is on: **Scenarios** has the simulated clock,
 **Save baseline** and **Reset demo** (the replaced state is archived, never deleted). To build the
 demo database from scratch, start `run-whiskerworks-demo.cmd` and run
 `node tools/replay-whiskerworks.mjs --base=http://localhost:5090`.

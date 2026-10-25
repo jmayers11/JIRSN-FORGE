@@ -110,6 +110,25 @@ public sealed class CauseAdjustedPerformanceTests(PostgresFixture postgres)
         Assert.Equal(100m, verified.GetProperty("employeeAttributableFpyPercent").GetDecimal());
         Assert.Equal(100m, verified.GetProperty("employeeAttributionCoveragePercent").GetDecimal());
 
+        // Review cards gather the same evidence for a quarter; what the viewer may not read is named, never shown as a zero.
+        var cardsUrl = $"/api/workforce/performance-cards?personIds={sarah}&from={Uri.EscapeDataString(start.AddDays(-80).ToString("O"))}&to={Uri.EscapeDataString(start.AddHours(4).ToString("O"))}";
+        var cards = await Get(sup, cardsUrl);
+        var card = Assert.Single(cards.GetProperty("cards").EnumerateArray());
+        Assert.Equal(sarah.ToString(), card.GetProperty("personId").GetString());
+        Assert.Equal(100m, card.GetProperty("firstPass").GetProperty("employeeAttributablePercent").GetDecimal());
+        Assert.Equal(1, card.GetProperty("efficiency").GetProperty("operationsInScope").GetInt32());
+        Assert.Equal(3m, card.GetProperty("paidHours").GetDecimal());
+        Assert.Equal(JsonValueKind.Null, card.GetProperty("attendance").ValueKind);
+        Assert.Equal(JsonValueKind.Object, card.GetProperty("competency").ValueKind);
+        Assert.Contains(cards.GetProperty("restrictions").EnumerateArray(), r => r.GetString()!.StartsWith("Attendance is hidden", StringComparison.Ordinal));
+        Assert.Contains(card.GetProperty("contributions").EnumerateArray(), c => c.GetString()!.StartsWith("Completed 1 operation(s) with accepted output", StringComparison.Ordinal));
+        await plant.Person("hr", "HumanResources");
+        var hrCard = (await Get(plant.As("hr"), cardsUrl)).GetProperty("cards")[0];
+        Assert.Equal(JsonValueKind.Object, hrCard.GetProperty("attendance").ValueKind);
+        Assert.Equal(JsonValueKind.Null, hrCard.GetProperty("firstPass").ValueKind);
+        Assert.Equal(HttpStatusCode.Forbidden, (await k.GetAsync(cardsUrl)).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await sup.GetAsync($"/api/workforce/performance-cards?from={Uri.EscapeDataString(start.AddDays(-400).ToString("O"))}&to={Uri.EscapeDataString(start.ToString("O"))}")).StatusCode);
+
         // A correction supersedes the verified attribution; both stay in history and the metric follows the new one.
         var correction = Id(await plant.Ok(insp, $"/api/quality/inspections/{inspection}/attribution", new { cause = "Unknown", employeeOpportunity = false, supersedesAttributionId = attribution, evidence = "Knife setup log missing", reason = "Re-review" }));
         await plant.Ok(qe, $"/api/quality/attributions/{correction}/verify", new { verify = true, reason = "Agreed" });

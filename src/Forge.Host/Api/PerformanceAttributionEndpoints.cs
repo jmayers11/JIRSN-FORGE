@@ -42,6 +42,15 @@ public static class PerformanceAttributionEndpoints
             var end = to ?? time.GetUtcNow();
             return Results.Ok(await service.BuildAsync(principal, personId, from ?? end.AddDays(-7), end, minCoverage ?? 80m, ct));
         });
+        // Review cards for a quarter or a year: every employee's verified evidence in one read (the Command Center's Employees tab and its printout).
+        workforce.MapGet("/performance-cards", async (HttpContext http, DateTimeOffset? from, DateTimeOffset? to, Guid[]? personIds, bool? includeInactive,
+            EmployeePerformanceCardService service, TimeProvider time, CancellationToken ct) =>
+        {
+            var principal = await PrincipalAsync(http);
+            if (principal is null) return NotRegistered();
+            var end = to ?? time.GetUtcNow();
+            return Results.Ok(await service.BuildAsync(principal, from ?? end.AddDays(-91), end, personIds, includeInactive ?? false, ct));
+        });
         workforce.MapGet("/coded-time", (HttpContext http, Guid? personId, DateTimeOffset? from, DateTimeOffset? to, TimeProvider time, CancellationToken _) =>
             ReadStore<ICodedTimeLookup>(http, Permissions.WorkforceRead, async (l, ct) =>
             {

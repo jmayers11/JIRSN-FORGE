@@ -4,6 +4,14 @@ import { appendOwnAttendanceCorrections, appendWorkforceIntelligence } from '../
 import { workforcePage } from '../../src/Forge.Host/wwwroot/js/pages/workforce.js';
 import { installBrowser, response, fire, flush } from './browser-harness.mjs';
 
+// The fixtures are dated around 24 October 2026; pin "now" there so relative wording ("expires in 2 days") stays true on any day.
+const RealDate = Date;
+const PINNED = RealDate.parse('2026-10-24T00:00:00Z');
+globalThis.Date = class extends RealDate {
+  constructor(...args) { if (args.length) super(...args); else super(PINNED); }
+  static now() { return PINNED; }
+};
+
 test('Workforce Command Center uses recorded sources, exposes honest gaps, and keeps absence reasons private', async t => {
   const browser = installBrowser(t), page = browser.document.createElement('div');
   browser.document.body.append(page);

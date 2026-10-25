@@ -94,6 +94,7 @@ builder.Services.AddForgeStore<Forge.Engineering.Contracts.IGeneratedDocumentCon
 builder.Services.AddScoped<Forge.Host.Workforce.PlantVisualService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.CauseAdjustedPerformanceService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.CoverageContributionService>();
+builder.Services.AddSingleton<Forge.Host.Workforce.EmployeePerformanceCardService>();
 builder.Services.AddForgeStore<IScanSessionStore>(uow => new PostgresScanSessionStore(uow));
 builder.Services.AddSingleton<PresentationAccess>();
 builder.Services.AddSingleton<LabelRendering>();

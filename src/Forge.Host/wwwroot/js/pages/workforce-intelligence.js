@@ -3,6 +3,7 @@ import { esc, fmtNumber, errorBlock } from '../ui.js';
 import { buildWorkforceIntelligence, filterWorkforceIntelligenceInputs, renderEvidenceReference } from '../workforce-intelligence.mjs';
 import { openCausePerformance } from '../cause-performance.js';
 import { candidateCapacityHtml, capacityByPerson } from '../skill-capacity.js';
+import { mountPerformanceCards } from '../performance-cards.js';
 
 const DAY = 86_400_000;
 const formatDate = value => {
@@ -306,10 +307,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
   const policyRows = (sources.policies?.data ?? []).map(policy => `<li><b>${esc(policy.policyCode)} · r${policy.revision}</b><span>Effective ${formatDate(policy.effectiveFrom)} · ${policy.graceMinutes} minute grace${policy.effectiveThrough ? ` · through ${formatDate(policy.effectiveThrough)}` : ''}</span></li>`).join('');
   const scheduleFrom = new Date(); scheduleFrom.setHours(0, 0, 0, 0);
   const scheduleThrough = new Date(scheduleFrom.getTime() + 14 * DAY);
-  return `
-    <section class="panel workforce-intelligence" aria-labelledby="workforce-intelligence-title">
-      <header class="workforce-intelligence-head"><div><h2 id="workforce-intelligence-title"><span aria-hidden="true">!</span> Training &amp; Performance Command Center</h2><p class="faint">Source-backed workforce signals · recommendations require supervisor review</p></div>
-        <div class="workforce-intelligence-filters"><label>Plant<select class="input" data-wi-filter="site"><option value="">All plants</option>${siteChoices}</select></label>
+  const filters = `<div class="workforce-intelligence-filters"><label>Plant<select class="input" data-wi-filter="site"><option value="">All plants</option>${siteChoices}</select></label>
         <label>Shift<select class="input" data-wi-filter="shift"><option value="">All shifts</option>${shiftChoices}</select></label>
         <label>Work center<select class="input" data-wi-filter="center"><option value="">All centers</option>${centerChoices}</select></label>
         <label>Machine<select class="input" data-wi-filter="machine"><option value="">All machines</option>${machineChoices}</select></label>
@@ -321,9 +319,8 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
           <label>Training type<select class="input" data-wi-filter="qualification"><option value="">All training</option>${qualificationChoices}</select></label>
           <label>Worker status<select class="input" data-wi-filter="workerStatus"><option value="all" ${options.workerStatus === 'all' ? 'selected' : ''}>All workers</option><option value="active" ${options.workerStatus === 'active' ? 'selected' : ''}>Active</option><option value="inactive" ${options.workerStatus === 'inactive' ? 'selected' : ''}>Inactive</option></select></label>
           <label>Review status<select class="input" data-wi-filter="reviewState"><option value="all" ${options.reviewState === 'all' ? 'selected' : ''}>Pending and disputed</option><option value="PendingReview" ${options.reviewState === 'PendingReview' ? 'selected' : ''}>Pending review</option><option value="Verified" ${options.reviewState === 'Verified' ? 'selected' : ''}>Verified</option><option value="Disputed" ${options.reviewState === 'Disputed' ? 'selected' : ''}>Disputed</option></select></label>
-        </div></details></div>
-        <p class="faint workforce-intelligence-filter-note">Roster, coverage, and evidence views follow the selected filters. Attendance totals follow the review period and remain permission-scoped. Departments are maintained on employee profiles by Workforce managers.</p>
-      </header>
+        </div></details></div>`;
+  const overview = `
       <div class="kpis kpis-4 workforce-intelligence-kpis">
         <div class="kpi"><div><div class="t">Current qualifications</div><div class="v">${qualificationsKnown ? fmtNumber(summary.qualificationCounts.current) : 'N/A'}</div><div class="why">Verified, unexpired Competency records</div></div></div>
         <div class="kpi ${summary.expiring.length ? 'attention' : ''}"><div><div class="t">Expiring in ${summary.expiryDays} days</div><div class="v">${qualificationsKnown ? fmtNumber(summary.qualificationCounts.expiring) : 'N/A'}</div><div class="why">Review evidence before scheduling reassessment</div></div></div>
@@ -332,14 +329,16 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
       </div>
       <div class="workforce-intelligence-columns">
         <section><h3>Daily action alerts <span class="badge ${issues.length ? 'orange' : 'gray'}">${issues.length}</span></h3>${alertRows}${materialSourcesKnown ? '' : '<p class="faint">Material task and suspect-report signals are unavailable to this account.</p>'}</section>
-        <section><h3>Qualification review</h3>${expiringRows}<p class="faint workforce-intelligence-note">${fmtNumber(summary.qualificationCounts.inTraining)} record(s) are marked In Training. In Training does not grant independent authorization.</p>${trainingRecommendationRows ? `<h4>Human-reviewed training opportunities</h4><ul class="workforce-intelligence-list">${trainingRecommendationRows}</ul>` : ''}</section>
-      </div>
-      <details class="workforce-intelligence-forecast"><summary>Upcoming training windows · next 14 days</summary><p class="faint">Forecasts compare scheduled workers and trainer credentials with the approved production schedule to find shared time clear of assigned work on the pair and training machine. A forecast is a review opportunity; it does not book training, estimate course duration, or assume employee interest.</p>${trainingForecastRows}</details>
-      ${recoveryRows ? `<section class="workforce-intelligence-recovery"><h3>Safe coverage options</h3><p class="faint">Ranked from current visible workers. The preview checks qualification, machine authorization, active source work, equipment/tooling, and safety composition; it does not commit assignments.</p>${recoveryRows}</section>` : ''}
-      <details class="workforce-intelligence-evidence"><summary>Performance and attendance evidence</summary>
-        <h3>Recorded operation labor · last 30 days</h3>${laborTable}
-        <p class="faint workforce-intelligence-note">Target hours and efficiency are N/A until an approved operation labor standard and reviewed quantity basis exist. Downtime and training time stay visible; no employee score is inferred.</p>
-        <details><summary>Employee qualification matrix</summary>${qualificationMatrixRows ? `<div class="table-wrap"><table class="table"><thead><tr><th>Employee / profile</th><th>Recorded qualification status</th></tr></thead><tbody>${qualificationMatrixRows}</tbody></table></div>` : '<p class="faint">Qualification records are not available to this account.</p>'}</details>
+        <section><h3>Qualification review</h3>${expiringRows}<p class="faint workforce-intelligence-note">${fmtNumber(summary.qualificationCounts.inTraining)} record(s) are marked In Training. In Training does not grant independent authorization.</p></section>
+      </div>`;
+  const training = `
+      <section class="workforce-intelligence-forecast"><h3>Upcoming training windows · next 14 days</h3><p class="faint">Forecasts compare scheduled workers and trainer credentials with the approved production schedule to find shared time clear of assigned work on the pair and training machine. A forecast is a review opportunity; it does not book training, estimate course duration, or assume employee interest.</p>${trainingForecastRows}</section>
+      ${trainingRecommendationRows ? `<section><h3>Human-reviewed training opportunities</h3><ul class="workforce-intelligence-list">${trainingRecommendationRows}</ul></section>` : ''}
+      <section><h3>Employee qualification matrix</h3><p class="faint workforce-intelligence-note">${fmtNumber(summary.qualificationCounts.inTraining)} record(s) are In Training; they grant no capability until certified in Competency.</p>${qualificationMatrixRows ? `<div class="table-wrap"><table class="table"><thead><tr><th>Employee / profile</th><th>Recorded qualification status</th></tr></thead><tbody>${qualificationMatrixRows}</tbody></table></div>` : '<p class="faint">Qualification records are not available to this account.</p>'}</section>`;
+  const coverage = recoveryRows
+    ? `<section class="workforce-intelligence-recovery"><h3>Safe coverage options</h3><p class="faint">Ranked from current visible workers. The preview checks qualification, machine authorization, active source work, equipment/tooling, and safety composition; it does not commit assignments.</p>${recoveryRows}</section>`
+    : `<p class="faint">${!canRecoverCoverage ? 'Coverage recovery needs readiness read and Workforce supervise or manage permissions.' : coverageKnown ? 'Every listed machine and shift capability has a current qualified worker in this view.' : 'Coverage is unknown until resources and qualifications are readable.'}</p>`;
+  const attendanceTab = `
         <div class="workforce-intelligence-attendance"><b>Attendance reliability: ${esc(summary.attendance.status)}</b><span>${esc(summary.attendance.detail)}</span></div>
         ${sources.attendance?.error ? errorBlock(sources.attendance.error, 'attendance summary') : ''}
         <div class="workforce-intelligence-attendance-stats" aria-label="Attendance calculation counts">
@@ -360,11 +359,13 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
         ${permissions.has('workforce.attendance-classification.record') ? `<div class="workforce-intelligence-review"><h3>Unclassified completed shifts</h3><p class="faint">A missing punch remains unknown. A supervisor must choose a classification and submit it for independent review.</p>${sources.opportunities?.error ? errorBlock(sources.opportunities.error, 'attendance schedule') : missedOpportunities.length ? missedOpportunities.map(item => {
           const name = sources.workerNames.get(item.personId) ?? `Worker ${item.personId.slice(0, 8)}`;
           return `<article class="workforce-intelligence-review-item"><b>${esc(name)} · ${esc(item.shiftCode)} · ${formatDate(item.scheduledStart)}</b><div class="workforce-intelligence-correction"><label>Classification<select class="input" data-wi-classification-kind="${escapeAttr(item.opportunityId)}">${eventKinds.map(kind => `<option value="${kind}" ${kind === 'NoShow' ? 'selected' : ''}>${kind}</option>`).join('')}</select></label><label>Observed at<input class="input" type="datetime-local" data-wi-classification-time="${escapeAttr(item.opportunityId)}" value="${localDateTime(item.scheduledEnd)}"></label><label>Audit reason<input class="input" data-wi-classification-reason="${escapeAttr(item.opportunityId)}" value="Review completed shift record" maxlength="240"></label><button class="btn small" type="button" data-wi-classify="${escapeAttr(item.opportunityId)}">Submit for review</button></div></article>`;
-        }).join('') : '<p class="faint">No completed, unclassified shifts in the current window.</p>'}</div>` : ''}
-      </details>
+        }).join('') : '<p class="faint">No completed, unclassified shifts in the current window.</p>'}</div>` : ''}`;
+  const labor = `
+      <section><h3>Recorded operation labor · last 30 days</h3>${laborTable}
+      <p class="faint workforce-intelligence-note">Target hours and efficiency are N/A until an approved operation labor standard and reviewed quantity basis exist. Downtime and training time stay visible; no employee score is inferred.</p></section>
       ${personHistory}
-      ${selectedWorker ? `<section class="workforce-intelligence-person-history"><header><h3>${esc(selectedWorker.displayName)} · cause-adjusted time and quality</h3><span class="spacer"></span><button class="btn small" data-wi-cause-performance="${escapeAttr(selectedWorker.personId)}" data-wi-cause-name="${escapeAttr(selectedWorker.displayName)}">Open</button></header><p class="faint">Paid time accounted for by labor, verified downtime and approved coded time; official and employee-attributable first-pass yield side by side. Factual reporting only.</p></section>` : ''}
-      ${canReadNominations || canNominate ? `<section class="workforce-intelligence-development"><h3>Training and advancement packets</h3><p class="faint">Recommendations require documented human review. Approval does not grant a qualification or machine authorization; those remain in Competency.</p>
+      ${selectedWorker ? `<section class="workforce-intelligence-person-history"><header><h3>${esc(selectedWorker.displayName)} · cause-adjusted time and quality</h3><span class="spacer"></span><button class="btn small" data-wi-cause-performance="${escapeAttr(selectedWorker.personId)}" data-wi-cause-name="${escapeAttr(selectedWorker.displayName)}">Open</button></header><p class="faint">Paid time accounted for by labor, verified downtime and approved coded time; official and employee-attributable first-pass yield side by side. Factual reporting only.</p></section>` : '<p class="faint">Choose an employee card or a name in the qualification matrix to see that person’s operation history and cause-adjusted time.</p>'}`;
+  const development = canReadNominations || canNominate ? `<section class="workforce-intelligence-development"><h3>Training and advancement packets</h3><p class="faint">Recommendations require documented human review. Approval does not grant a qualification or machine authorization; those remain in Competency.</p>
         ${canNominate ? `<form class="workforce-intelligence-form" data-wi-nomination-form><label>Employee<select class="input" name="personId" required><option value="">Choose employee</option>${(sources.workers.data ?? []).filter(worker => worker.isActive).map(worker => `<option value="${escapeAttr(worker.personId)}">${esc(worker.displayName)} · ${esc(worker.jobTitle ?? worker.homeWorkCenterCode ?? 'Worker')}</option>`).join('')}</select></label>
           <label>Packet type<select class="input" name="kind" required><option value="AdvancedTraining">Advanced training</option><option value="LeadReadiness">Lead responsibilities</option><option value="PromotionReadiness">Promotion readiness</option>${canReadCompensation ? '<option value="CompensationConsideration">Compensation consideration</option>' : ''}</select></label>
           <label>Pathway<input class="input" name="pathway" maxlength="120" required placeholder="e.g. CNC setup practical assessment"></label>
@@ -377,7 +378,27 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
           <label>Audit reason<input class="input" name="reason" maxlength="240" required value="Create development packet"></label>
           <button class="btn small primary" type="submit">Save draft packet</button></form>` : ''}
         ${sources.nominations?.error ? errorBlock(sources.nominations.error, 'development packets') : nominationRows || (canReadNominations ? '<p class="faint">No development packets are recorded.</p>' : '')}
-      </section>` : ''}
+      </section>` : '';
+  const tabs = [
+    { key: 'overview', label: 'Overview', badge: issues.length, html: overview },
+    { key: 'employees', label: 'Employees', badge: null, html: '<div data-wi-employee-cards><p class="faint">Open this tab to gather each employee’s review card.</p></div>' },
+    { key: 'training', label: 'Training & qualifications', badge: summary.trainingRecommendations?.length || null, html: training },
+    { key: 'coverage', label: 'Coverage', badge: canRecoverCoverage && coverageKnown ? summary.capabilityGaps.length : null, html: coverage },
+    { key: 'attendance', label: 'Attendance', badge: canReview ? pendingEvents.length : null, html: attendanceTab },
+    { key: 'labor', label: 'Labor evidence', badge: null, html: labor },
+    ...(development ? [{ key: 'development', label: 'Development', badge: (sources.nominations?.data ?? []).length || null, html: development }] : []),
+  ];
+  const active = tabs.some(tab => tab.key === options.tab) ? options.tab : 'overview';
+  return `
+    <section class="panel workforce-intelligence" aria-labelledby="workforce-intelligence-title">
+      <header class="workforce-intelligence-head"><div><h2 id="workforce-intelligence-title"><span aria-hidden="true">!</span> Training &amp; Performance Command Center</h2><p class="faint">Source-backed workforce signals · recommendations require supervisor review</p></div>
+        ${filters}
+        <p class="faint workforce-intelligence-filter-note">Roster, coverage, and evidence views follow the selected filters. Attendance totals follow the review period and remain permission-scoped. Departments are maintained on employee profiles by Workforce managers.</p>
+      </header>
+      <div class="workspace-tabs workforce-intelligence-tabs">
+        <div class="workspace-tablist" role="tablist" aria-label="Command Center sections">${tabs.map(tab => `<button class="workspace-tab" type="button" role="tab" id="wi-tab-${tab.key}" data-wi-tab="${tab.key}" aria-controls="wi-panel-${tab.key}" aria-selected="${tab.key === active}" tabindex="${tab.key === active ? 0 : -1}">${esc(tab.label)}${tab.badge ? ` <span class="badge ${tab.key === 'overview' || tab.key === 'attendance' ? 'orange' : 'gray'}">${fmtNumber(tab.badge)}</span>` : ''}</button>`).join('')}</div>
+        ${tabs.map(tab => `<div class="workspace-panel workforce-intelligence-panel" role="tabpanel" id="wi-panel-${tab.key}" data-wi-panel="${tab.key}" aria-labelledby="wi-tab-${tab.key}" ${tab.key === active ? '' : 'hidden'}>${tab.html}</div>`).join('')}
+      </div>
       <p class="workforce-intelligence-note faint">No automatic promotion, pay, or disciplinary decision is made from these signals.</p>
       ${sources.workers.error ? errorBlock(sources.workers.error, 'workforce intelligence') : ''}
     </section>`;
@@ -387,7 +408,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
   const now = new Date();
   const activityFrom = new Date(now.getTime() - 30 * DAY);
   const through = new Date(now.getTime() + 30 * DAY);
-  const current = { expiryDays: 60, siteCode: '', areaCode: '', department: '', shiftCode: '', workCenterCode: '', machineCode: '', roleTitle: '', qualificationCode: '', workerStatus: 'all', reviewState: 'all', attendancePeriod: 'quarter' };
+  const current = { tab: selectedPersonId ? 'labor' : 'overview', expiryDays: 60, siteCode: '', areaCode: '', department: '', shiftCode: '', workCenterCode: '', machineCode: '', roleTitle: '', qualificationCode: '', workerStatus: 'all', reviewState: 'all', attendancePeriod: 'quarter' };
   const periodStart = attendancePeriodStart(current.attendancePeriod, now);
   const reviewFrom = new Date(now.getTime() - 90 * DAY);
   const scheduleFrom = new Date(now.getTime() - 60 * DAY);
@@ -474,7 +495,35 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
       jobTitles, qualificationTypes, departments };
     return render(buildWorkforceIntelligence({ ...scoped, ...current }), filteredSources, options, me, selectedPersonId, personOperationHistory);
   };
+  // Employees tab: review cards are gathered only when the tab is opened (one read per review period, cached across filter changes).
+  const cardState = {}, cardCache = new Map();
+  const mountCards = () => {
+    const host = page.querySelector('[data-wi-employee-cards]');
+    if (!host || current.tab !== 'employees') return;
+    cardState.visibleIds = new Set((filteredView().scoped.workers ?? []).map(worker => worker.personId));
+    host.setAttribute('data-mounted', 'true');
+    mountPerformanceCards(host, { get: tryGet, state: cardState, cache: cardCache });
+  };
+  const selectTab = key => {
+    const panel = page.querySelector('.workforce-intelligence');
+    if (!panel) return;
+    current.tab = key;
+    for (const button of panel.querySelectorAll('[data-wi-tab]')) {
+      const on = button.dataset.wiTab === key;
+      button.setAttribute('aria-selected', String(on)); button.tabIndex = on ? 0 : -1;
+    }
+    for (const section of panel.querySelectorAll('[data-wi-panel]')) section.hidden = section.dataset.wiPanel !== key;
+    if (key === 'employees' && panel.querySelector('[data-wi-employee-cards]')?.getAttribute('data-mounted') !== 'true') mountCards();
+  };
   page.innerHTML = renderPanel() + page.innerHTML;
+  if (current.tab === 'employees') mountCards();
+  page.addEventListener('keydown', event => {
+    const tab = event.target?.closest?.('[data-wi-tab]');
+    if (!tab || !['ArrowRight', 'ArrowLeft'].includes(event.key)) return;
+    const buttons = [...page.querySelectorAll('[data-wi-tab]')];
+    const next = buttons[(buttons.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length];
+    event.preventDefault(); next.focus(); selectTab(next.dataset.wiTab);
+  });
   page.addEventListener('change', async event => {
     const filter = event.target?.dataset?.wiFilter;
     if (!filter) return;
@@ -498,7 +547,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
       sources.attendance = result;
       inputs.attendanceSummary = result.data ?? null;
     }
-    if (panel) panel.outerHTML = renderPanel();
+    if (panel) { panel.outerHTML = renderPanel(); mountCards(); }
   });
   page.addEventListener('submit', async event => {
     const form = event.target.closest('[data-wi-schedule-form], [data-wi-policy-form], [data-wi-nomination-form]');
@@ -540,6 +589,8 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     }
   });
   page.addEventListener('click', async event => {
+    const tab = event.target.closest('[data-wi-tab]');
+    if (tab) { selectTab(tab.dataset.wiTab); return; }
     const cover = event.target.closest('[data-wi-cover]');
     if (cover) {
       const plan = JSON.parse(cover.dataset.wiCover);

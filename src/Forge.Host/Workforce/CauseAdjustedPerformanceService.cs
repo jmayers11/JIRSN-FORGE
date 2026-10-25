@@ -66,9 +66,20 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
     public async Task<CauseAdjustedPerformanceReport> BuildAsync(ForgePrincipal principal, Guid personId, DateTimeOffset from, DateTimeOffset to, decimal minimumCoverage, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(principal);
-        Demand(principal, Permissions.WorkforceRead, "Workforce");
         if (to <= from || to - from > TimeSpan.FromDays(31))
             throw new CommandRejectedException("invalid_date_range", "Choose a period of up to 31 days.");
+        return (await BuildManyAsync(principal, [personId], from, to, minimumCoverage, ct))[0];
+    }
+
+    /// <summary>The same report for several people over up to a year, reading each source once (quarterly and annual reviews).</summary>
+    public async Task<IReadOnlyList<CauseAdjustedPerformanceReport>> BuildManyAsync(ForgePrincipal principal, IReadOnlyList<Guid> personIds, DateTimeOffset from, DateTimeOffset to,
+        decimal minimumCoverage, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        ArgumentNullException.ThrowIfNull(personIds);
+        Demand(principal, Permissions.WorkforceRead, "Workforce");
+        if (to <= from || to - from > TimeSpan.FromDays(370))
+            throw new CommandRejectedException("invalid_date_range", "Choose a period of up to a year.");
         if (minimumCoverage is < 0 or > 100)
             throw new CommandRejectedException("invalid_coverage", "The coverage threshold is a percentage.");
         var now = time.GetUtcNow();
@@ -76,33 +87,43 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
         await using var uow = await unitOfWork.BeginSnapshotAsync(ct);
         var workforce = uow.Store<IWorkforceLookup>();
         var execution = uow.Store<IExecutionLookup>();
-        var attendance = (await workforce.ListAttendanceAsync(from, to, ct)).Where(a => a.PersonId == personId).OrderBy(a => a.ClockInAt).ToList();
-        var labor = (await execution.ListLaborAsync(from, to, null, ct)).Where(l => l.PersonId == personId).ToList();
-        var reports = (await execution.ListReportsAsync(from, to, null, ct)).Where(r => r.PersonId == personId).ToList();
-        var coded = await uow.Store<ICodedTimeLookup>().ListCodedTimeAsync(personId, from, to, ct);
+        var allAttendance = await workforce.ListAttendanceAsync(from, to, ct);
+        var allLabor = await execution.ListLaborAsync(from, to, null, ct);
+        var allReports = await execution.ListReportsAsync(from, to, null, ct);
         var downtime = (await uow.Store<IMaintenanceLookup>().ListDowntimeAsync(from, to, ct)).Where(d => !d.IsHypothetical).ToList();
         var stoppages = await uow.Store<IProductionActualsLookup>().ListStoppagesAsync(from, to, false, ct);
+        var qualityRestricted = !authorizer.Authorize(principal, Permissions.QualityRead, ResourceRef.Of("Quality")).IsPermitted;
 
-        var shifts = new List<ShiftAttribution>();
-        var allVerifiedExternal = new List<PerformanceInterval>();
-        foreach (var record in attendance)
+        var result = new List<CauseAdjustedPerformanceReport>();
+        foreach (var personId in personIds)
         {
-            var end = record.ClockOutAt ?? (now < to ? now : to);
-            if (end <= record.ClockInAt) continue;
-            shifts.Add(Shift(personId, record, end, labor, coded, downtime, stoppages, allVerifiedExternal));
+            var attendance = allAttendance.Where(a => a.PersonId == personId).OrderBy(a => a.ClockInAt).ToList();
+            var labor = allLabor.Where(l => l.PersonId == personId).ToList();
+            var reports = allReports.Where(r => r.PersonId == personId).ToList();
+            var coded = await uow.Store<ICodedTimeLookup>().ListCodedTimeAsync(personId, from, to, ct);
+
+            var shifts = new List<ShiftAttribution>();
+            var allVerifiedExternal = new List<PerformanceInterval>();
+            foreach (var record in attendance)
+            {
+                var end = record.ClockOutAt ?? (now < to ? now : to);
+                if (end <= record.ClockInAt) continue;
+                shifts.Add(Shift(personId, record, end, labor, coded, downtime, stoppages, allVerifiedExternal));
+            }
+
+            var (efficiency, scope, outside) = await EfficiencyAsync(uow, principal, labor, reports, allVerifiedExternal, ct);
+            FirstPassYieldMetrics? firstPass = null;
+            IReadOnlyList<FirstPassCohortView> cohorts = [];
+            if (!qualityRestricted)
+                (firstPass, cohorts) = await FirstPassAsync(uow, principal, labor, from, to, minimumCoverage, ct);
+
+            result.Add(new CauseAdjustedPerformanceReport(personId, from, to, shifts,
+                shifts.Sum(s => s.Reconciliation.ExpectedPaidMinutes), shifts.Sum(s => s.Reconciliation.AccountedPaidMinutes),
+                shifts.Sum(s => s.Reconciliation.GapMinutes), shifts.Sum(s => s.Reconciliation.OverlapMinutes),
+                efficiency, scope, outside, firstPass, cohorts, qualityRestricted, BasisText));
         }
 
-        var (efficiency, scope, outside) = await EfficiencyAsync(uow, principal, labor, reports, allVerifiedExternal, ct);
-        var qualityRestricted = !authorizer.Authorize(principal, Permissions.QualityRead, ResourceRef.Of("Quality")).IsPermitted;
-        FirstPassYieldMetrics? firstPass = null;
-        IReadOnlyList<FirstPassCohortView> cohorts = [];
-        if (!qualityRestricted)
-            (firstPass, cohorts) = await FirstPassAsync(uow, principal, labor, from, to, minimumCoverage, ct);
-
-        return new CauseAdjustedPerformanceReport(personId, from, to, shifts,
-            shifts.Sum(s => s.Reconciliation.ExpectedPaidMinutes), shifts.Sum(s => s.Reconciliation.AccountedPaidMinutes),
-            shifts.Sum(s => s.Reconciliation.GapMinutes), shifts.Sum(s => s.Reconciliation.OverlapMinutes),
-            efficiency, scope, outside, firstPass, cohorts, qualityRestricted, BasisText);
+        return result;
     }
 
     private static ShiftAttribution Shift(Guid personId, AttendanceRecord record, DateTimeOffset end, IReadOnlyList<LaborEntry> labor,
