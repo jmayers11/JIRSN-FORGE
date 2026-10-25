@@ -382,6 +382,32 @@ async function replayS16() {
   check('S16 the cascade shows on at least two of the three sources at once', visible >= 2, { visible, counts: { asm03: asm.length, cnc01: cnc.length, motor: motor.length } });
 }
 
+// S10: a rush VIP request modelled as a private, read-only what-if that raises a WW-CAT finished-goods order to priority 1.
+// It must return order impacts and recovery options, stay private to its author, and change no production record.
+async function replayS10() {
+  const before = await get('/api/readiness/operations', planner);
+  const target = before.filter(op => /^WW-CAT/.test(op.partNumber ?? '') && op.priority > 1).sort((a, b) => a.orderNumber - b.orderNumber)[0];
+  check('S10 finds an open WW-CAT order below priority 1', !!target, {});
+  if (!target) return;
+  const scheduleBefore = await get('/api/planning/schedules/approved', planner).catch(() => null);
+  const created = await post('/api/planning/scenarios', { name: 'WW-S10 rush VIP order (replay)',
+    change: { kind: 'PriorityChange', orderNumber: target.orderNumber, priority: 1 }, reason: 'S10 replay what-if' }, planner);
+  const id = created.entityId;
+  const result = await post(`/api/planning/scenarios/${id}/run`, {}, planner);
+  const hidden = await get(`/api/planning/scenarios/${id}`, engineer).then(() => 'visible', error => String(error.message));
+  const after = await get('/api/readiness/operations', planner);
+  const scheduleAfter = await get('/api/planning/schedules/approved', planner).catch(() => null);
+  const unchanged = after.filter(op => op.orderNumber === target.orderNumber).every(op => op.priority === target.priority);
+  evidence.s10 = { order: target.orderNumber, partNumber: target.partNumber, priority: target.priority, description: result.scenarioDescription,
+    orderImpacts: (result.orders ?? []).length, recoveryOptions: (result.recoveryOptions ?? []).length, hidden };
+  check('S10 the what-if describes the priority change and returns order impacts and recovery options',
+    /→ 1/.test(result.scenarioDescription ?? '') && (result.orders ?? []).length > 0 && (result.recoveryOptions ?? []).length > 0, evidence.s10);
+  check('S10 the scenario is private to its author', /404/.test(hidden), { hidden });
+  check('S10 no production record changed: order priority and the approved schedule are as before', unchanged
+    && (scheduleBefore?.versionId ?? null) === (scheduleAfter?.versionId ?? null), { priority: target.priority, scheduleBefore: scheduleBefore?.versionId ?? null, scheduleAfter: scheduleAfter?.versionId ?? null });
+  await post(`/api/planning/scenarios/${id}/delete`, { reason: 'S10 replay cleanup' }, planner);
+}
+
 async function replayS02(simulatedNow) {
   // Mirrors the Scenario Center's source workflow: three audited callout windows, two scheduled
   // workers without presence, and no fabricated verified attendance/no-show classification.
@@ -566,6 +592,7 @@ async function main() {
   const siteZone = sites[0]?.timeZone ?? 'UTC';
   await replayFloorEvents(new Intl.DateTimeFormat('en-CA', { timeZone: siteZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.parse(status.simulatedNow))));
   await replayS16();
+  await replayS10();
   const resourcesAll = await get('/api/resources/');
   await replayS14(status.simulatedNow, resourcesAll);
   const s15Absence = await replayS15Absence(status.simulatedNow);
