@@ -127,6 +127,9 @@ public sealed class CauseAdjustedPerformanceTests(PostgresFixture postgres)
         Assert.Equal(JsonValueKind.Object, hrCard.GetProperty("attendance").ValueKind);
         Assert.Equal(JsonValueKind.Null, hrCard.GetProperty("firstPass").ValueKind);
         Assert.Equal(HttpStatusCode.Forbidden, (await k.GetAsync(cardsUrl)).StatusCode);
+        var local = TimeSpan.FromHours(-4);
+        var offsetUrl = $"/api/workforce/performance-cards?personIds={sarah}&from={Uri.EscapeDataString(start.AddDays(-80).ToOffset(local).ToString("O"))}&to={Uri.EscapeDataString(start.AddHours(4).ToOffset(local).ToString("O"))}";
+        Assert.Equal(100m, (await Get(sup, offsetUrl)).GetProperty("cards")[0].GetProperty("firstPass").GetProperty("employeeAttributablePercent").GetDecimal());
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await sup.GetAsync($"/api/workforce/performance-cards?from={Uri.EscapeDataString(start.AddDays(-400).ToString("O"))}&to={Uri.EscapeDataString(start.ToString("O"))}")).StatusCode);
 
         // A correction supersedes the verified attribution; both stay in history and the metric follows the new one.

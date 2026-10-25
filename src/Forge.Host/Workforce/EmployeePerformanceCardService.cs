@@ -56,6 +56,8 @@ public sealed class EmployeePerformanceCardService(IKernelUnitOfWorkFactory unit
     {
         ArgumentNullException.ThrowIfNull(principal);
         Demand(principal, Permissions.WorkforceRead, "Workforce");
+        // Periods arrive with the reviewer's local offset; the stores take UTC.
+        (from, to) = (from.ToUniversalTime(), to.ToUniversalTime());
         if (to <= from || to - from > TimeSpan.FromDays(370))
             throw new CommandRejectedException("invalid_date_range", "Choose a review period of up to a year.");
         var now = time.GetUtcNow();

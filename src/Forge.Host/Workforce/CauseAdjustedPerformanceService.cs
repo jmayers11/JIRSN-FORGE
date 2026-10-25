@@ -78,6 +78,7 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
         ArgumentNullException.ThrowIfNull(principal);
         ArgumentNullException.ThrowIfNull(personIds);
         Demand(principal, Permissions.WorkforceRead, "Workforce");
+        (from, to) = (from.ToUniversalTime(), to.ToUniversalTime());
         if (to <= from || to - from > TimeSpan.FromDays(370))
             throw new CommandRejectedException("invalid_date_range", "Choose a period of up to a year.");
         if (minimumCoverage is < 0 or > 100)
