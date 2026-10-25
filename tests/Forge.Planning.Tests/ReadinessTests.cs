@@ -97,6 +97,7 @@ public class ReadinessTests
         var capacityRequirement = new WorkRequirement("SLIT-WC", "SLITTER-A", RunSlitter, [SlitII], [], 1, RequiresMachineAuthorization: true);
         Assert.False(capacityRequirement.Qualifies(snapshot.Person(operatorId)!, Now));
         Assert.True(capacityRequirement.Qualifies(authorizedPerson, Now));
+        Assert.False((capacityRequirement with { MachineCode = "SLITTER-B" }).Qualifies(authorizedPerson, Now), "Authorization on one machine does not authorize its sibling.");
         Assert.False(capacityRequirement.Qualifies(authorizedPerson, Now.AddHours(2)), "Authorization expiry blocks future projected capacity.");
     }
 }
