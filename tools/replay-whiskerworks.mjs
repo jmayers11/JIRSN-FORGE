@@ -362,6 +362,26 @@ async function replayS15Handoff(simulatedNow, resources, absence) {
     && (after.acknowledgments ?? []).some(x => String(x.personId).toLowerCase() === String(incoming.personId).toLowerCase()), { acknowledgments: after.acknowledgments ?? [] });
 }
 
+// S16: the ASM-03 callout (S03), CNC-01 breakdown (S04) and held motor lot (S06) are all in force at once. Every open
+// operation on ASM-03 or CNC-01 must now be non-executable for the matching recorded cause, and the readiness view must
+// show the cascade on more than one source at the same time.
+async function replayS16() {
+  const operations = await get('/api/readiness/operations', planner);
+  const dim = (op, name) => (op.dimensions ?? []).find(d => d.name === name);
+  const failing = (op, name) => ['Fail', 'Indeterminate'].includes(dim(op, name)?.outcome);
+  const asm = operations.filter(op => op.machine === 'ASM-03');
+  const cnc = operations.filter(op => op.machine === 'CNC-01');
+  const motor = operations.filter(op => failing(op, 'Material') && /WW-MOT-24V-DC/.test(dim(op, 'Material')?.detail ?? ''));
+  const asmExplained = asm.every(op => !op.executable && (failing(op, 'Safety') || failing(op, 'Workforce')));
+  const cncExplained = cnc.every(op => !op.executable && failing(op, 'Equipment'));
+  const visible = [asm.length > 0, cnc.length > 0, motor.length > 0].filter(Boolean).length;
+  const summary = op => ({ order: op.orderNumber, seq: op.sequence, machine: op.machine, executable: op.executable, primary: op.primaryConstraint });
+  evidence.s16 = { asm03: asm.map(summary), cnc01: cnc.map(summary), motorShort: motor.map(summary) };
+  check('S16 every open ASM-03 operation is blocked by Safety or Workforce', asmExplained, { asm03: evidence.s16.asm03 });
+  check('S16 every open CNC-01 operation is blocked by Equipment', cncExplained, { cnc01: evidence.s16.cnc01 });
+  check('S16 the cascade shows on at least two of the three sources at once', visible >= 2, { visible, counts: { asm03: asm.length, cnc01: cnc.length, motor: motor.length } });
+}
+
 async function replayS02(simulatedNow) {
   // Mirrors the Scenario Center's source workflow: three audited callout windows, two scheduled
   // workers without presence, and no fabricated verified attendance/no-show classification.
@@ -545,6 +565,7 @@ async function main() {
   await replayS07();
   const siteZone = sites[0]?.timeZone ?? 'UTC';
   await replayFloorEvents(new Intl.DateTimeFormat('en-CA', { timeZone: siteZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.parse(status.simulatedNow))));
+  await replayS16();
   const resourcesAll = await get('/api/resources/');
   await replayS14(status.simulatedNow, resourcesAll);
   const s15Absence = await replayS15Absence(status.simulatedNow);
