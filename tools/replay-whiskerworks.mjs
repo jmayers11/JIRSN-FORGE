@@ -9,6 +9,8 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
+import { delayedPromiseDate } from '../src/Forge.Host/wwwroot/js/data/whiskerworks-demo.js';
+import { allItems, subassemblyBoms } from './whiskerworks-commercial.mjs';
 import { scenarioQualificationExpiry } from './whiskerworks-plant.mjs';
 
 const args = process.argv.slice(2);
@@ -26,16 +28,19 @@ const evidence = { startedAt: new Date().toISOString(), base, steps: [], asserti
 const step = (name, detail = {}) => { evidence.steps.push({ name, at: new Date().toISOString(), ...detail }); console.log(`- ${name}`); };
 const check = (name, passed, detail = {}) => { evidence.assertions.push({ name, passed: !!passed, ...detail }); console.log(`  ${passed ? 'PASS' : 'FAIL'} ${name}`); };
 
-async function request(method, path, who, body) {
+async function request(method, path, who, body, idempotencyKey) {
   const headers = { 'X-Forge-Dev-Subject': who, Accept: 'application/json' };
-  if (body !== undefined) { headers['Content-Type'] = 'application/json'; headers['Idempotency-Key'] = `ww-replay-${randomUUID()}`; }
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    headers['Idempotency-Key'] = idempotencyKey ?? `ww-replay-${randomUUID()}`;
+  }
   const response = await fetch(`${base}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30 * 60_000) });
   const text = await response.text();
   if (!response.ok) throw new Error(`${method} ${path} as ${who} returned ${response.status}: ${text}`);
   return text ? JSON.parse(text) : null;
 }
 const get = (path, who = admin) => request('GET', path, who);
-const post = (path, body, who = admin) => request('POST', path, who, body);
+const post = (path, body, who = admin, idempotencyKey) => request('POST', path, who, body, idempotencyKey);
 
 async function ready() {
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -64,6 +69,125 @@ async function cncMillReadiness() {
   const output = result.output ?? result;
   const workforce = (output.dimensions ?? []).find(d => d.name === 'Workforce');
   return { outcome: workforce?.outcome ?? null, detail: workforce?.detail ?? null };
+}
+
+async function replayS07() {
+  const parts = [
+    { partNumber: 'WW-SENS-PROX-05', supplierCode: 'WW-SUP-009', parentPartNumber: 'WW-SENSOR-ARRAY-ASSY', label: 'sensor' },
+    { partNumber: 'WW-BRG-608-2RS', supplierCode: 'WW-SUP-010', parentPartNumber: 'WW-ARENA-DRIVE', label: 'bearing' },
+  ];
+  const orders = await get('/api/procurement/purchase-orders', engineer);
+  const targets = [];
+  for (const target of parts) {
+    const candidates = orders.flatMap(order => (order.lines ?? []).map(line => ({ order, line })))
+      .filter(({ order, line }) => order.supplierCode === target.supplierCode && order.status === 'Approved'
+        && line.partNumber === target.partNumber && line.status === 'Open' && Number(line.open) > 0);
+    if (candidates.length !== 1) throw new Error(`S07 expected one approved open ${target.partNumber} line from ${target.supplierCode}; found ${candidates.length}.`);
+    const { order, line } = candidates[0];
+    const promisedFrom = line.promisedDate;
+    const promisedTo = delayedPromiseDate(promisedFrom, 4);
+    const partPlan = await get(`/api/planning/mrp?part=${encodeURIComponent(target.partNumber)}`, engineer);
+    const itemPlan = (partPlan.output ?? partPlan).items?.find(item => item.partNumber === target.partNumber);
+    const receipt = itemPlan?.receipts?.find(candidate => candidate.key === `PO${order.poNumber}/${line.lineNumber}`);
+    const bom = subassemblyBoms.find(candidate => candidate.partNumber === target.parentPartNumber);
+    const componentIndex = bom?.lines?.findIndex(([partNumber]) => partNumber === target.partNumber) ?? -1;
+    const component = componentIndex >= 0 ? bom.lines[componentIndex] : null;
+    const parent = allItems.find(item => item.partNumber === target.parentPartNumber);
+    const available = Number(itemPlan?.available);
+    const scheduledQuantity = Number(receipt?.quantity);
+    const quantityPer = Number(component?.[1]);
+    if (!Number.isFinite(available) || !Number.isFinite(scheduledQuantity) || !Number.isFinite(quantityPer)
+      || quantityPer <= 0 || !Number.isFinite(Number(parent?.leadTimeDays))) {
+      throw new Error(`S07 cannot derive a source-backed planned order for ${target.partNumber} from its MRP snapshot and released WhiskerWorks BOM.`);
+    }
+    // The existing finished-goods workload is intentionally well stocked. Add a temporary, ordinary
+    // planned subassembly order so this replay has a real earlier component requirement to test.
+    const productionQuantity = Math.floor(available / quantityPer) + 1;
+    const componentNeed = productionQuantity * quantityPer;
+    if (componentNeed > available + scheduledQuantity) {
+      throw new Error(`S07 cannot isolate a delayed-receipt shortage for ${target.partNumber}: ${componentNeed} required, ${available} released and ${scheduledQuantity} already due.`);
+    }
+    const dueDate = new Date(`${promisedFrom}T00:00:00.000Z`);
+    dueDate.setUTCDate(dueDate.getUTCDate() + Number(parent.leadTimeDays));
+    const sourceOrder = await post('/api/orders/', {
+      partNumber: target.parentPartNumber,
+      quantity: productionQuantity,
+      dueDate: dueDate.toISOString().slice(0, 10),
+      priority: 1,
+      reason: 'S07 isolated replay: schedule subassembly demand to verify delayed purchased-material impact',
+    }, engineer, `ww-replay-s07-demand-${target.partNumber.toLowerCase()}-${promisedFrom}`);
+    target.sourceOrderNumber = Number(sourceOrder.entityId ?? sourceOrder.orderNumber);
+    target.componentNeed = componentNeed;
+    target.componentLineNumber = (componentIndex + 1) * 10;
+    target.stockAvailableBeforeNeed = available;
+    target.scheduledQuantityBeforeDelay = scheduledQuantity;
+    target.requirementDate = promisedFrom;
+    target.originalReceiptDate = receipt?.dueDate ?? null;
+    const baselineMrp = await get(`/api/planning/mrp?part=${encodeURIComponent(target.partNumber)}`, engineer);
+    const baselineOutput = baselineMrp.output ?? baselineMrp;
+    const baselineItem = baselineOutput.items?.find(candidate => candidate.partNumber === target.partNumber);
+    const baselineRequirements = baselineItem?.requirements ?? [];
+    const baselineRequirement = baselineRequirements.find(candidate => candidate.key === `WO${target.sourceOrderNumber}/${target.componentLineNumber}`);
+    const baselineReceipt = baselineItem?.receipts?.find(candidate => candidate.key === `PO${order.poNumber}/${line.lineNumber}`);
+    const baselineReschedule = (baselineOutput.exceptions ?? []).find(exception => exception.partNumber === target.partNumber
+      && exception.kind === 'RescheduleIn' && String(exception.detail ?? '').includes(`PO ${order.poNumber} line ${line.lineNumber}`));
+    const baselineSupplyCoversNeed = !!baselineRequirement && baselineRequirement.needDate === target.requirementDate
+      && baselineReceipt?.dueDate === target.requirementDate
+      && Number(baselineItem.available) + Number(baselineReceipt.quantity) >= Number(baselineRequirement.quantity);
+    check(`S07 ${target.label} baseline order need is covered by the original receipt date`, baselineSupplyCoversNeed && !baselineReschedule, {
+      orderNumber: target.sourceOrderNumber, requirement: baselineRequirement ?? null, receipt: baselineReceipt ?? null,
+      baselineReschedule: baselineReschedule ?? null, candidateRequirements: baselineRequirements,
+    });
+    await post(`/api/procurement/purchase-orders/${order.poNumber}/lines/${line.lineNumber}/date`, {
+      promisedDate: promisedTo,
+      reason: `S07 replay: delay approved ${target.partNumber} supply by four calendar days`,
+    }, engineer, `ww-replay-s07-${target.partNumber.toLowerCase()}-po-${order.poNumber}-line-${line.lineNumber}`);
+    targets.push({ ...target, poNumber: Number(order.poNumber), lineNumber: Number(line.lineNumber), promisedFrom, promisedTo });
+  }
+
+  const ordersAfter = await get('/api/procurement/purchase-orders', engineer);
+  const results = [];
+  for (const target of targets) {
+    const order = ordersAfter.find(candidate => Number(candidate.poNumber) === target.poNumber);
+    const line = order?.lines?.find(candidate => Number(candidate.lineNumber) === target.lineNumber);
+    const sourceMatches = !!line && order.status === 'Approved' && line.status === 'Open' && Number(line.open) > 0
+      && line.promisedDate === target.promisedTo;
+    const plan = await get(`/api/planning/mrp?part=${encodeURIComponent(target.partNumber)}`, engineer);
+    const output = plan.output ?? plan;
+    const item = output.items?.find(candidate => candidate.partNumber === target.partNumber);
+    const receipt = item?.receipts?.find(candidate => candidate.key === `PO${target.poNumber}/${target.lineNumber}`);
+    const requirements = item?.requirements ?? [];
+    const requirement = requirements.find(candidate => candidate.key === `WO${target.sourceOrderNumber}/${target.componentLineNumber}`);
+    const reschedule = (output.exceptions ?? []).find(exception => exception.partNumber === target.partNumber
+      && exception.kind === 'RescheduleIn' && String(exception.detail ?? '').includes(`PO ${target.poNumber} line ${target.lineNumber}`));
+    const earlierRequirement = !!requirement && requirement.needDate === target.requirementDate
+      && requirement.needDate < (receipt?.dueDate ?? '') && Number(requirement.quantity) === target.componentNeed;
+    const receiptMatches = receipt?.kind === 'PurchaseOrder' && receipt.dueDate === target.promisedTo && earlierRequirement;
+    const rescheduleMatches = !!reschedule && String(reschedule.detail ?? '').includes(`due ${target.promisedTo}`)
+      && String(reschedule.detail ?? '').includes(`below zero on ${target.requirementDate}`);
+    const result = { ...target, sourceMatches, receipt: receipt ?? null, requirement: requirement ?? null,
+      earlierRequirement, reschedule: reschedule ?? null, rescheduleMatches };
+    results.push(result);
+    check(`S07 ${target.label} PO date is persisted on the exact approved open line`, sourceMatches, {
+      poNumber: target.poNumber, lineNumber: target.lineNumber, promisedFrom: target.promisedFrom,
+      promisedTo: target.promisedTo, current: line ?? null,
+    });
+    check(`S07 ${target.label} exact planned-order requirement and delayed receipt appear in MRP`, receiptMatches, {
+      receipt: receipt ?? null, requirement: requirement ?? null, earlierRequirement, candidateRequirements: requirements,
+    });
+    check(`S07 ${target.label} MRP RescheduleIn cites the exact delayed PO line and need date`, rescheduleMatches, {
+      exception: reschedule ?? null, rescheduleMatches,
+    });
+  }
+  evidence.s07 = {
+    targets: results,
+    scenarioDemand: 'Two temporary, reasoned production orders create source-backed component requirements through the normal Orders API.',
+    scenarioShortage: 'Each original receipt covers its exact planned-order requirement; the four-day delay moves receipt after the need date and produces the exact MRP RescheduleIn.',
+    supplierCorrespondence: 'not fabricated',
+    disposition: 'The end-of-replay baseline reset archives and removes both temporary orders and both date changes from the active demo database.',
+  };
+  step('Replayed S07 sensor and bearing promise changes with source and MRP readback');
+  return results;
 }
 
 async function main() {
@@ -106,6 +230,8 @@ async function main() {
   const sites = (await get('/api/resources/')).sites ?? [];
   check('Only the WW-P01 site exists in the replay database', sites.length === 1 && sites[0].code === 'WW-P01', { sites: sites.map(s => s.code) });
   check('The S01 baseline has released work', baselineKpis.releasedOrders > 0, { releasedOrders: baselineKpis.releasedOrders });
+
+  await replayS07();
 
   // S05: a CNC-02 mill qualification seeded to expire five days out stops counting once the simulated clock passes it.
   const before = await cncMillReadiness();
