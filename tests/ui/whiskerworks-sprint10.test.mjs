@@ -1,18 +1,38 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 import { validateSprint10ScenarioCatalog, sprint10ScenarioCatalog } from '../../tools/whiskerworks-sprint10-scenarios.mjs';
 import { targets, workers } from '../../tools/whiskerworks-plant.mjs';
 import { buildSprint10CompetencyPlan } from '../../tools/seed-whiskerworks-sprint10-competency.mjs';
 import { buildSprint10AttendanceFact } from '../../tools/seed-whiskerworks-sprint10-attendance.mjs';
 
-test('Sprint 10 has a complete 22-core plus 16-material acceptance matrix without claiming scenarios passed', () => {
+test('Sprint 10 has a complete 22-core plus 16-material acceptance matrix, each case mapped to named evidence or an honest gap', () => {
   assert.equal(validateSprint10ScenarioCatalog(), true);
   assert.equal(sprint10ScenarioCatalog.length, 38);
   assert.equal(new Set(sprint10ScenarioCatalog.map(scenario => scenario.code)).size, 38);
-  assert.ok(sprint10ScenarioCatalog.every(scenario => /Pending isolated-database scenario replay/.test(scenario.executionStatus)));
   assert.equal(sprint10ScenarioCatalog.filter(scenario => scenario.phase === 'core').length, 22);
   assert.equal(sprint10ScenarioCatalog.filter(scenario => scenario.phase === 'material-extension').length, 16);
+  const byStatus = status => sprint10ScenarioCatalog.filter(scenario => scenario.evidence.status === status).map(scenario => scenario.code);
+  assert.deepEqual(byStatus('Open'), ['WW-S10-14', 'WW-S10-29']);
+  assert.ok(byStatus('Partial').length > 0 && byStatus('Covered').length + byStatus('Partial').length + 2 === 38);
+  assert.ok(sprint10ScenarioCatalog.every(scenario => scenario.executionStatus.startsWith(scenario.evidence.status === 'Open' ? 'Open' : scenario.evidence.status === 'Covered' ? 'Covered' : 'Partially')));
+  // Every named regression exists in the repository; a renamed test must update the map.
+  const sources = [];
+  const walk = dir => { for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory() && !['bin', 'obj', '.forge-logs', 'node_modules'].includes(entry.name)) walk(join(dir, entry.name));
+    else if (entry.name.endsWith('.cs') || entry.name.endsWith('.mjs')) sources.push(readFileSync(join(dir, entry.name), 'utf8'));
+  } };
+  walk('tests');
+  const corpus = sources.join('\n');
+  for (const scenario of sprint10ScenarioCatalog) {
+    for (const check of scenario.evidence.checks) {
+      if (check.startsWith('Forge.')) assert.ok(new RegExp(`(void|Task) ${check.split('.').pop()}\\(`).test(corpus), `${scenario.code}: ${check} not found`);
+      else if (check.startsWith('ui:')) assert.ok(corpus.includes(check.slice(3).split(' ').slice(1).join(' ')), `${scenario.code}: ${check} not found`);
+      else assert.match(check, /^replay S\d\d$/);
+    }
+  }
 });
 
 test('Sprint 10 WhiskerWorks roster extends the original seed to 60 workers across all three shifts', () => {

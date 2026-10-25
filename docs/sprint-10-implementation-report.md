@@ -2,7 +2,7 @@
 
 Date: 2026-10-25
 Specification: `Forge_Sprint_10_Latest.txt` (extends `Forge_Sprint_10_Training_Performance_Workforce_Intelligence.md`)
-Status: Sections 16–22 are delivered end to end (persisted records, commands, APIs, UI and PostgreSQL integration tests) as of the Claude completion pass below. The WhiskerWorks demo now runs on its own isolated database with a simulated clock, saved baseline and reset. On 2026-10-25, the current-source isolated Release solution build passed with 0 warnings/errors; Planning passed 359/359, Architecture 32/32, and UI 387/387. The full isolated-output `verify.cmd` run reported 819 passed / 4 failed; the four fixed/environment cases reran 7/7 green and UI checks passed, but no single uninterrupted all-green full run is recorded. The isolated WhiskerWorks replay passed 28/28 assertions (`.forge-logs/whiskerworks-replay-20261025c.json`), including S02, S04/S05/S06/S07/S08/S11 checks; the Sprint 9/10 acceptance matrix remains open.
+Status: Sections 16–22 are delivered end to end (persisted records, commands, APIs, UI and PostgreSQL integration tests) as of the Claude completion pass below. The WhiskerWorks demo now runs on its own isolated database with a simulated clock, saved baseline and reset. On 2026-10-25, the current-source isolated Release solution build passed with 0 warnings/errors; Planning passed 359/359, Architecture 32/32, and UI 387/387. The full isolated-output `verify.cmd` run reported 819 passed / 4 failed; the four fixed/environment cases reran 7/7 green and UI checks passed, but no single uninterrupted all-green full run is recorded. The isolated WhiskerWorks replay passed 28/28 assertions (`.forge-logs/whiskerworks-replay-20261025c.json`), including S02, S04/S05/S06/S07/S08/S11 checks; the Sprint 9 replay later reached 47/47, and the Sprint 10 matrix is mapped below (26 Covered, 10 Partial, 2 Open).
 
 ## Completion pass: Sections 16–22 end to end (Claude, 2026-10-24)
 
@@ -34,6 +34,56 @@ Owner-requested follow-ups to the Command Center (commits `968924a` through `1b7
 - **Workforce Records** (Admin menu, formerly Workforce in Make): worker records, people and roles, presence, labor supply, document training and My attendance as tabs; the Command Center is no longer duplicated there.
 - **Demo:** `tools/seed-whiskerworks-training.mjs` adds `ww-demo-manager` (Supervisor + HR), `ww-demo-trainer` (Technical Trainer), three onboarding requirements, requests for the cross-training plan and expiring qualifications; baseline 4 includes them.
 - **Verification:** `TrainingRequestTests` (end-to-end flow), `CauseAdjustedPerformanceTests` (cards, permission-scoped sections, offsets), `KernelRoundTripTests`/`V328Tests` (162 migrations) passed 13/13 on PostgreSQL; UI 387/387.
+
+## Acceptance matrix evidence (Claude, 2026-10-25)
+
+Each of the 38 cases in `tools/whiskerworks-sprint10-scenarios.mjs` now carries its evidence: the named regressions or replay checks that prove it, or the gap. **26 Covered, 10 Partial, 2 Open.** "Covered" means passing PostgreSQL/Planning/UI tests or the WhiskerWorks replay assert the acceptance invariant, sometimes on the slitting fixture rather than WhiskerWorks names; the UI suite fails if a named test disappears.
+
+- New `MaterialRequestAcceptanceTests` (2 PostgreSQL tests, passing) prove cases 23, 25, 27, 28, 33, 34, 35 and the role half of 38 through the real API: a suspect scrap report is Quality evidence and notifies Quality with no scrap or stock movement; one linked replacement (no larger than the report, only once) enters the stockroom queue; a retried terminal request is one request; additional material waits for an independent decision, cannot be allocated first and never amends the order's BOM; held stock is never allocated; two racing allocations cannot both take the last 10; a cancellation after a partial issue reopens exactly the unfilled 14.
+- **Defect found and fixed:** additional (non-BOM) material requests returned 500 on PostgreSQL because the V3.4 check allowed an unallocated task only while Requested or Cancelled. Inventory migration `0029_additional_material_review_allocation_check.sql` (164 migrations) allows ApprovalNeeded and Rejected without a source location.
+- Strengthened: machine authorization on one machine does not authorize its sibling (`ReadinessTests`); a development packet's author cannot decide it and nothing opens before approval (`TrainingRequestTests`).
+- Open: 14 and 29 (approved rework adding operations, qualifications, hours, MRP demand and training). Partial gaps are named per case below.
+
+| Case | Title | Status | Gap or note |
+|---|---|---|---|
+| WW-S10-01 | PTO coverage gap | Covered | Proven on the slitting fixture; the CNC setup roster is the same rule. |
+| WW-S10-02 | Unexpected callout recovery | Covered |  |
+| WW-S10-03 | No-show versus callout | Covered |  |
+| WW-S10-04 | Two-person crew constraint | Covered |  |
+| WW-S10-05 | Expired qualification block | Covered |  |
+| WW-S10-06 | Machine-specific authorization | Covered | The readiness test asserts authorization on one machine does not authorize its sibling. |
+| WW-S10-07 | Pending practical authorization | Covered |  |
+| WW-S10-08 | IPC reassessment window | Covered | The configured window is the qualification validity/expiry and refresher policy; the expiry scan opens one reassessment request. |
+| WW-S10-09 | Quality trend confounders | Partial | Employee-attributable FPY stays N/A without a Quality-verified attribution, so no operator fault is assumed. There is no quality trend view that shows equipment and material confounders. |
+| WW-S10-10 | Inaccurate labor standard | Partial | Efficiency is N/A unless a released routing standard and accepted output exist. There is no workflow that flags an inaccurate standard for review. |
+| WW-S10-11 | Downtime-context labor | Covered |  |
+| WW-S10-12 | Advanced training prerequisites | Partial | A packet needs a rationale and expected plant benefit and is decided by a human; prerequisites are checked for trainers and authorizations, but are not listed on the packet before nomination. |
+| WW-S10-13 | Multi-person packaging-safe recovery | Covered | Proven on the slitting/paint fixture. |
+| WW-S10-14 | Rework qualification expansion | Open | Rework keeps history and quantity states, but adding solder/test work to an order (operations, qualifications, labor hours) is not implemented. |
+| WW-S10-15 | Sixty-shift attendance denominator | Covered |  |
+| WW-S10-16 | Attendance correction review | Covered |  |
+| WW-S10-17 | Quarter rollover history | Partial | Any prior quarter stays queryable by its dates and review cards choose quarter periods, but the attendance summary defaults to a rolling 90 days, not the current calendar quarter. |
+| WW-S10-18 | Effective-dated attendance policy | Covered |  |
+| WW-S10-19 | Insufficient evidence nomination | Covered | Forge never ranks employees; thin evidence is gray, not scored. |
+| WW-S10-20 | Advisory advancement packet | Covered | The packet author cannot decide it; an approval only opens a training request. Forge holds no compensation records to change. |
+| WW-S10-21 | Forge-only workflow | Covered | Every workforce, attendance and competency regression runs with development sign-in and no Nexus connection; Nexus is only an optional identity provider and import source. |
+| WW-S10-22 | Personnel privacy and tenant scope | Covered | Each plant (and the demo) is its own database, so tenant isolation is the database boundary; role checks are asserted per section. |
+| WW-S10-23 | Suspect scrap report | Covered |  |
+| WW-S10-24 | Split disposition reconciliation | Partial | Quantities and genealogy reconcile; cost reconciliation of a split disposition is not asserted. |
+| WW-S10-25 | Linked replacement request | Covered |  |
+| WW-S10-26 | Partial issue and backorder | Partial | Allocation never exceeds unreserved released stock and a short pick leaves the rest as open demand that can be requested again; there is no explicit backorder status. |
+| WW-S10-27 | Concurrent last-stock requests | Covered |  |
+| WW-S10-28 | Non-BOM approval gate | Covered | The PostgreSQL test found additional-material requests could not be saved; fixed by inventory migration 0029. |
+| WW-S10-29 | Rework routing expansion | Open | Approved rework does not yet add operations, inspection steps, labor standards, MRP demand or training requirements to an order. |
+| WW-S10-30 | Due-date risk email | Partial | Rules deduplicate, deep-link and recheck permission before email; no projected-shortage event or seeded planner rule exists yet. |
+| WW-S10-31 | Overdue escalation de-duplication | Partial | Alerts deduplicate and resolve when the source clears; escalation at the configured threshold is not asserted. |
+| WW-S10-32 | Email provider retry | Covered |  |
+| WW-S10-33 | Held stock pick denial | Covered |  |
+| WW-S10-34 | Network retry idempotency | Covered |  |
+| WW-S10-35 | Manufacturing replacement recovery | Covered |  |
+| WW-S10-36 | Machine-fault variance context | Covered |  |
+| WW-S10-37 | Partial issue cancellation | Partial | Recovery proposals check qualified people and never commit on their own; there is no replacement manufacturing order proposal type. |
+| WW-S10-38 | Cross-role and cross-site permissions | Partial | Operator, terminal, stockroom, planner and Quality steps and program scope are enforced; per-site permission boundaries are not modelled (tenancy is the database). |
 
 ## Earlier calculation-only increment (superseded by the completion pass above)
 
@@ -112,7 +162,7 @@ A broad `Forge.Integration.Tests` run was stopped before completion after surfac
 
 - The receipt preview is limited to remaining quantities on in-transit BOM staging tasks. It is a same-site-date what-if, not a receipt; actual receiving, holds, point-of-use checks, and safety/authorization remain authoritative.
 - Future-shift recovery checks scheduled attendance, qualifications, machine authorization, effective safety rules, and target readiness. Forge does not store future operation assignments, so it cannot forecast whether moving a candidate leaves their source-center production covered.
-- The isolated WhiskerWorks demo contains its 60-worker roster and the attendance/competency histories applied through the audited seed scripts. Historical operation-labor/performance data is not fabricated. All 38 acceptance scenarios are defined, but the complete scenario matrix has not been replayed against isolated databases. Their statuses remain pending, not passed.
+- The isolated WhiskerWorks demo contains its 60-worker roster and the attendance/competency histories applied through the audited seed scripts. Historical operation-labor/performance data is not fabricated. All 38 acceptance scenarios are mapped to evidence (see "Acceptance matrix evidence"): 26 Covered, 10 Partial with named gaps, 2 Open.
 - Email delivery depends on a configured provider and deployment notification policies. Default material rules use InApp delivery; provider retry and recipient delivery remain deployment validation.
 - Earned standard hours and labor efficiency stay N/A until operation-scoped accepted-output evidence and approved labor standards are available.
 - Sprint 9 still has open scenario assertions and an isolated-data gate. S05 offers a guarded, audited CNC-02 PM outage proposal; its JSON export rereads the outage, matches its work order and exact interval, verifies the one-hour length and four-hour offset when the original request timestamp is retained, and distinguishes a pending proposal from an independently approved outage with a downtime record. Older browser-session proposals without that timestamp are Indeterminate for the offset. The demo clock and its expiry/readiness and overdue-work lockout integration are implemented. The six-day replay verifies that the persisted qualification expired at simulated time; readiness can also reflect supervisor-confirmed presence lapsing over six days. S09's exact Rev A-to-Rev B training regression and S13's twelve negative qualification cases plus CNC alternatives/trainer coverage passed in the selected 12-test integration batch on 2026-10-24; these focused results do not close the full Scenario Center gate. S02 now has audited source replay coverage for three current callouts and two unconfirmed scheduled absences, preserving pending attendance review and verifying baseline reset. S07's isolated API/MRP replay passes for both approved supplier lines: two temporary planned subassembly orders create exact source-backed component needs that the original receipts cover, and the audited four-day delays yield exact MRP `RescheduleIn` records. Interactive S07 Scenario Center evidence, replay automation for S03, S09, S10, and S12–S16, and all 38 Sprint 10 acceptance cases remain open.

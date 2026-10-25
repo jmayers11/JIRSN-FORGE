@@ -1,5 +1,5 @@
 // Sprint 10 acceptance matrix from the approved workforce-intelligence brief.
-// These are test definitions, not evidence that database-backed scenarios have passed.
+// Each case carries the evidence map below; statuses are claims about named checks, re-verify them when those tests change.
 const core = [
   ['PTO coverage gap', 'Workforce', 'Approved CNC setup PTO removes the next-shift specialist; the gap and safe alternatives remain explicit.'],
   ['Unexpected callout recovery', 'Workforce', 'A same-day proposal ranks only currently qualified alternatives and reports source-center impact.'],
@@ -44,18 +44,96 @@ const material = [
   ['Cross-role and cross-site permissions', 'Security / Inventory', 'Operator, stockroom, planner, Quality, and supervisor permissions are enforced across site and tenant boundaries.'],
 ];
 
+// Where each case is proven (2026-10-25). 'Covered' means named regressions or replay checks that passed assert the acceptance
+// invariant (sometimes on the slitting fixture rather than the WhiskerWorks names); 'Partial' means part of the invariant is proven
+// and the note names the gap; 'Open' means the behavior is not implemented. Test names are Class.Method; 'replay Sxx' is
+// tools/replay-whiskerworks.mjs; 'ui:' is a tests/ui file and test title.
+const I = 'Forge.Integration.Tests.', P = 'Forge.Planning.Tests.';
+const MAT = I + 'MaterialRequestAcceptanceTests.';
+const MAT_A = MAT + 'Suspect_scrap_replacement_retried_requests_and_additional_material_stay_controlled';
+const MAT_B = MAT + 'Held_and_last_stock_is_never_double_reserved_and_cancelling_after_a_partial_issue_reopens_only_the_rest';
+const CAUSE = I + 'CauseAdjustedPerformanceTests.Paid_time_downtime_and_first_pass_quality_are_attributed_from_verified_evidence';
+const CALC = I + 'AttendanceReliabilityCalculatorTests.';
+const READY = P + 'ReadinessTests.Machine_specific_practical_authorization_is_required_in_addition_to_the_qualification';
+const TRAIN = I + 'TrainingRequestTests.New_hires_supervisors_expiring_qualifications_and_approved_packets_open_requests_that_trainers_schedule';
+const RECOVERY = P + 'WorkforceRecoveryEngineTests.';
+const V319 = I + 'V319Tests.Notification_rules_deduplicate_resolve_respect_current_program_access_and_delivery_failure_is_separate';
+export const sprint10Evidence = {
+  'WW-S10-01': ['Covered', [I + 'Phase4Tests.Spec_81_approved_pto_surfaces_before_the_absence_with_alternatives', P + 'SchedulingTests.Spec_81_future_pto_interrupts_work_and_makes_the_order_late',
+    'ui:workforce-intelligence.test.mjs upcoming approved time away warns when it removes the last scheduled qualified machine option'], 'Proven on the slitting fixture; the CNC setup roster is the same rule.'],
+  'WW-S10-02': ['Covered', [RECOVERY + 'Ranking_returns_only_currently_qualified_workers_and_is_stable', RECOVERY + 'Projected_shift_preview_reports_open_source_work_impact_and_an_ordered_backfill_option', 'replay S02'], ''],
+  'WW-S10-03': ['Covered', [CALC + 'Missing_punch_is_pending_review_and_never_inferred_as_a_no_show', CALC + 'Callouts_and_no_shows_are_separate_and_only_explicit_verified_no_shows_enter_the_denominator',
+    I + 'DailyMissionAttendanceTests.Current_shift_mission_keeps_a_missing_clock_in_pending_and_aggregated'], ''],
+  'WW-S10-04': ['Covered', ['replay S03', P + 'CompositionTests.One_person_with_every_qualification_never_counts_as_two'], ''],
+  'WW-S10-05': ['Covered', [I + 'HistoricalExecutionGovernanceTests.An_authenticated_supervisor_cannot_override_their_expired_operator_qualification',
+    P + 'SkillEvidenceTests.An_expired_qualification_or_missing_refresher_is_a_hard_stop_whatever_the_history', P + 'ShopFloorEngineTests.Expired_qualification_does_not_count', 'replay S05'], ''],
+  'WW-S10-06': ['Covered', [READY, RECOVERY + 'Machine_authorization_is_a_hard_gate_for_recovery_candidates',
+    'ui:workforce-intelligence.test.mjs machine-specific authorization is separate from qualification'], 'The readiness test asserts authorization on one machine does not authorize its sibling.'],
+  'WW-S10-07': ['Covered', [READY, 'ui:workforce-intelligence.test.mjs machine-specific authorization is separate from qualification'], ''],
+  'WW-S10-08': ['Covered', ['ui:workforce-intelligence.test.mjs qualification summary honors expiry windows', TRAIN, 'ui:performance-cards.test.mjs green, yellow and red follow the published thresholds'],
+    'The configured window is the qualification validity/expiry and refresher policy; the expiry scan opens one reassessment request.'],
+  'WW-S10-09': ['Partial', [CAUSE], 'Employee-attributable FPY stays N/A without a Quality-verified attribution, so no operator fault is assumed. There is no quality trend view that shows equipment and material confounders.'],
+  'WW-S10-10': ['Partial', [I + 'ProductionLaborMetricsTests.Released_routing_setup_and_run_targets_compare_with_person_hours_without_claiming_unverified_efficiency', CAUSE,
+    'ui:workforce-intelligence.test.mjs operation labor stays contextual and does not invent standards'], 'Efficiency is N/A unless a released routing standard and accepted output exist. There is no workflow that flags an inaccurate standard for review.'],
+  'WW-S10-11': ['Covered', [CAUSE, I + 'ProductionLaborMetricsTests.Linked_machine_stoppages_are_reported_as_context_without_becoming_labor_or_proven_causes',
+    P + 'SkillEvidenceTests.Machine_downtime_is_excluded_from_the_run_rate_and_overlapping_labor_counts_once'], ''],
+  'WW-S10-12': ['Partial', [TRAIN], 'A packet needs a rationale and expected plant benefit and is decided by a human; prerequisites are checked for trainers and authorizations, but are not listed on the packet before nomination.'],
+  'WW-S10-13': ['Covered', [RECOVERY + 'Ranked_two_step_option_backfills_the_source_work_before_moving_the_operator',
+    P + 'ReallocationTests.A_cascading_plan_rechecks_the_next_move_against_the_previous_move_and_does_not_change_source', P + 'CompositionTests.Every_applicable_rule_must_pass'], 'Proven on the slitting/paint fixture.'],
+  'WW-S10-14': ['Open', [I + 'V35Tests.Rework_and_repair_take_output_back_without_rewriting_history_and_quantity_states_follow'],
+    'Rework keeps history and quantity states, but adding solder/test work to an order (operations, qualifications, labor hours) is not implemented.'],
+  'WW-S10-15': ['Covered', [I + 'AttendanceSixtyShiftHistoryTests.Sixty_reviewed_shift_history_preserves_denominator_and_protected_exclusions', CALC + 'Quarter_excludes_verified_pto_and_protected_leave_and_explains_the_denominator'], ''],
+  'WW-S10-16': ['Covered', [I + 'AttendanceSelfCorrectionTests.Employee_can_request_only_own_attendance_correction_and_reviewer_keeps_independent_decision', CALC + 'Approved_correction_supersedes_prior_event_without_deleting_it'], ''],
+  'WW-S10-17': ['Partial', ['ui:performance-cards.test.mjs cards load per review period on demand'],
+    'Any prior quarter stays queryable by its dates and review cards choose quarter periods, but the attendance summary defaults to a rolling 90 days, not the current calendar quarter.'],
+  'WW-S10-18': ['Covered', [CALC + 'Effective_policy_versions_apply_to_their_own_scheduled_dates', CALC + 'Overlapping_policy_versions_make_the_result_unavailable'], ''],
+  'WW-S10-19': ['Covered', ['ui:performance-cards.test.mjs green, yellow and red follow the published thresholds and say why; thin or unverified evidence stays gray'], 'Forge never ranks employees; thin evidence is gray, not scored.'],
+  'WW-S10-20': ['Covered', [TRAIN], 'The packet author cannot decide it; an approval only opens a training request. Forge holds no compensation records to change.'],
+  'WW-S10-21': ['Covered', [I + 'AttendanceSourceImportTests.External_arrival_import_is_pending_deduplicated_private_and_requires_independent_review', TRAIN, I + 'AttendanceSixtyShiftHistoryTests.Sixty_reviewed_shift_history_preserves_denominator_and_protected_exclusions'],
+    'Every workforce, attendance and competency regression runs with development sign-in and no Nexus connection; Nexus is only an optional identity provider and import source.'],
+  'WW-S10-22': ['Covered', [CAUSE, I + 'AttendanceSelfCorrectionTests.Employee_can_request_only_own_attendance_correction_and_reviewer_keeps_independent_decision',
+    'ui:workforce-intelligence-page.test.mjs keeps absence reasons private', I + 'DemoTenantTests.The_demo_clock_drives_expiry_and_a_reset_restores_the_baseline_and_archives_the_rest'],
+    'Each plant (and the demo) is its own database, so tenant isolation is the database boundary; role checks are asserted per section.'],
+  'WW-S10-23': ['Covered', [MAT_A], ''],
+  'WW-S10-24': ['Partial', [I + 'V5RejectionSplitTests.Part_of_a_rejection_goes_back_and_the_rest_needs_its_own_decision_while_an_open_return_only_goes_down',
+    'Forge.Simulation.Tests.SimulationScenarios.S10b_split_dispositions_account_for_every_rejected_unit', P + 'GenealogyGraphTests.Issued_equals_consumed_returned_scrap_loss_remnant_and_remaining_within_tolerance'],
+    'Quantities and genealogy reconcile; cost reconciliation of a split disposition is not asserted.'],
+  'WW-S10-25': ['Covered', [MAT_A], ''],
+  'WW-S10-26': ['Partial', [MAT_B, I + 'V34Tests.Material_is_requested_allocated_picked_and_delivered_by_scan_and_flow_is_kept_apart_from_shortage'],
+    'Allocation never exceeds unreserved released stock and a short pick leaves the rest as open demand that can be requested again; there is no explicit backorder status.'],
+  'WW-S10-27': ['Covered', [MAT_B, I + 'InventoryScrapRequestTests.Concurrent_requests_never_claim_the_same_units', 'Forge.Simulation.Tests.SimulationScenarios.S16_concurrent_transactions_on_the_same_material_apply_exactly_once'], ''],
+  'WW-S10-28': ['Covered', [MAT_A], 'The PostgreSQL test found additional-material requests could not be saved; fixed by inventory migration 0029.'],
+  'WW-S10-29': ['Open', [], 'Approved rework does not yet add operations, inspection steps, labor standards, MRP demand or training requirements to an order.'],
+  'WW-S10-30': ['Partial', [V319], 'Rules deduplicate, deep-link and recheck permission before email; no projected-shortage event or seeded planner rule exists yet.'],
+  'WW-S10-31': ['Partial', [V319], 'Alerts deduplicate and resolve when the source clears; escalation at the configured threshold is not asserted.'],
+  'WW-S10-32': ['Covered', [V319, 'Forge.Simulation.Tests.SimulationScenarios.S15_lost_responses_and_concurrent_retries_apply_once'], ''],
+  'WW-S10-33': ['Covered', [MAT_B, I + 'SelectionHoldGovernanceTests.Selection_excludes_direct_and_descendant_issue_holds_preserves_independent_material_and_restores_after_release'], ''],
+  'WW-S10-34': ['Covered', [MAT_A, I + 'AttendanceReplayAuthorityTests.Shared_terminal_clock_in_retry_is_bound_to_current_badge_owner_without_a_second_attendance_or_secret_record'], ''],
+  'WW-S10-35': ['Covered', [MAT_B, 'Forge.Integration.Tests.MaterialTaskDemandTests.Cancelled_tasks_release_their_unfilled_demand'], ''],
+  'WW-S10-36': ['Covered', [CAUSE, P + 'WorkforcePerformanceCalculationsTests.Machine_downtime_is_limited_to_assignment_and_paid_shift_overlap_after_prior_classification',
+    P + 'RecoveryOptionTests.Selected_maintenance_window_preserves_observed_failure_and_cannot_erase_source_downtime'], ''],
+  'WW-S10-37': ['Partial', [P + 'RecoveryOptionTests.Additional_shift_needs_selected_workers_and_cannot_create_qualification',
+    I + 'RecoveryGovernanceTests.Machine_failure_changes_capacity_goals_alerts_and_fact_evaluated_recovery_without_auto_commit'],
+    'Recovery proposals check qualified people and never commit on their own; there is no replacement manufacturing order proposal type.'],
+  'WW-S10-38': ['Partial', [MAT_A, I + 'V310Tests.Program_holds_are_hidden_and_cannot_be_released_without_program_access', CAUSE],
+    'Operator, terminal, stockroom, planner and Quality steps and program scope are enforced; per-site permission boundaries are not modelled (tenancy is the database).'],
+};
+
+const STATUS_TEXT = { Covered: 'Covered by passing regression and replay checks', Partial: 'Partially covered; gap named in note', Open: 'Open: not implemented' };
+
 export const sprint10ScenarioCatalog = [
   ...core.map(([title, domain, acceptance], index) => ({
     code: `WW-S10-${String(index + 1).padStart(2, '0')}`,
     phase: 'core', title, domain, acceptance,
-    executionStatus: 'Pending isolated-database scenario replay',
   })),
   ...material.map(([title, domain, acceptance], index) => ({
     code: `WW-S10-${String(index + 23).padStart(2, '0')}`,
     phase: 'material-extension', title, domain, acceptance,
-    executionStatus: 'Pending isolated-database scenario replay',
   })),
-];
+].map(scenario => {
+  const [status, checks, note] = sprint10Evidence[scenario.code];
+  return { ...scenario, executionStatus: STATUS_TEXT[status], evidence: { status, checks, note } };
+});
 
 export function validateSprint10ScenarioCatalog(catalog = sprint10ScenarioCatalog) {
   if (!Array.isArray(catalog) || catalog.length !== 38) throw new Error('Sprint 10 acceptance requires exactly 38 scenario definitions.');
@@ -64,5 +142,11 @@ export function validateSprint10ScenarioCatalog(catalog = sprint10ScenarioCatalo
     throw new Error('Sprint 10 scenarios must be complete, unique, and ordered by acceptance ID.');
   if (catalog.slice(0, 22).some(scenario => scenario.phase !== 'core') || catalog.slice(22).some(scenario => scenario.phase !== 'material-extension'))
     throw new Error('The Sprint 10 catalog must preserve its 22 core and 16 material-extension cases.');
+  for (const scenario of catalog) {
+    const evidence = scenario.evidence;
+    if (!evidence || !STATUS_TEXT[evidence.status]) throw new Error(`${scenario.code} needs a Covered, Partial or Open evidence status.`);
+    if (evidence.status !== 'Open' && evidence.checks.length === 0) throw new Error(`${scenario.code} claims coverage without naming a check.`);
+    if (evidence.status !== 'Covered' && !evidence.note) throw new Error(`${scenario.code} must name its gap.`);
+  }
   return true;
 }

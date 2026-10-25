@@ -1824,3 +1824,7 @@ During final scope review, found that maintenance blockers and open-operation re
 
 Followed the handoff: ran the Daily Mission PostgreSQL tests Codex could not run. 22/25 passed first time; fixed the migration count (163) and the attendance test's seconds-precision shift start, then committed Codex's verified working tree with the owner's go-ahead. Aligned `OperationalDayResolver` with `WorkCalendar` minute precision (new resolver test; 5/5). Extended the WhiskerWorks replay with S03, S10, S14, S15 and S16; it passes 47/47 and resets the demo to baseline afterwards. Sprint 9 is now covered by replay or regression except live scanner/printer faults (S12) and the interactive S07 walkthrough. Next: the 38 Sprint 10 acceptance cases.
 
+## Claude: Sprint 10 acceptance evidence map and material request tests — 2026-10-25
+
+Mapped all 38 Sprint 10 cases to named passing checks or gaps (26 Covered / 10 Partial / 2 Open). Wrote `MaterialRequestAcceptanceTests`; it found that additional (non-BOM) material requests failed on PostgreSQL, fixed by inventory migration 0029 (164 migrations). Added a sibling-machine authorization assertion and a packet self-decision check. Focused runs: integration 14/14, Planning `ReadinessTests` 28/28, UI Sprint 10 catalog 6/6.
+

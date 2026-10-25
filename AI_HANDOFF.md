@@ -1,5 +1,11 @@
 # AI_HANDOFF.md
 
+## Claude: Sprint 10 acceptance matrix mapped; non-BOM review defect fixed (2026-10-25)
+
+- Every WW-S10 case now carries `evidence: { status, checks, note }` in `tools/whiskerworks-sprint10-scenarios.mjs`: **26 Covered, 10 Partial, 2 Open (14, 29)**. `tests/ui/whiskerworks-sprint10.test.mjs` fails if a named test is renamed or removed. Summary table in `docs/sprint-10-implementation-report.md`.
+- New `MaterialRequestAcceptanceTests` (PostgreSQL, 2/2) cover cases 23, 25, 27, 28, 33, 34, 35 and 38's role checks. They exposed a real defect: additional-material requests could not be saved (500, `material_task_check2`). Fixed by inventory migration 0029; migration count is **164** (`KernelRoundTripTests`, `V328Tests` updated; 14/14 with `TrainingRequestTests` and the material tests).
+- **Next candidates (need the owner's go-ahead, they are new behavior):** rework routing expansion (14, 29); a projected-shortage planner notification (30); attendance summary defaulting to the calendar quarter (17); an "inaccurate standard" review flag (10); a quality trend view with equipment/material context (9).
+
 ## Claude: Daily Mission verified and committed; Sprint 9 replay completed (2026-10-25)
 
 - **Daily Mission (Codex) verified on PostgreSQL and committed** (`feat: Daily Mission and role workspaces`): migration 0036 applies (163 migrations), `DailyMission*`, `V320`, attendance calculator, `KernelRoundTrip`/`V328` tests and the UI suite pass. `OperationalDayResolver` now builds shift starts to the minute like `WorkCalendar` and the attendance schedule (a shift stored with seconds missed its attendance opportunity); covered by a new resolver test.
