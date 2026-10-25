@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
-import { delayedPromiseDate } from '../src/Forge.Host/wwwroot/js/data/whiskerworks-demo.js';
+import { delayedPromiseDate, selectDayShiftScenarioRoster } from '../src/Forge.Host/wwwroot/js/data/whiskerworks-demo.js';
 import { allItems, subassemblyBoms } from './whiskerworks-commercial.mjs';
 import { scenarioQualificationExpiry } from './whiskerworks-plant.mjs';
 
@@ -196,6 +196,89 @@ async function machineDimension(machineCode, activity, name) {
   return { outcome: dimension?.outcome ?? null, detail: dimension?.detail ?? null };
 }
 
+async function replayS02(simulatedNow) {
+  // Mirrors the Scenario Center's source workflow: three audited callout windows, two scheduled
+  // workers without presence, and no fabricated verified attendance/no-show classification.
+  const supervisor = 'ww-demo-supervisor';
+  const workersBefore = await get('/api/workforce/workers', supervisor);
+  const { callouts, missing } = selectDayShiftScenarioRoster(workersBefore);
+  const selectedIds = [...callouts, ...missing].map(worker => worker.personId);
+  if (new Set(selectedIds).size !== 5 || callouts.length !== 3 || missing.length !== 2)
+    throw new Error('S02 requires five distinct active Day Shift workers; no absence events were recorded.');
+
+  const startsAt = new Date(simulatedNow);
+  const endsAt = new Date(startsAt.getTime() + 8 * 60 * 60 * 1000);
+  const from = new Date(startsAt.getTime() - 60 * 60 * 1000).toISOString();
+  const to = new Date(endsAt.getTime() + 60 * 60 * 1000).toISOString();
+  const existing = await get(`/api/workforce/unavailability?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, supervisor);
+
+  for (const worker of callouts) {
+    const overlapping = existing.find(item => item.personId === worker.personId
+      && Date.parse(item.startsAt) < endsAt.getTime() && Date.parse(item.endsAt) > startsAt.getTime());
+    if (overlapping && overlapping.kind !== 'CallOut')
+      throw new Error(`S02 refused to replace ${overlapping.kind} unavailability for ${worker.personId}.`);
+    if (!overlapping) await post(`/api/workforce/workers/${worker.personId}/unavailability`, {
+      kind: 'CallOut', startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), reason: 'S02 replay: reported Day Shift callout',
+    }, supervisor, `ww-replay-s02-callout-${worker.personId}`);
+    if (worker.presentUntil && Date.parse(worker.presentUntil) > startsAt.getTime())
+      await post(`/api/workforce/workers/${worker.personId}/departure`, { reason: 'S02 replay: record callout departure' },
+        supervisor, `ww-replay-s02-departure-${worker.personId}`);
+  }
+  for (const worker of missing) {
+    const overlapping = existing.find(item => item.personId === worker.personId
+      && Date.parse(item.startsAt) < endsAt.getTime() && Date.parse(item.endsAt) > startsAt.getTime());
+    if (overlapping) throw new Error(`S02 requires an unconfirmed absence, but ${worker.personId} already has ${overlapping.kind} unavailability.`);
+    if (worker.presentUntil && Date.parse(worker.presentUntil) > startsAt.getTime())
+      await post(`/api/workforce/workers/${worker.personId}/departure`, { reason: 'S02 replay: leave scheduled worker unconfirmed' },
+        supervisor, `ww-replay-s02-departure-${worker.personId}`);
+  }
+
+  const [workersAfter, recorded] = await Promise.all([
+    get('/api/workforce/workers', supervisor),
+    get(`/api/workforce/unavailability?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, supervisor),
+  ]);
+  const stateById = new Map(workersAfter.map(worker => [worker.personId, worker]));
+  const windowById = personId => recorded.filter(item => item.personId === personId
+    && Date.parse(item.startsAt) < endsAt.getTime() && Date.parse(item.endsAt) > startsAt.getTime());
+  const calloutWindows = callouts.flatMap(worker => windowById(worker.personId).filter(item => item.kind === 'CallOut'));
+  const unexpectedCalloutWindows = missing.flatMap(worker => windowById(worker.personId).filter(item => item.kind === 'CallOut'));
+  const allFiveNotPresent = selectedIds.every(id => {
+    const state = stateById.get(id);
+    return !!state && (!state.presentUntil || Date.parse(state.presentUntil) <= startsAt.getTime());
+  });
+  const missingRemainScheduledAndUnconfirmed = missing.every(worker => {
+    const state = stateById.get(worker.personId);
+    return !!state && state.isActive && state.shiftCode === 'SHIFT-DAY' && !state.unavailability
+      && (!state.presentUntil || Date.parse(state.presentUntil) <= startsAt.getTime());
+  });
+  const attendanceEvents = await get(`/api/workforce/attendance-intelligence/events?from=${encodeURIComponent(startsAt.toISOString())}&to=${encodeURIComponent(endsAt.toISOString())}`, supervisor);
+  const recentAttendance = attendanceEvents.filter(event => selectedIds.includes(event.personId)
+    && Date.parse(event.recordedAt) >= startsAt.getTime());
+  const missingAttendanceClassifications = recentAttendance.filter(event => missing.some(worker => worker.personId === event.personId)
+    && ['CallOut', 'NoShow'].includes(event.kind));
+  const nonPendingCalloutClassifications = recentAttendance.filter(event => callouts.some(worker => worker.personId === event.personId)
+    && event.kind === 'CallOut' && event.reviewState !== 'PendingReview');
+
+  evidence.s02 = {
+    startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(),
+    calloutWorkers: callouts.map(worker => ({ personId: worker.personId, name: worker.displayName })),
+    unconfirmedWorkers: missing.map(worker => ({ personId: worker.personId, name: worker.displayName })),
+    calloutWindows: calloutWindows.map(item => ({ personId: item.personId, kind: item.kind, startsAt: item.startsAt, endsAt: item.endsAt })),
+    attendanceEvents: recentAttendance.map(event => ({ personId: event.personId, kind: event.kind, reviewState: event.reviewState })),
+  };
+  check('S02 selects three callouts and two other active Day Shift workers', new Set(selectedIds).size === 5
+    && callouts.length === 3 && missing.length === 2 && [...callouts, ...missing].every(worker => worker.isActive && worker.shiftCode === 'SHIFT-DAY'),
+  { calloutCount: callouts.length, unconfirmedCount: missing.length, distinctWorkers: new Set(selectedIds).size });
+  check('S02 records exactly three current, audited CallOut windows', calloutWindows.length === 3
+    && callouts.every(worker => windowById(worker.personId).filter(item => item.kind === 'CallOut').length === 1), evidence.s02);
+  check('S02 ends presence for all five affected workers', allFiveNotPresent, { affected: selectedIds.map(id => ({ personId: id, presentUntil: stateById.get(id)?.presentUntil ?? null })) });
+  check('S02 leaves two scheduled workers unconfirmed without callout or no-show records', missingRemainScheduledAndUnconfirmed
+    && unexpectedCalloutWindows.length === 0 && missingAttendanceClassifications.length === 0,
+  { workers: missing.map(worker => stateById.get(worker.personId)), unexpectedCallouts: unexpectedCalloutWindows, attendanceClassifications: missingAttendanceClassifications });
+  check('S02 reported callouts remain pending independent attendance review', nonPendingCalloutClassifications.length === 0,
+    { calloutClassifications: recentAttendance.filter(event => callouts.some(worker => worker.personId === event.personId) && event.kind === 'CallOut') });
+}
+
 const lotQuantity = (positions, partNumber, lotNumber, status, location = 'WW-RAW') => positions
   .filter(p => p.partNumber === partNumber && p.lotNumber === lotNumber && p.qualityStatus === status && (!location || p.locationCode === location))
   .reduce((sum, p) => sum + Number(p.quantity), 0);
@@ -291,6 +374,7 @@ async function main() {
   check('Only the WW-P01 site exists in the replay database', sites.length === 1 && sites[0].code === 'WW-P01', { sites: sites.map(s => s.code) });
   check('The S01 baseline has released work', baselineKpis.releasedOrders > 0, { releasedOrders: baselineKpis.releasedOrders });
 
+  await replayS02(status.simulatedNow);
   await replayS07();
   const siteZone = sites[0]?.timeZone ?? 'UTC';
   await replayFloorEvents(new Intl.DateTimeFormat('en-CA', { timeZone: siteZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.parse(status.simulatedNow))));
