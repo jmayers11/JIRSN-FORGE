@@ -61,10 +61,10 @@ const NAV = [
   { route: 'scenarios', label: 'Scenarios', icon: 'scenarios', page: scenariosPage },
   { route: 'material-plan', label: 'Material Plan', icon: 'material', page: mrpPage },
   { route: 'work-centers', label: 'Work Centers', icon: 'production', page: workCentersPage },
-  { route: 'tools', label: 'Tools & Calibration', icon: 'gauge', href: '#/work-centers?focus=tools' },
+  { route: 'tools', label: 'Tools & Calibration', icon: 'calibration', href: '#/work-centers?focus=tools' },
   { route: 'shop-floor', label: 'Shop Floor', icon: 'operator', page: shopFloorPage },
   { route: 'plant-setup', label: 'Plant Setup', icon: 'factory', page: plantSetupPage },
-  { route: 'workforce', label: 'Workforce', icon: 'workforce', page: workforcePage },
+  { route: 'workforce', label: 'Workforce Records', icon: 'workforce', page: workforcePage },
   { route: 'safety-rules', label: 'Safety Rules', icon: 'safety', page: safetyRulesPage },
   { route: 'shift-continuity', label: 'Shift Continuity', icon: 'handover', page: shiftContinuityPage },
   { route: 'notifications', label: 'Notifications', icon: 'bell', page: notificationsPage },
@@ -91,9 +91,9 @@ const NAV = [
 const NAV_GROUPS = [
   ['Supervisor', ['supervisor', 'workforce-kanban', 'machine-kanban', 'performance']],
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
-  ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'workforce', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'maintenance', 'shipping']],
+  ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'maintenance', 'shipping']],
   ['Quality', ['quality', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
-  ['Admin', ['my-work', 'notifications', 'integrity', 'reports', 'analyst', 'access']],
+  ['Admin', ['my-work', 'notifications', 'workforce', 'integrity', 'reports', 'analyst', 'access']],
 ];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
 

@@ -103,6 +103,35 @@ async function loadPersonOperationHistory(personId, activityResult, me, asOf) {
   return { rows, error: failed, omittedOrders: Math.max(0, orderNumbers.length - visibleOrders.length) };
 }
 
+function personHistoryHtml(selectedPersonId, selectedWorker, personOperationHistory) {
+  return !selectedPersonId ? '' : !selectedWorker
+    ? `<section class="workforce-intelligence-person-history"><h3>Operation history</h3><p class="faint">The selected worker is not available in the current Workforce scope.</p></section>`
+    : personOperationHistory?.error
+      ? `<section class="workforce-intelligence-person-history"><h3>${esc(selectedWorker.displayName)} · operation history</h3>${errorBlock(personOperationHistory.error, 'operation history')}</section>`
+      : !personOperationHistory?.rows?.length
+        ? `<section class="workforce-intelligence-person-history"><h3>${esc(selectedWorker.displayName)} · operation history</h3><p class="faint">No direct labor entries for this employee were recorded in the last 30 days.</p></section>`
+        : `<section class="workforce-intelligence-person-history"><header><h3>${esc(selectedWorker.displayName)} · operation history</h3><span class="spacer"></span><span class="muted">Last 30 days · recorded labor</span></header>
+          <p class="workforce-intelligence-note">Employee hours come from this person’s recorded intervals. Routing targets and crew actuals describe the whole operation; they are not an individual score. Efficiency stays N/A without reviewed accepted-output evidence.</p>
+          ${personOperationHistory.error ? `<p class="notice warn">Some work-order details could not be read: ${esc(personOperationHistory.error)}</p>` : ''}
+          <div class="table-wrap"><table class="table"><thead><tr><th>Work order / operation</th><th>Employee hours</th><th>Operation target / crew actual</th><th>Reported output</th><th>Machine stops</th></tr></thead><tbody>
+          ${personOperationHistory.rows.map(row => `<tr><td><a href="#/orders?q=${encodeURIComponent(String(row.orderNumber))}">WO ${row.orderNumber} · op ${row.sequence}</a><div class="faint">${esc(row.workCenterCode)}${row.machineCodes.length ? ` · ${row.machineCodes.map(esc).join(', ')}` : ''}</div></td>
+            <td>${fmtNumber(row.employeeHours)} h direct${row.trainingHours ? `<div class="faint">${fmtNumber(row.trainingHours)} h training</div>` : ''}<div class="faint">${row.phases.map(([phase, hours]) => `${esc(phase)} ${fmtNumber(hours)} h`).join(' · ') || 'No phase detail'}</div></td>
+            <td>${row.metric?.plannedTotalLaborHours == null ? 'N/A' : `${fmtNumber(row.metric.plannedTotalLaborHours)} h target`}<div class="faint">${row.metric ? `${fmtNumber(row.metric.recordedOperatorHours)} h crew actual · crew ${row.metric.crewSize}` : 'Operation target unavailable'}</div></td>
+            <td>${row.metric ? `${fmtNumber(row.metric.reportedGoodQuantity, 3)} good / ${fmtNumber(row.metric.reportedScrapQuantity, 3)} scrap` : 'N/A'}<div class="faint">${row.metric?.earnedStandardStatus ? esc(row.metric.earnedStandardStatus) : 'Operation details unavailable'}</div></td>
+            <td>${row.metric ? `${fmtNumber(row.metric.recordedStoppageMinutes)} min` : 'N/A'}<div class="faint">${esc(row.metric?.stoppageContext ?? 'Operation details unavailable')}</div></td></tr>`).join('')}
+          </tbody></table></div>
+          ${personOperationHistory.omittedOrders ? `<p class="faint">Showing recent operations from ${personOperationHistory.rows.length} orders; ${personOperationHistory.omittedOrders} older orders are outside this profile view.</p>` : ''}
+        </section>`;
+}
+
+/** Recent operation labor for one person (last 30 days), for pages outside the Command Center. */
+export async function personOperationHistoryHtml(person, me) {
+  const now = new Date();
+  const from = new Date(now.getTime() - 30 * DAY);
+  const activity = await tryGet(`/api/shopfloor/activity?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(now.toISOString())}`);
+  return personHistoryHtml(person.personId, person, await loadPersonOperationHistory(person.personId, activity, me, now));
+}
+
 function renderOwnAttendanceCorrections(eventsResult) {
   const events = Array.isArray(eventsResult?.data) ? eventsResult.data : [];
   const superseded = new Set(events.map(item => item.supersedesEventId).filter(Boolean));
@@ -208,9 +237,9 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
   const qualificationsKnown = summary.sources.qualifications;
   const materialSourcesKnown = summary.sources.materialTasks && summary.sources.suspectReports;
   const expiringRows = summary.expiring.length
-    ? `<ul class="workforce-intelligence-list">${summary.expiring.slice(0, 6).map(row => `<li><a href="#/workforce?personId=${encodeURIComponent(row.personId)}"><b>${esc(row.workerName)}</b></a><span>${esc(row.code)} · expires ${formatDate(row.expiresAt)} (${row.daysRemaining}d)</span></li>`).join('')}</ul>`
+    ? `<ul class="workforce-intelligence-list">${summary.expiring.slice(0, 6).map(row => `<li><a href="#/performance?personId=${encodeURIComponent(row.personId)}"><b>${esc(row.workerName)}</b></a><span>${esc(row.code)} · expires ${formatDate(row.expiresAt)} (${row.daysRemaining}d)</span></li>`).join('')}</ul>`
     : `<p class="faint">${qualificationsKnown ? 'No qualifications expire in this window.' : 'Qualification records are not visible to this account.'}</p>`;
-  const trainingRecommendationRows = (summary.trainingRecommendations ?? []).filter(row => !options.qualificationCode || row.qualificationCode === options.qualificationCode).slice(0, 8).map(row => `<li><a href="#/workforce?personId=${encodeURIComponent(row.personId)}"><b>${esc(row.workerName)}</b></a><span>${esc(row.qualificationCode)} · ${esc(row.machineCode)} / ${esc(row.activityCode)} · ${esc(row.workCenterCode)} / ${esc(row.shiftCode)}</span><span>${esc(row.rationale)}</span>${row.evidenceReferences?.length ? `<span>Evidence: ${row.evidenceReferences.map(renderEvidenceReference).join(' · ')}</span>` : ''}</li>`).join('');
+  const trainingRecommendationRows = (summary.trainingRecommendations ?? []).filter(row => !options.qualificationCode || row.qualificationCode === options.qualificationCode).slice(0, 8).map(row => `<li><a href="#/performance?personId=${encodeURIComponent(row.personId)}"><b>${esc(row.workerName)}</b></a><span>${esc(row.qualificationCode)} · ${esc(row.machineCode)} / ${esc(row.activityCode)} · ${esc(row.workCenterCode)} / ${esc(row.shiftCode)}</span><span>${esc(row.rationale)}</span>${row.evidenceReferences?.length ? `<span>Evidence: ${row.evidenceReferences.map(renderEvidenceReference).join(' · ')}</span>` : ''}</li>`).join('');
   const trainingForecastRows = summary.trainingForecast?.length
     ? `<ul class="workforce-intelligence-list">${summary.trainingForecast.slice(0, 10).map(row => `<li><b>${esc(row.date)} · ${esc(row.shiftCode)} · ${esc(row.machineCode)} / ${esc(row.activityCode)}</b><span>${esc(row.workCenterCode)} · ${esc(row.qualificationCode)} · ${row.traineeCount} scheduled learner(s) · ${row.trainerCount} qualified trainer(s) · ${row.qualifiedCount} independently qualified worker(s)</span>${row.canReviewWindow ? `<span>Largest shared production-free block: ${fmtNumber(row.largestSharedFreeMinutes)} min · ${esc(formatMoment(row.availableFrom))}–${esc(formatMoment(row.availableThrough))}</span>` : ''}<span>${esc(row.detail)}</span></li>`).join('')}</ul>`
     : summary.trainingForecast ? '<p class="faint">No scheduled learner-and-qualification gap pairs were found in the next 14 days.</p>'
@@ -218,7 +247,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
   const qualificationMatrixRows = qualificationsKnown
     ? (sources.workers.data ?? []).map(worker => {
       const rows = (sources.qualifications.data ?? []).filter(record => record.personId === worker.personId);
-      return `<tr><td><a href="#/workforce?personId=${encodeURIComponent(worker.personId)}">${esc(worker.displayName)}</a><div class="faint">${esc(worker.jobTitle ?? worker.homeWorkCenterCode ?? '')}</div></td><td>${rows.length ? rows.map(record => `<span class="pill ${record.status === 'Qualified' ? (record.expiresAt && new Date(record.expiresAt).getTime() <= Date.now() ? 'bad' : 'ok') : record.status === 'InTraining' ? 'warn' : 'none'}">${esc(record.code)} · ${esc(record.status)}${record.expiresAt ? ` · to ${formatDate(record.expiresAt)}` : ''}</span>`).join(' ') : '<span class="faint">No recorded qualifications</span>'}</td></tr>`;
+      return `<tr><td><a href="#/performance?personId=${encodeURIComponent(worker.personId)}">${esc(worker.displayName)}</a><div class="faint">${esc(worker.jobTitle ?? worker.homeWorkCenterCode ?? '')}</div></td><td>${rows.length ? rows.map(record => `<span class="pill ${record.status === 'Qualified' ? (record.expiresAt && new Date(record.expiresAt).getTime() <= Date.now() ? 'bad' : 'ok') : record.status === 'InTraining' ? 'warn' : 'none'}">${esc(record.code)} · ${esc(record.status)}${record.expiresAt ? ` · to ${formatDate(record.expiresAt)}` : ''}</span>`).join(' ') : '<span class="faint">No recorded qualifications</span>'}</td></tr>`;
     }).join('')
     : '';
   const alertRows = issues.length
@@ -229,24 +258,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
     ? `<div class="table-wrap"><table class="table"><thead><tr><th>Work order / op</th><th>Work center</th><th>Operator hours</th><th>Training hours</th><th>Good / scrap qty</th><th>Target</th></tr></thead><tbody>${laborRows.map(row => `<tr><td>WO ${row.orderNumber} / ${row.sequence}</td><td>${esc(row.workCenterCode)}</td><td>${fmtNumber(row.operatorHours)}</td><td>${fmtNumber(row.trainingHours)}</td><td>${fmtNumber(row.goodQuantity)} / ${fmtNumber(row.scrapQuantity)}</td><td><span class="pill none">N/A</span></td></tr>`).join('')}</tbody></table></div>`
     : `<p class="faint">${sources.activity ? 'No operation labor was recorded in the last 30 days.' : 'Shop-floor activity is unavailable to this account.'}</p>`;
   const selectedWorker = (sources.workers.data ?? []).find(worker => worker.personId === selectedPersonId);
-  const personHistory = !selectedPersonId ? '' : !selectedWorker
-    ? `<section class="workforce-intelligence-person-history"><h3>Operation history</h3><p class="faint">The selected worker is not available in the current Workforce scope.</p></section>`
-    : personOperationHistory?.error
-      ? `<section class="workforce-intelligence-person-history"><h3>${esc(selectedWorker.displayName)} · operation history</h3>${errorBlock(personOperationHistory.error, 'operation history')}</section>`
-      : !personOperationHistory?.rows?.length
-        ? `<section class="workforce-intelligence-person-history"><h3>${esc(selectedWorker.displayName)} · operation history</h3><p class="faint">No direct labor entries for this employee were recorded in the last 30 days.</p></section>`
-        : `<section class="workforce-intelligence-person-history"><header><h3>${esc(selectedWorker.displayName)} · operation history</h3><span class="spacer"></span><span class="muted">Last 30 days · recorded labor</span></header>
-          <p class="workforce-intelligence-note">Employee hours come from this person’s recorded intervals. Routing targets and crew actuals describe the whole operation; they are not an individual score. Efficiency stays N/A without reviewed accepted-output evidence.</p>
-          ${personOperationHistory.error ? `<p class="notice warn">Some work-order details could not be read: ${esc(personOperationHistory.error)}</p>` : ''}
-          <div class="table-wrap"><table class="table"><thead><tr><th>Work order / operation</th><th>Employee hours</th><th>Operation target / crew actual</th><th>Reported output</th><th>Machine stops</th></tr></thead><tbody>
-          ${personOperationHistory.rows.map(row => `<tr><td><a href="#/orders?q=${encodeURIComponent(String(row.orderNumber))}">WO ${row.orderNumber} · op ${row.sequence}</a><div class="faint">${esc(row.workCenterCode)}${row.machineCodes.length ? ` · ${row.machineCodes.map(esc).join(', ')}` : ''}</div></td>
-            <td>${fmtNumber(row.employeeHours)} h direct${row.trainingHours ? `<div class="faint">${fmtNumber(row.trainingHours)} h training</div>` : ''}<div class="faint">${row.phases.map(([phase, hours]) => `${esc(phase)} ${fmtNumber(hours)} h`).join(' · ') || 'No phase detail'}</div></td>
-            <td>${row.metric?.plannedTotalLaborHours == null ? 'N/A' : `${fmtNumber(row.metric.plannedTotalLaborHours)} h target`}<div class="faint">${row.metric ? `${fmtNumber(row.metric.recordedOperatorHours)} h crew actual · crew ${row.metric.crewSize}` : 'Operation target unavailable'}</div></td>
-            <td>${row.metric ? `${fmtNumber(row.metric.reportedGoodQuantity, 3)} good / ${fmtNumber(row.metric.reportedScrapQuantity, 3)} scrap` : 'N/A'}<div class="faint">${row.metric?.earnedStandardStatus ? esc(row.metric.earnedStandardStatus) : 'Operation details unavailable'}</div></td>
-            <td>${row.metric ? `${fmtNumber(row.metric.recordedStoppageMinutes)} min` : 'N/A'}<div class="faint">${esc(row.metric?.stoppageContext ?? 'Operation details unavailable')}</div></td></tr>`).join('')}
-          </tbody></table></div>
-          ${personOperationHistory.omittedOrders ? `<p class="faint">Showing recent operations from ${personOperationHistory.rows.length} orders; ${personOperationHistory.omittedOrders} older orders are outside this profile view.</p>` : ''}
-        </section>`;
+  const personHistory = personHistoryHtml(selectedPersonId, selectedWorker, personOperationHistory);
   const shiftChoices = options.shifts.map(shift => `<option value="${escapeAttr(shift.code)}" ${options.shiftCode === shift.code ? 'selected' : ''}>${esc(shift.name)}</option>`).join('');
   const centerChoices = options.workCenters.map(center => `<option value="${escapeAttr(center.code)}" ${options.workCenterCode === center.code ? 'selected' : ''}>${esc(center.name)}</option>`).join('');
   const siteChoices = (options.sites ?? []).map(site => `<option value="${escapeAttr(site.code)}" ${options.siteCode === site.code ? 'selected' : ''}>${esc(site.name)}</option>`).join('');

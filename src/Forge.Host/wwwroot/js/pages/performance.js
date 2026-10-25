@@ -4,7 +4,7 @@
 // Figures are evidence for a review conversation; Forge makes no ranking, pay, promotion or disciplinary decision from them.
 import { tryGet, command } from '../api.js';
 import { esc, fmtNumber, fmtDate, fmtDateTime, errorBlock, toast } from '../ui.js';
-import { appendWorkforceIntelligence } from './workforce-intelligence.js';
+import { appendWorkforceIntelligence, personOperationHistoryHtml } from './workforce-intelligence.js';
 import { openCausePerformance } from '../cause-performance.js';
 import { gradeCard, reviewPeriods, printDocument, tile, evidenceHtml, contributionsHtml, GRADE_LABEL, GRADE_ORDER, PILL, SHORT } from '../performance-cards.js';
 
@@ -201,7 +201,8 @@ export async function performancePage(page, ctx) {
         : `<p class="faint">${card ? 'Attendance rates are visible to supervisors and Human Resources.' : 'No attendance figures for this period.'}</p>`,
       labor: `${metricBlock(grading, 'efficiency')}${metricBlock(grading, 'firstPass')}${metricBlock(grading, 'coverage')}
            ${card ? `<p class="faint">${fmtNumber(card.paidHours)} paid hours across ${fmtNumber(card.shiftsRecorded, 0)} shift(s); ${fmtNumber(card.unaccountedHours)} h not yet accounted for by labor, verified downtime or approved coded time.</p>` : ''}
-           <div class="toolbar"><button class="btn small" type="button" data-tp-cause="${attr(worker.personId)}">Open cause-adjusted time and quality</button><a class="btn small" href="#/workforce?personId=${encodeURIComponent(worker.personId)}">Workforce profile and operation history</a></div>`,
+           <div class="toolbar"><button class="btn small" type="button" data-tp-cause="${attr(worker.personId)}">Open cause-adjusted time and quality</button><a class="btn small" href="#/workforce?personId=${encodeURIComponent(worker.personId)}">Worker record (shift, badge, qualifications)</a></div>
+           <div data-tp-history><p class="faint">Loading recent operation history…</p></div>`,
       development: packets.length ? packets.map(n => `<article class="tp-request"><div class="tp-request-head"><b>${esc(n.pathway)}</b><span class="pill none">${esc(String(n.kind).replaceAll(/([a-z])([A-Z])/g, '$1 $2'))}</span><span class="pill info">${esc(String(n.status).replaceAll(/([a-z])([A-Z])/g, '$1 $2'))}</span></div><div class="faint">Updated ${esc(fmtDate(n.updatedAt))}</div><p>${esc(n.rationale)}</p></article>`).join('')
         : `<p class="faint">${can.has('workforce.development.read') ? 'No development packets for this employee.' : 'Development packets are not visible to this account.'}</p>`,
     };
@@ -215,6 +216,14 @@ export async function performancePage(page, ctx) {
       <div class="workspace-tabs"><div class="workspace-tablist" role="tablist" aria-label="Employee sections">${tabs.map(([key, label, badge]) => `<button class="workspace-tab" type="button" role="tab" data-tp-tab="${key}" aria-selected="${key === active}" tabindex="${key === active ? 0 : -1}">${esc(label)}${badge ? ` <span class="badge ${key === 'training' ? 'orange' : 'gray'}">${badge}</span>` : ''}</button>`).join('')}</div>
         ${tabs.map(([key]) => `<div class="workspace-panel tp-panel" role="tabpanel" data-tp-panel="${key}" ${key === active ? '' : 'hidden'}>${panels[key]}</div>`).join('')}</div>
     </section>`;
+    if (active === 'labor') fillHistory(worker);
+  };
+  const histories = new Map();
+  const fillHistory = async worker => {
+    if (!histories.has(worker.personId)) histories.set(worker.personId, personOperationHistoryHtml(worker, me).catch(error => `<p class="faint">${esc(error?.message ?? 'Operation history is unavailable.')}</p>`));
+    const html = await histories.get(worker.personId);
+    const host = center.employee.querySelector('[data-tp-history]');
+    if (host && state.selected === worker.personId) host.innerHTML = html || '<p class="faint">No operation history.</p>';
   };
 
   // ------------------------------------------------------------------ plant tabs (training queue, new employee training)

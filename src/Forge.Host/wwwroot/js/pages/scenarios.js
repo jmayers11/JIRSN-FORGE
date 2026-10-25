@@ -261,7 +261,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
           'WW-S09-ECN-REV': ['#/engineering?part=WW-PCB-CTRL-200', 'Open engineering revision'],
           'WW-S11-CAL-EXPIRED': ['#/work-centers?focus=tools', 'Open calibration records'],
           'WW-S12-SCAN-OUTAGE': ['#/shop-floor', 'Open operator kiosk'],
-          'WW-S13-IPC-MISMATCH': ['#/workforce', 'Open training and qualifications'],
+          'WW-S13-IPC-MISMATCH': ['#/performance', 'Open training and qualifications'],
           'WW-S14-RECOVERY-BOARD': ['#/shift-continuity', 'Open shift actions'],
           'WW-S15-HANDOFF': ['#/shift-continuity', 'Open shift handoff'],
         }[scenario.code];

@@ -214,3 +214,23 @@ test('Training & Performance lists employees alphabetically on the right and fil
   assert.equal(posts[0][1].trainerPersonId, null);
   assert.equal(new Date(posts[0][1].endsAt) - new Date(posts[0][1].startsAt), 2 * 3_600_000);
 });
+
+test('Workforce Records keeps people, worker records, presence and document training in tabs, without the Command Center', async t => {
+  const { workforcePage } = await import('../../src/Forge.Host/wwwroot/js/pages/workforce.js');
+  const browser = installBrowser(t);
+  const page = browser.document.createElement('div');
+  browser.document.body.append(page);
+  const paths = [];
+  globalThis.fetch = path => {
+    paths.push(path);
+    if (path === '/api/resources/') return Promise.resolve(response({ sites: [], shifts: [], workCenters: [], machines: [] }));
+    if (path === '/api/engineering/document-training') return Promise.resolve(response({ policy: { policy: 'Warn', documentTypes: ['WorkInstruction'] }, records: [] }));
+    return Promise.resolve(response([]));
+  };
+  await workforcePage(page, { me: { permissions: ['workforce.read', 'workforce.manage', 'kernel.people.read'] }, query: new URLSearchParams('') });
+  assert.match(page.innerHTML, /<h1>Workforce Records<\/h1>/);
+  assert.doesNotMatch(page.innerHTML, /Training &amp; Performance Command Center/);
+  assert.ok(!paths.some(path => path.startsWith('/api/workforce/attendance-intelligence')), 'the Command Center sources are not read here');
+  const tabs = page.querySelectorAll('[data-workspace-tab]').map(tab => tab.textContent);
+  assert.ok(tabs.includes('People & roles') && tabs.includes('Labor supply'), tabs.join(', '));
+});
