@@ -46,7 +46,9 @@ public static class OperationalDayResolver
             if (!shift.Days.Contains((int)date.DayOfWeek) || closedDates.Contains(new DateOnly(date.Year, date.Month, date.Day)))
                 continue;
 
-            var start = date.At(new LocalTime(shift.Start.Hour, shift.Start.Minute, shift.Start.Second, shift.Start.Millisecond))
+            // Minute precision, exactly as the planning WorkCalendar and the attendance schedule build shift occurrences, so a
+            // shift stored with seconds still lines up with its generated attendance opportunities.
+            var start = date.At(new LocalTime(shift.Start.Hour, shift.Start.Minute))
                 .InZoneLeniently(zone).ToInstant();
             candidates.Add((date, start, start + Duration.FromMinutes(shift.DurationMinutes)));
         }

@@ -1,3 +1,4 @@
+using Forge.Planning.Engines;
 using Forge.Resources.Contracts;
 
 namespace Forge.Planning.Tests;
@@ -50,5 +51,20 @@ public sealed class OperationalDayResolverTests
         var shift = new ShiftInfo("NONE", "PLANT1", "None", new TimeOnly(7, 0), 480, []);
 
         Assert.Null(OperationalDayResolver.Resolve(shift, "America/New_York", DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void A_shift_start_with_seconds_resolves_to_the_minute_like_the_work_calendar()
+    {
+        var shift = new ShiftInfo("DAY", "PLANT1", "Day", new TimeOnly(16, 17, 23), 480, [0, 1, 2, 3, 4, 5, 6]);
+
+        var resolved = OperationalDayResolver.Resolve(shift, "UTC", new DateTimeOffset(2026, 10, 25, 17, 17, 0, TimeSpan.Zero));
+
+        Assert.NotNull(resolved);
+        Assert.Equal("Current", resolved.Relation);
+        Assert.Equal(new DateTimeOffset(2026, 10, 25, 16, 17, 0, TimeSpan.Zero), resolved.StartsAt);
+        Assert.Equal(WorkCalendar.Instances(shift, new SiteSnapshot(resolved.StartsAt, [], [], [], [], [], [], [], [])
+            { Sites = [new SiteInfo("PLANT1", "Plant 1", "UTC")], Shifts = [shift], Closures = [] },
+            resolved.StartsAt.AddHours(-1), resolved.EndsAt)[0].Start, resolved.StartsAt);
     }
 }
