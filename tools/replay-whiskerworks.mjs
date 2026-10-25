@@ -196,6 +196,41 @@ async function machineDimension(machineCode, activity, name) {
   return { outcome: dimension?.outcome ?? null, detail: dimension?.detail ?? null };
 }
 
+// S03: one of exactly two present, independently qualified ASM-03 operators calls out, so the SAFE-ASM-2P two-person
+// rule is no longer met. Presence for the crew is confirmed first through the audited supervisor command (seeded
+// presence lapses with the clock); nothing else about the crew is changed.
+async function replayS03(simulatedNow) {
+  const supervisor = 'ww-demo-supervisor';
+  const now = Date.parse(simulatedNow);
+  const workers = await get('/api/workforce/workers', supervisor);
+  const ids = workers.map(w => w.personId);
+  const records = await get(`/api/competency/people/qualifications?${ids.map(id => `personIds=${encodeURIComponent(id)}`).join('&')}`, engineer);
+  const qualified = new Set(records.filter(r => r.code === 'QUAL-ASM-HVY' && r.status === 'Qualified' && (!r.expiresAt || Date.parse(r.expiresAt) > now)).map(r => r.personId));
+  const crew = workers.filter(w => w.isActive && w.shiftCode === 'SHIFT-DAY' && w.assignment?.machineCode === 'ASM-03' && qualified.has(w.personId))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  check('S03 finds exactly two independently qualified Day Shift operators assigned to ASM-03', crew.length === 2, { crew: crew.map(w => w.displayName) });
+  if (crew.length !== 2) return;
+  for (const worker of crew) {
+    if (!worker.presentUntil || Date.parse(worker.presentUntil) <= now)
+      await post(`/api/workforce/workers/${worker.personId}/presence`, { kind: 'SupervisorConfirmed', reason: 'S03 replay: crew confirmed on the floor' }, supervisor,
+        `ww-replay-s03-presence-${worker.personId}`);
+  }
+  const safetyBefore = await machineDimension('ASM-03', 'ASSEMBLE_HEAVY', 'Safety');
+  const [callout] = crew;
+  const endsAt = new Date(now + 8 * 3600e3);
+  await post(`/api/workforce/workers/${callout.personId}/unavailability`, {
+    kind: 'CallOut', startsAt: new Date(now).toISOString(), endsAt: endsAt.toISOString(), reason: 'S03 replay: heavy assembly operator called out',
+  }, supervisor, `ww-replay-s03-callout-${callout.personId}`);
+  await post(`/api/workforce/workers/${callout.personId}/departure`, { reason: 'S03 replay: callout departure' }, supervisor, `ww-replay-s03-departure-${callout.personId}`);
+  const safetyAfter = await machineDimension('ASM-03', 'ASSEMBLE_HEAVY', 'Safety');
+  const after = new Map((await get('/api/workforce/workers', supervisor)).map(w => [w.personId, w]));
+  const remaining = after.get(crew[1].personId);
+  evidence.s03 = { callout: callout.displayName, partner: crew[1].displayName, safetyBefore, safetyAfter };
+  check('S03 ASM-03 two-person safety is met while both qualified operators are present', safetyBefore.outcome === 'Pass', { safetyBefore });
+  check('S03 ASM-03 safety fails after one of the two calls out, while the partner is still present', safetyAfter.outcome === 'Fail'
+    && !!remaining?.presentUntil && Date.parse(remaining.presentUntil) > now, { safetyAfter, partnerPresentUntil: remaining?.presentUntil ?? null });
+}
+
 async function replayS02(simulatedNow) {
   // Mirrors the Scenario Center's source workflow: three audited callout windows, two scheduled
   // workers without presence, and no fabricated verified attendance/no-show classification.
@@ -374,6 +409,7 @@ async function main() {
   check('Only the WW-P01 site exists in the replay database', sites.length === 1 && sites[0].code === 'WW-P01', { sites: sites.map(s => s.code) });
   check('The S01 baseline has released work', baselineKpis.releasedOrders > 0, { releasedOrders: baselineKpis.releasedOrders });
 
+  await replayS03(status.simulatedNow); // before S02, whose callouts may include the ASM-03 crew
   await replayS02(status.simulatedNow);
   await replayS07();
   const siteZone = sites[0]?.timeZone ?? 'UTC';
