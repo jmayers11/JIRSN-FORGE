@@ -264,10 +264,33 @@ public static class OperationsEndpoints
                 return Results.BadRequest(new { error = "invalid_date_range", message = "Choose an end time after the start, within a 90-day window." });
             return await ReadStore<IWorkforceLookup>(http, Permissions.WorkforceRead, async (l, ct) => await l.ListUnavailabilityAsync(startsAt, endsAt, ct));
         });
-        api.MapGet("/attendance-intelligence", async (HttpContext http, DateTimeOffset? from, DateTimeOffset? to, TimeProvider time, CancellationToken _) =>
+        // Without dates the summary covers a calendar quarter at the site: the current one to date by default, the previous one, or any
+        // earlier quarter by name (?quarter=2026-Q3). Explicit from/to dates still choose any period up to a year.
+        api.MapGet("/attendance-intelligence", async (HttpContext http, DateTimeOffset? from, DateTimeOffset? to, string? period, string? quarter, TimeProvider time,
+            IKernelUnitOfWorkFactory unitOfWork, CancellationToken _) =>
         {
-            var endsAt = to ?? time.GetUtcNow();
-            var startsAt = from ?? endsAt.AddDays(-90);
+            var now = time.GetUtcNow();
+            DateTimeOffset startsAt, endsAt;
+            string? label = null;
+            if (from is null && to is null)
+            {
+                string zone;
+                await using (var uow = await unitOfWork.BeginSnapshotAsync(http.RequestAborted))
+                    zone = await uow.SiteTimeZoneAsync(http.RequestAborted);
+                var named = AttendancePeriods.Resolve(period, quarter, SiteTime.DateAt(now, zone));
+                if (named is null)
+                    return Results.BadRequest(new { error = "invalid_period", message = "Choose quarter, previous-quarter or a started quarter such as 2026-Q3." });
+                startsAt = SiteTime.StartOf(named.FirstDay, zone);
+                var periodEnd = SiteTime.StartOf(named.EndBefore, zone);
+                endsAt = periodEnd < now ? periodEnd : now;
+                label = periodEnd < now ? named.Label : $"{named.Label} to date";
+            }
+            else
+            {
+                endsAt = to ?? now;
+                startsAt = from ?? endsAt.AddDays(-90);
+            }
+
             if (endsAt <= startsAt || endsAt - startsAt > TimeSpan.FromDays(366))
                 return Results.BadRequest(new { error = "invalid_date_range", message = "Choose a period up to one year long." });
             return await ReadStore<IAttendanceReliabilityStore>(http, Permissions.AttendanceIntelligenceRead, async (store, ct) =>
@@ -275,7 +298,8 @@ public static class OperationsEndpoints
                 var opportunities = await store.ListAttendanceOpportunitiesAsync(startsAt, endsAt, ct);
                 var events = await store.ListAttendanceIntelligenceEventsAsync(startsAt, endsAt, ct);
                 var policies = await store.ListAttendancePoliciesAsync(ct);
-                return AttendanceReliabilityCalculator.Calculate(opportunities, events, policies, startsAt, endsAt, time.GetUtcNow());
+                return AttendanceReliabilityCalculator.Calculate(opportunities, events, policies, startsAt, endsAt, now)
+                    with { PeriodLabel = label, PeriodStart = startsAt, PeriodEnd = endsAt };
             });
         });
         api.MapGet("/attendance-policies", (HttpContext http, CancellationToken _) =>

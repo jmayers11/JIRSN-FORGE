@@ -605,6 +605,7 @@ export function buildWorkforceIntelligence(input = {}) {
       pendingReviewOpportunities: attendanceSummary?.pendingReviewOpportunities ?? null,
       missingPolicyOpportunities: attendanceSummary?.missingPolicyOpportunities ?? null,
     };
+  attendance.period = attendanceSummary?.periodLabel ?? null;
 
   return {
     expiryDays,

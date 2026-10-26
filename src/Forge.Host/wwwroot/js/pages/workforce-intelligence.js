@@ -181,6 +181,13 @@ export async function appendOwnAttendanceCorrections(page, me) {
   });
 }
 
+/** Calendar quarters are resolved by the server in the plant's time zone; the other periods are chosen here. */
+export function attendanceSummaryUrl(period, now) {
+  if (period === 'quarter' || period === 'previous-quarter') return `/api/workforce/attendance-intelligence?period=${period}`;
+  const iso = date => encodeURIComponent(date.toISOString());
+  return `/api/workforce/attendance-intelligence?from=${iso(attendancePeriodStart(period, now))}&to=${iso(now)}`;
+}
+
 function attendancePeriodStart(period, now) {
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
@@ -351,7 +358,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
     ? `<section class="workforce-intelligence-recovery"><h3>Safe coverage options</h3><p class="faint">Ranked from current visible workers. The preview checks qualification, machine authorization, active source work, equipment/tooling, and safety composition; it does not commit assignments.</p>${recoveryRows}</section>`
     : `<p class="faint">${!canRecoverCoverage ? 'Coverage recovery needs readiness read and Workforce supervise or manage permissions.' : coverageKnown ? 'Every listed machine and shift capability has a current qualified worker in this view.' : 'Coverage is unknown until resources and qualifications are readable.'}</p>`;
   const attendanceTab = `
-        <div class="workforce-intelligence-attendance"><b>Attendance reliability: ${esc(summary.attendance.status)}</b><span>${esc(summary.attendance.detail)}</span></div>
+        <div class="workforce-intelligence-attendance"><b>Attendance reliability${summary.attendance.period ? ` · ${esc(summary.attendance.period)}` : ''}: ${esc(summary.attendance.status)}</b><span>${esc(summary.attendance.detail)}</span></div>
         ${sources.attendance?.error ? errorBlock(sources.attendance.error, 'attendance summary') : ''}
         <div class="workforce-intelligence-attendance-stats" aria-label="Attendance calculation counts">
           <span>Scheduled: <b>${attendanceCount(summary.attendance.scheduledOpportunities)}</b></span><span>Eligible arrivals: <b>${attendanceCount(summary.attendance.eligibleOpportunities)}</b></span>
@@ -361,7 +368,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
         </div>
         ${summary.upcomingAbsence.length ? `<p class="faint">${summary.upcomingAbsence.length} planned availability window(s) remain in the next 30 days. The source records contain no private absence reasons.</p>` : ''}
         <div class="workforce-intelligence-attendance-tools"><h3>Attendance schedule and policy</h3>
-          <label>Review period<select class="input" data-wi-filter="period"><option value="quarter" ${options.attendancePeriod === 'quarter' ? 'selected' : ''}>Calendar quarter to date</option><option value="month" ${options.attendancePeriod === 'month' ? 'selected' : ''}>Month to date</option><option value="rolling90" ${options.attendancePeriod === 'rolling90' ? 'selected' : ''}>Rolling 90 days</option><option value="year" ${options.attendancePeriod === 'year' ? 'selected' : ''}>Year to date</option></select></label>
+          <label>Review period<select class="input" data-wi-filter="period"><option value="quarter" ${options.attendancePeriod === 'quarter' ? 'selected' : ''}>Calendar quarter to date</option><option value="previous-quarter" ${options.attendancePeriod === 'previous-quarter' ? 'selected' : ''}>Previous calendar quarter</option><option value="month" ${options.attendancePeriod === 'month' ? 'selected' : ''}>Month to date</option><option value="rolling90" ${options.attendancePeriod === 'rolling90' ? 'selected' : ''}>Rolling 90 days</option><option value="year" ${options.attendancePeriod === 'year' ? 'selected' : ''}>Year to date</option></select></label>
           <p class="faint">The metric uses dated opportunities and the policy revision effective on each scheduled date. A missed punch remains pending review; no-show classifications require a completed shift and independent verification.</p>
           ${policyRows ? `<ul class="workforce-intelligence-list">${policyRows}</ul>` : '<p class="faint">No attendance policy is recorded yet.</p>'}
           ${canSchedule ? `<form data-wi-schedule-form class="workforce-intelligence-form"><label>From<input class="input" name="from" type="datetime-local" required value="${localDateTime(scheduleFrom)}"></label><label>Through<input class="input" name="through" type="datetime-local" required value="${localDateTime(scheduleThrough)}"></label><label>Audit reason<input class="input" name="reason" required value="Generate dated shift schedule" maxlength="240"></label><button class="btn small primary" type="submit">Generate shift opportunities</button></form>` : ''}
@@ -422,7 +429,6 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
   const activityFrom = new Date(now.getTime() - 30 * DAY);
   const through = new Date(now.getTime() + 30 * DAY);
   const current = { tab: tab ?? (selectedPersonId ? 'labor' : 'overview'), expiryDays: 60, siteCode: '', areaCode: '', department: '', shiftCode: '', workCenterCode: '', machineCode: '', roleTitle: '', qualificationCode: '', workerStatus: 'all', reviewState: 'all', attendancePeriod: 'quarter' };
-  const periodStart = attendancePeriodStart(current.attendancePeriod, now);
   const reviewFrom = new Date(now.getTime() - 90 * DAY);
   const scheduleFrom = new Date(now.getTime() - 60 * DAY);
   const iso = date => encodeURIComponent(date.toISOString());
@@ -436,7 +442,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     tryGet(`/api/workforce/unavailability?from=${iso(now)}&to=${iso(through)}`),
     tryGet('/api/readiness/operations'),
     tryGet(`/api/shopfloor/activity?from=${iso(activityFrom)}&to=${iso(now)}`),
-    tryGet(`/api/workforce/attendance-intelligence?from=${iso(periodStart)}&to=${iso(now)}`),
+    tryGet(attendanceSummaryUrl(current.attendancePeriod, now)),
     tryGet(`/api/workforce/attendance-intelligence/events?from=${iso(reviewFrom)}&to=${iso(now)}`),
     tryGet('/api/workforce/attendance-policies'),
     tryGet(`/api/workforce/attendance-opportunities?from=${iso(scheduleFrom)}&to=${iso(through)}`),
@@ -563,8 +569,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     if (filter === 'period') {
       current.attendancePeriod = event.target.value;
       const end = new Date();
-      const start = attendancePeriodStart(current.attendancePeriod, end);
-      const result = await tryGet(`/api/workforce/attendance-intelligence?from=${iso(start)}&to=${iso(end)}`);
+      const result = await tryGet(attendanceSummaryUrl(current.attendancePeriod, end));
       sources.attendance = result;
       inputs.attendanceSummary = result.data ?? null;
     }

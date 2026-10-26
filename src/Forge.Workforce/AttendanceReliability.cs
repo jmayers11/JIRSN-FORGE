@@ -67,7 +67,53 @@ public sealed record AttendanceReliabilitySummary(
     int CallOutDenominator,
     int NoShowDenominator,
     IReadOnlyList<(string PolicyCode, int Revision)> PolicyRevisions,
-    string Explanation);
+    string Explanation,
+    string? PeriodLabel = null,
+    DateTimeOffset? PeriodStart = null,
+    DateTimeOffset? PeriodEnd = null);
+
+/// <summary>A named attendance review period: whole site-local days from <see cref="FirstDay"/> up to, not including, <see cref="EndBefore"/>.</summary>
+public sealed record AttendancePeriod(string Label, DateOnly FirstDay, DateOnly EndBefore);
+
+/// <summary>
+/// Calendar quarters for attendance reviews (Sprint 10 WW-S10-17). The current period starts again on the first day of each quarter at
+/// the site; every earlier quarter stays queryable by name ("2026-Q3") or as the previous quarter. Nothing is reset or rewritten: a
+/// period only chooses which dated opportunities and facts are counted.
+/// </summary>
+public static class AttendancePeriods
+{
+    public static AttendancePeriod QuarterOf(DateOnly day)
+    {
+        var quarter = ((day.Month - 1) / 3) + 1;
+        var first = new DateOnly(day.Year, ((quarter - 1) * 3) + 1, 1);
+        return new AttendancePeriod($"{day.Year}-Q{quarter}", first, first.AddMonths(3));
+    }
+
+    /// <summary>
+    /// The period asked for: <paramref name="quarter"/> by name ("2026-Q3"), otherwise "previous-quarter" or the current quarter (the
+    /// default). Null when the name is not a quarter or names one that has not started.
+    /// </summary>
+    public static AttendancePeriod? Resolve(string? period, string? quarter, DateOnly today)
+    {
+        var current = QuarterOf(today);
+        if (!string.IsNullOrWhiteSpace(quarter))
+        {
+            var text = quarter.Trim().ToUpperInvariant();
+            if (text.Length != 7 || text[4] != '-' || text[5] != 'Q' || !int.TryParse(text[..4], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var year)
+                || year is < 2000 or > 2100 || text[6] is < '1' or > '4')
+                return null;
+            var named = QuarterOf(new DateOnly(year, ((text[6] - '1') * 3) + 1, 1));
+            return named.FirstDay > today ? null : named;
+        }
+
+        return (period?.Trim().ToLowerInvariant() ?? "quarter") switch
+        {
+            "quarter" or "current-quarter" => current,
+            "previous-quarter" => QuarterOf(current.FirstDay.AddDays(-1)),
+            _ => null,
+        };
+    }
+}
 
 /// <summary>
 /// Deterministic, non-disciplinary attendance calculations. Missing punches never create a no-show;
