@@ -90,8 +90,13 @@ public sealed class DemoTenantTests(PostgresFixture postgres)
             Assert.Contains(compare.GetProperty("rows").EnumerateArray(), r => r.GetProperty("metric").GetString() == "Released orders");
             Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await plant.Try(pat, "/api/demo/reset", new { reason = "x" })).StatusCode);
 
+            // A baseline saved by an older build lacks the newest schema: make it look like one. Reset must bring the copy up to date.
+            await AgeBaselineAsync(connection, database + "_baseline");
+
             var reset = await plant.Ok(sam, "/api/demo/reset", new { reason = "Restart the scenario run" });
             Assert.Contains("_archive_", reset.GetProperty("message").GetString()!, StringComparison.Ordinal);
+            Assert.Contains("brought up to date with 1 newer migration", reset.GetProperty("message").GetString()!, StringComparison.Ordinal);
+            Assert.Equal(System.Net.HttpStatusCode.OK, (await pat.GetAsync(new Uri("/api/planning/replacement-orders", UriKind.Relative))).StatusCode);
             var items = await plant.Engineer.GetFromJsonAsync<JsonElement[]>("/api/engineering/items");
             Assert.DoesNotContain(items ?? [], i => i.GetProperty("partNumber").GetString() == "WW-AFTER-BASELINE");
             var after = await Get(pat, "/api/demo/status");
@@ -107,6 +112,33 @@ public sealed class DemoTenantTests(PostgresFixture postgres)
             NpgsqlConnection.ClearAllPools();
             foreach (var extra in await DatabasesAsync(connection, database + "\\_%"))
                 await postgres.DropDatabaseAsync(extra);
+        }
+    }
+
+    private static async Task AgeBaselineAsync(string connection, string baseline)
+    {
+        var maintenance = new NpgsqlConnectionStringBuilder(connection) { Database = "postgres", Pooling = false };
+        await using (var admin = new NpgsqlConnection(maintenance.ConnectionString))
+        {
+            await admin.OpenAsync();
+            await using var allow = new NpgsqlCommand($"ALTER DATABASE \"{baseline}\" ALLOW_CONNECTIONS true", admin);
+            await allow.ExecuteNonQueryAsync();
+        }
+
+        var target = new NpgsqlConnectionStringBuilder(connection) { Database = baseline, Pooling = false };
+        await using (var db = new NpgsqlConnection(target.ConnectionString))
+        {
+            await db.OpenAsync();
+            await using var age = new NpgsqlCommand(
+                "DROP TABLE planning.replacement_order_proposal; DELETE FROM public.forge_schema_migrations WHERE migration_id = 'planning/0010_replacement_order_proposal'", db);
+            await age.ExecuteNonQueryAsync();
+        }
+
+        await using (var admin = new NpgsqlConnection(maintenance.ConnectionString))
+        {
+            await admin.OpenAsync();
+            await using var deny = new NpgsqlCommand($"ALTER DATABASE \"{baseline}\" ALLOW_CONNECTIONS false", admin);
+            await deny.ExecuteNonQueryAsync();
         }
     }
 

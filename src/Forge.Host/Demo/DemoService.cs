@@ -82,7 +82,8 @@ public sealed class DemoService(
     NpgsqlDataSource dataSource,
     SiteClockLoader siteClock,
     ReadinessService readiness,
-    IForgeAuthorizer authorizer)
+    IForgeAuthorizer authorizer,
+    Forge.Kernel.Postgres.MigrationRunner migrations)
 {
     private const string Source = "Demo";
     private const string Entity = "DemoTenant";
@@ -346,6 +347,8 @@ public sealed class DemoService(
         }
 
         dataSource.Clear();
+        // A baseline saved before an upgrade has the older schema: bring the restored copy up to this build, as at startup.
+        var upgraded = await migrations.MigrateAsync(ct);
         await LoadClockAsync(ct);
         await siteClock.LoadAsync(ct);
 
@@ -355,7 +358,7 @@ public sealed class DemoService(
         {
             await uow.Store<IDemoStore>().InsertBaselineAsync(baseline with { BaselineId = 0 }, ct);
             return new CommandOutcome(
-                CommandResult.Ok(tenant.DemoCode, $"Demo reset to baseline {baseline.BaselineId} ({baseline.CapturedAt.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture)}). The previous state is kept as database {archive}."),
+                CommandResult.Ok(tenant.DemoCode, $"Demo reset to baseline {baseline.BaselineId} ({baseline.CapturedAt.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture)}). The previous state is kept as database {archive}.{(upgraded.Count > 0 ? $" The restored copy was brought up to date with {upgraded.Count} newer migration(s)." : string.Empty)}"),
                 [pipeline.Event(new DemoReset(tenant.DemoCode, baseline.DatabaseName, archive, "Restored"), context, Source, Entity, tenant.DemoCode)],
                 new AuditChange(Entity, tenant.DemoCode, archive, baseline.DatabaseName));
         }, ct);
