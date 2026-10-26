@@ -76,17 +76,17 @@ public sealed class LaborStandardReviewTests(PostgresFixture postgres)
 
         var url = $"/api/workforce/cause-adjusted-performance?personId={sarah}&from={Uri.EscapeDataString(start.AddHours(-1).ToString("O"))}&to={Uri.EscapeDataString(start.AddHours(4).ToString("O"))}";
         var cardsUrl = $"/api/workforce/performance-cards?personIds={sarah}&from={Uri.EscapeDataString(start.AddDays(-80).ToString("O"))}&to={Uri.EscapeDataString(start.AddHours(4).ToString("O"))}";
-        async Task<(int InScope, string[] States, string Status)> Efficiency()
+        async Task<(int InScope, string States, string Status)> Efficiency()
         {
             var report = await Get(sup, url);
             return (report.GetProperty("efficiencyScope").GetArrayLength(),
-                report.GetProperty("standardReviews").EnumerateArray().Select(n => n.GetProperty("state").GetString()!).ToArray(),
+                string.Join(",", report.GetProperty("standardReviews").EnumerateArray().Select(n => n.GetProperty("state").GetString()!)),
                 report.GetProperty("efficiency").GetProperty("status").GetString()!);
         }
 
         // Implausible is only flagged: it still counts until a person marks the standard for review.
         var flagged = await Efficiency();
-        Assert.Equal((1, new[] { "ReviewSuggested" }), (flagged.InScope, flagged.States));
+        Assert.Equal((1, "ReviewSuggested"), (flagged.InScope, flagged.States));
         Assert.Contains("look implausible", flagged.Status, StringComparison.Ordinal);
 
         // A supervisor marks it; the worker and the terminal cannot, nor can anyone review an operation the routing does not have.
@@ -99,7 +99,7 @@ public sealed class LaborStandardReviewTests(PostgresFixture postgres)
         await Rejected(plant, sup, reviews, Raise(), "review_open");
 
         var underReview = await Efficiency();
-        Assert.Equal((0, new[] { "UnderReview" }), (underReview.InScope, underReview.States));
+        Assert.Equal((0, "UnderReview"), (underReview.InScope, underReview.States));
         Assert.Contains("not used as a worker score", underReview.Status, StringComparison.Ordinal);
         var report = await Get(sup, url);
         Assert.Equal(JsonValueKind.Null, report.GetProperty("efficiency").GetProperty("controllableEfficiencyPercent").ValueKind);
@@ -112,14 +112,15 @@ public sealed class LaborStandardReviewTests(PostgresFixture postgres)
         Assert.Equal(HttpStatusCode.Forbidden, (await plant.Try(sup, $"{reviews}/{review}/decide", new { status = "Confirmed", resolution = "x", reason = "x" })).StatusCode);
         await Rejected(plant, e, $"{reviews}/{review}/decide", new { status = "Open", resolution = "x", reason = "x" }, "invalid_decision");
         await plant.Ok(e, $"{reviews}/{review}/decide", new { status = "Confirmed", resolution = "Time study 2026-10 matches the routing", reason = "Engineering review" });
-        Assert.Equal((1, Array.Empty<string>()), ((await Efficiency()).InScope, (await Efficiency()).States));
+        var confirmed = await Efficiency();
+        Assert.Equal((1, ""), (confirmed.InScope, confirmed.States));
 
         // Raised again and found wrong: work done against it stays out of efficiency.
         var second = Id(await plant.Ok(sup, reviews, Raise()));
         await plant.Ok(e, $"{reviews}/{second}/decide", new { status = "Corrected", resolution = "Rev B routing adds the knife change", reason = "Engineering review" });
         await Rejected(plant, e, $"{reviews}/{second}/decide", new { status = "Confirmed", resolution = "x", reason = "x" }, "review_decided");
         var corrected = await Efficiency();
-        Assert.Equal((0, new[] { "Corrected" }), (corrected.InScope, corrected.States));
+        Assert.Equal((0, "Corrected"), (corrected.InScope, corrected.States));
         var history = (await Get(sup, reviews)).EnumerateArray().Select(r => r.GetProperty("status").GetString()).ToArray();
         Assert.Equal(new[] { "Confirmed", "Corrected" }, history);
     }
