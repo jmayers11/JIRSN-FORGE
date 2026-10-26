@@ -12,6 +12,7 @@ using Forge.Kernel.Serialization;
 using Forge.Planning;
 using Forge.Programs.Contracts;
 using Forge.Quality.Contracts;
+using Forge.Resources.Contracts;
 using Forge.Workforce;
 using Forge.Workforce.Contracts;
 
@@ -164,6 +165,7 @@ public sealed class ReplacementOrderService(CommandPipeline pipeline, ReadinessS
         string revision;
         List<WorkerState> workers;
         ILookup<Guid, string> held;
+        var operatorQualifications = new Dictionary<(string Machine, string Activity), IReadOnlyList<string>>();
         await using (var uow = await unitOfWork.BeginSnapshotAsync(ct))
         {
             workers = (await uow.Store<IWorkforceLookup>().GetWorkerStatesAsync(at, ct)).Where(w => w.IsActive).ToList();
@@ -176,6 +178,11 @@ public sealed class ReplacementOrderService(CommandPipeline pipeline, ReadinessS
                 ?? throw new CommandRejectedException("no_released_revision", $"Part {part} has no released revision in force.");
             revision = effective.Revision;
             routing = (await engineering.GetRevisionDetailAsync(part, revision, ct))?.Routing ?? [];
+            var resources = uow.Store<IResourcesLookup>();
+            foreach (var op in routing)
+                foreach (var code in op.EligibleMachines)
+                    if (await resources.FindMachineActivityAsync(code, op.ActivityCode, ct) is { } activity)
+                        operatorQualifications[(code, op.ActivityCode)] = activity.OperatorQualifications;
         }
 
         if (routing.Count == 0) throw new CommandRejectedException("no_routing", $"{part} rev {revision} has no routing to check.");
@@ -185,18 +192,21 @@ public sealed class ReplacementOrderService(CommandPipeline pipeline, ReadinessS
             {
                 if (checks.Count == MaximumChecks)
                     throw new CommandRejectedException("routing_too_large", $"A replacement check covers at most {MaximumChecks} operation and machine combinations.");
-                checks.Add(await CheckOperationAsync(principal, op, machine, workers, held, ct));
+                var required = op.RequiredQualifications
+                    .Concat(machine is not null && operatorQualifications.TryGetValue((machine, op.ActivityCode), out var quals) ? quals : [])
+                    .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+                checks.Add(await CheckOperationAsync(principal, op, machine, required, workers, held, ct));
             }
 
         return (revision, checks);
     }
 
-    private async Task<ReplacementOperationCheck> CheckOperationAsync(ForgePrincipal principal, RoutingOperationInfo op, string? machine, IReadOnlyList<WorkerState> workers,
+    private async Task<ReplacementOperationCheck> CheckOperationAsync(ForgePrincipal principal, RoutingOperationInfo op, string? machine, IReadOnlyList<string> required, IReadOnlyList<WorkerState> workers,
         ILookup<Guid, string> held, CancellationToken ct)
     {
-        // The recovery engine checks the machine's operator qualifications, authorization and safety composition; the routing
-        // operation's own required qualifications are checked here against each person's qualifications valid now.
-        bool Holds(Guid person) => op.RequiredQualifications.All(code => held[person].Contains(code, StringComparer.Ordinal));
+        // The recovery engine checks presence, authorization, equipment and safety composition for the work; the person who would
+        // run it must also hold, valid now, the operation's required qualifications and the machine activity's operator qualifications.
+        bool Holds(Guid person) => required.All(code => held[person].Contains(code, StringComparer.Ordinal));
         try
         {
             var run = await readiness.RecommendWorkforceRecoveryAsync(principal, new AssignWork(new PersonId(Guid.Empty), null, op.WorkCenterCode, machine, op.ActivityCode, false), ct);
@@ -206,10 +216,10 @@ public sealed class ReplacementOrderService(CommandPipeline pipeline, ReadinessS
                 && a.ActivityCode == op.ActivityCode && (machine is null || a.MachineCode == machine)).ToList();
             var readyNow = result.TargetReadyBefore && onIt.Any(w => Holds(w.PersonId));
             var constraint = result.TargetReadyBefore && !readyNow
-                ? $"Nobody on it now holds {string.Join(", ", op.RequiredQualifications)}."
+                ? $"Nobody on it now holds {string.Join(", ", required)}."
                 : result.CurrentConstraint;
             IReadOnlyList<string> limitations = lacking == 0 ? result.Limitations
-                : [.. result.Limitations, $"{lacking} more person(s) could run the equipment but lack {string.Join(", ", op.RequiredQualifications)}, which the operation requires; they are not listed."];
+                : [.. result.Limitations, $"{lacking} more person(s) could run the equipment but lack {string.Join(", ", required)}, which the operation requires; they are not listed."];
             var candidates = result.Candidates.Where(candidate => Holds(candidate.PersonId)).Select(candidate => new ReplacementCandidate(candidate.PersonId, candidate.PersonName, candidate.RequiresSourceBackfill,
                 candidate.SourceImpacts.Select(impact => impact.Detail).ToList(),
                 [.. candidate.Evidence, .. candidate.Moves.Where(move => move.PersonId != candidate.PersonId).Select(move => $"Backfill: {move.PersonName} to {Work(move.Assignment)}.")])).ToList();

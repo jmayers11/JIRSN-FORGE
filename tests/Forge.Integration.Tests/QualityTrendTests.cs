@@ -40,7 +40,7 @@ public sealed class QualityTrendTests(PostgresFixture postgres)
         foreach (var order in new[] { a, b })
         {
             await plant.Ok(planner, $"/api/orders/{order}/release", new { reason = "Customer order" });
-            await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = order, partNumber = "COIL-AL", quantity = 60m, locationCode = "STORES" });
+            await plant.Ok(stores, "/api/inventory/issues", new { orderNumber = order, partNumber = "COIL-AL", quantity = 52m, locationCode = "STORES" });
         }
 
         await plant.Ok(kiosk, "/api/shopfloor/start", new { badge = Sarah, orderNumber = a, sequence = 10, machineCode = "SLITTER-A" });
