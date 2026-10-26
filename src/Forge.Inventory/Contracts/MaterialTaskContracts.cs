@@ -28,6 +28,9 @@ public enum MaterialTaskStatus
     DeliveryRejected,
     Rejected,
     Cancelled,
+
+    /// <summary>The part of a request stock could not cover when the rest was allocated (Sprint 10 WW-S10-26); allocated when stock arrives.</summary>
+    Backordered,
 }
 
 public enum MaterialCustodyEventKind
@@ -88,7 +91,8 @@ public sealed record MaterialTask(
     decimal ReceivedQuantity = 0m,
     decimal RejectedQuantity = 0m,
     decimal ReturnedQuantity = 0m,
-    decimal ReversedQuantity = 0m)
+    decimal ReversedQuantity = 0m,
+    long? BackorderOfTaskId = null)
 {
     /// <summary>Stock this task holds back from other allocations: allocated or picked, not yet delivered.</summary>
     public decimal Reserved => Status switch

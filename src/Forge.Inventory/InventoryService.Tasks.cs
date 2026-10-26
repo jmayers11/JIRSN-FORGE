@@ -19,7 +19,8 @@ public sealed record RequestMaterial(MaterialTaskKind Kind, long? OrderNumber, s
     string? FromLocation = null, string? KitCode = null, int? OperationSequence = null, bool OperatorInitiated = false, Guid? RequesterPersonId = null,
     long? SourceSuspectReportId = null, bool AllowNonBomMaterial = false);
 
-public sealed record AllocateMaterial(long TaskId, string FromLocation, string? LotNumber);
+/// <param name="AllowPartial">When the source cannot cover the whole task, allocate what it can and backorder the rest as a linked task.</param>
+public sealed record AllocateMaterial(long TaskId, string FromLocation, string? LotNumber, bool AllowPartial = false);
 
 /// <param name="Quantity">What was actually picked; less than the task when the location was short.</param>
 public sealed record PickMaterial(long TaskId, string ScannedLocation, string? ScannedLot, decimal? Quantity = null,
@@ -305,8 +306,11 @@ public sealed partial class InventoryService
     public Task<CommandResult> AllocateMaterialAsync(AllocateMaterial c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
-        return ChangeTaskAsync(nameof(AllocateMaterial), c.TaskId, c, context, MaterialTaskStatus.Requested, false, async (uow, task, now) =>
+        MaterialTask? backorder = null;
+        return ChangeTaskAsync(nameof(AllocateMaterial), c.TaskId, c, context, null, false, async (uow, task, now) =>
         {
+            if (task.Status is not (MaterialTaskStatus.Requested or MaterialTaskStatus.Backordered))
+                throw new CommandRejectedException("wrong_step", $"Task {task.TaskId} is {task.Status.ToString().ToLowerInvariant()}; this step needs it requested or backordered.");
             var item = await ItemAsync(uow, task.PartNumber, ct);
             var lot = Optional(c.LotNumber) is null ? task.LotNumber : RequireLot(item, c.LotNumber);
             if (task.LotNumber is not null && lot != task.LotNumber)
@@ -319,9 +323,30 @@ public sealed partial class InventoryService
                 RequireLot(item, null);
             }
 
+            // Sprint 10 WW-S10-26: issue at most what is there; the rest stays requested as a linked backorder, never lost or double-counted.
+            if (c.AllowPartial)
+            {
+                var available = await UnallocatedAsync(uow, task, c.FromLocation, lot, ct);
+                if (available > 0 && available < task.Quantity)
+                {
+                    var remainder = task.Quantity - available;
+                    backorder = new MaterialTask(0, task.Kind, task.OrderNumber, task.KitCode, task.PartNumber, task.LotNumber, remainder, null, task.ToLocation,
+                        MaterialTaskStatus.Backordered, null, task.Reason, task.RequestedBy, task.RequestedAt, OperationSequence: task.OperationSequence,
+                        RequesterPersonId: task.RequesterPersonId, IsNonBom: task.IsNonBom, ReviewedBy: task.ReviewedBy, ReviewedAt: task.ReviewedAt, ReviewNote: task.ReviewNote,
+                        BackorderOfTaskId: task.TaskId);
+                    var partial = await AllocatedAsync(uow, task with { Quantity = available }, c.FromLocation, lot, context.Actor, now, ct);
+                    var backorderId = await uow.Store<IInventoryStore>().InsertMaterialTaskAsync(backorder, ct);
+                    backorder = backorder with { TaskId = backorderId };
+                    return (partial, $"Task {task.TaskId}: {Qty(available)} of {Qty(task.Quantity)} {task.PartNumber} allocated from {partial.FromLocation}; {Qty(remainder)} backordered as task {backorderId}.");
+                }
+            }
+
             var allocated = await AllocatedAsync(uow, task, c.FromLocation, lot, context.Actor, now, ct);
             return (allocated, $"Task {task.TaskId}: {Qty(task.Quantity)} {task.PartNumber}{(lot is null ? string.Empty : " lot " + lot)} allocated from {allocated.FromLocation}.");
-        }, ct);
+        }, ct, extra: program => backorder is { } b
+            ? [pipeline.Event(new MaterialTaskChanged(b.TaskId, nameof(MaterialTaskStatus.Backordered), b.OrderNumber), context, SourceContext, TaskEntity,
+                b.TaskId.ToString(CultureInfo.InvariantCulture), program)]
+            : []);
     }
 
     public Task<CommandResult> PickMaterialAsync(PickMaterial c, CommandContext context, CancellationToken ct)
@@ -652,7 +677,8 @@ public sealed partial class InventoryService
     }
 
     private Task<CommandResult> ChangeTaskAsync<TCommand>(string name, long taskId, TCommand command, CommandContext context, MaterialTaskStatus? expected, bool reasonRequired,
-        Func<IKernelUnitOfWork, MaterialTask, DateTimeOffset, Task<(MaterialTask Changed, string Message)>> change, CancellationToken ct, string? permission = null)
+        Func<IKernelUnitOfWork, MaterialTask, DateTimeOffset, Task<(MaterialTask Changed, string Message)>> change, CancellationToken ct, string? permission = null,
+        Func<ProgramId?, IReadOnlyList<EventEnvelope>>? extra = null)
         where TCommand : notnull
     {
         var key = taskId.ToString(CultureInfo.InvariantCulture);
@@ -720,11 +746,25 @@ public sealed partial class InventoryService
             }
             if (changed.ReceiverPersonId is not null && changed.Status is (MaterialTaskStatus.Delivered or MaterialTaskStatus.DeliveryRejected))
                 events.Add(pipeline.Event(new MaterialCustodyResolved(taskId, changed.Status.ToString()), context, SourceContext, TaskEntity, key, programId));
+            if (extra is not null) events.AddRange(extra(programId));
             return new CommandOutcome(
                 CommandResult.Ok(key, message),
                 events,
                 new AuditChange(TaskEntity, key, CanonicalJson.Serialize(task), CanonicalJson.Serialize(changed)));
         }, ct);
+    }
+
+    /// <summary>Released stock at the source not held by any other task.</summary>
+    private static async Task<decimal> UnallocatedAsync(IKernelUnitOfWork uow, MaterialTask task, string rawFrom, string? lot, CancellationToken ct)
+    {
+        var from = await CompanyLocationAsync(uow, rawFrom, ct);
+        var store = uow.Store<IInventoryStore>();
+        await store.LockPartAsync(task.PartNumber, ct);
+        var balance = await store.BalanceAsync(task.PartNumber, from.Code, lot, StockStatus.Released, ct);
+        var held = (await uow.Store<IInventoryLookup>().ListMaterialTasksAsync(true, null, ct))
+            .Where(t => t.TaskId != task.TaskId && t.PartNumber == task.PartNumber && t.FromLocation == from.Code && t.LotNumber == lot)
+            .Sum(t => t.Reserved);
+        return Math.Max(0m, balance - held);
     }
 
     /// <summary>Holds stock for the task: released, in the company's custody, not already held by another task.</summary>

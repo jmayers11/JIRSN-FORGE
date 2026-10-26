@@ -217,4 +217,47 @@ public sealed class MaterialRequestAcceptanceTests(PostgresFixture postgres)
         Assert.Equal("Requested", history[rest].GetProperty("status").GetString());
         Assert.Equal((4m, 4m), (await Stock(stores, "CONN-8", "STORES"), await Stock(stores, "CONN-8", "STORES", "Hold")));
     }
+
+    [Fact]
+    public async Task A_short_request_issues_only_what_is_there_and_backorders_the_rest_until_stock_arrives()
+    {
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync());
+        var (plant, planner, _, stores, _, order) = await BuildAsync(app, 12m);
+
+        // WW-S10-26: 20 requested, 12 on the shelf. Allocating all of it is refused; allocating what is there backorders the other 8.
+        var task = Id(await plant.Ok(stores, Tasks, new { kind = "Stage", orderNumber = order, partNumber = "CONN-8", quantity = 20m, toLocation = "SL-STAGE", operationSequence = 10 }));
+        await Rejected(plant, stores, $"{Tasks}/{task}/allocate", new { fromLocation = "STORES" }, "insufficient_unallocated");
+        var split = await plant.Ok(stores, $"{Tasks}/{task}/allocate", new { fromLocation = "STORES", allowPartial = true });
+        Assert.Contains("12 of 20 CONN-8 allocated", split.GetProperty("message").GetString(), StringComparison.Ordinal);
+        var tasks = (await Get(stores, $"{Tasks}?open=false&order={order}")).EnumerateArray().ToList();
+        var allocated = tasks.Single(t => t.GetProperty("taskId").GetInt64() == task);
+        var backorder = tasks.Single(t => t.GetProperty("status").GetString() == "Backordered");
+        Assert.Equal(("Allocated", 12m), (allocated.GetProperty("status").GetString(), allocated.GetProperty("quantity").GetDecimal()));
+        Assert.Equal((8m, task), (backorder.GetProperty("quantity").GetDecimal(), backorder.GetProperty("backorderOfTaskId").GetInt64()));
+        var backorderId = backorder.GetProperty("taskId").GetInt64();
+
+        // The backorder is still the order's requested demand: nothing more can be requested against the released BOM.
+        await Rejected(plant, stores, Tasks, new { kind = "Stage", orderNumber = order, partNumber = "CONN-8", quantity = 1m, toLocation = "SL-STAGE", operationSequence = 10 }, "over_request");
+        await PropagateAsync(app);
+        Assert.Contains((await Get(planner, "/api/notifications/inbox")).EnumerateArray(), a =>
+            a.GetProperty("title").GetString() == "Material backordered" && a.GetProperty("entityId").GetString() == backorderId.ToString(CultureInfo.InvariantCulture));
+
+        // At most 12 are issued now.
+        await plant.Ok(stores, $"{Tasks}/{task}/pick", new { scannedLocation = "STORES" });
+        await plant.Ok(stores, $"{Tasks}/{task}/deliver", new { scannedLocation = "SL-STAGE" });
+        await plant.ReceiveAsync(task, "SL-STAGE", 12m);
+        await Rejected(plant, stores, $"{Tasks}/{backorderId}/allocate", new { fromLocation = "STORES" }, "insufficient_unallocated");
+
+        // Stock arrives: the backorder is allocated and fulfilled like any request, and the planners' notice clears.
+        await plant.Ok(stores, "/api/inventory/receipts", new { partNumber = "CONN-8", quantity = 8m, locationCode = "STORES", reason = "Supplier delivery" });
+        await plant.Ok(stores, $"{Tasks}/{backorderId}/allocate", new { fromLocation = "STORES" });
+        await plant.Ok(stores, $"{Tasks}/{backorderId}/pick", new { scannedLocation = "STORES" });
+        await plant.Ok(stores, $"{Tasks}/{backorderId}/deliver", new { scannedLocation = "SL-STAGE" });
+        await plant.ReceiveAsync(backorderId, "SL-STAGE", 8m);
+        await PropagateAsync(app);
+        var alert = (await Get(planner, "/api/notifications/inbox")).EnumerateArray()
+            .Single(a => a.GetProperty("title").GetString() == "Material backordered" && a.GetProperty("entityId").GetString() == backorderId.ToString(CultureInfo.InvariantCulture));
+        Assert.Equal("Resolved", alert.GetProperty("state").GetString());
+        Assert.All((await Get(stores, $"{Tasks}?open=false&order={order}")).EnumerateArray(), t => Assert.Equal("Delivered", t.GetProperty("status").GetString()));
+    }
 }

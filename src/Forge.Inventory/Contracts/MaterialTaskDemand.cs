@@ -29,7 +29,7 @@ public static class MaterialTaskDemand
         ArgumentNullException.ThrowIfNull(task);
         return task.Status switch
         {
-            MaterialTaskStatus.ApprovalNeeded or MaterialTaskStatus.Requested or MaterialTaskStatus.Allocated => task.Quantity,
+            MaterialTaskStatus.ApprovalNeeded or MaterialTaskStatus.Requested or MaterialTaskStatus.Backordered or MaterialTaskStatus.Allocated => task.Quantity,
             MaterialTaskStatus.Picked => task.PickedQuantity ?? task.Quantity,
             MaterialTaskStatus.InTransit => Math.Max(0m, (task.PickedQuantity ?? task.Quantity) - task.ReceivedQuantity - task.RejectedQuantity),
             _ => 0m,

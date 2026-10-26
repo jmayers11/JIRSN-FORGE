@@ -147,7 +147,7 @@ public sealed class WorkSourceResolver(TimeProvider time, IHoldTargetResolver ho
                 var destination = (await uow.Store<IInventoryLookup>().ListLocationsAsync(ct)).FirstOrDefault(location => location.Code == task.ToLocation);
                 var taskResource = await OrderResourceAsync(uow, "MaterialTask", id, task.OrderNumber, null, ct);
                 return new(Permissions.InventoryRead, [taskResource with { FacilityId = destination?.SiteCode, WorkCenterId = destination?.WorkCenterCode }],
-                    task.Status is MaterialTaskStatus.Requested or MaterialTaskStatus.Allocated or MaterialTaskStatus.Picked);
+                    task.Status is MaterialTaskStatus.Requested or MaterialTaskStatus.Backordered or MaterialTaskStatus.Allocated or MaterialTaskStatus.Picked);
             case "Schedule":
                 var schedule = await uow.Store<IPlanningStore>().FindVersionAsync(number, true, ct);
                 if (schedule is null) return null;

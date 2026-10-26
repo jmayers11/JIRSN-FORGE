@@ -51,7 +51,7 @@ public sealed record MaterialTaskRequest(MaterialTaskKind Kind, long? OrderNumbe
 public sealed record OrderMaterialShortageRequest(string ToLocation, string? Reason);
 public sealed record MaterialTaskReviewRequest(bool Approve, string? Reason);
 
-public sealed record AllocateRequest(string FromLocation, string? LotNumber, string? Reason);
+public sealed record AllocateRequest(string FromLocation, string? LotNumber, string? Reason, bool AllowPartial = false);
 
 public sealed record PickRequest(string ScannedLocation, string? ScannedLot, decimal? Quantity, string? Reason, ScannedMaterialIdentity? ScannedMaterial = null);
 
@@ -385,7 +385,7 @@ public static class MaterialsEndpoints
         api.MapPost("/orders/{orderNumber:long}/stage-shortages", (HttpContext http, long orderNumber, OrderMaterialShortageRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RequestOrderMaterialShortagesAsync(new RequestOrderMaterialShortages(orderNumber, b.ToLocation), c, ct)));
         api.MapPost("/tasks/{id:long}/allocate", (HttpContext http, long id, AllocateRequest b, InventoryService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.AllocateMaterialAsync(new AllocateMaterial(id, b.FromLocation, b.LotNumber), c, ct)));
+            Command(http, b.Reason, c => s.AllocateMaterialAsync(new AllocateMaterial(id, b.FromLocation, b.LotNumber, b.AllowPartial), c, ct)));
         api.MapPost("/tasks/{id:long}/pick", (HttpContext http, long id, PickRequest b, InventoryService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.PickMaterialAsync(new PickMaterial(id, b.ScannedLocation, b.ScannedLot, b.Quantity, b.ScannedMaterial), c, ct)));
         api.MapPost("/tasks/{id:long}/deliver", (HttpContext http, long id, DeliverRequest b, InventoryService s, CancellationToken ct) =>

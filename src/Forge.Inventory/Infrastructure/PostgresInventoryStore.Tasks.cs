@@ -11,7 +11,7 @@ internal sealed partial class PostgresInventoryStore
         SELECT task_id, kind, order_number, kit_code, part_number, lot_number, quantity, from_location, to_location, status, picked_quantity, reason,
                requested_by, requested_at, allocated_by, allocated_at, picked_by, picked_at, delivered_by, delivered_at, transaction_id, cancelled_by, cancelled_at, cancel_reason,
                transit_location, receiver_person_id, received_by, received_at, receipt_transaction_id, operation_sequence, requester_person_id, source_suspect_report_id,
-               is_non_bom, reviewed_by, reviewed_at, review_note, received_quantity, rejected_quantity, returned_quantity, reversed_quantity
+               is_non_bom, reviewed_by, reviewed_at, review_note, received_quantity, rejected_quantity, returned_quantity, reversed_quantity, backorder_of_task_id
         FROM inventory.material_task
         """;
 
@@ -21,8 +21,8 @@ internal sealed partial class PostgresInventoryStore
         await using var cmd = uow.Command(
             """
             INSERT INTO inventory.material_task (kind, order_number, kit_code, part_number, lot_number, quantity, from_location, to_location, status, reason, requested_by, requested_at,
-                allocated_by, allocated_at, operation_sequence, requester_person_id, source_suspect_report_id, is_non_bom, reviewed_by, reviewed_at, review_note)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+                allocated_by, allocated_at, operation_sequence, requester_person_id, source_suspect_report_id, is_non_bom, reviewed_by, reviewed_at, review_note, backorder_of_task_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             ON CONFLICT (source_suspect_report_id) WHERE source_suspect_report_id IS NOT NULL DO NOTHING
             RETURNING task_id
             """,
@@ -30,7 +30,7 @@ internal sealed partial class PostgresInventoryStore
             task.Status.ToString(), Text(task.Reason), task.RequestedBy, task.RequestedAt, Text(task.AllocatedBy), Time(task.AllocatedAt),
             new NpgsqlParameter { Value = (object?)task.OperationSequence ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer }, Uuid(task.RequesterPersonId),
             new NpgsqlParameter { Value = (object?)task.SourceSuspectReportId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint }, task.IsNonBom,
-            Text(task.ReviewedBy), Time(task.ReviewedAt), Text(task.ReviewNote));
+            Text(task.ReviewedBy), Time(task.ReviewedAt), Text(task.ReviewNote), Long(task.BackorderOfTaskId));
         var result = await cmd.ExecuteScalarAsync(ct);
         if (result is not long id)
             throw new Forge.Kernel.Commands.CommandRejectedException("replacement_already_requested", $"Suspect report {task.SourceSuspectReportId} already has a linked material request.");
@@ -43,7 +43,7 @@ internal sealed partial class PostgresInventoryStore
         await using var cmd = uow.Command(
             """
             UPDATE inventory.material_task SET
-                lot_number = $3, from_location = $4, status = $5, picked_quantity = $6, allocated_by = $7, allocated_at = $8, picked_by = $9, picked_at = $10,
+                lot_number = $3, from_location = $4, status = $5, picked_quantity = $6, quantity = $34, allocated_by = $7, allocated_at = $8, picked_by = $9, picked_at = $10,
                 delivered_by = $11, delivered_at = $12, transaction_id = $13, cancelled_by = $14, cancelled_at = $15, cancel_reason = $16,
                 transit_location = $17, receiver_person_id = $18, received_by = $19, received_at = $20, receipt_transaction_id = $21,
                 is_non_bom = $22, reviewed_by = $23, reviewed_at = $24, review_note = $25,
@@ -57,13 +57,13 @@ internal sealed partial class PostgresInventoryStore
             Text(task.CancelledBy), Time(task.CancelledAt), Text(task.CancelReason), Text(task.TransitLocation), Uuid(task.ReceiverPersonId),
             Text(task.ReceivedBy), Time(task.ReceivedAt), Long(task.ReceiptTransactionId), task.IsNonBom, Text(task.ReviewedBy), Time(task.ReviewedAt), Text(task.ReviewNote),
             task.ReceivedQuantity, task.RejectedQuantity, task.ReturnedQuantity, task.ReversedQuantity,
-            expected.ReceivedQuantity, expected.RejectedQuantity, expected.ReturnedQuantity, expected.ReversedQuantity);
+            expected.ReceivedQuantity, expected.RejectedQuantity, expected.ReturnedQuantity, expected.ReversedQuantity, task.Quantity);
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
     public Task<IReadOnlyList<MaterialTask>> ListMaterialTasksAsync(bool openOnly, long? orderNumber, CancellationToken ct) =>
         ReadAsync(
-            TaskSql + " WHERE (NOT $1 OR status IN ('ApprovalNeeded', 'Requested', 'Allocated', 'Picked', 'InTransit')) AND ($2::bigint IS NULL OR order_number = $2) ORDER BY task_id",
+            TaskSql + " WHERE (NOT $1 OR status IN ('ApprovalNeeded', 'Requested', 'Backordered', 'Allocated', 'Picked', 'InTransit')) AND ($2::bigint IS NULL OR order_number = $2) ORDER BY task_id",
             ReadTask,
             ct,
             openOnly, Long(orderNumber));
@@ -165,5 +165,5 @@ internal sealed partial class PostgresInventoryStore
         r.IsDBNull(30) ? null : r.GetGuid(30),
         r.IsDBNull(31) ? null : r.GetInt64(31),
         r.GetBoolean(32), NullableText(r, 33), r.IsDBNull(34) ? null : r.GetFieldValue<DateTimeOffset>(34), NullableText(r, 35),
-        Dec(r, 36), Dec(r, 37), Dec(r, 38), Dec(r, 39));
+        Dec(r, 36), Dec(r, 37), Dec(r, 38), Dec(r, 39), r.IsDBNull(40) ? null : r.GetInt64(40));
 }
