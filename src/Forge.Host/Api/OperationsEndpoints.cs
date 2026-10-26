@@ -376,6 +376,9 @@ public static class OperationsEndpoints
                         .Authorize(principal!, Permissions.WorkforceCompensationRead, ResourceRef.Of("DevelopmentNomination", nominationId.ToString("D"))));
                 return await store.ListNominationEventsAsync(nominationId, ct);
             }));
+        // Sprint 10 WW-S10-12: prerequisites and the qualification's bottleneck, shown before anyone is nominated toward it.
+        api.MapGet("/development-nominations/readiness", (HttpContext http, Guid personId, string qualificationCode, Forge.Host.Workforce.DevelopmentReadinessService s, CancellationToken _) =>
+            Read(http, Permissions.WorkforceDevelopmentNominate, async principal => await s.BuildAsync(principal, personId, qualificationCode, http.RequestAborted)));
         api.MapPost("/development-nominations", (HttpContext http, DevelopmentNominationRequest b, DevelopmentNominationService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CreateAsync(new CreateDevelopmentNomination(b.PersonId, b.Kind, b.Pathway, b.Rationale,
                 b.ExpectedPlantBenefit, b.EvidenceReferences, b.EstimatedTrainingHours, b.EstimatedCost, b.Currency), c, ct)));

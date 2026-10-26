@@ -181,6 +181,14 @@ export async function appendOwnAttendanceCorrections(page, me) {
   });
 }
 
+/** Prerequisites and today's coverage of a target qualification, shown in the nomination form before anyone is nominated. */
+export function readinessHtml(r) {
+  const rows = r.prerequisites.map(p => `<li>${p.held ? '✓' : '✗'} ${esc(p.name)} (${esc(p.code)})${p.group ? ` <span class="faint">one of ${esc(p.group)}</span>` : ''}</li>`).join('');
+  return `<div><b>${esc(r.qualificationName)}</b>: ${r.alreadyHeld ? 'already held' : r.prerequisitesMet ? 'prerequisites met' : 'prerequisites missing'}</div>
+    ${rows ? `<ul class="workforce-intelligence-list">${rows}</ul>` : '<div class="faint">No prerequisites are configured for this qualification.</div>'}
+    <div>${esc(r.benefit)}</div>`;
+}
+
 /** Calendar quarters are resolved by the server in the plant's time zone; the other periods are chosen here. */
 export function attendanceSummaryUrl(period, now) {
   if (period === 'quarter' || period === 'previous-quarter') return `/api/workforce/attendance-intelligence?period=${period}`;
@@ -387,6 +395,8 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
   const development = canReadNominations || canNominate ? `<section class="workforce-intelligence-development"><h3>Training and advancement packets</h3><p class="faint">Recommendations require documented human review. Approval does not grant a qualification or machine authorization; those remain in Competency.</p>
         ${canNominate ? `<form class="workforce-intelligence-form" data-wi-nomination-form><label>Employee<select class="input" name="personId" required><option value="">Choose employee</option>${(sources.workers.data ?? []).filter(worker => worker.isActive).map(worker => `<option value="${escapeAttr(worker.personId)}">${esc(worker.displayName)} · ${esc(worker.jobTitle ?? worker.homeWorkCenterCode ?? 'Worker')}</option>`).join('')}</select></label>
           <label>Packet type<select class="input" name="kind" required><option value="AdvancedTraining">Advanced training</option><option value="LeadReadiness">Lead responsibilities</option><option value="PromotionReadiness">Promotion readiness</option>${canReadCompensation ? '<option value="CompensationConsideration">Compensation consideration</option>' : ''}</select></label>
+          <label>Target qualification<select class="input" name="qualificationCode" data-wi-readiness><option value="">None (general development)</option>${(sources.types?.data ?? []).map(type => `<option value="${escapeAttr(type.code)}">${esc(type.name)} (${esc(type.code)})</option>`).join('')}</select></label>
+          <div class="faint" data-wi-readiness-result>Choose an employee and a target qualification to see prerequisites and today's coverage before nominating.</div>
           <label>Pathway<input class="input" name="pathway" maxlength="120" required placeholder="e.g. CNC setup practical assessment"></label>
           <label>Evidence based rationale<textarea class="input" name="rationale" maxlength="500" required></textarea></label>
           <label>Expected plant benefit<textarea class="input" name="benefit" maxlength="500" required placeholder="Coverage, quality, trainer capacity or delivery benefit"></textarea></label>
@@ -484,7 +494,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     .sort((a, b) => a.localeCompare(b)).map(code => ({ code, name: code }));
   if ((workers ?? []).some(worker => !worker.department?.trim())) departments.push({ code: '__unassigned', name: 'Unassigned' });
   const workerNames = new Map((workers ?? []).map(worker => [worker.personId, worker.displayName]));
-  const sources = { workers: workersResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, resources: resourcesResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, schedule: scheduleResult, workerNames };
+  const sources = { workers: workersResult, types: typesResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, resources: resourcesResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, schedule: scheduleResult, workerNames };
   const filteredView = () => {
     const scoped = filterWorkforceIntelligenceInputs(inputs, current);
     const ids = new Set((scoped.workers ?? []).map(worker => worker.personId));
@@ -552,6 +562,16 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     event.preventDefault(); next.focus(); selectTab(next.dataset.wiTab);
   });
   page.addEventListener('change', async event => {
+    const nominationForm = event.target?.closest?.('[data-wi-nomination-form]');
+    if (nominationForm && (event.target.name === 'personId' || event.target.name === 'qualificationCode')) {
+      const host = nominationForm.querySelector('[data-wi-readiness-result]');
+      const personId = nominationForm.querySelector('[name="personId"]').value, code = nominationForm.querySelector('[name="qualificationCode"]').value;
+      if (host && personId && code) {
+        const result = await tryGet(`/api/workforce/development-nominations/readiness?personId=${encodeURIComponent(personId)}&qualificationCode=${encodeURIComponent(code)}`);
+        host.innerHTML = result.error ? errorBlock(result.error, 'prerequisites') : readinessHtml(result.data);
+      }
+      return;
+    }
     const filter = event.target?.dataset?.wiFilter;
     if (!filter) return;
     if (filter === 'expiry') current.expiryDays = Number(event.target.value);
@@ -584,6 +604,8 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     try {
       if (form.matches('[data-wi-nomination-form]')) {
         const evidence = String(values.get('evidence') ?? '').split(',').map(value => value.trim()).filter(Boolean);
+        const target = String(values.get('qualificationCode') ?? '');
+        if (target && !evidence.includes(`Qualification/${target}`)) evidence.unshift(`Qualification/${target}`);
         const hours = String(values.get('hours') ?? '');
         const cost = String(values.get('cost') ?? '');
         await command('/api/workforce/development-nominations', {
