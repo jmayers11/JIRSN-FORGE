@@ -43,7 +43,8 @@ public sealed class ReplacementOrderTests(PostgresFixture postgres)
         foreach (var (subject, role) in new[] { ("qe", "QualityEngineer"), ("planner2", "Planner"), ("sup", "Supervisor"), ("kiosk", "ShopFloorTerminal") })
             await plant.Person(subject, role);
         var (qe, planner2, sup, kiosk) = (plant.As("qe"), plant.As("planner2"), plant.As("sup"), plant.As("kiosk"));
-        foreach (var person in new[] { "sarah", "michael", "jennifer", "dana" })
+        await plant.Worker("kai", "SLIT-WC", "SLIT-II"); // present, qualified for slitting, on nothing yet
+        foreach (var person in new[] { "sarah", "michael", "jennifer", "dana", "kai" })
             await plant.Ok(e, $"/api/workforce/workers/{plant.People[person]}/presence", new { kind = "SupervisorConfirmed", reason = "On shift" });
 
         // Five of twenty rolls are scrapped at slitting.
@@ -68,14 +69,16 @@ public sealed class ReplacementOrderTests(PostgresFixture postgres)
         var names = plant.People.ToDictionary(p => p.Value, p => p.Key);
         string[] Candidates(JsonElement check) => check.GetProperty("candidates").EnumerateArray().Select(c => names[c.GetProperty("personId").GetGuid()]).ToArray();
         foreach (var slit in checks.Where(c => c.GetProperty("sequence").GetInt32() == 10))
-            Assert.All(Candidates(slit), person => Assert.Contains(person, new[] { "sarah", "michael" })); // SLIT-II holders only
+            Assert.All(Candidates(slit), person => Assert.Contains(person, new[] { "sarah", "michael", "kai" })); // SLIT-II holders only
         Assert.All(Candidates(checks[2]), person => Assert.Contains(person, new[] { "sarah", "jennifer" })); // FIRST-AID holders only
         var slitterA = checks[0];
         Assert.False(slitterA.GetProperty("readyNow").GetBoolean());
-        Assert.NotEmpty(Candidates(slitterA));
-        // Every option says what it costs the work the person is on now: a source impact or a backfill move.
-        Assert.Contains(checks.SelectMany(c => c.GetProperty("candidates").EnumerateArray()),
-            c => c.GetProperty("requiresSourceBackfill").GetBoolean() || c.GetProperty("sourceImpacts").GetArrayLength() > 0);
+        Assert.Contains("kai", Candidates(slitterA));
+        // Every option states its effect on the source work center: nothing stops, or the backfill that keeps it running.
+        Assert.All(checks.SelectMany(c => c.GetProperty("candidates").EnumerateArray()), c => Assert.Contains(c.GetProperty("evidence").EnumerateArray(),
+            e => e.GetString()!.Contains("source", StringComparison.Ordinal)));
+        // Kai could stand at the kitting bench but lacks the first aid the operation requires, so is not offered for it.
+        Assert.DoesNotContain("kai", Candidates(checks[2]));
 
         // Nothing exists yet: one order of ROLL-100, and nobody was moved.
         async Task<int> RollOrders() => (await Get(planner, "/api/orders/")).EnumerateArray().Count(o => o.GetProperty("partNumber").GetString() == "ROLL-100");
@@ -83,7 +86,7 @@ public sealed class ReplacementOrderTests(PostgresFixture postgres)
 
         // A planner who did not propose it approves; the planned order follows the normal order rules.
         Assert.Equal(HttpStatusCode.Forbidden, (await plant.Try(e, $"{Url}/{proposalId}/decide", new { approve = true, note = "x", reason = "x" })).StatusCode);
-        var approved = await plant.Ok(planner, $"{Url}/{proposalId}/decide", new { approve = true, note = "Sarah moves to Slitter A; Dana backfills staging", reason = "Recovery" });
+        var approved = await plant.Ok(planner, $"{Url}/{proposalId}/decide", new { approve = true, note = "Kai takes Slitter A", reason = "Recovery" });
         Assert.Contains("nobody was assigned", approved.GetProperty("message").GetString(), StringComparison.Ordinal);
         await Rejected(plant, planner2, $"{Url}/{proposalId}/decide", new { approve = false, note = "x", reason = "x" }, "proposal_decided");
         var decided = Assert.Single((await Get(planner, Url)).EnumerateArray());
