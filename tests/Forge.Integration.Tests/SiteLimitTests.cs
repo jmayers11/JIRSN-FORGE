@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 
 namespace Forge.Integration.Tests;
@@ -23,7 +22,7 @@ public sealed class SiteLimitTests(PostgresFixture postgres)
 
         await using var expanded = new ForgeApp(app.ConnectionString, configureBuilder: builder => builder.UseSetting("Forge:Sites:MaxSites", "2"));
         var engineer = expanded.As("eng");
-        var response = await engineer.PostAsJsonAsync(new Uri("/api/resources/sites", UriKind.Relative), new { code = "PLANT2", name = "Second plant", timeZone = "America/Chicago", reason = "Expansion" });
+        var response = await engineer.CommandAsync("/api/resources/sites", new { code = "PLANT2", name = "Second plant", timeZone = "America/Chicago", reason = "Expansion" }, "site-limit-expansion");
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
     }
 }
