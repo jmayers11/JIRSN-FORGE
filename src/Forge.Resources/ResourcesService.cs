@@ -133,7 +133,7 @@ public interface IResourcesStore
 /// The physical and organizational model: site → safety area → work center → machine, the
 /// activity types performed there, and what each machine requires to run each activity.
 /// </summary>
-public sealed class ResourcesService(CommandPipeline pipeline, Contracts.SiteClock siteClock)
+public sealed class ResourcesService(CommandPipeline pipeline, Contracts.SiteClock siteClock, SitePolicy sites)
 {
     public const string SourceContext = "Resources";
 
@@ -146,7 +146,13 @@ public sealed class ResourcesService(CommandPipeline pipeline, Contracts.SiteClo
             throw new CommandRejectedException("invalid_time_zone", $"'{zone}' is not an IANA time zone (for example America/New_York).");
         }
 
-        return RememberZone(CreateAsync(nameof(CreateSite), "Site", c.Code, c.Name, null, null, c, context, (_, _) => Task.CompletedTask, ct, (store, code, token) => store.SetSiteTimeZoneAsync(code, zone, token)), c.Code, zone);
+        return RememberZone(CreateAsync(nameof(CreateSite), "Site", c.Code, c.Name, null, null, c, context, async (lookup, token) =>
+        {
+            if (sites.MaxSites is int limit && limit > 0 && (await lookup.ListSitesAsync(token)).Count >= limit)
+                throw new CommandRejectedException("site_limit_reached", limit == 1
+                    ? "This Forge database runs one site. Another site needs its own database until multi-site operation is turned on."
+                    : $"This Forge database runs at most {limit} sites.");
+        }, ct, (store, code, token) => store.SetSiteTimeZoneAsync(code, zone, token)), c.Code, zone);
     }
 
     /// <summary>Keeps the site clock current once a site command has succeeded (ADR 0057 §1).</summary>

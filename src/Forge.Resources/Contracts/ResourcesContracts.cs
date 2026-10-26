@@ -2,6 +2,15 @@ namespace Forge.Resources.Contracts;
 
 /// <summary>A plant. Shift times are local to its IANA time zone.</summary>
 public sealed record SiteInfo(string Code, string Name, string TimeZone = "America/New_York", bool HasCustomMap = false);
+
+/// <summary>
+/// How many sites one Forge database may hold (Sprint 10 WW-S10-38). The owner runs one site per database for now; the site dimension
+/// stays on every record so a later expansion only raises this limit (configuration Forge:Sites:MaxSites; 0 means no limit).
+/// </summary>
+public sealed record SitePolicy(int? MaxSites)
+{
+    public static SitePolicy SingleSite { get; } = new(1);
+}
 public sealed record SiteMapImageInfo(string Sha256, string ContentType);
 
 /// <summary>

@@ -147,6 +147,8 @@ builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host
 builder.Services.AddSingleton<Forge.Host.Moves.TemporaryMoveReconciler>();
 builder.Services.AddSingleton<Forge.Host.Training.TrainingExpiryScanner>();
 builder.Services.AddSingleton<Forge.Host.Planning.MaterialRiskScanner>();
+// One site per database for now (owner decision 2026-10-25); raise Forge:Sites:MaxSites (0 = no limit) when multi-site operation starts.
+builder.Services.AddSingleton(new Forge.Resources.Contracts.SitePolicy(builder.Configuration.GetValue<int?>("Forge:Sites:MaxSites") ?? 1));
 
 var sentinelEventsEndpoint = builder.Configuration["Forge:Sentinel:SecurityEventsEndpoint"];
 if (!string.IsNullOrWhiteSpace(sentinelEventsEndpoint))

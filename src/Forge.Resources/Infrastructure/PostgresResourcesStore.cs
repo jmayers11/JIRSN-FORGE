@@ -286,6 +286,7 @@ public static class ResourcesRegistration
         services.AddForgeStore<IResourcesStore>(uow => new PostgresResourcesStore(uow));
         services.AddForgeStore<IResourcesLookup>(uow => new PostgresResourcesStore(uow));
         services.AddForgeStore<ICompetencyMachineContext>(uow => new PostgresResourcesStore(uow));
+        services.AddSingleton(SitePolicy.SingleSite);
         services.AddSingleton<Contracts.SiteClock>();
         services.AddSingleton<Contracts.ISiteClock>(sp => sp.GetRequiredService<Contracts.SiteClock>());
         services.AddSingleton<SiteClockLoader>();

@@ -120,8 +120,9 @@ export const sprint10Evidence = {
   'WW-S10-37': ['Partial', [P + 'RecoveryOptionTests.Additional_shift_needs_selected_workers_and_cannot_create_qualification',
     I + 'RecoveryGovernanceTests.Machine_failure_changes_capacity_goals_alerts_and_fact_evaluated_recovery_without_auto_commit'],
     'Recovery proposals check qualified people and never commit on their own; there is no replacement manufacturing order proposal type.'],
-  'WW-S10-38': ['Partial', [MAT_A, I + 'V310Tests.Program_holds_are_hidden_and_cannot_be_released_without_program_access', CAUSE],
-    'Operator, terminal, stockroom, planner and Quality steps and program scope are enforced; per-site permission boundaries are not modelled (tenancy is the database).'],
+  'WW-S10-38': ['Covered', [MAT_A, I + 'SiteLimitTests.A_database_runs_one_site_until_multi_site_operation_is_turned_on',
+    I + 'HorizonLensTests.All_seven_lenses_share_archived_scope_counts_and_keep_old_projection_and_commitment_history', I + 'V310Tests.Program_holds_are_hidden_and_cannot_be_released_without_program_access', CAUSE],
+    'Operator, terminal, stockroom, planner and Quality steps and program scope are enforced; a database runs one site (owner decision) and facility-scoped permissions already bound readers to a site; tenancy is the database.'],
 };
 
 const STATUS_TEXT = { Covered: 'Covered by passing regression and replay checks', Partial: 'Partially covered; gap named in note', Open: 'Open: not implemented' };

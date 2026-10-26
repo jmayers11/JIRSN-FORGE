@@ -26,6 +26,8 @@ public sealed class ForgeApp(
         builder.UseSetting("Forge:BackgroundServices:Enabled", "false");
         builder.UseSetting("Forge:Bootstrap:AdminSubject", AdminSubject);
         builder.UseSetting("Forge:Bootstrap:AdminDisplayName", "Test Administrator");
+        // Fixtures exercise multi-site rules; production runs one site per database (SiteLimitTests covers that default).
+        builder.UseSetting("Forge:Sites:MaxSites", "0");
         builder.ConfigureLogging(logging => logging.ClearProviders());
         configureBuilder?.Invoke(builder);
         if (services is not null)
