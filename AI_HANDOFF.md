@@ -1,5 +1,12 @@
 # AI_HANDOFF.md
 
+## Claude: single site, standard costing, split NCRs (2026-10-25)
+
+- **Owner decisions:** costs follow US GAAP practice, standard cost with full absorption (material + labor + overhead), kept by a new **CostAccountant** role; method changeable later (prospective, audited). **One site per database for now**, expansion later.
+- **WW-S10-38:** `SitePolicy` (Resources contracts), `Forge:Sites:MaxSites` (default 1; tests set 0). `SiteLimitTests`.
+- **WW-S10-24:** `Forge.Inventory/CostingService.cs` + `CostingContracts.cs` + `PostgresCostingStore` (migration inventory 0031 seeds Standard/USD); `Forge.Host/Costing/DispositionCostService.cs`; `Api/CostingEndpoints.cs`; `QualityService.SplitNcrAsync`; `ReworkKind.Scrap`; page `pages/costing.js`. Weighted average/FIFO deliberately refused until receipts and production carry actual costs (next costing step if the owner wants it).
+- Migrations **173**. Focused tests 22/22; UI green. Matrix **35 Covered / 3 Partial** (9 quality trend view, 12 packet prerequisites, 37 replacement-order recovery).
+
 ## Claude: labor standard reviews and backorders (2026-10-25)
 
 - **WW-S10-10:** `Forge.Engineering/LaborStandardReviewService.cs`, contracts `LaborStandardContracts.cs`, migration engineering 0018; endpoints under `/api/engineering/labor-standard-reviews`. `CauseAdjustedPerformanceService` reports `standardReviews` (UnderReview/Corrected leave efficiency; ReviewSuggested is only a flag).

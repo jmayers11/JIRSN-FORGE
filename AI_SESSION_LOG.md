@@ -1844,3 +1844,7 @@ Built WW-S10-17: the attendance summary defaults to the site's current calendar 
 
 Built WW-S10-10 (suspect labor standards are reviewed and never used as a worker score while open; engineer confirms or corrects) and WW-S10-26 (short stock allocates what is there and backorders the rest as linked, notified, still-requested demand). 170 migrations; focused tests 23/23; UI green. Matrix 33 Covered / 5 Partial.
 
+## Claude: single-site limit, standard costing, split NCR dispositions — 2026-10-25
+
+Owner decided: US GAAP standard cost with full absorption kept by a Cost Accountant; one site per database for now. Built WW-S10-38 (site limit, configurable) and WW-S10-24 (costing policy and standard costs, NCR split, scrap records, cost reconciliation of split dispositions including rework added cost; Costing page). 173 migrations; 22/22 focused tests; UI green. Matrix 35 Covered / 3 Partial.
+
