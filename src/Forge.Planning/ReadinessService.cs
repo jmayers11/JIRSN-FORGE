@@ -164,7 +164,8 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
         AssignWork targetRequest,
         CancellationToken ct,
         DateOnly? shiftDate = null,
-        string? shiftCode = null)
+        string? shiftCode = null,
+        IReadOnlySet<Guid>? moverPersonIds = null)
     {
         ArgumentNullException.ThrowIfNull(targetRequest);
         Demand(principal);
@@ -224,7 +225,7 @@ public sealed class ReadinessService(IKernelUnitOfWorkFactory unitOfWork, IForge
             .ToHashSet();
 
         return EngineRunner.Run(new WorkforceRecoveryEngine(), snapshot,
-            new WorkforceRecoveryRequest(target, visibleCandidates, projectedShift), snapshot.AsOf);
+            new WorkforceRecoveryRequest(target, visibleCandidates, projectedShift, moverPersonIds), snapshot.AsOf);
     }
 
     /// <summary>Previews a cascading worker move scenario against one copied Forge snapshot. Nothing is committed.</summary>

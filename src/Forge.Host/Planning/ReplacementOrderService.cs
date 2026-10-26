@@ -192,35 +192,39 @@ public sealed class ReplacementOrderService(CommandPipeline pipeline, ReadinessS
             {
                 if (checks.Count == MaximumChecks)
                     throw new CommandRejectedException("routing_too_large", $"A replacement check covers at most {MaximumChecks} operation and machine combinations.");
-                var required = op.RequiredQualifications
-                    .Concat(machine is not null && operatorQualifications.TryGetValue((machine, op.ActivityCode), out var quals) ? quals : [])
-                    .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-                checks.Add(await CheckOperationAsync(principal, op, machine, required, workers, held, ct));
+                IReadOnlyList<string> anyOf = machine is not null && operatorQualifications.TryGetValue((machine, op.ActivityCode), out var quals) ? quals : [];
+                checks.Add(await CheckOperationAsync(principal, op, machine, anyOf, workers, held, ct));
             }
 
         return (revision, checks);
     }
 
-    private async Task<ReplacementOperationCheck> CheckOperationAsync(ForgePrincipal principal, RoutingOperationInfo op, string? machine, IReadOnlyList<string> required, IReadOnlyList<WorkerState> workers,
+    private async Task<ReplacementOperationCheck> CheckOperationAsync(ForgePrincipal principal, RoutingOperationInfo op, string? machine, IReadOnlyList<string> operatorAnyOf, IReadOnlyList<WorkerState> workers,
         ILookup<Guid, string> held, CancellationToken ct)
     {
         // The recovery engine checks presence, authorization, equipment and safety composition for the work; the person who would
         // run it must also hold, valid now, the operation's required qualifications and the machine activity's operator qualifications.
-        bool Holds(Guid person) => required.All(code => held[person].Contains(code, StringComparer.Ordinal));
+        bool Holds(Guid person) => op.RequiredQualifications.All(code => held[person].Contains(code, StringComparer.Ordinal))
+            && (operatorAnyOf.Count == 0 || operatorAnyOf.Any(code => held[person].Contains(code, StringComparer.Ordinal)));
+        var needs = op.RequiredQualifications.ToList();
+        if (operatorAnyOf.Count > 0) needs.Add($"one of {string.Join("/", operatorAnyOf)}");
+        var required = string.Join(", ", needs);
         try
         {
-            var run = await readiness.RecommendWorkforceRecoveryAsync(principal, new AssignWork(new PersonId(Guid.Empty), null, op.WorkCenterCode, machine, op.ActivityCode, false), ct);
+            // Only people who hold what the work needs are offered to move; anyone available may backfill what they leave.
+            var movers = workers.Where(w => Holds(w.PersonId)).Select(w => w.PersonId).ToHashSet();
+            var run = await readiness.RecommendWorkforceRecoveryAsync(principal, new AssignWork(new PersonId(Guid.Empty), null, op.WorkCenterCode, machine, op.ActivityCode, false), ct,
+                moverPersonIds: movers);
             var result = run.Output;
-            var lacking = result.Candidates.Count(candidate => !Holds(candidate.PersonId));
             var onIt = workers.Where(w => w.PresenceKind is not null && w.Unavailability is null && w.Assignment is { } a && a.WorkCenterCode == op.WorkCenterCode
                 && a.ActivityCode == op.ActivityCode && (machine is null || a.MachineCode == machine)).ToList();
             var readyNow = result.TargetReadyBefore && onIt.Any(w => Holds(w.PersonId));
             var constraint = result.TargetReadyBefore && !readyNow
-                ? $"Nobody on it now holds {string.Join(", ", required)}."
+                ? $"Nobody on it now holds {required}."
                 : result.CurrentConstraint;
-            IReadOnlyList<string> limitations = lacking == 0 ? result.Limitations
-                : [.. result.Limitations, $"{lacking} more person(s) could run the equipment but lack {string.Join(", ", required)}, which the operation requires; they are not listed."];
-            var candidates = result.Candidates.Where(candidate => Holds(candidate.PersonId)).Select(candidate => new ReplacementCandidate(candidate.PersonId, candidate.PersonName, candidate.RequiresSourceBackfill,
+            IReadOnlyList<string> limitations = needs.Count == 0 ? result.Limitations
+                : [.. result.Limitations, $"Only people holding {required} are offered to run it."];
+            var candidates = result.Candidates.Select(candidate => new ReplacementCandidate(candidate.PersonId, candidate.PersonName, candidate.RequiresSourceBackfill,
                 candidate.SourceImpacts.Select(impact => impact.Detail).ToList(),
                 [.. candidate.Evidence, .. candidate.Moves.Where(move => move.PersonId != candidate.PersonId).Select(move => $"Backfill: {move.PersonName} to {Work(move.Assignment)}.")])).ToList();
             return new ReplacementOperationCheck(op.Sequence, op.Description, op.WorkCenterCode, machine, op.ActivityCode, readyNow, readyNow ? null : constraint, candidates, limitations);

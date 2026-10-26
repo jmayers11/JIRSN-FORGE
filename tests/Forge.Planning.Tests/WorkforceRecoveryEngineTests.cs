@@ -27,6 +27,18 @@ public sealed class WorkforceRecoveryEngineTests
     }
 
     [Fact]
+    public void Movers_can_be_limited_to_people_holding_the_operations_own_qualifications()
+    {
+        var factory = Slitting();
+        var zara = factory.Add("Zara", null, true, null, SlitII);
+        var alina = factory.Add("Alina", null, true, null, SlitII, FirstAid);
+        var result = new WorkforceRecoveryEngine().Evaluate(factory.Build(), new WorkforceRecoveryRequest(SlitterWork("SLITTER-A"),
+            new HashSet<Guid> { zara, alina }, MoverPersonIds: new HashSet<Guid> { alina }), Now).Output;
+
+        Assert.Equal("Alina", Assert.Single(result.Candidates).PersonName);
+    }
+
+    [Fact]
     public void Machine_authorization_is_a_hard_gate_for_recovery_candidates()
     {
         var factory = Slitting();

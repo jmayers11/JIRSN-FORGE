@@ -5,7 +5,9 @@ namespace Forge.Planning.Engines;
 
 public sealed record WorkforceRecoveryMove(Guid PersonId, string PersonName, WorkAssignment Assignment);
 
-public sealed record WorkforceRecoveryRequest(WorkItem Target, IReadOnlySet<Guid>? CandidatePersonIds = null, bool ProjectedShift = false);
+/// <param name="MoverPersonIds">When set, only these people are offered to move to the target (for example, those holding an
+/// operation's required qualifications); anyone available may still backfill the work they leave.</param>
+public sealed record WorkforceRecoveryRequest(WorkItem Target, IReadOnlySet<Guid>? CandidatePersonIds = null, bool ProjectedShift = false, IReadOnlySet<Guid>? MoverPersonIds = null);
 
 public sealed record WorkforceRecoveryCandidate(
     int Rank,
@@ -85,6 +87,8 @@ public sealed class WorkforceRecoveryEngine : IEngine<SiteSnapshot, WorkforceRec
         foreach (var mover in available)
         {
             if (mover.Assignment is { } existing && ToWork(existing) == target)
+                continue;
+            if (request.MoverPersonIds is { } movers && !movers.Contains(mover.PersonId))
                 continue;
 
             var proposed = AssignmentFor(target);
