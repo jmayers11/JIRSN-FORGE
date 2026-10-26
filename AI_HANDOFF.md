@@ -5,7 +5,8 @@
 - **Full `verify.cmd` passed uninterrupted** (isolated output, clean environment): 843 tests (44 / Planning 364 / Architecture 32 / Integration 403) and all UI checks, at commit `bae7eea` (rework plans). Simulation scenarios still run separately via `simulate.cmd`.
 - **WW-S10-30 built:** `Forge.Planning/MaterialRisk.cs` + `PostgresMaterialRiskStore` + planning migration 0009 (table `planning.material_risk`, rule "Order at risk from material", Planner, InApp; admins add Email). Host `Planning/MaterialRiskMonitor.cs` (hourly, `Roles.MaterialRisk` system role, `SystemActors.MaterialRisk`); `POST /api/planning/material-risk/scan`, `GET /api/planning/material-risk`. Events only on change, so one notice per order; program-scoped orders only reach planners with that program.
 - **WW-S10-31 proven:** `NotificationEscalationTests` — the seeded stockroom rule escalates by email to planners exactly once at 7200 s and resolves on fulfilment. In-app alerts are not re-sent on escalation (by design of the rule engine).
-- Migrations **168**. Sprint 10 matrix **30 Covered / 8 Partial**: 9, 10, 12, 17, 24, 26, 37, 38 remain partial, each gap named in the catalog.
+- Migrations **168**. Sprint 10 matrix **31 Covered / 7 Partial**: 9, 10, 12, 24, 26, 37, 38 remain partial, each gap named in the catalog.
+- **WW-S10-17 built:** attendance summary defaults to the site's calendar quarter to date (`AttendancePeriods` in `Forge.Workforce/AttendanceReliability.cs`); `period=previous-quarter`, `quarter=YYYY-Qn`; summary reports `periodLabel/periodStart/periodEnd`. `AttendanceQuarterTests` + 25/25 attendance-related tests; UI suite green.
 
 ## Claude: rework routing expansion built (2026-10-25)
 

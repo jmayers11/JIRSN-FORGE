@@ -1836,3 +1836,7 @@ Built WW-S10-14/29 on the owner's go-ahead: rework plans proposed by order setup
 
 Ran the full `verify.cmd` uninterrupted: PASS, 843 tests and all UI checks. Built WW-S10-30 (hourly/on-demand material due-date risk check, one deduplicated, permission-checked planner notice per at-risk order, cleared when covered; 168 migrations) and proved WW-S10-31 (escalation once at threshold, resolve on fulfilment). New tests with V319/KernelRoundTrip/V328: 15/15. Sprint 10 matrix 30 Covered / 8 Partial.
 
+## Claude: attendance calendar quarters — 2026-10-25
+
+Built WW-S10-17: the attendance summary defaults to the site's current calendar quarter (local-midnight rollover), with the previous quarter and named earlier quarters queryable and the period named in the response and the Command Center. 25/25 attendance-related PostgreSQL tests and the UI suite pass. Matrix 31 Covered / 7 Partial.
+
