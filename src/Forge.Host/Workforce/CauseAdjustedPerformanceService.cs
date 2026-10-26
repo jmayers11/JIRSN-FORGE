@@ -32,6 +32,12 @@ public sealed record ShiftAttribution(
 
 public sealed record EfficiencyScope(long OrderNumber, int Sequence, decimal GoodQuantity, decimal EarnedStandardHours, decimal DirectLaborHours, decimal ExcludedDelayHours);
 
+/// <summary>
+/// An operation whose labor standard is in question (Sprint 10 WW-S10-10): under review or corrected (left out of efficiency, never a
+/// worker score), or implausible against the labor recorded ("ReviewSuggested": still counted until someone marks it for review).
+/// </summary>
+public sealed record StandardReviewNote(long OrderNumber, int Sequence, string PartNumber, string Revision, string State, long? ReviewId, string Detail);
+
 /// <param name="Cohort">One first-pass inspection's good or failed units, with the verified cause that decides whether the employee metric may use it.</param>
 public sealed record FirstPassCohortView(long InspectionId, long OrderNumber, int Sequence, decimal Quantity, bool Passed, string Cause, bool Verified, string AttributionState, long? AttributionId);
 
@@ -50,7 +56,8 @@ public sealed record CauseAdjustedPerformanceReport(
     FirstPassYieldMetrics? FirstPass,
     IReadOnlyList<FirstPassCohortView> FirstPassCohorts,
     bool QualityRestricted,
-    string Basis);
+    string Basis,
+    IReadOnlyList<StandardReviewNote>? StandardReviews = null);
 
 /// <summary>
 /// Cause-adjusted performance (Sprint 10 §16) from the records Forge already keeps: attendance is paid time, labor is operation time,
@@ -112,7 +119,7 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
                 shifts.Add(Shift(personId, record, end, labor, coded, downtime, stoppages, allVerifiedExternal));
             }
 
-            var (efficiency, scope, outside) = await EfficiencyAsync(uow, principal, labor, reports, allVerifiedExternal, ct);
+            var (efficiency, scope, outside, standardReviews) = await EfficiencyAsync(uow, principal, labor, reports, allVerifiedExternal, ct);
             FirstPassYieldMetrics? firstPass = null;
             IReadOnlyList<FirstPassCohortView> cohorts = [];
             if (!qualityRestricted)
@@ -121,7 +128,7 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
             result.Add(new CauseAdjustedPerformanceReport(personId, from, to, shifts,
                 shifts.Sum(s => s.Reconciliation.ExpectedPaidMinutes), shifts.Sum(s => s.Reconciliation.AccountedPaidMinutes),
                 shifts.Sum(s => s.Reconciliation.GapMinutes), shifts.Sum(s => s.Reconciliation.OverlapMinutes),
-                efficiency, scope, outside, firstPass, cohorts, qualityRestricted, BasisText));
+                efficiency, scope, outside, firstPass, cohorts, qualityRestricted, BasisText, standardReviews));
         }
 
         return result;
@@ -202,7 +209,7 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
             direct, verifiedMinutes, reportedOnly, events, pending);
     }
 
-    private async Task<(ControllableLaborEfficiency Efficiency, IReadOnlyList<EfficiencyScope> Scope, int Outside)> EfficiencyAsync(
+    private async Task<(ControllableLaborEfficiency Efficiency, IReadOnlyList<EfficiencyScope> Scope, int Outside, IReadOnlyList<StandardReviewNote> StandardReviews)> EfficiencyAsync(
         IKernelUnitOfWork uow, ForgePrincipal principal, IReadOnlyList<LaborEntry> labor, IReadOnlyList<ProductionReport> reports,
         IReadOnlyList<PerformanceInterval> verifiedExternal, CancellationToken ct)
     {
@@ -210,6 +217,8 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
         var quality = authorizer.Authorize(principal, Permissions.QualityRead, ResourceRef.Of("Quality")).IsPermitted ? uow.Store<IQualityLookup>() : null;
         var scope = new List<EfficiencyScope>();
         var outside = 0;
+        var reviews = await uow.Store<Forge.Engineering.Contracts.ILaborStandardReviewLookup>().ListReviewsAsync(ct);
+        var notes = new List<StandardReviewNote>();
         var directLabor = labor.Where(l => DirectPhases.Contains(l.Phase) && l.EndedAt is not null).ToList();
         var totalDirectHours = PerformanceIntervalMath.UnionMinutes(directLabor.Select(l => new PerformanceInterval(l.StartedAt, l.EndedAt!.Value))
             .Where(i => i.EndsAt > i.StartsAt)) / 60m;
@@ -232,6 +241,31 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
             var earned = ((op.Any(l => l.Phase == LaborPhase.Setup) ? setup : 0m) + runPerUnit * good) / 60m;
             var intervals = op.Select(l => new PerformanceInterval(l.StartedAt, l.EndedAt!.Value)).Where(i => i.EndsAt > i.StartsAt).ToList();
             var hours = PerformanceIntervalMath.UnionMinutes(intervals) / 60m;
+            // A standard under review or corrected never becomes a worker score; an implausible one is flagged for someone to review.
+            var review = Forge.Engineering.Contracts.LaborStandardReviews.Latest(reviews, order.PartNumber, order.Revision, op.Key.Sequence);
+            var standard = $"{order.PartNumber} rev {order.Revision} operation {op.Key.Sequence}";
+            StandardReviewNote? note = review?.Status switch
+            {
+                Forge.Engineering.Contracts.LaborStandardReviewStatus.Open => new(op.Key.OrderNumber, op.Key.Sequence, order.PartNumber, order.Revision, "UnderReview", review.ReviewId,
+                    $"The labor standard of {standard} is under review: {review.Reason}"),
+                Forge.Engineering.Contracts.LaborStandardReviewStatus.Corrected => new(op.Key.OrderNumber, op.Key.Sequence, order.PartNumber, order.Revision, "Corrected", review.ReviewId,
+                    $"The labor standard of {standard} was found wrong and corrected: {review.Resolution}"),
+                Forge.Engineering.Contracts.LaborStandardReviewStatus.Confirmed => null,
+                _ when Forge.Engineering.Contracts.LaborStandardReviews.Implausible(earned, hours) => new(op.Key.OrderNumber, op.Key.Sequence, order.PartNumber, order.Revision, "ReviewSuggested", null,
+                    $"The labor standard of {standard} implies {earned:0.##} h for {hours:0.##} h recorded; it looks implausible and is suggested for review."),
+                _ => null,
+            };
+            if (note is not null)
+            {
+                notes.Add(note);
+                // An implausible standard is only flagged: a person decides whether to put it under review; then it stops counting.
+                if (note.State != "ReviewSuggested")
+                {
+                    outside++;
+                    continue;
+                }
+            }
+
             var delays = PerformanceIntervalMath.UnionMinutes(intervals.SelectMany(i => verifiedExternal.Select(e => PerformanceIntervalMath.Intersect(i, e)))
                 .OfType<PerformanceInterval>()) / 60m;
             scope.Add(new EfficiencyScope(op.Key.OrderNumber, op.Key.Sequence, good, decimal.Round(earned, 4), decimal.Round(hours, 4), decimal.Round(Math.Min(delays, hours), 4)));
@@ -243,7 +277,13 @@ public sealed class CauseAdjustedPerformanceService(IKernelUnitOfWorkFactory uni
         var efficiency = ControllableLaborEfficiencyCalculator.Calculate(earnedHours, scopeHours, Math.Max(0m, scopeHours - scopeDelays), scopeDelays);
         if (earnedHours is null && totalDirectHours > 0)
             efficiency = efficiency with { Status = "N/A: no operation in this period has accepted output (a passed inspection) and a released routing standard." };
-        return (efficiency, scope, outside);
+        var left = notes.Count(n => n.State != "ReviewSuggested");
+        if (left > 0)
+            efficiency = efficiency with { Status = $"{efficiency.Status} {left} operation(s) left out because their labor standard is under review or was corrected; they are not used as a worker score." };
+        var suggested = notes.Count - left;
+        if (suggested > 0)
+            efficiency = efficiency with { Status = $"{efficiency.Status} {suggested} operation(s) look implausible against their labor standard; mark the standard for review to leave it out." };
+        return (efficiency, scope, outside, notes);
     }
 
     private static async Task<(FirstPassYieldMetrics Metrics, IReadOnlyList<FirstPassCohortView> Cohorts)> FirstPassAsync(IKernelUnitOfWork uow, ForgePrincipal principal,

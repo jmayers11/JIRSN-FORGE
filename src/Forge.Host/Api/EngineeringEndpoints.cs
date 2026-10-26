@@ -14,6 +14,10 @@ public sealed record ItemRequest(string PartNumber, string Description, string U
 
 public sealed record ClassifyRequest(ItemClass Class, string? Reason);
 
+public sealed record LaborStandardReviewRequest(string PartNumber, string Revision, int Sequence, string? Reason);
+
+public sealed record LaborStandardDecisionRequest(LaborStandardReviewStatus Status, string Resolution, string? Reason);
+
 public sealed record ManufacturerPartRequest(string Manufacturer, string Mpn, string? ManufacturerRevision, ManufacturerLifecycle? Lifecycle, string? Datasheet, string? Note, string? Reason);
 
 public sealed record ManufacturerPartRef(string Manufacturer, string Mpn, string? Reason);
@@ -54,6 +58,13 @@ public static class EngineeringEndpoints
     public static void MapEngineeringEndpoints(this IEndpointRouteBuilder app)
     {
         var eng = app.MapGroup("/api/engineering").RequireAuthorization();
+        // Sprint 10 WW-S10-10: suspect labor standards are reviewed, never used as a worker score while open.
+        eng.MapGet("/labor-standard-reviews", (HttpContext http, CancellationToken _) =>
+            ReadStore<ILaborStandardReviewLookup>(http, Permissions.EngineeringRead, async (store, ct) => await store.ListReviewsAsync(ct)));
+        eng.MapPost("/labor-standard-reviews", (HttpContext http, LaborStandardReviewRequest b, LaborStandardReviewService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.RaiseAsync(new RaiseLaborStandardReview(b.PartNumber, b.Revision, b.Sequence, b.Reason ?? string.Empty), c, ct)));
+        eng.MapPost("/labor-standard-reviews/{id:long}/decide", (HttpContext http, long id, LaborStandardDecisionRequest b, LaborStandardReviewService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.DecideAsync(new DecideLaborStandardReview(id, b.Status, b.Resolution), c, ct)));
 
         eng.MapGet("/items", (HttpContext http, CancellationToken _) =>
             ReadStore<IEngineeringLookup>(http, Permissions.EngineeringRead, async (l, ct) => await l.ListItemsAsync(ct)));

@@ -297,6 +297,9 @@ public static class EngineeringRegistration
         services.AddForgeStore<IObsolescenceLookup>(uow => new PostgresObsolescenceStore(uow));
         services.AddForgeStore<IMroLookup>(uow => new PostgresObsolescenceStore(uow));
         services.AddSingleton<ObsolescenceService>();
+        services.AddForgeStore<ILaborStandardReviewStore>(uow => new PostgresLaborStandardReviewStore(uow));
+        services.AddForgeStore<ILaborStandardReviewLookup>(uow => new PostgresLaborStandardReviewStore(uow));
+        services.AddSingleton<LaborStandardReviewService>();
         return services;
     }
 }
