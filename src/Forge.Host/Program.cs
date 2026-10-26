@@ -97,6 +97,7 @@ builder.Services.AddScoped<Forge.Host.Workforce.PlantVisualService>();
 builder.Services.AddScoped<Forge.Host.Quality.ReworkPlanService>();
 builder.Services.AddSingleton<Forge.Host.Costing.DispositionCostService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.DevelopmentReadinessService>();
+builder.Services.AddScoped<Forge.Host.Planning.ReplacementOrderService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.CauseAdjustedPerformanceService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.CoverageContributionService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.EmployeePerformanceCardService>();

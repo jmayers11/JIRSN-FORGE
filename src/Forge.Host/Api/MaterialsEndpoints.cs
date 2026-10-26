@@ -16,6 +16,10 @@ using static Forge.Host.Api.ApiSupport;
 
 namespace Forge.Host.Api;
 
+public sealed record ReplacementOrderRequest(string PartNumber, decimal Quantity, DateOnly DueDate, int Priority, long? NcrId, long? ReplacesOrderNumber, string Rationale, string? Reason);
+
+public sealed record ReplacementOrderDecisionRequest(bool Approve, string Note, bool AcceptUncoveredOperations, string? Reason);
+
 public sealed record ItemPlanningRequest(int LeadTimeDays, decimal SafetyStock, LotPolicy LotPolicy, decimal OrderQuantity, decimal OrderMultiple, string? Reason);
 
 public sealed record LocationRequest(
@@ -200,6 +204,12 @@ public static class MaterialsEndpoints
             return await Command(http, b.Reason, c => s.RaiseAsync(new RaiseRequisition(planned.PartNumber, planned.Quantity, planned.DueDate, source.Kind, source.Key, source.Label, source.DemandId, planned.Key,
                 b.RequiredRevision, b.SupplierCode, program), c, ct));
         });
+        planning.MapPost("/replacement-orders", (HttpContext http, ReplacementOrderRequest b, Forge.Host.Planning.ReplacementOrderService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ProposeAsync(new Forge.Host.Planning.ProposeReplacementOrder(b.PartNumber, b.Quantity, b.DueDate, b.Priority, b.NcrId, b.ReplacesOrderNumber, b.Rationale), c, ct)));
+        planning.MapPost("/replacement-orders/{proposalId:guid}/decide", (HttpContext http, Guid proposalId, ReplacementOrderDecisionRequest b, Forge.Host.Planning.ReplacementOrderService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.DecideAsync(new Forge.Host.Planning.DecideReplacementOrder(proposalId, b.Approve, b.Note, b.AcceptUncoveredOperations), c, ct)));
+        planning.MapGet("/replacement-orders", (HttpContext http, bool? open, Forge.Host.Planning.ReplacementOrderService s, CancellationToken ct) =>
+            Read(http, Permissions.OrdersRead, async principal => await s.ListAsync(principal, open ?? false, ct)));
         planning.MapPost("/material-risk/scan", (HttpContext http, ReasonRequest b, MaterialRiskService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ScanAsync(new ScanMaterialRisk(), c, ct)));
         planning.MapGet("/material-risk", (HttpContext http, CancellationToken _) =>

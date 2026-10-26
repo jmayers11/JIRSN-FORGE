@@ -17,6 +17,7 @@ public static class PlanningRegistration
         services.AddForgeStore<IDemandStore>(uow => new PostgresDemandStore(uow));
         services.AddForgeStore<IGoalStore>(uow => new PostgresGoalStore(uow));
         services.AddForgeStore<IMaterialRiskStore>(uow => new PostgresMaterialRiskStore(uow));
+        services.AddForgeStore<IReplacementOrderStore>(uow => new PostgresReplacementOrderStore(uow));
         services.AddForgeStore<IPlanningScenarioStore>(uow => new PostgresPlanningScenarioStore(uow));
         services.AddForgeStore<Reporting.IReportDefinitionStore>(uow => new PostgresReportStore(uow));
         services.AddSingleton<DemandService>();

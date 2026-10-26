@@ -8,6 +8,7 @@ import { appendOrderMaterialFlow } from '../materialflow.js';
 import { appendOrderQuantityStates } from '../actuals.js';
 import { appendHolds } from '../executable.js';
 import { openPartialBuild } from '../partial-build.js';
+import { appendReplacementOrders } from '../replacement-orders.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, tabifyPanels, enhanceTables } from '../ui.js';
 
 const STATUS_TONE = { Planned: 'none', FirmPlanned: 'info', Released: 'ok', Held: 'warn', Cancelled: 'bad', Completed: 'ok' };
@@ -53,6 +54,7 @@ export async function ordersPage(page, ctx) {
   enhanceTables(page, { filter: false });
   $$('[data-order]', page).forEach(r => r.addEventListener('click', () => { location.hash = `#/orders/${r.dataset.order}`; }));
   $('#new-order', page)?.addEventListener('click', () => newOrder());
+  await appendReplacementOrders(page, ctx.me);
 }
 
 /** Bind the always-visible production-order search, including single-row and no-match results. */
