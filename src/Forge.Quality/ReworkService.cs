@@ -63,7 +63,7 @@ public sealed class ReworkService(CommandPipeline pipeline)
             {
                 var ncr = await uow.Store<IQualityLookup>().FindNcrAsync(ncrId, ct)
                     ?? throw new CommandRejectedException("ncr_not_found", $"NCR {ncrId} does not exist.");
-                var wanted = c.Kind == ReworkKind.Repair ? Disposition.Repair : Disposition.Rework;
+                var wanted = c.Kind switch { ReworkKind.Repair => Disposition.Repair, ReworkKind.Scrap => Disposition.Scrap, _ => Disposition.Rework };
                 if (ncr.OrderNumber != order.OrderNumber || ncr.Status != NcrStatus.Dispositioned || ncr.Disposition != wanted)
                 {
                     throw new CommandRejectedException("ncr_not_dispositioned", ncr.OrderNumber != order.OrderNumber
@@ -77,9 +77,9 @@ public sealed class ReworkService(CommandPipeline pipeline)
                     throw new CommandRejectedException("over_ncr", $"NCR {ncrId} covers {ncr.Quantity:0.###}; {taken:0.###} already went to {c.Kind.ToString().ToLowerInvariant()}.");
                 }
             }
-            else if (c.Kind == ReworkKind.Repair)
+            else if (c.Kind is ReworkKind.Repair or ReworkKind.Scrap)
             {
-                throw new CommandRejectedException("ncr_required", "A repair carries out an approved repair disposition on an NCR; name the NCR.");
+                throw new CommandRejectedException("ncr_required", $"A {c.Kind.ToString().ToLowerInvariant()} carries out that disposition on an NCR; name the NCR.");
             }
 
             if (!string.IsNullOrWhiteSpace(c.ReasonCode))
@@ -101,6 +101,18 @@ public sealed class ReworkService(CommandPipeline pipeline)
                 BusinessCode.RequireName(c.Instructions, "Instructions"), now, context.Actor);
             var id = await uow.Store<IReworkStore>().InsertReworkAsync(rework, ct);
             var key = id.ToString(CultureInfo.InvariantCulture);
+            if (c.Kind == ReworkKind.Scrap)
+            {
+                // Scrap ends there: the output comes back as scrapped in the same step, and the production reports stay as recorded.
+                var note = $"Scrapped under NCR {c.NcrId}.";
+                await uow.Store<IReworkStore>().CloseReworkAsync(id, 0m, c.Quantity, note, now, context.Actor, ct);
+                var scrapped = rework with { ReworkId = id, ClosedAt = now, ClosedBy = context.Actor, GoodQuantity = 0m, ScrapQuantity = c.Quantity, CloseNote = note };
+                return new CommandOutcome(
+                    CommandResult.Ok(key, $"{c.Quantity:0.###} of {opId} scrapped under NCR {c.NcrId}. The production reports stay as recorded."),
+                    [pipeline.Event(new ReworkChanged(id, order.OrderNumber, op.Sequence, c.Kind.ToString(), "Closed", c.Quantity), context, SourceContext, Entity, key, program)],
+                    new AuditChange(Entity, key, null, CanonicalJson.Serialize(scrapped), program));
+            }
+
             return new CommandOutcome(
                 CommandResult.Ok(key, $"{c.Quantity:0.###} of {opId} taken back for {c.Kind.ToString().ToLowerInvariant()} ({(c.NcrId is { } n ? $"NCR {n}" : reasonCode)}). The production reports stay as recorded."),
                 [pipeline.Event(new ReworkChanged(id, order.OrderNumber, op.Sequence, c.Kind.ToString(), "Opened", c.Quantity), context, SourceContext, Entity, key, program)],

@@ -122,6 +122,12 @@ public static class Permissions
 
     /// <summary>Defines the training every new employee (or every new employee in a work center) must complete.</summary>
     public const string OnboardingManage = "workforce.onboarding.manage";
+
+    /// <summary>Read the costing policy, standard costs and cost reconciliations (Sprint 10 WW-S10-24).</summary>
+    public const string CostingRead = "costing.read";
+
+    /// <summary>Set the costing policy, standard costs and labor and overhead rates.</summary>
+    public const string CostingManage = "costing.manage";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -237,6 +243,9 @@ public static class Roles
 
     /// <summary>Schedules and delivers training and is notified when someone needs it; certification stays with Competency roles.</summary>
     public const string TechnicalTrainer = "TechnicalTrainer";
+
+    /// <summary>Keeps the costing policy, standard costs and labor and overhead rates (owner decision 2026-10-25).</summary>
+    public const string CostAccountant = "CostAccountant";
     public const string Certifier = "Certifier";
     public const string SafetyEngineer = "SafetyEngineer";
     public const string SafetyApprover = "SafetyApprover";
@@ -331,6 +340,7 @@ public static class Roles
         [ProgramManager] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.GoalsManage, Permissions.ProgramsManage, Permissions.ProgramsRead, Permissions.OrdersRead, Permissions.EngineeringRead, Permissions.MaterialPlanRead, Permissions.ScheduleRead, Permissions.InventoryRead, Permissions.QualityRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach, Permissions.ChangesReview, Permissions.RequisitionRaise, Permissions.ProjectsRead],
         [EngineeringApprover] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.EngineeringRelease, Permissions.EngineeringRead, Permissions.ResourcesRead, Permissions.CotsManage, Permissions.DocumentsApprove, Permissions.DocumentsRelease, Permissions.OrdersRead, Permissions.ProgramsRead, Permissions.ChangesReview, Permissions.ChangesApprove, Permissions.AlternatesApprove],
         [TechnicalTrainer] = [Permissions.WorkforceRead, Permissions.CompetencyRead, Permissions.ResourcesRead, Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest, Permissions.TrainingRequestsManage, Permissions.OnboardingManage],
+        [CostAccountant] = [Permissions.CostingRead, Permissions.CostingManage, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.OrdersRead, Permissions.QualityRead, Permissions.ResourcesRead],
         [TrainingCoordinator] = [Permissions.CompetencyManage, Permissions.CompetencyRead, Permissions.CompetencyMachineAuthorize, Permissions.WorkforceRead, Permissions.WorkforceDevelopmentNominate, Permissions.WorkforceNominationReview, Permissions.WorkforceNominationRead, Permissions.ResourcesRead, Permissions.EngineeringRead],
         [Certifier] = [Permissions.CompetencyCertify, Permissions.CompetencyRead, Permissions.CompetencyMachineAuthorize],
         [SafetyEngineer] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.SafetyRulesDraft, Permissions.SafetyRulesRead, Permissions.ResourcesRead, Permissions.CompetencyRead],
@@ -384,6 +394,10 @@ public static class Roles
         Map[Supervisor] = [.. Map[Supervisor], Permissions.AttendanceIntelligenceRead, Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest];
         Map[TrainingCoordinator] = [.. Map[TrainingCoordinator], Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest, Permissions.TrainingRequestsManage, Permissions.OnboardingManage];
         Map[HumanResources] = [.. Map[HumanResources], Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest];
+        // Costs are read where decisions use them; only cost accountants change them.
+        Map[Planner] = [.. Map[Planner], Permissions.CostingRead];
+        Map[InventoryController] = [.. Map[InventoryController], Permissions.CostingRead];
+        Map[QualityManager] = [.. Map[QualityManager], Permissions.CostingRead];
     }
 
     /// <summary>The system role the propagation of a released engineering change acts with (V2.5).</summary>

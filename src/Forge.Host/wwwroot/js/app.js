@@ -41,6 +41,7 @@ import { workInboxPage } from './pages/work-inbox.js';
 import { dailyMissionPage } from './pages/daily-mission.js';
 import { integrityPage } from './pages/integrity.js';
 import { scenariosPage } from './pages/scenarios.js';
+import { costingPage } from './pages/costing.js';
 import { loadDirectory } from './people.js';
 import { roleTitle } from './roles.js';
 import { isKioskMode } from './shell-mode.mjs';
@@ -86,6 +87,7 @@ const NAV = [
   { route: 'commercial-quality', label: 'Customer & Provider Quality', icon: 'commercial', page: commercialQualityPage },
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
   { route: 'shipping', label: 'Shipping', icon: 'truck', page: shippingPage },
+  { route: 'costing', label: 'Costing', icon: 'analytics', page: costingPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: analystPage },
   { route: 'access', label: 'Access Control', icon: 'access', page: accessPage },
@@ -96,7 +98,7 @@ const NAV_GROUPS = [
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
   ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'maintenance', 'shipping']],
   ['Quality', ['quality', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
-  ['Admin', ['my-work', 'notifications', 'workforce', 'integrity', 'reports', 'analyst', 'access']],
+  ['Admin', ['my-work', 'notifications', 'workforce', 'costing', 'integrity', 'reports', 'analyst', 'access']],
 ];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
 
@@ -104,6 +106,7 @@ const NAV_ACCESS = {
   supervisor: ['workforce.supervise', 'workforce.manage'], 'workforce-kanban': ['workforce.supervise', 'workforce.manage', 'resources.floor-map.manage'],
   'machine-kanban': ['planning.readiness.read', 'maintenance.read', 'resources.read'],
   performance: ['workforce.read'],
+  costing: ['costing.read'],
   home: ['planning.readiness.read', 'planning.schedule.read', 'execution.orders.read', 'resources.read', 'quality.read', 'inventory.read'],
   horizon: ['planning.schedule.read', 'planning.readiness.read'], programs: ['programs.read', 'programs.manage'],
   projects: ['projects.read', 'projects.manage'], orders: ['execution.orders.read', 'execution.orders.manage'],

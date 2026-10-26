@@ -95,6 +95,7 @@ builder.Services.AddForgeStore<IIdentificationPresentationStore>(uow => new Labe
 builder.Services.AddForgeStore<Forge.Engineering.Contracts.IGeneratedDocumentContentStore>(uow => new GeneratedDocumentContentStore(uow));
 builder.Services.AddScoped<Forge.Host.Workforce.PlantVisualService>();
 builder.Services.AddScoped<Forge.Host.Quality.ReworkPlanService>();
+builder.Services.AddSingleton<Forge.Host.Costing.DispositionCostService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.CauseAdjustedPerformanceService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.CoverageContributionService>();
 builder.Services.AddSingleton<Forge.Host.Workforce.EmployeePerformanceCardService>();
@@ -323,6 +324,7 @@ app.MapQmsReviewEndpoints();
 app.MapCommercialQualityEndpoints();
 app.MapReturnAcceptanceEndpoints();
 app.MapProductAcceptanceEndpoints();
+app.MapCostingEndpoints();
 app.MapInvestigationEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();

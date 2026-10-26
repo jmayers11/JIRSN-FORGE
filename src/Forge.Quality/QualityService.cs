@@ -41,6 +41,9 @@ public sealed record DecideUseAsIs(long NcrId, bool Approve);
 
 public sealed record CloseNcr(long NcrId, string Note);
 
+/// <summary>Moves <see cref="Quantity"/> of an open NCR into its own NCR so each part can take its own disposition (Sprint 10 WW-S10-24).</summary>
+public sealed record SplitNcr(long NcrId, decimal Quantity);
+
 public sealed record OpenCapa(long? NcrId, string Title, string RootCause, string Action, DateOnly DueDate);
 
 public sealed record ImplementCapa(long CapaId, string Note);
@@ -93,6 +96,9 @@ public interface IQualityStore
     Task<long> InsertNcrAsync(NcrInfo ncr, CancellationToken ct);
 
     Task UpdateNcrAsync(NcrInfo ncr, DateTimeOffset at, string actor, CancellationToken ct);
+
+    /// <summary>Moves part of an open NCR into a new open NCR that names it as its parent; null when the parent is not open or too small.</summary>
+    Task<long?> SplitNcrAsync(long parentNcrId, decimal quantity, NcrInfo child, CancellationToken ct);
 
     Task<long> InsertCapaAsync(CapaInfo capa, CancellationToken ct);
 
@@ -474,6 +480,53 @@ public sealed class QualityService(CommandPipeline pipeline, IKernelUnitOfWorkFa
                 ? (ncr with { Status = NcrStatus.AwaitingApproval, Disposition = c.Disposition, DispositionNote = note, DispositionedBy = context.Actor }, $"{Words(c.Disposition)} proposed; a quality manager must approve it")
                 : (ncr with { Status = NcrStatus.Dispositioned, Disposition = c.Disposition, DispositionNote = note, DispositionedBy = context.Actor }, $"dispositioned {Words(c.Disposition)}");
         }, ct);
+    }
+
+    /// <summary>
+    /// Splits an open NCR (Sprint 10 WW-S10-24): five of eight bad units can be scrapped while three are reworked. The new NCR names the
+    /// original as its parent and carries the same part, order, operation, lot and defect; every unit stays in exactly one NCR.
+    /// </summary>
+    public async Task<CommandResult> SplitNcrAsync(SplitNcr c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var id = c.NcrId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        ResourceRef resource;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
+        {
+            var found = await read.Store<IQualityLookup>().FindNcrAsync(c.NcrId, ct);
+            resource = found is null ? ResourceRef.Of("Ncr", id) : await ResourceForNcrAsync(read, found, ct);
+        }
+
+        var spec = new CommandSpec(SourceContext, nameof(SplitNcr), Permissions.QualityDisposition, resource, ReasonRequired: true);
+        return await pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var ncr = await uow.Store<IQualityLookup>().FindNcrAsync(c.NcrId, ct) ?? throw new CommandRejectedException("ncr_not_found", $"NCR {id} does not exist.");
+            await QualityAuthorityAsync(uow, context.Principal, Permissions.QualityDisposition, "Ncr", c.NcrId, c.NcrId, await ResourcesForNcrAsync(uow, ncr, ct), ct);
+            if (await ResourceForNcrAsync(uow, ncr, ct) != resource)
+                throw new CommandRejectedException("ncr_context_changed", "The NCR's operational context changed. Review its current source records and retry.");
+            if (ncr.Status != NcrStatus.Open)
+                throw new CommandRejectedException("not_open", $"NCR {id} is {ncr.Status}; only an open NCR is split, before any disposition.");
+            if (c.Quantity <= 0 || c.Quantity >= ncr.Quantity)
+                throw new CommandRejectedException("invalid_quantity", $"Move part of NCR {id}'s {ncr.Quantity:0.###} into the new NCR: more than zero and less than all of it.");
+            var child = ncr with
+            {
+                NcrId = 0, Quantity = c.Quantity, Status = NcrStatus.Open, Disposition = null, DispositionNote = null, DispositionedBy = null, ApprovedBy = null,
+                ClosedBy = null, ClosureNote = null, ClosedAt = null, RaisedBy = context.Actor, RaisedAt = now, ParentNcrId = ncr.NcrId,
+            };
+            var childId = await uow.Store<IQualityStore>().SplitNcrAsync(ncr.NcrId, c.Quantity, child, ct)
+                ?? throw new CommandRejectedException("ncr_changed", $"NCR {id} changed while you were splitting it. Refresh and try again.");
+            var childKey = childId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var remaining = ncr with { Quantity = ncr.Quantity - c.Quantity };
+            return new CommandOutcome(
+                CommandResult.Ok(childKey, $"NCR {id} split: {c.Quantity:0.###} moved to NCR {childKey}, {remaining.Quantity:0.###} stay on NCR {id}. Each takes its own disposition."),
+                [pipeline.Event(new NcrChanged(ncr.NcrId, ncr.PartNumber, ncr.OrderNumber, nameof(NcrStatus.Open)), context, SourceContext, "Ncr", id, resource.Program, resource.Markings),
+                 pipeline.Event(new NcrChanged(childId, ncr.PartNumber, ncr.OrderNumber, nameof(NcrStatus.Open)), context, SourceContext, "Ncr", childKey, resource.Program, resource.Markings)],
+                new AuditChange("Ncr", id, CanonicalJson.Serialize(ncr), CanonicalJson.Serialize(remaining), resource.Program, resource.Markings));
+        }, ct, async (uow, _) =>
+        {
+            var ncr = await uow.Store<IQualityLookup>().FindNcrAsync(c.NcrId, ct) ?? throw new CommandRejectedException("ncr_not_found", $"NCR {id} does not exist.");
+            return await QualityAuthorityAsync(uow, context.Principal, Permissions.QualityDisposition, "Ncr", c.NcrId, c.NcrId, await ResourcesForNcrAsync(uow, ncr, ct), ct);
+        });
     }
 
     public Task<CommandResult> DecideUseAsIsAsync(DecideUseAsIs c, CommandContext context, CancellationToken ct)

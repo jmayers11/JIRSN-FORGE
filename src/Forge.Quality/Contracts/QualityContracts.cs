@@ -104,7 +104,8 @@ public sealed record NcrInfo(
     string? ApprovedBy,
     string? ClosedBy,
     string? ClosureNote,
-    DateTimeOffset? ClosedAt);
+    DateTimeOffset? ClosedAt,
+    long? ParentNcrId = null);
 
 /// <summary>Operator-reported suspected scrap or quality concern. This is evidence only; it is not an NCR disposition or inventory transaction.</summary>
 public enum SuspectReportKind { Scrap, QualityIssue }
@@ -216,6 +217,9 @@ public enum ReworkKind
 
     /// <summary>An approved repair makes it usable, not conforming.</summary>
     Repair,
+
+    /// <summary>Good output an NCR's scrap disposition takes back for good (Sprint 10 WW-S10-24): recorded closed, all of it scrapped.</summary>
+    Scrap,
 }
 
 /// <summary>

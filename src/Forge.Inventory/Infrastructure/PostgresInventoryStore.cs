@@ -551,6 +551,9 @@ public static class InventoryRegistration
         services.AddForgeStore<IOutsideProcessLookup>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IOutsideProcessStore>(uow => new PostgresInventoryStore(uow));
         services.AddSingleton<InventoryService>();
+        services.AddForgeStore<ICostingStore>(uow => new PostgresCostingStore(uow));
+        services.AddForgeStore<ICostingLookup>(uow => new PostgresCostingStore(uow));
+        services.AddSingleton<CostingService>();
         services.AddForgeStore<IReturnAcceptanceInventoryStore>(uow => new PostgresReturnAcceptanceStore(uow));
         services.AddForgeStore<IReturnAcceptanceInventoryLookup>(uow => new PostgresReturnAcceptanceStore(uow));
         services.AddForgeStore<IReturnAcceptanceInventoryLock>(uow => new PostgresReturnAcceptanceStore(uow));

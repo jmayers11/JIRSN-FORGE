@@ -12,7 +12,7 @@ export const ROLE_TITLES = {
   ProgramManager: 'Program Manager', MaintenancePlanner: 'Maintenance Planner', FacilitiesManager: 'Facilities Manager',
   DocumentController: 'Document Controller', ChangeBoard: 'Change Board',
   AuditPlanner: 'Audit Planner', InternalAuditor: 'Internal Auditor', AuditApprover: 'Audit Approver',
-  TechnicalTrainer: 'Technical Trainer', HumanResources: 'Human Resources',
+  TechnicalTrainer: 'Technical Trainer', HumanResources: 'Human Resources', CostAccountant: 'Cost Accountant',
 };
 export const roleTitle = r => ROLE_TITLES[r] ?? r;
 export const ROLE_NAMES = Object.keys(ROLE_TITLES);

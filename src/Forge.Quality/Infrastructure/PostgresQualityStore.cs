@@ -12,7 +12,7 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
     private const string NcrSql =
         """
         SELECT ncr_id, part_number, order_number, sequence, lot_number, quantity, defect, description, status, disposition, disposition_note,
-               raised_by, raised_at, dispositioned_by, approved_by, closed_by, closure_note, closed_at
+               raised_by, raised_at, dispositioned_by, approved_by, closed_by, closure_note, closed_at, parent_ncr_id
         FROM quality.ncr
         """;
 
@@ -83,6 +83,23 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING ncr_id
             """,
             ncr.PartNumber, Long(ncr.OrderNumber), Int(ncr.Sequence), Text(ncr.LotNumber), ncr.Quantity, ncr.Defect, ncr.Description, ncr.Status.ToString(), ncr.RaisedBy, ncr.RaisedAt);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<long?> SplitNcrAsync(long parentNcrId, decimal quantity, NcrInfo child, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(child);
+        await using (var reduce = uow.Command("UPDATE quality.ncr SET quantity = quantity - $2 WHERE ncr_id = $1 AND status = 'Open' AND quantity > $2", parentNcrId, quantity))
+        {
+            if (await reduce.ExecuteNonQueryAsync(ct) != 1) return null;
+        }
+
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO quality.ncr (part_number, order_number, sequence, lot_number, quantity, defect, description, status, raised_by, raised_at, parent_ncr_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'Open', $8, $9, $10) RETURNING ncr_id
+            """,
+            child.PartNumber, Long(child.OrderNumber), Int(child.Sequence), Text(child.LotNumber), quantity, child.Defect, child.Description, child.RaisedBy, child.RaisedAt, parentNcrId);
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -303,7 +320,8 @@ internal sealed partial class PostgresQualityStore(PostgresUnitOfWork uow) : IQu
         r.IsDBNull(14) ? null : r.GetString(14),
         r.IsDBNull(15) ? null : r.GetString(15),
         r.IsDBNull(16) ? null : r.GetString(16),
-        r.IsDBNull(17) ? null : r.GetFieldValue<DateTimeOffset>(17));
+        r.IsDBNull(17) ? null : r.GetFieldValue<DateTimeOffset>(17),
+        r.IsDBNull(18) ? null : r.GetInt64(18));
 
     private static CapaInfo ReadCapa(NpgsqlDataReader r) => new(
         r.GetInt64(0),

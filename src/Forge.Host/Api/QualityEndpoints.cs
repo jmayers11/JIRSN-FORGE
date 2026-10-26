@@ -27,6 +27,8 @@ public sealed record SuspectReplacementMaterialRequest(decimal Quantity, string 
 
 public sealed record DispositionRequest(Disposition Disposition, string Note, string? Reason);
 
+public sealed record NcrSplitRequest(decimal Quantity, string? Reason);
+
 public sealed record NoteRequest(string Note, string? Reason);
 
 public sealed record CapaRequest(long? NcrId, string Title, string RootCause, string Action, DateOnly DueDate, string? Reason);
@@ -215,6 +217,8 @@ public static class QualityEndpoints
             Command(http, b.Reason, c => s.RecordInspectionAsync(new RecordInspection(b.OrderNumber, b.Sequence, b.Quantity, b.GaugeCode, b.Notes, b.Findings ?? [], b.RejectedQuantity), c, ct)));
         api.MapPost("/ncrs", (HttpContext http, NcrRequest b, QualityService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RaiseNcrAsync(new RaiseNcr(b.PartNumber, b.OrderNumber, b.Sequence, b.LotNumber, b.Quantity, b.Defect, b.Description), c, ct)));
+        api.MapPost("/ncrs/{id:long}/split", (HttpContext http, long id, NcrSplitRequest b, QualityService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.SplitNcrAsync(new SplitNcr(id, b.Quantity), c, ct)));
         api.MapPost("/ncrs/{id:long}/disposition", (HttpContext http, long id, DispositionRequest b, QualityService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DispositionAsync(new DispositionNcr(id, b.Disposition, b.Note), c, ct)));
         api.MapPost("/ncrs/{id:long}/approve", (HttpContext http, long id, ReasonRequest b, QualityService s, CancellationToken ct) =>
