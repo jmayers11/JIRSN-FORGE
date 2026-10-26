@@ -1840,3 +1840,7 @@ Ran the full `verify.cmd` uninterrupted: PASS, 843 tests and all UI checks. Buil
 
 Built WW-S10-17: the attendance summary defaults to the site's current calendar quarter (local-midnight rollover), with the previous quarter and named earlier quarters queryable and the period named in the response and the Command Center. 25/25 attendance-related PostgreSQL tests and the UI suite pass. Matrix 31 Covered / 7 Partial.
 
+## Claude: labor standard reviews and material backorders — 2026-10-25
+
+Built WW-S10-10 (suspect labor standards are reviewed and never used as a worker score while open; engineer confirms or corrects) and WW-S10-26 (short stock allocates what is there and backorders the rest as linked, notified, still-requested demand). 170 migrations; focused tests 23/23; UI green. Matrix 33 Covered / 5 Partial.
+

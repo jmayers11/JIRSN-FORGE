@@ -1,5 +1,11 @@
 # AI_HANDOFF.md
 
+## Claude: labor standard reviews and backorders (2026-10-25)
+
+- **WW-S10-10:** `Forge.Engineering/LaborStandardReviewService.cs`, contracts `LaborStandardContracts.cs`, migration engineering 0018; endpoints under `/api/engineering/labor-standard-reviews`. `CauseAdjustedPerformanceService` reports `standardReviews` (UnderReview/Corrected leave efficiency; ReviewSuggested is only a flag).
+- **WW-S10-26:** `MaterialTaskStatus.Backordered`, `MaterialTask.BackorderOfTaskId`, `AllocateMaterial.AllowPartial`, migration inventory 0030 (+ rule "Material backordered"). `ChangeTaskAsync` gained an `extra` events hook.
+- Migrations **170**. Verified 23/23 focused PostgreSQL tests; UI suite green. Matrix **33 Covered / 5 Partial** (9, 12, 24, 37, 38).
+
 ## Claude: full verify green; material risk notices and escalation proven (2026-10-25)
 
 - **Full `verify.cmd` passed uninterrupted** (isolated output, clean environment): 843 tests (44 / Planning 364 / Architecture 32 / Integration 403) and all UI checks, at commit `bae7eea` (rework plans). Simulation scenarios still run separately via `simulate.cmd`.
