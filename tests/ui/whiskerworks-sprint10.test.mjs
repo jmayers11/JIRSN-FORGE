@@ -16,7 +16,7 @@ test('Sprint 10 has a complete 22-core plus 16-material acceptance matrix, each 
   assert.equal(sprint10ScenarioCatalog.filter(scenario => scenario.phase === 'material-extension').length, 16);
   const byStatus = status => sprint10ScenarioCatalog.filter(scenario => scenario.evidence.status === status).map(scenario => scenario.code);
   assert.deepEqual(byStatus('Open'), []);
-  assert.ok(byStatus('Partial').length > 0 && byStatus('Covered').length + byStatus('Partial').length === 38);
+  assert.equal(byStatus('Covered').length + byStatus('Partial').length, 38);
   assert.ok(sprint10ScenarioCatalog.every(scenario => scenario.executionStatus.startsWith(scenario.evidence.status === 'Open' ? 'Open' : scenario.evidence.status === 'Covered' ? 'Covered' : 'Partially')));
   // Every named regression exists in the repository; a renamed test must update the map.
   const sources = [];

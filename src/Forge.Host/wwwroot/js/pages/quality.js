@@ -3,6 +3,7 @@ import { who } from '../people.js';
 import { attachmentsDrawer } from '../attachments.js';
 import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, enhanceTables } from '../ui.js';
 import { formModal, qty, canAction, plusDays, today } from '../forms.js';
+import { trendTabHtml, bindTrendTab } from '../quality-trend.js';
 
 // Quality (spec §45-46): inspection points after routing operations, inspections by someone who did
 // not do the work, with a calibrated gauge for anything measured. A failure raises an NCR that holds
@@ -46,7 +47,7 @@ export async function qualityPage(page, ctx) {
     const due = data.due.data?.length ?? 0;
     const overdueGauges = (data.gauges.data ?? []).filter(g => g.active && g.calibrationDue < today());
     const suspectCount = (data.suspectReports.data ?? []).filter(report => !report.ncrId).length;
-    const tabs = [['due', `Inspections due${due ? ` (${due})` : ''}`], ['ncrs', `Nonconformances${open ? ` (${open})` : ''}`], ['suspect', `Suspect reports${suspectCount ? ` (${suspectCount})` : ''}`], ['capas', 'Corrective actions'], ['history', 'Inspection history'], ['plans', 'Inspection plans'], ['gauges', 'Gauges']];
+    const tabs = [['due', `Inspections due${due ? ` (${due})` : ''}`], ['ncrs', `Nonconformances${open ? ` (${open})` : ''}`], ['suspect', `Suspect reports${suspectCount ? ` (${suspectCount})` : ''}`], ['capas', 'Corrective actions'], ['history', 'Inspection history'], ['plans', 'Inspection plans'], ['gauges', 'Gauges'], ['trends', 'Quality trend']];
     page.innerHTML = `
       <div class="page-head">
         <div><h1>Quality</h1><div class="sub">Inspections, nonconformances and corrective actions. An undecided NCR or a missed inspection holds the order; finished goods enter stock and ship only after they pass.</div></div>
@@ -57,11 +58,12 @@ export async function qualityPage(page, ctx) {
       ${overdueGauges.length ? `<div class="notice warn">${overdueGauges.length} gauge(s) are past their calibration date and cannot be used for inspection: ${overdueGauges.map(g => esc(g.code)).join(', ')}.</div>` : ''}
       <section class="panel">
         <header><div class="seg">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${{ due: dueTab, ncrs: ncrTab, suspect: suspectTab, capas: capaTab, history: historyTab, plans: plansTab, gauges: gaugesTab }[tab]?.() ?? dueTab()}
+        ${{ due: dueTab, ncrs: ncrTab, suspect: suspectTab, capas: capaTab, history: historyTab, plans: plansTab, gauges: gaugesTab, trends: trendTabHtml }[tab]?.() ?? dueTab()}
       </section>`;
 
     enhanceTables(page);
     $$('[data-tab]', page).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
+    bindTrendTab(page);
     $('#closed', page).onchange = async e => { showClosed = e.target.checked; await reload(); };
     $('#raise', page)?.addEventListener('click', () => raiseNcr());
     $$('[data-inspect]', page).forEach(b => b.addEventListener('click', () => inspect(...b.dataset.inspect.split('/').map(Number))));

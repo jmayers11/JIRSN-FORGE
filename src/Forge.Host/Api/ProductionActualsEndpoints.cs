@@ -75,6 +75,8 @@ internal static class ProductionActualsEndpoints
         quality.MapPost("/rework/{id:long}/close", (HttpContext http, long id, ReworkCloseRequest b, ReworkService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.CloseAsync(new CloseRework(id, b.GoodQuantity, b.ScrapQuantity, b.Note), c, ct)));
 
+        quality.MapGet("/trends", (HttpContext http, string part, DateOnly? from, DateOnly? to, Forge.Host.Quality.QualityTrendService s, CancellationToken ct) =>
+            Read(http, Permissions.QualityRead, async principal => await s.BuildAsync(principal, part, from, to, ct)));
         quality.MapGet("/rework-plans", (HttpContext http, long? order, CancellationToken _) =>
             Read(http, Permissions.ShopFloorRead, async principal =>
             {
