@@ -1,5 +1,13 @@
 # AI_HANDOFF.md
 
+## Claude: Sprint 10 matrix complete — cases 12, 35, 9; catalog fix for 37 (2026-10-25)
+
+- **WW-S10-12:** `Forge.Host/Workforce/DevelopmentReadinessService.cs`, `GET /api/workforce/development-nominations/readiness` (nominators); nomination form shows prerequisites held/missing and today's bottleneck. `DevelopmentReadinessTests`.
+- **Catalog fix:** evidence for 35 and 37 was swapped in `tools/whiskerworks-sprint10-scenarios.mjs`. 37 (cancel after partial issue) was already proven; 35 was the real gap.
+- **WW-S10-35:** `Forge.Planning/ReplacementOrders.cs` (contracts, events), `PostgresReplacementOrderStore`, planning migration 0010 (+ rule "Replacement order to decide"), `Forge.Host/Planning/ReplacementOrderService.cs`, endpoints `/api/planning/replacement-orders` (propose: `execution.orders.manage`; decide: `execution.orders.release`, a different person; list: orders read). Each routing operation × eligible machine is checked with `ReadinessService.RecommendWorkforceRecoveryAsync`, which now takes an optional `moverPersonIds` (engine `WorkforceRecoveryRequest.MoverPersonIds`) so only people holding the operation's required qualifications and one of the machine activity's operator qualifications are offered; anyone may backfill. Approval inserts a Planned order; uncovered operations need `acceptUncoveredOperations`. UI: `js/replacement-orders.js` on Production Orders. `ReplacementOrderTests`, `tests/ui/replacement-orders.test.mjs`, engine test `Movers_can_be_limited_to_people_holding_the_operations_own_qualifications`.
+- **WW-S10-09:** `Forge.Host/Quality/QualityTrendService.cs`, `GET /api/quality/trends?part=&from=&to=` (quality.read): weekly yield/scrap/inspections/NCR qty with machines (stoppages, maintenance windows), gauges and component lots; no person dimension. UI: `js/quality-trend.js`, Quality page "Quality trend" tab. `QualityTrendTests`, `tests/ui/quality-trend.test.mjs`.
+- Migrations **174**. Matrix **38 Covered / 0 Partial / 0 Open**. Next sensible step: one uninterrupted full `verify.cmd` run, then the WhiskerWorks replay, before calling Sprint 10 accepted.
+
 ## Claude: single site, standard costing, split NCRs (2026-10-25)
 
 - **Owner decisions:** costs follow US GAAP practice, standard cost with full absorption (material + labor + overhead), kept by a new **CostAccountant** role; method changeable later (prospective, audited). **One site per database for now**, expansion later.

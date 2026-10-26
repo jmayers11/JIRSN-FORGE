@@ -1848,3 +1848,6 @@ Built WW-S10-10 (suspect labor standards are reviewed and never used as a worker
 
 Owner decided: US GAAP standard cost with full absorption kept by a Cost Accountant; one site per database for now. Built WW-S10-38 (site limit, configurable) and WW-S10-24 (costing policy and standard costs, NCR split, scrap records, cost reconciliation of split dispositions including rework added cost; Costing page). 173 migrations; 22/22 focused tests; UI green. Matrix 35 Covered / 3 Partial.
 
+## Claude: development readiness, replacement orders, quality trend — 2026-10-25
+
+Worked smallest to largest on the owner's instruction. Built WW-S10-12 (prerequisites and today's bottleneck before nomination). Found the catalog had the evidence for 35 and 37 swapped and corrected it: 37 was already proven, 35 was the gap. Built WW-S10-35 (replacement order proposals checked operation by operation for qualified, present people and their source-center effect; approved by a different planner into a Planned order, nobody assigned; uncovered work accepted explicitly). Testing showed the recovery engine's top-three cut could hide qualified people, so the engine request gained an optional mover set. Built WW-S10-09 (weekly quality trend beside machines, stoppages, maintenance, gauges and component lots, with no person dimension). Migrations 174; all 38 Sprint 10 cases Covered.
