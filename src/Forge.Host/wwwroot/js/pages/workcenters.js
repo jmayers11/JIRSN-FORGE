@@ -54,19 +54,16 @@ export async function workCentersPage(page, ctx) {
       ${panel('readiness')}${panel('support')}${panel('tools')}${panel('holds')}
     </div></section>`;
 
+  // A compact card grid: one card per work center, shifts as short chips with the full hours on hover (owner feedback 2026-10-27:
+  // the table with every shift on its own line made a long scroll).
   function listHtml() {
-    return `<section class="panel">
-      ${!rows.length ? emptyBlock('No work centers yet', 'A manufacturing engineer sets up sites, safety areas, work centers and machines under Plant Setup.') : `
-      <table class="table"><thead><tr><th>Work center</th><th>Safety area</th><th>Machines</th><th>Shifts</th><th>Now</th><th></th></tr></thead><tbody>
-      ${rows.map(x => `<tr class="click" data-wc="${esc(x.wc.code)}">
-        <td><b>${esc(x.wc.name)}</b><br><span class="faint">${esc(x.wc.code)}</span></td>
-        <td>${esc(x.area?.name ?? x.wc.safetyAreaCode)}</td>
-        <td>${x.ms.map(m => esc(m.code)).join(', ') || '<span class="faint">none</span>'}</td>
-        <td>${x.shifts.map(s => esc(shiftText(s))).join('<br>') || '<span class="c-warn">No shift — no working time</span>'}</td>
-        <td>${x.down.length ? `<span class="pill bad">${x.down.length} down</span>` : '<span class="pill ok">All up</span>'}</td>
-        <td class="chev">${icon('chevron')}</td></tr>`).join('')}
-      </tbody></table>`}
-    </section>`;
+    if (!rows.length) return `<section class="panel">${emptyBlock('No work centers yet', 'A manufacturing engineer sets up sites, safety areas, work centers and machines under Plant Setup.')}</section>`;
+    return `<div class="wc-card-grid">${rows.map(x => `<a class="wc-card" href="#/work-centers/${encodeURIComponent(x.wc.code)}" data-wc="${esc(x.wc.code)}">
+      <div class="wc-card-head"><div><b>${esc(x.wc.name)}</b><span class="faint">${esc(x.wc.code)}</span></div>${x.down.length ? `<span class="pill bad">${x.down.length} down</span>` : '<span class="pill ok">All up</span>'}</div>
+      <div class="wc-card-area">${esc(x.area?.name ?? x.wc.safetyAreaCode)}</div>
+      <div class="wc-card-chips" title="Machines">${x.ms.map(m => `<span class="chip${x.down.includes(m) ? ' bad' : ''}">${esc(m.code)}</span>`).join('') || '<span class="faint">No machines</span>'}</div>
+      <div class="wc-card-chips" title="Shifts">${x.shifts.map(sh => `<span class="chip info" title="${esc(shiftText(sh))}">${esc(sh.name.split(/[\s/]/)[0])}</span>`).join('') || '<span class="c-warn">No shift — no working time</span>'}</div>
+    </a>`).join('')}</div>`;
   }
 
   function detail(x) {

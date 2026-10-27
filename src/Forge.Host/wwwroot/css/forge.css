@@ -1657,3 +1657,15 @@ button.pill.linkish:hover { text-decoration: underline; }
 .order-facts-more { padding: 8px 12px; }
 .order-facts-more > summary { cursor: pointer; font-weight: 650; }
 .order-facts-more .order-facts { margin: 10px 0 6px; }
+.wc-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.wc-card { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: inherit; text-decoration: none; }
+.wc-card:hover, .wc-card:focus-visible { border-color: var(--forge-orange); }
+.wc-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.wc-card-head > div { display: grid; min-width: 0; }
+.wc-card-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wc-card-head .faint { font-size: 11px; }
+.wc-card-area { color: var(--muted); font-size: 12px; }
+.wc-card-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.wc-card-chips .chip { padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.wc-card-chips .chip.info { border-color: rgba(59,130,246,.45); color: #93c5fd; }
+.wc-card-chips .chip.bad { border-color: rgba(185,28,28,.6); color: #fca5a5; }

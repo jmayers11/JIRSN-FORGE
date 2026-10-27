@@ -38,7 +38,8 @@ test('work centers open as tabs: the list first, each other view in its own tab 
   assert.deepEqual(tabs, ['list', 'readiness', 'support', 'tools', 'holds']);
   const shown = [...page.querySelectorAll('[data-workspace-panel]')].filter(p => !p.hidden).map(p => p.dataset.workspacePanel);
   assert.deepEqual(shown, ['list']);
-  assert.equal(page.querySelectorAll('[data-wc]').length, 2);
+  assert.equal(page.querySelectorAll('.wc-card-grid .wc-card[data-wc]').length, 2);
+  assert.equal(page.querySelector('table'), null, 'the list is a compact card grid, not a long table');
   assert.equal(page.querySelectorAll('[data-wc-picker] option').length, 3);
   fire(page.querySelector('[data-workspace-tab="tools"]'), 'click');
   assert.deepEqual([...page.querySelectorAll('[data-workspace-panel]')].filter(p => !p.hidden).map(p => p.dataset.workspacePanel), ['tools']);
