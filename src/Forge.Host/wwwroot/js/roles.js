@@ -9,7 +9,7 @@ export const ROLE_TITLES = {
   QmsAuthor: 'QMS Author', QmsReviewer: 'QMS Reviewer', QmsApprover: 'QMS Approver',
   QmsPolicyConsumer: 'QMS Policy Consumer', LabelAuthor: 'Label Author', LabelApprover: 'Label Approver',
   LabelPrinter: 'Label Printer', IdentificationAdministrator: 'Identification Administrator', ScanOperator: 'Scan Operator',
-  ProgramManager: 'Program Manager', MaintenancePlanner: 'Maintenance Planner', FacilitiesManager: 'Facilities Manager',
+  ProgramManager: 'Program Manager', PlantManager: 'Plant Manager', MaintenancePlanner: 'Maintenance Planner', FacilitiesManager: 'Facilities Manager',
   DocumentController: 'Document Controller', ChangeBoard: 'Change Board',
   AuditPlanner: 'Audit Planner', InternalAuditor: 'Internal Auditor', AuditApprover: 'Audit Approver',
   TechnicalTrainer: 'Technical Trainer', HumanResources: 'Human Resources', CostAccountant: 'Cost Accountant',

@@ -315,6 +315,12 @@ public static class Roles
     /// <summary>Approves facility and capital projects and changes to them (V2.10).</summary>
     public const string FacilitiesManager = "FacilitiesManager";
 
+    /// <summary>
+    /// Answers for the whole plant (owner decision 2026-10-27): sees every area of Forge, including the people views supervisors use.
+    /// It changes nothing by itself; each change stays with that area's own role, so separation of duties is unchanged.
+    /// </summary>
+    public const string PlantManager = "PlantManager";
+
     private static readonly Dictionary<string, string[]> Map = new(StringComparer.Ordinal)
     {
         [Employee] = [Permissions.AttendanceCorrectionRequest],
@@ -359,6 +365,7 @@ public static class Roles
         [DocumentController] = [Permissions.DocumentsManage, Permissions.DocumentsApprove, Permissions.DocumentsRelease, Permissions.DocumentsAttach, Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.PurchasingRead, Permissions.QualityRead, Permissions.MaintenanceRead, Permissions.ProgramsRead, Permissions.ResourcesRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.ChangesManage, Permissions.ChangesReview, Permissions.EngineeringRelease],
         [ChangeBoard] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ChangesApprove, Permissions.ChangesReview, Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.QualityRead, Permissions.ProgramsRead, Permissions.ResourcesRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.AlternatesApprove],
         [FacilitiesManager] = [Permissions.ProjectsRead, Permissions.ProjectsManage, Permissions.ProjectsApprove, Permissions.RequisitionRaise, Permissions.DemandManage, Permissions.InventoryRead, Permissions.MaintenanceRead, Permissions.EngineeringRead, Permissions.PurchasingRead, Permissions.MaterialPlanRead, Permissions.ResourcesRead, Permissions.ResourcesFloorMapManage, Permissions.WorkforcePhotosManage, Permissions.WorkforceRead, Permissions.WorkforceSupervise, Permissions.CompetencyRead, Permissions.ScheduleRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach],
+        [PlantManager] = [Permissions.AnalystUse, Permissions.ReportsSave],
         [ShopFloorTerminal] = [Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.InventoryMaterialRequest, Permissions.QualityReportSuspect, Permissions.ReadinessRead, Permissions.OrdersRead, Permissions.ResourcesRead, Permissions.ScheduleRead],
     };
 
@@ -398,7 +405,31 @@ public static class Roles
         Map[Planner] = [.. Map[Planner], Permissions.CostingRead];
         Map[InventoryController] = [.. Map[InventoryController], Permissions.CostingRead];
         Map[QualityManager] = [.. Map[QualityManager], Permissions.CostingRead];
+        // Owner decision 2026-10-27: supervisors and managers answer to several areas, so they can see every area of Forge. Seeing is all
+        // this adds; recording, proposing and approving stay with each area's role. People views (attendance, development packets,
+        // training requests) go to supervisors and the plant manager only; pay, the audit trail and access administration go to nobody new.
+        foreach (var role in OperationalOverview)
+            Map[role] = [.. Map[role].Union(SeeEveryArea, StringComparer.Ordinal)];
+        foreach (var role in new[] { Supervisor, PlantManager })
+            Map[role] = [.. Map[role].Union(SeePeople, StringComparer.Ordinal)];
     }
+
+    /// <summary>Roles that see every operational area (owner decision 2026-10-27).</summary>
+    public static readonly IReadOnlyList<string> OperationalOverview = [Supervisor, PlantManager, QualityManager, PurchasingManager, ProgramManager, FacilitiesManager];
+
+    /// <summary>Read access to every operational area of Forge.</summary>
+    public static readonly IReadOnlyList<string> SeeEveryArea =
+    [
+        Permissions.ResourcesRead, Permissions.WorkforceRead, Permissions.CompetencyRead, Permissions.SafetyRulesRead, Permissions.ReadinessRead,
+        Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.MaintenanceRead, Permissions.ScheduleRead, Permissions.ShopFloorRead,
+        Permissions.HoldsRead, Permissions.InventoryRead, Permissions.PurchasingRead, Permissions.QualityRead, Permissions.QmsRead,
+        Permissions.IdentificationRead, Permissions.MaterialPlanRead, Permissions.ProgramsRead, Permissions.ProjectsRead, Permissions.CostingRead,
+        Permissions.AnalystUse, Permissions.ReportsSave,
+    ];
+
+    /// <summary>The people views a supervisor works from: attendance intelligence, development packets and training requests.</summary>
+    public static readonly IReadOnlyList<string> SeePeople =
+        [Permissions.AttendanceIntelligenceRead, Permissions.WorkforceNominationRead, Permissions.TrainingRequestsRead];
 
     /// <summary>The system role the propagation of a released engineering change acts with (V2.5).</summary>
     public const string ChangePropagation = "system.ChangePropagation";

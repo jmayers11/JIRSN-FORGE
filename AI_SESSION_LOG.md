@@ -1855,3 +1855,7 @@ Worked smallest to largest on the owner's instruction. Built WW-S10-12 (prerequi
 ## Claude: full verification and WhiskerWorks replay after Sprint 10 — 2026-10-26
 
 One uninterrupted full `verify.cmd` run passed (855 .NET + 397 UI tests). The WhiskerWorks replay then failed at its first check: a demo reset restored a baseline saved before the Sprint 10 migrations, so the host queried columns the restored copy lacked. Fixed `DemoService.ResetAsync` to migrate the restored copy (it applied 12) and proved it in `DemoTenantTests`. The replay passed 47/47 afterwards. Also found that starting the preview from a dev job held the job log open and blocked the dev loop; the preview now starts through `Start-Process`.
+
+## Claude: Daily Mission board, Work Center tabs, overview access — 2026-10-27
+
+Owner asked for a kanban Daily Mission, tabbed Work Centers, and broad access for supervisors and managers. Asked how broad: the owner chose read access to every area (actions and approvals unchanged) and a new Plant Manager role. Built the five-lane mission board, the tabbed work-center page with a picker, and the overview access (kernel migration 0038). People views stay with supervisors and the plant manager; pay, audit and access administration are not widened.

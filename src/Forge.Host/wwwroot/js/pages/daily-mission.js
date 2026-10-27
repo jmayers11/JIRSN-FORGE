@@ -76,6 +76,19 @@ function renderRecoveryPreview(result) {
   return `<h4>Read-only coverage preview</h4><p>Fresh order-readiness and supervisor-scope checks completed at ${esc(dateTime(run?.asOf ?? output?.asOf))}. No staffing change was made.</p>${candidateList}${limitations}`;
 }
 
+const LANE = { 'Requires Decision': 'decision', 'Ready to Execute': 'ready', 'Requires Attention': 'attention', 'Assigned Work': 'assigned', 'Watch/Upcoming': 'watch' };
+
+/** The mission as a kanban board: one lane per group, side by side, each scrolling on its own. */
+export function missionBoardHtml(items, priorities, timeZone, stale = false, canReviewRecovery = false) {
+  return `<div class="daily-mission-board" aria-label="Daily Mission board">${GROUPS.map(group => {
+    const inGroup = items.filter(item => item.group === group);
+    const id = `mission-lane-${LANE[group]}`;
+    return `<section class="daily-mission-section daily-mission-lane" data-lane="${LANE[group]}" data-mission-group="${esc(group)}" aria-labelledby="${id}">
+      <header class="daily-mission-lane-head"><h2 id="${id}">${esc(group)}</h2><span class="badge gray">${inGroup.length}</span></header>
+      <div class="daily-mission-list">${inGroup.length ? inGroup.map(item => itemCard(item, priorities, timeZone, stale, canReviewRecovery)).join('') : '<p class="daily-mission-empty">Nothing from the connected sources needs attention here.</p>'}</div></section>`;
+  }).join('')}</div>`;
+}
+
 export async function dailyMissionPage(root, { me }) {
   const renderHeader = (preferences = null) => `<section class="page-head daily-mission-head"><div><p class="eyebrow">SHIFT BRIEFING · LIVE SOURCE LINKS</p><h1>Daily Mission</h1><p class="sub">A role-aware view of decisions, assigned work and operational risks. Source workflows remain authoritative.</p></div><div class="daily-mission-header-actions"><button class="btn" data-reopen-briefing type="button" aria-controls="daily-mission-intro" aria-expanded="false">View shift briefing</button><button class="btn" data-refresh type="button">Refresh mission</button></div></section>
     ${preferences ? `<details class="daily-mission-preferences"><summary>Personalize your workspace</summary><div class="daily-mission-preference-fields"><label>Default workspace on sign-in<select class="input" data-landing-route>${preferences.options.map(option => `<option value="${esc(option.route)}" ${option.route === preferences.landingRoute ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select></label><label>Program view<select class="input" data-program-scope>${(preferences.programOptions ?? [{ route: 'all', label: 'All authorized programs' }]).map(option => `<option value="${esc(option.route)}" ${option.route === (preferences.programScope ?? 'all') ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select></label><label>Hawk accents<select class="input" data-hawk-accents><option value="off" ${preferences.hawkAccents === 'off' ? 'selected' : ''}>Off</option><option value="subtle" ${preferences.hawkAccents === 'subtle' ? 'selected' : ''}>Subtle</option><option value="expressive" ${preferences.hawkAccents === 'expressive' ? 'selected' : ''}>Expressive</option></select></label><button class="btn small" data-save-preferences type="button">Save preferences</button><small>The program view can narrow your authorized scope; it cannot grant access. Shared site context stays governed by its own permissions. The sidebar remains available as your Classic Workspace.</small></div></details>` : ''}`;
@@ -111,11 +124,7 @@ export async function dailyMissionPage(root, { me }) {
   const permissions = me?.permissions ?? [];
   const canReviewRecovery = permissions.includes('workforce.supervise') || permissions.includes('workforce.manage');
   const priorities = new Set(items.slice(0, 5).map(item => item.id));
-  const sections = GROUPS.map(group => {
-    const inGroup = items.filter(item => item.group === group);
-    return `<section class="section daily-mission-section" data-mission-group="${esc(group)}"><div class="section-head"><h2>${esc(group)}</h2><span class="badge gray">${inGroup.length}</span></div>
-      ${inGroup.length ? `<div class="daily-mission-list">${inGroup.map(item => itemCard(item, priorities, timeZone, stale, canReviewRecovery)).join('')}</div>` : `<p class="daily-mission-empty">Nothing from the connected sources needs attention in this section.</p>`}</section>`;
-  }).join('');
+  const sections = missionBoardHtml(items, priorities, timeZone, stale, canReviewRecovery);
 
   root.innerHTML = `${renderHeader(preferences)}
     ${briefing.scopeChanged ? `<div class="notice info daily-mission-scope-notice" role="status">Your role, site, shift, or program access changed. This mission now reflects your current authorized scope. Your briefing has not been repeated.</div>` : ''}

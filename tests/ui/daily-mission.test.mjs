@@ -156,3 +156,18 @@ test('supervisors can request a fresh, read-only safe coverage preview for a wor
   assert.match(panel.innerHTML, /20 good units/);
   assert.match(panel.innerHTML, /No staffing change was made/);
 });
+
+test('the Daily Mission is a kanban board with one lane per group, side by side', async t => {
+  installBrowser(t);
+  const { missionBoardHtml } = await import('../../src/Forge.Host/wwwroot/js/pages/daily-mission.js');
+  const items = [
+    { id: 'a', group: 'Requires Decision', title: 'Approve schedule', reason: 'Waiting', sourceLifecycle: 'Schedule', sourceStatus: 'Proposed', deepLink: '#/scheduling' },
+    { id: 'b', group: 'Assigned Work', title: 'Inspect order 7', reason: 'Due today', sourceLifecycle: 'Inspection', sourceStatus: 'Due', deepLink: '#/quality' },
+  ];
+  const html = missionBoardHtml(items, new Set(['a']));
+  const lanes = [...html.matchAll(/data-mission-group="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(lanes, ['Requires Decision', 'Ready to Execute', 'Requires Attention', 'Assigned Work', 'Watch/Upcoming']);
+  assert.match(html, /class="daily-mission-board"/);
+  assert.match(html, /data-lane="decision"[\s\S]*Approve schedule[\s\S]*data-lane="ready"[\s\S]*Nothing from the connected sources/);
+  assert.match(html, /data-lane="assigned"[\s\S]*Inspect order 7/);
+});

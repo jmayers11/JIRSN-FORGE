@@ -310,7 +310,22 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .daily-mission-freshness b { font-size: 12px; }
 .daily-mission-freshness small { color: var(--faint); }
 .daily-mission-warning { font-size: 13px; }
-.daily-mission-list { display: grid; gap: 8px; }
+.daily-mission-board { display: grid; grid-template-columns: repeat(5, minmax(250px, 1fr)); gap: 12px; margin: 14px 0; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: 6px; }
+.daily-mission-lane { display: flex; flex-direction: column; min-width: 250px; max-height: calc(100vh - 230px); border: 1px solid var(--line); border-top: 3px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); scroll-snap-align: start; }
+.daily-mission-lane[data-lane="decision"] { border-top-color: var(--forge-orange); }
+.daily-mission-lane[data-lane="ready"] { border-top-color: var(--ok, #22c55e); }
+.daily-mission-lane[data-lane="attention"] { border-top-color: var(--warn, #eab308); }
+.daily-mission-lane[data-lane="assigned"] { border-top-color: var(--info, #38bdf8); }
+.daily-mission-lane-head { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.daily-mission-lane-head h2 { margin: 0; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+.daily-mission-lane .daily-mission-list { padding: 10px; overflow-y: auto; }
+.daily-mission-lane .daily-mission-card { flex-direction: column; align-items: stretch; gap: 8px; }
+.daily-mission-lane .daily-mission-card-actions { justify-items: start; min-width: 0; }
+.daily-mission-lane .daily-mission-assignment-note { max-width: none; text-align: left; }
+.daily-mission-lane .daily-mission-group-tag { display: none; }
+.daily-mission-list { display: grid; gap: 8px; align-content: start; }
+.wc-picker { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.wc-picker .select { min-width: 200px; }
 .daily-mission-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: 5px; background: rgba(12,17,22,.55); }
 .daily-mission-card.priority { border-left: 3px solid var(--forge-orange); }
 .daily-mission-card-main { min-width: 0; }

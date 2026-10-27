@@ -1,5 +1,12 @@
 # AI_HANDOFF.md
 
+## Claude: Daily Mission board, Work Center tabs, overview access for supervisors and managers (2026-10-27)
+
+- **Owner request:** Daily Mission as kanban rather than a vertical scroll; Work Centers tabbed; supervisors and managers "access to pretty much everything". **Owner decisions (2026-10-27):** *see* everything (read only; actions, approvals and separation of duties unchanged), and add a **Plant Manager** role.
+- **Daily Mission:** `missionBoardHtml` in `js/pages/daily-mission.js` renders five lanes side by side (`.daily-mission-board`, `.daily-mission-lane[data-lane]`), each scrolling on its own, horizontally scrollable on narrow screens. Group names, `data-mission-group` and all actions unchanged.
+- **Work Centers:** `js/pages/workcenters.js` is tabbed: All work centers (or Capacity & downtime for one), Readiness & presence, Stoppages, Tools, Holds & reason codes; a work-center picker in the header replaces scrolling back to the list. `?focus=tools|holds|readiness|support` opens a tab (Tools & Calibration nav link now lands on the Tools tab even without a work center).
+- **Access:** `Roles.SeeEveryArea` (22 read permissions across every area, plus analyst and saved reports) for `Roles.OperationalOverview` = Supervisor, PlantManager, QualityManager, PurchasingManager, ProgramManager, FacilitiesManager; `Roles.SeePeople` (attendance intelligence, development packets, training requests) for Supervisor and PlantManager only. Pay (`workforce.compensation.read`), the audit trail and access administration are not widened. Program-restricted records still need program membership. Kernel migration 0038 (175 migrations). `OverviewRoleTests` (Kernel).
+
 ## Claude: Sprint 10 matrix complete — cases 12, 35, 9; catalog fix for 37 (2026-10-25)
 
 - **WW-S10-12:** `Forge.Host/Workforce/DevelopmentReadinessService.cs`, `GET /api/workforce/development-nominations/readiness` (nominators); nomination form shows prerequisites held/missing and today's bottleneck. `DevelopmentReadinessTests`.

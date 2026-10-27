@@ -30,12 +30,35 @@ export async function workCentersPage(page, ctx) {
     return { wc, ms, area, down, shifts: shiftsOf(wc.code) };
   });
 
+  const tab = (id, label, selectedTab) => `<button class="workspace-tab" id="wc-tab-${id}" type="button" role="tab" data-workspace-tab="${id}" aria-controls="wc-panel-${id}" aria-selected="${selectedTab}" ${selectedTab ? '' : 'tabindex="-1"'}>${label}</button>`;
+  const panel = (id, body = '', shown = false) => `<div id="wc-panel-${id}" data-workspace-panel="${id}" role="tabpanel" aria-labelledby="wc-tab-${id}" ${shown ? '' : 'hidden'}>${body}</div>`;
+  const current = selected ? rows.find(x => x.wc.code === selected) : null;
+  const picker = rows.length ? `<label class="wc-picker">Work center <select class="select" data-wc-picker><option value="">All work centers</option>${rows.map(x => `<option value="${esc(x.wc.code)}" ${x.wc.code === selected ? 'selected' : ''}>${esc(x.wc.name)} (${esc(x.wc.code)})</option>`).join('')}</select></label>` : '';
+
+  // One screen at a time: tabs instead of every section stacked on one long page (owner request 2026-10-27).
   page.innerHTML = `
-    <div class="page-head"><div><h1>Work Centers</h1><div class="sub">${esc(r.sites.map(s => `${s.name} (${s.timeZone})`).join(' · ') || 'No site set up yet')}</div></div><div class="spacer"></div><a class="btn" href="#/plant-setup">Add or edit work centers</a></div>
-    <section class="panel">
+    <div class="page-head"><div><h1>${current ? esc(current.wc.name) : 'Work Centers'}</h1><div class="sub">${current
+      ? `${esc(current.wc.code)} · ${esc(current.area?.name ?? current.wc.safetyAreaCode)} · ${current.ms.length} machine${current.ms.length === 1 ? '' : 's'} · ${current.shifts.length} shift${current.shifts.length === 1 ? '' : 's'} · ${current.down.length ? `<span class="pill bad">${current.down.length} down</span>` : '<span class="pill ok">All up</span>'}`
+      : esc(r.sites.map(s => `${s.name} (${s.timeZone})`).join(' · ') || 'No site set up yet')}</div></div><div class="spacer"></div>${picker}<a class="btn" href="#/plant-setup">Add or edit work centers</a></div>
+    ${selected && !current ? emptyBlock('Unknown work center', selected) : ''}
+    <section class="workspace-tabs">
+    <div class="workspace-tablist" role="tablist" aria-label="Work center views">
+      ${current ? tab('overview', 'Capacity &amp; downtime', true) : tab('list', `All work centers (${rows.length})`, true)}
+      ${tab('readiness', 'Readiness &amp; presence', false)}
+      ${tab('support', 'Stoppages', false)}
+      ${tab('tools', 'Tools', false)}
+      ${tab('holds', 'Holds &amp; reason codes', false)}
+    </div>
+    <div class="workspace-panels">
+      ${current ? panel('overview', detail(current), true) : panel('list', listHtml(), true)}
+      ${panel('readiness')}${panel('support')}${panel('tools')}${panel('holds')}
+    </div></section>`;
+
+  function listHtml() {
+    return `<section class="panel">
       ${!rows.length ? emptyBlock('No work centers yet', 'A manufacturing engineer sets up sites, safety areas, work centers and machines under Plant Setup.') : `
       <table class="table"><thead><tr><th>Work center</th><th>Safety area</th><th>Machines</th><th>Shifts</th><th>Now</th><th></th></tr></thead><tbody>
-      ${rows.map(x => `<tr class="click" data-wc="${esc(x.wc.code)}" ${x.wc.code === selected ? 'style="outline:1px solid #F97316"' : ''}>
+      ${rows.map(x => `<tr class="click" data-wc="${esc(x.wc.code)}">
         <td><b>${esc(x.wc.name)}</b><br><span class="faint">${esc(x.wc.code)}</span></td>
         <td>${esc(x.area?.name ?? x.wc.safetyAreaCode)}</td>
         <td>${x.ms.map(m => esc(m.code)).join(', ') || '<span class="faint">none</span>'}</td>
@@ -43,22 +66,12 @@ export async function workCentersPage(page, ctx) {
         <td>${x.down.length ? `<span class="pill bad">${x.down.length} down</span>` : '<span class="pill ok">All up</span>'}</td>
         <td class="chev">${icon('chevron')}</td></tr>`).join('')}
       </tbody></table>`}
-    </section>
-    ${selected ? detail(rows.find(x => x.wc.code === selected)) : ''}`;
+    </section>`;
+  }
 
   function detail(x) {
-    if (!x) return emptyBlock('Unknown work center', selected);
     const capRows = cap.filter(c => c.workCenterCode === x.wc.code);
     return `
-    <section class="panel object-summary"><header><h2>${esc(x.wc.name)}</h2><span class="spacer"></span><span class="muted">${esc(x.wc.code)} · ${x.ms.length} machine${x.ms.length === 1 ? '' : 's'} · ${x.shifts.length} shift${x.shifts.length === 1 ? '' : 's'}</span></header></section>
-    <section class="workspace-tabs">
-    <div class="workspace-tablist" role="tablist" aria-label="Work center views">
-      <button class="workspace-tab" id="wc-tab-overview" type="button" role="tab" data-workspace-tab="overview" aria-controls="wc-panel-overview" aria-selected="true">Capacity</button>
-      <button class="workspace-tab" id="wc-tab-readiness" type="button" role="tab" data-workspace-tab="readiness" aria-controls="wc-panel-readiness" aria-selected="false" tabindex="-1">Readiness &amp; presence</button>
-      <button class="workspace-tab" id="wc-tab-support" type="button" role="tab" data-workspace-tab="support" aria-controls="wc-panel-support" aria-selected="false" tabindex="-1">Stoppages &amp; tools</button>
-    </div>
-    <div class="workspace-panels">
-    <div id="wc-panel-overview" data-workspace-panel="overview" role="tabpanel" aria-labelledby="wc-tab-overview">
     <section class="panel"><header><h2>Executable capacity, next 7 days</h2></header>
       ${capacity.error ? errorBlock(capacity.error, 'capacity') : !capRows.length ? emptyBlock('No machine capacity', 'This work center has no machines with activities set up.') : `
       <table class="table"><thead><tr><th>Machine</th><th>Activity</th><th>Working hours</th><th>Executable hours</th><th>Lost to</th><th>Readiness now</th></tr></thead><tbody>
@@ -73,12 +86,10 @@ export async function workCentersPage(page, ctx) {
       </tbody></table>
       <div class="faint" style="margin-top:6px">${esc(capacity.data.output.confidence)}</div>`}
     </section>
+    <section class="panel"><header><h2>Shifts</h2></header>${x.shifts.map(sh => `<div>${esc(shiftText(sh))}</div>`).join('') || '<span class="c-warn">No shift — no working time</span>'}</section>
     <section class="panel"><header><h2>Downtime</h2></header>
       ${(downtime.data ?? []).filter(w => x.ms.some(m => m.code === w.machineCode)).map(w => `<div>${esc(w.machineCode)} · <span class="pill ${w.kind === 'Planned' ? 'info' : 'bad'}">${esc(w.kind)}</span> ${esc(fmtDateTime(w.startsAt))} – ${w.endsAt ? esc(fmtDateTime(w.endsAt)) : 'open'} · ${esc(w.reason)}</div>`).join('') || '<span class="muted">None recorded in the last day or planned in the next two weeks.</span>'}
-    </section>
-    </div><div id="wc-panel-readiness" data-workspace-panel="readiness" role="tabpanel" aria-labelledby="wc-tab-readiness" hidden></div>
-    <div id="wc-panel-support" data-workspace-panel="support" role="tabpanel" aria-labelledby="wc-tab-support" hidden></div>
-    </div></section>`;
+    </section>`;
   }
 
   $$('[data-wc]', page).forEach(row => row.addEventListener('click', () => { location.hash = `#/work-centers/${encodeURIComponent(row.dataset.wc)}`; }));
@@ -99,18 +110,23 @@ export async function workCentersPage(page, ctx) {
     button.disabled = false;
   }));
 
-  // V3.5: stoppages on the selected work center's machines (or all machines), and the plant's reason codes.
-  const chosen = selected ? rows.find(x => x.wc.code === selected) : null;
-  const supportPanel = selected ? $('[data-workspace-panel="support"]', page) : page;
-  const readinessPanel = selected ? $('[data-workspace-panel="readiness"]', page) : page;
-  await appendStoppages(supportPanel, chosen ? chosen.ms : r.machines, ctx.me);
-  await appendReasonCodes(supportPanel, ctx.me);
-  await appendTools(supportPanel, r.machines, ctx.me);
-  await appendToolRequirements(supportPanel, ctx.me);
-  // V3.9: can each open operation run now, who is actually present, and production holds.
-  await appendOperations(readinessPanel, chosen?.wc.code);
-  await appendPresence(readinessPanel, chosen?.wc.code);
-  await appendHolds(readinessPanel, ctx.me);
+  // V3.5: stoppages on the selected work center's machines (or all machines), and the plant's reason codes; V3.9 readiness,
+  // presence and holds. Each goes into its own tab.
+  $('[data-wc-picker]', page)?.addEventListener('change', event => {
+    location.hash = event.target.value ? `#/work-centers/${encodeURIComponent(event.target.value)}` : '#/work-centers';
+  });
+  const into = id => $(`[data-workspace-panel="${id}"]`, page);
+  const machines = current ? current.ms : r.machines;
+  await appendStoppages(into('support'), machines, ctx.me);
+  await appendTools(into('tools'), current ? current.ms : r.machines, ctx.me);
+  await appendToolRequirements(into('tools'), ctx.me);
+  await appendOperations(into('readiness'), current?.wc.code);
+  await appendPresence(into('readiness'), current?.wc.code);
+  await appendHolds(into('holds'), ctx.me);
+  await appendReasonCodes(into('holds'), ctx.me);
   wireWorkspaceTabs(page);
-  if (selected && ctx.query?.get('focus') === 'tools') $('[data-workspace-tab="support"]', page)?.click();
+  const focus = ctx.query?.get('focus') ?? ctx.query?.get('tab');
+  const focused = focus ? $(`[data-workspace-tab="${focus}"]`, page) : null;
+  if (focused && typeof focused.click === 'function') focused.click();
+  else if (focused) focused.dispatchEvent({ type: 'click', bubbles: true });
 }
