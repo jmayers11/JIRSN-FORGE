@@ -1,5 +1,12 @@
 # AI_HANDOFF.md
 
+## Claude: Production Risk Radar built (2026-10-27)
+
+- **Owner decisions (2026-10-27):** three adjustable views — current (today), next 7 days, next 30 days. Bands by days until the impact: **High** today up to 6 days, **Medium** 7–29 days, **Low** 30 days or more. Configurable as `Forge:RiskRadar:HighMaxDays` (6) and `Forge:RiskRadar:MediumMaxDays` (29).
+- **Impact time (same snapshot as the evidence):** `OperationalEvidenceSignal` gained `ImpactAt` and `ImpactBasis`, computed in `OperationalEvidenceService.Impact`: now for conditions in force (open NCR, active hold, open stoppage, machine down, overdue supply); recorded start for upcoming downtime/stoppages; the approved schedule start of the affected operation or the order's first open operation (only for readers with `planning.schedule.read`); else the order's due date. Ended/released records and root-cause assessments get none. Each basis is stated on the card.
+- **API/UI:** `Forge.Planning/RiskRadar.cs` (`RiskRadarService`, `GET /api/planning/risk-radar?view=current|7d|30d`, `planning.readiness.read`); page `js/pages/risk-radar.js` (route `risk-radar`, Supervisor group): High/Medium/Low lanes side by side, each scrolling on its own, cards linking to the order, operation or part; sources the role cannot read are listed so an empty band is not mistaken for all-clear. The 30-day view also lists anything later as Low. Hidden when `Forge:Features:OperationalVisualizations` is false.
+- **Tests:** `RiskRadarTests` (bands, impact bases), `OperationalEvidenceApiTests` extended (radar on PostgreSQL), `tests/ui/risk-radar.test.mjs`.
+
 ## Claude: Codex backend committed; UI density pass implemented (2026-10-27)
 
 - **Codex work committed:** the uncommitted operational evidence backend (`OperationalEvidenceService`, `GET /api/planning/operational-evidence`, maintenance downtime source references) and `docs/ui-ux-density-audit.md`, plus a new PostgreSQL test `OperationalEvidenceApiTests` (one shared snapshot, exact order links on NCR and stoppage signals, no cause identifier without a root-cause record, quality withheld as NotAuthorized from a terminal, 403 without readiness). Codex's earlier `b63bd45` (operational views) was already committed.

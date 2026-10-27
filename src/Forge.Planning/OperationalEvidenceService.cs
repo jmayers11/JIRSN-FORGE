@@ -8,6 +8,7 @@ using Forge.Kernel.Security;
 using Forge.Maintenance.Contracts;
 using Forge.Planning.Engines;
 using Forge.Quality.Contracts;
+using Forge.Resources.Contracts;
 
 namespace Forge.Planning;
 
@@ -87,7 +88,9 @@ public sealed record OperationalEvidenceSignal(
     string? ObservedAtMeaning,
     DateTimeOffset? LifecycleAt,
     string? LifecycleAtMeaning,
-    IReadOnlyList<OperationalEvidenceLink> Links);
+    IReadOnlyList<OperationalEvidenceLink> Links,
+    DateTimeOffset? ImpactAt = null,
+    string? ImpactBasis = null);
 
 public sealed record OperationalEvidenceAssociation(
     string AssociationId,
@@ -184,6 +187,17 @@ public sealed class OperationalEvidenceService(
 
         if (orderNumber is { } requested && !orderHeaders.ContainsKey(requested))
             throw new CommandRejectedException("order_not_found", $"Order {requested} does not exist.");
+
+        // When each signal starts to affect work (owner request 2026-10-27, Risk Radar): read in this same snapshot. Schedule starts are used
+        // only for readers who may see the approved schedule; otherwise the order's due date is the stated basis.
+        var zone = await uow.SiteTimeZoneAsync(ct);
+        var scheduleStarts = new Dictionary<(long Order, int Sequence), DateTimeOffset>();
+        if (authorizer.Authorize(principal, Permissions.ScheduleRead, ResourceRef.Of("Schedule")).IsPermitted
+            && (await uow.Store<IPlanningStore>().ApprovedAsOfAsync(startedAt, ct))?.Result is { } approved)
+        {
+            foreach (var op in approved.Operations.Where(op => op.Scheduled && op.Start is not null && orderHeaders.ContainsKey(op.OrderNumber)))
+                scheduleStarts[(op.OrderNumber, op.Sequence)] = op.Start!.Value;
+        }
 
         if (included["readiness"])
         {
@@ -358,6 +372,10 @@ public sealed class OperationalEvidenceService(
             }
         }
 
+        var impactNow = time.GetUtcNow();
+        signals = signals.Select(signal => Impact(signal, impactNow, orderHeaders, scheduleStarts, zone) is { } impact
+            ? signal with { ImpactAt = impact.At, ImpactBasis = impact.Basis } : signal).ToList();
+
         var completedAt = time.GetUtcNow();
         var read = new OperationalEvidenceReadWindow(snapshotId, startedAt, completedAt, "RepeatableReadUnitOfWork");
         var sourceStates = SourcePermissions.Select(item => new OperationalEvidenceSource(
@@ -369,6 +387,53 @@ public sealed class OperationalEvidenceService(
         return new OperationalEvidenceResponse(read, sourceStates, signals.OrderBy(signal => signal.SignalId, StringComparer.Ordinal).ToList(),
             OperationalEvidenceBuilder.Associations(signals), limitations,
             OperationalEvidenceBuilder.SourcesShareReadSnapshot(sourceStates));
+    }
+
+    /// <summary>
+    /// When a signal starts to affect work, and why that time: now for conditions already in force, the recorded start for upcoming
+    /// windows, the approved schedule start of the affected operation (or the order's first open one), or the order's due date when the
+    /// schedule does not place it. Ended or released records and root-cause assessments have no impact time of their own.
+    /// </summary>
+    internal static (DateTimeOffset At, string Basis)? Impact(OperationalEvidenceSignal signal, DateTimeOffset now, IReadOnlyDictionary<long, OrderInfo> orders,
+        IReadOnlyDictionary<(long Order, int Sequence), DateTimeOffset> starts, string? zone)
+    {
+        ArgumentNullException.ThrowIfNull(signal);
+        long? order = signal.Links.Where(link => link.TargetType is "Order" or "Operation")
+            .Select(link => long.TryParse(link.TargetId.Split('/')[0], NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : (long?)null)
+            .FirstOrDefault(n => n is not null);
+        int? sequence = signal.Links.Where(link => link.TargetType == "Operation")
+            .Select(link => link.TargetId.Split('/') is [_, var seq] && int.TryParse(seq, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : (int?)null)
+            .FirstOrDefault(n => n is not null);
+
+        (DateTimeOffset, string) Now(string basis) => (now, basis);
+        (DateTimeOffset, string) AtLeastNow(DateTimeOffset at, string basis) => at <= now ? (now, basis + " (already reached)") : (at, basis);
+        (DateTimeOffset, string)? FromOrder()
+        {
+            if (order is not { } number) return null;
+            if (sequence is { } seq && starts.TryGetValue((number, seq), out var opStart))
+                return AtLeastNow(opStart, "Approved schedule start of the affected operation");
+            var orderStarts = starts.Where(item => item.Key.Order == number).Select(item => item.Value).ToList();
+            if (orderStarts.Count > 0) return AtLeastNow(orderStarts.Min(), "Approved schedule start of the order's first open operation");
+            return orders.TryGetValue(number, out var info) ? AtLeastNow(SiteTime.StartOfOrUtc(info.DueDate, zone), "Order due date (not placed by the approved schedule)") : null;
+        }
+
+        return signal.Category switch
+        {
+            "ReadinessBlocker" => FromOrder(),
+            "MaterialRisk" => signal.State == OperationalEvidenceState.OverdueSupply ? Now("Supply for the order is already overdue") : FromOrder(),
+            "QualityNcr" => signal.LifecycleAt is null ? Now("Open NCR holds the order now") : null,
+            "ProductionStoppage" => signal.State switch
+            {
+                OperationalEvidenceState.Upcoming when signal.ObservedAt is { } start => (start, "Recorded stoppage start"),
+                OperationalEvidenceState.Open or OperationalEvidenceState.Active => Now("Stoppage in force now"),
+                _ => null,
+            },
+            "MachineDowntime" => signal.State == OperationalEvidenceState.Upcoming && signal.ObservedAt is { } start
+                ? (start, "Recorded downtime start") : signal.State == OperationalEvidenceState.Active ? Now("Machine down now") : null,
+            "RootCauseAssessment" => null,
+            _ when signal.Category.EndsWith("Hold", StringComparison.Ordinal) => signal.LifecycleAt is null ? Now("Hold in force now") : null,
+            _ => null,
+        };
     }
 
     private static List<OperationalEvidenceLink> StoppageLinks(StoppageInfo stoppage)

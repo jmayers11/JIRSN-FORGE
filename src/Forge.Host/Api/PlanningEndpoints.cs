@@ -60,6 +60,8 @@ public static class PlanningEndpoints
             Command(http, b.Reason, c => s.PlanAsync(new PlanMaintenance(machine, b.StartsAt, b.EndsAt, b.Description), c, ct)));
 
         var planning = app.MapGroup("/api/planning").RequireAuthorization();
+        planning.MapGet("/risk-radar", (HttpContext http, string? view, RiskRadarService radar, CancellationToken _) =>
+            Read(http, Permissions.ReadinessRead, async principal => await radar.BuildAsync(principal, RiskRadarService.ParseView(view), http.RequestAborted)));
         planning.MapGet("/operational-evidence", (HttpContext http, long? orderNumber, int? lookbackDays, int? horizonDays, OperationalEvidenceService evidence, CancellationToken _) =>
             Read(http, Permissions.ReadinessRead, async principal =>
                 await evidence.ReadAsync(principal, orderNumber, lookbackDays ?? 7, horizonDays ?? 31, http.RequestAborted)));

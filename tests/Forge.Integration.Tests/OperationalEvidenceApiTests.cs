@@ -56,6 +56,19 @@ public sealed class OperationalEvidenceApiTests(PostgresFixture postgres)
         Assert.Equal("NotAuthorized", terminal.GetProperty("sources").EnumerateArray().Single(s => s.GetProperty("code").GetString() == "quality").GetProperty("status").GetString());
         Assert.DoesNotContain(terminal.GetProperty("signals").EnumerateArray(), s => s.GetProperty("category").GetString() == "QualityNcr");
 
+        // The Risk Radar bands the same evidence by when it affects work: the open NCR and stoppage are in force now, so High today.
+        var radar = await Get(planner, "/api/planning/risk-radar?view=current");
+        var items = radar.GetProperty("items").EnumerateArray().ToList();
+        var ncr = Assert.Single(items, i => i.GetProperty("signal").GetProperty("category").GetString() == "QualityNcr");
+        Assert.Equal(("High", 0), (ncr.GetProperty("band").GetString(), ncr.GetProperty("daysOut").GetInt32()));
+        Assert.Equal("Open NCR holds the order now", ncr.GetProperty("impactBasis").GetString());
+        Assert.All(items, i => Assert.Equal(0, i.GetProperty("daysOut").GetInt32()));
+        Assert.Equal("Impact today up to 6 days out", radar.GetProperty("bands").EnumerateArray().First().GetProperty("rule").GetString());
+        var month = await Get(planner, "/api/planning/risk-radar?view=30d");
+        Assert.True(month.GetProperty("items").GetArrayLength() >= items.Count);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await planner.GetAsync(new Uri("/api/planning/risk-radar?view=year", UriKind.Relative))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await plant.As("sarah").GetAsync(new Uri("/api/planning/risk-radar", UriKind.Relative))).StatusCode);
+
         // Nobody without readiness access reads it, and out-of-range windows are refused.
         Assert.Equal(HttpStatusCode.Forbidden, (await plant.As("sarah").GetAsync(new Uri(url, UriKind.Relative))).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await planner.GetAsync(new Uri(url + "&lookbackDays=400", UriKind.Relative))).StatusCode);

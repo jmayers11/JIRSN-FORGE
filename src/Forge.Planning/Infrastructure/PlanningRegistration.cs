@@ -24,6 +24,8 @@ public static class PlanningRegistration
         services.AddSingleton<MaterialPlanningService>();
         services.AddSingleton<MaterialRiskService>();
         services.AddSingleton<OperationalEvidenceService>();
+        services.TryAddSingleton(new RiskRadarOptions());
+        services.AddSingleton<RiskRadarService>();
         services.AddSingleton<ReadinessService>();
         services.AddSingleton<MaterialReceiptImpactPreviewService>();
         services.AddSingleton<MaterialScrapImpactPreviewService>();

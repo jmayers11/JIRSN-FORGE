@@ -153,6 +153,9 @@ builder.Services.AddSingleton<Forge.Host.Training.TrainingExpiryScanner>();
 builder.Services.AddSingleton<Forge.Host.Planning.MaterialRiskScanner>();
 // One site per database for now (owner decision 2026-10-25); raise Forge:Sites:MaxSites (0 = no limit) when multi-site operation starts.
 builder.Services.AddSingleton(new Forge.Resources.Contracts.SitePolicy(builder.Configuration.GetValue<int?>("Forge:Sites:MaxSites") ?? 1));
+// Risk Radar bands (owner decision 2026-10-27): High = today up to 6 days out, Medium = 7 to 29, Low = 30 or more.
+builder.Services.AddSingleton(new Forge.Planning.RiskRadarOptions(
+    builder.Configuration.GetValue<int?>("Forge:RiskRadar:HighMaxDays") ?? 6, builder.Configuration.GetValue<int?>("Forge:RiskRadar:MediumMaxDays") ?? 29));
 
 var sentinelEventsEndpoint = builder.Configuration["Forge:Sentinel:SecurityEventsEndpoint"];
 if (!string.IsNullOrWhiteSpace(sentinelEventsEndpoint))

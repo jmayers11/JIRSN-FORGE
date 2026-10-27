@@ -42,6 +42,7 @@ import { dailyMissionPage } from './pages/daily-mission.js';
 import { integrityPage } from './pages/integrity.js';
 import { scenariosPage } from './pages/scenarios.js';
 import { costingPage } from './pages/costing.js';
+import { riskRadarPage } from './pages/risk-radar.js';
 import { loadDirectory } from './people.js';
 import { roleTitle } from './roles.js';
 import { isKioskMode } from './shell-mode.mjs';
@@ -62,6 +63,7 @@ const NAV = [
   { route: 'engineering', label: 'Engineering', icon: 'blade', page: engineeringPage },
   { route: 'scheduling', label: 'Scheduling', icon: 'planning', page: schedulingPage },
   { route: 'scenarios', label: 'Scenarios', icon: 'scenarios', page: scenariosPage },
+  { route: 'risk-radar', label: 'Risk Radar', icon: 'alert', page: riskRadarPage },
   { route: 'material-plan', label: 'Material Plan', icon: 'material', page: mrpPage },
   { route: 'work-centers', label: 'Work Centers', icon: 'production', page: workCentersPage },
   { route: 'tools', label: 'Tools & Calibration', icon: 'calibration', href: '#/work-centers?focus=tools' },
@@ -94,7 +96,7 @@ const NAV = [
 ];
 const NAV_GROUPS = [
   ['Daily', ['daily-mission']],
-  ['Supervisor', ['supervisor', 'workforce-kanban', 'machine-kanban', 'performance']],
+  ['Supervisor', ['supervisor', 'risk-radar', 'workforce-kanban', 'machine-kanban', 'performance']],
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
   ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'maintenance', 'shipping']],
   ['Quality', ['quality', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
@@ -107,6 +109,7 @@ const NAV_ACCESS = {
   'machine-kanban': ['planning.readiness.read', 'maintenance.read', 'resources.read'],
   performance: ['workforce.read'],
   costing: ['costing.read'],
+  'risk-radar': ['planning.readiness.read'],
   home: ['planning.readiness.read', 'planning.schedule.read', 'execution.orders.read', 'resources.read', 'quality.read', 'inventory.read'],
   horizon: ['planning.schedule.read', 'planning.readiness.read'], programs: ['programs.read', 'programs.manage'],
   projects: ['projects.read', 'projects.manage'], orders: ['execution.orders.read', 'execution.orders.manage'],

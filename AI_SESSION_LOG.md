@@ -1931,3 +1931,7 @@ Added coverage for exact matching, related card links, different order numbers, 
 ## Claude: handoff review, Codex backend committed, UI density pass — 2026-10-27
 
 Reviewed the handoffs and the device working tree. Codex had committed the operational views (`b63bd45`) but left the operational evidence backend and the UI density audit uncommitted. Reviewed the backend, added a PostgreSQL API test Codex could not run, and committed it. Implemented all seven findings of `docs/ui-ux-density-audit.md`: bounded, internally scrolling Machine Readiness lanes and Workforce Kanban tiles; Order detail Overview tab; Scenarios, Shift Continuity, Program and Project tabs; QMS list/detail panes; Daily Mission lanes that wrap to fit; one sticky band at a time. UI suite green locally.
+
+## Claude: Production Risk Radar — 2026-10-27
+
+Owner chose the views (current, 7 days, 30 days) and bands (High to 6 days, Medium 7–29, Low 30+). Added a stated impact time to each operational evidence signal in the same read snapshot, a Risk Radar service and endpoint, and a three-lane page. Work Centers also got one section per tab and a card grid after owner feedback.
