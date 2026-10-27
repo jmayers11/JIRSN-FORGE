@@ -8,6 +8,7 @@ namespace Forge.Maintenance.Infrastructure;
 internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMaintenanceStore, IMaintenanceLookup
 {
     private const string Select = "SELECT downtime_id, machine_code, kind, starts_at, ends_at, reason FROM maintenance.downtime";
+    private const long AssetEventIdOffset = 1_000_000_000_000;
 
     public async Task<DowntimeWindow?> FindOpenOutageAsync(string machineCode, CancellationToken ct) =>
         (await ReadAsync(Select + " WHERE machine_code = $1 AND ends_at IS NULL", ct, machineCode)).SingleOrDefault();
@@ -113,7 +114,8 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
             if (await usage.ReachedAsync(d.Machine, d.From, d.Hours, asOf, ct) is { } reached && reached < to)
             {
                 windows.Add(new DowntimeWindow(-d.Id, d.Machine, DowntimeKind.MaintenanceOverdue, reached, null,
-                    $"Preventive maintenance {d.Id} ({d.Title}) reached its run-hour limit; the machine is locked out until it is done"));
+                    $"Preventive maintenance {d.Id} ({d.Title}) reached its run-hour limit; the machine is locked out until it is done",
+                    SourceReference: $"WorkOrder/{d.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
             }
         }
 
@@ -316,13 +318,22 @@ internal sealed class PostgresMaintenanceStore(PostgresUnitOfWork uow) : IMainte
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
+            var id = reader.GetInt64(0);
+            var sourceReference = id switch
+            {
+                > 0 => $"Downtime/{id.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+                <= -AssetEventIdOffset => $"AssetEvent/{(-id - AssetEventIdOffset).ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+                < 0 => $"WorkOrder/{(-id).ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+                _ => null,
+            };
             list.Add(new DowntimeWindow(
-                reader.GetInt64(0),
+                id,
                 reader.GetString(1),
                 Enum.Parse<DowntimeKind>(reader.GetString(2)),
                 reader.GetFieldValue<DateTimeOffset>(3),
                 reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTimeOffset>(4),
-                reader.GetString(5)));
+                reader.GetString(5),
+                SourceReference: sourceReference));
         }
 
         return list;

@@ -1,3 +1,11 @@
+## Operational evidence backend for future Risk Radar (2026-10-27)
+
+Added `GET /api/planning/operational-evidence` with typed source record identifiers, attribution state, evidence links, non-causal context associations, per-source authorization status, and a repeatable-read snapshot compatibility token. It gathers current readiness blockers, recomputed material-risk findings and exact visible supply links, order-linked NCRs, production stoppages and proposed/confirmed root causes, typed downtime source refs, and direct or explicitly propagated holds in one UOW. It avoids persisting another material-risk cache, interpreting free text, or labeling an order/machine relationship as a common cause. `DowntimeWindow.SourceReference` is now populated for recorded downtime, PM work orders and asset lifecycle events.
+
+The API bounds are 1–90 lookback days and 1–31 horizon days. Record timestamps are labeled by event meaning; request read-start/end times are bounds, not an exact database timestamp. The endpoint does not merge the archived Horizon Lens or hourly notices, return a risk score, or forecast schedule/staffing/WIP.
+
+`OperationalEvidenceTests` passes **16/16**; the complete Planning project passes **381/381**. Release Host build passes with **0 warnings / 0 errors** to `.forge-logs/operational-evidence-build/`. `git diff --check` passes. Audit and handoff updated. No migration or write path added; PostgreSQL integration was not run for this read-only slice.
+
 ## Seven Operational Visualizations — audit and Manufacturing Flow first increment (2026-10-27)
 
 Audited all seven requested views against current Forge routes, APIs and source models; the implemented/partial/absent matrix and reuse plan are in `docs/operational-visualizations-audit.md`. The existing app already has an order-readiness engine and detail table, a Workforce Kanban plant map, employee qualification and skill-capacity evidence, planning scenarios/recovery previews, and hierarchical inventory positions with approved WIP-capacity calculations. A future-horizon risk model and a unified production recovery comparison are not currently verified.
