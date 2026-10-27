@@ -56,3 +56,17 @@ test('recovery action board shows due dates and completion evidence and marks un
   assert.ok(box.querySelector('[data-action-next="2"]'));
   assert.equal(box.querySelector('[data-action-next="3"]'), null);
 });
+
+test('today\'s pass-on and the handoff archive are separate tabs, with the selected handoff beside the list', async t => {
+  const h = await harness(t);
+  const shown = () => [...h.page.querySelectorAll('[data-workspace-panel]')].filter(panel => !panel.hidden).map(panel => panel.dataset.workspacePanel);
+  assert.deepEqual([...h.page.querySelectorAll('[data-workspace-tab]')].map(tab => tab.dataset.workspaceTab), ['shift', 'history']);
+  assert.deepEqual(shown(), ['shift']);
+  assert.ok(h.page.querySelector('[data-workspace-panel="shift"] #capture-handoff'));
+  fire(h.page.querySelector('[data-workspace-tab="history"]'), 'click');
+  assert.deepEqual(shown(), ['history']);
+  await h.open();
+  const pane = h.page.querySelector('.list-detail-detail#handoff-detail');
+  assert.match(pane.textContent, /Handoff #42/);
+  assert.ok(h.page.querySelector('.list-detail-list [data-open="42"]'));
+});

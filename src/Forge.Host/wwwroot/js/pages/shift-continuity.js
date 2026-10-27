@@ -1,5 +1,5 @@
 import { tryGet, command } from '../api.js';
-import { esc, $, toast, errorBlock, fmtDateTime } from '../ui.js';
+import { esc, $, toast, errorBlock, fmtDateTime, wireWorkspaceTabs } from '../ui.js';
 import { canAction, formModal } from '../forms.js';
 import { who } from '../people.js';
 
@@ -64,6 +64,7 @@ export async function shiftContinuityPage(page, ctx) {
       <select class="select" data-check="${esc(i.code)}"><option>Open</option><option>Complete</option><option>NotApplicable</option></select>
       <input class="input" data-note="${esc(i.code)}" placeholder="Note for open or N/A"></div>`).join('') : '<div class="muted">No configured checklist items for this work center.</div>';
 
+  let activeTab = 'shift';
   async function render() {
     await load();
     const siteCode = resources.workCenters?.find(w => w.code === selected)?.safetyAreaCode;
@@ -74,17 +75,28 @@ export async function shiftContinuityPage(page, ctx) {
     page.innerHTML = `
       <div class="page-head"><div><h1>Shift continuity</h1><div class="sub">Pass-on snapshots come from current production, material, downtime and maintenance records. Acknowledgment records receipt; assigned actions remain open until completed.</div></div></div>
       <section class="panel"><header><h2>Work center</h2></header><div class="toolbar">${centerSelect()}<select id="shift-code" class="select"><option value="">Choose assigned shift</option>${shiftOptions()}</select><span class="muted">${esc(zone)}</span></div></section>
+      <section class="workspace-tabs"><div class="workspace-tablist" role="tablist" aria-label="Shift continuity views">
+        <button class="workspace-tab" id="sc-tab-shift" type="button" role="tab" data-workspace-tab="shift" aria-controls="sc-panel-shift" aria-selected="${activeTab === 'shift'}" ${activeTab === 'shift' ? '' : 'tabindex="-1"'}>This shift</button>
+        <button class="workspace-tab" id="sc-tab-history" type="button" role="tab" data-workspace-tab="history" aria-controls="sc-panel-history" aria-selected="${activeTab === 'history'}" ${activeTab === 'history' ? '' : 'tabindex="-1"'}>Recent handoffs (${handoffs.length})</button>
+      </div><div class="workspace-panels">
+      <div id="sc-panel-shift" data-workspace-panel="shift" role="tabpanel" aria-labelledby="sc-tab-shift" ${activeTab === 'shift' ? '' : 'hidden'}>
       ${canRecord ? `<section class="panel"><header><h2>Capture shift pass-on</h2><span class="spacer"></span><span class="muted">${shiftWindow ? `${esc(shiftWindow.name)} · configured ${shiftWindow.durationMinutes} minutes` : 'Select an assigned shift'}</span></header>
         <div class="toolbar"><label class="field">Shift starts<input id="shift-from" type="datetime-local" class="input" value="${localInput(startDate)}"></label><label class="field">Shift ends<input id="shift-until" type="datetime-local" class="input" value="${localInput(endDate)}"></label></div>
         <div class="field"><label for="shift-context">Outgoing shift context</label><textarea id="shift-context" class="input" rows="3" maxlength="2000" placeholder="What should the next shift know? This note is recorded in the audit trail."></textarea></div>
         <h3>Work-center checklist</h3><div class="stack">${checklistForm()}</div><div class="actions"><button id="capture-handoff" class="btn primary" ${selectedShift ? '' : 'disabled'}>Capture handoff</button></div></section>` : ''}
       ${canManageChecklist && selected ? `<section class="panel"><header><h2>Configure checklist</h2><span class="spacer"></span><span class="muted">A change applies to new handoffs; recorded checklist versions stay with their shift.</span></header>
         <form id="checklist-config" class="toolbar"><input class="input" name="code" maxlength="40" placeholder="Item code" required><input class="input" name="description" maxlength="240" placeholder="Checklist item" required><label><input name="required" type="checkbox"> Required</label><button class="btn" type="submit">Save item</button></form></section>` : ''}
-      <section class="panel"><header><h2>Recent handoffs</h2></header>${handoffs.length ? `<div class="stack">${handoffs.map(h => `<article class="card"><div class="row"><b>${esc(h.shiftCode)} · ${esc(h.workCenterCode)}</b><span class="spacer"></span><span class="pill ${h.reviewedAt ? 'ok' : 'warn'}">${h.reviewedAt ? 'Reviewed' : 'Awaiting review'}</span><button class="btn small" data-open="${h.handoffId}">Open</button></div><div class="muted">${esc(fmtDateTime(h.shiftFrom))} – ${esc(fmtDateTime(h.shiftUntil))} · by ${esc(h.createdBy)}</div><div>${esc(h.context ?? '')}</div></article>`).join('')}</div>` : '<div class="muted">No handoffs recorded for this work center.</div>'}</section>
       <section class="panel"><header><h2>Shift closeout</h2><span class="spacer"></span>${supervisor ? '<button id="close-shift" class="btn primary" ' + (selectedShift ? '' : 'disabled') + '>Capture closeout for selected window</button>' : ''}</header>
         <div class="muted">Closeout records production reports, current WIP, order-linked material movements, downtime, maintenance and any source sections unavailable to your access. It never rewrites those records.</div>
         ${closeouts.length ? `<div class="stack">${closeouts.map(c => `<article class="card"><b>${esc(c.shiftCode)} · ${esc(c.workCenterCode)}</b><div class="muted">${esc(fmtDateTime(c.shiftFrom))} – ${esc(fmtDateTime(c.shiftUntil))} · closed ${esc(fmtDateTime(c.closedAt))}</div><div>${c.facts.production.reportCount} reports · ${c.facts.production.goodQuantity} good · ${c.facts.production.scrapQuantity} scrap · ${c.facts.production.openOperations} open operations</div><details><summary>Operational facts and unresolved exceptions (${c.facts.facts.filter(f => f.kind === 'Reconciliation').length})</summary><ul class="evidence">${c.facts.facts.map(f => `<li><b>${esc(f.kind)}</b> · ${esc(f.summary)} <span class="muted">${esc(f.status)}</span></li>`).join('') || '<li class="muted">No visible source facts.</li>'}</ul></details>${c.facts.unknowns?.length ? `<div class="notice warn">${c.facts.unknowns.map(esc).join('<br>')}</div>` : ''}</article>`).join('')}</div>` : '<div class="muted">No closeouts recorded for this work center.</div>'}</section>
-      <div id="handoff-detail"></div>`;
+      </div>
+      <div id="sc-panel-history" data-workspace-panel="history" role="tabpanel" aria-labelledby="sc-tab-history" ${activeTab === 'history' ? '' : 'hidden'}>
+      <div class="list-detail"><div class="list-detail-list">
+      <section class="panel"><header><h2>Recent handoffs</h2></header>${handoffs.length ? `<div class="stack">${handoffs.map(h => `<article class="card"><div class="row"><b>${esc(h.shiftCode)} · ${esc(h.workCenterCode)}</b><span class="spacer"></span><span class="pill ${h.reviewedAt ? 'ok' : 'warn'}">${h.reviewedAt ? 'Reviewed' : 'Awaiting review'}</span><button class="btn small" data-open="${h.handoffId}">Open</button></div><div class="muted">${esc(fmtDateTime(h.shiftFrom))} – ${esc(fmtDateTime(h.shiftUntil))} · by ${esc(h.createdBy)}</div><div>${esc(h.context ?? '')}</div></article>`).join('')}</div>` : '<div class="muted">No handoffs recorded for this work center.</div>'}</section>
+      </div><div class="list-detail-detail" id="handoff-detail"><section class="panel"><div class="empty">Open a handoff from the list; it shows here beside the list.</div></section></div></div>
+      </div></div></section>`;
+    wireWorkspaceTabs(page);
+    page.querySelectorAll('[data-workspace-tab]').forEach(button => button.addEventListener('click', () => { activeTab = button.dataset.workspaceTab; }));
 
     $('#shift-wc', page)?.addEventListener('change', async e => { selected = e.target.value; selectedShift = ''; await render(); });
     $('#shift-code', page)?.addEventListener('change', e => { selectedShift = e.target.value; const btn = $('#capture-handoff', page); if (btn) btn.disabled = !selectedShift; const close = $('#close-shift', page); if (close) close.disabled = !selectedShift; });

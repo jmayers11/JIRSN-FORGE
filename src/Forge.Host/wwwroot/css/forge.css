@@ -1629,3 +1629,31 @@ button.pill.linkish:hover { text-decoration: underline; }
   .inventory-map-filters { grid-template-columns: 1fr; }
   .inventory-map-filters .field:first-child { grid-column: auto; }
 }
+
+/* Density pass (owner request 2026-10-27, docs/ui-ux-density-audit.md): boards fit the screen and scroll inside their lanes instead
+   of stretching the whole page; detail pages split into tabs or list/detail panes. */
+.daily-mission-board { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); overflow-x: visible; }
+.daily-mission-lane { max-height: clamp(320px, calc(100vh - 260px), 760px); }
+
+.machine-kanban-host { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow-x: visible; }
+.machine-lane { display: flex; flex-direction: column; max-height: clamp(320px, calc(100vh - 280px), 780px); padding: 0; overflow: hidden; }
+.machine-lane > header { position: sticky; top: 0; z-index: 1; margin: 0; padding: 10px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+.machine-lane-cards { min-height: 0; padding: 10px; overflow-y: auto; overscroll-behavior: contain; }
+@media (max-width: 1280px) { .machine-kanban-host { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .machine-kanban-host { grid-template-columns: 1fr; } .machine-lane { max-height: 70vh; } }
+
+.workforce-kanban-lane { display: flex; flex-direction: column; max-height: clamp(220px, calc((100vh - 300px) / 2), 420px); }
+.workforce-kanban-lane .workforce-lane-cards { min-height: 0; overflow-y: auto; overscroll-behavior: contain; align-content: start; }
+
+/* One sticky band at a time: the record's compact context band stays; workspace tabs scroll with the page. */
+.workspace-tablist { position: static; }
+
+/* Shared list/detail split for record pages (QMS, Shift Continuity, Scenarios). */
+.list-detail { display: grid; grid-template-columns: minmax(300px, 440px) minmax(0, 1fr); gap: 12px; align-items: start; }
+.list-detail-list { position: sticky; top: 64px; max-height: calc(100vh - 90px); overflow-y: auto; overscroll-behavior: contain; }
+.list-detail-list .table tr.selected, .list-detail-list [aria-current="true"] { outline: 1px solid var(--forge-orange); background: rgba(194, 65, 12, .1); }
+.list-detail-detail { min-width: 0; }
+@media (max-width: 1100px) { .list-detail { grid-template-columns: 1fr; } .list-detail-list { position: static; max-height: 360px; } }
+.order-facts-more { padding: 8px 12px; }
+.order-facts-more > summary { cursor: pointer; font-weight: 650; }
+.order-facts-more .order-facts { margin: 10px 0 6px; }

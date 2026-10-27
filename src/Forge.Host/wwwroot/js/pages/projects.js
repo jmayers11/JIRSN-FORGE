@@ -1,6 +1,6 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
-import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, confirmWithReason } from '../ui.js';
+import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, confirmWithReason, tabifyPanels } from '../ui.js';
 import { formModal, qty, canAction, today, plusDays } from '../forms.js';
 import { historyDrawer } from '../history.js';
 
@@ -147,6 +147,14 @@ async function projectDetail(page, ctx, code) {
       ${d.outages.map(o => `<tr><td>${o.outageId}</td><td>${esc(o.machineCode)}</td><td class="nowrap">${esc(fmtDateTime(o.startsAt))} – ${esc(fmtDateTime(o.endsAt))}</td><td>${esc(o.reason)}</td>
         <td><span class="pill ${OUTAGE_TONE[o.status] ?? 'none'}">${esc(o.status)}</span></td><td class="faint">${esc(o.impact ?? (o.status === 'Proposed' ? 'previewed when it is decided (Maintenance → Outages)' : ''))}</td></tr>`).join('')}</tbody></table>`}
     </section>`;
+  // Summary and KPIs stay on top; each work area gets its own tab (UI density audit 2026-10-27).
+  tabifyPanels(page, [
+    { label: 'Material', match: ['material'] },
+    { label: 'Tasks & milestones', match: ['tasks and milestones'] },
+    { label: pending.length ? `Change requests (${pending.length})` : 'Change requests', match: ['change requests'] },
+    { label: 'Purchases & returns', match: ['purchases', 'issues and returns'] },
+    { label: 'Outages', match: ['outages'] },
+  ]);
 
   const lineOf = n => material.lines.find(l => l.lineNumber === Number(n));
   const act = async (title, detail, url, body = {}, reasonRequired = true, confirmLabel = 'Confirm') => {

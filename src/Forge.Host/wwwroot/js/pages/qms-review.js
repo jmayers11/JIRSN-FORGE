@@ -212,7 +212,7 @@ export async function qmsReviewPage(page, ctx) {
     if (disposed || !page.isConnected) return;
     const rows = rowsFor(tab, data), selectedId = selected && idFor(tab, selected);
     const sourceText = error ? errorBlock(error, 'current quality review records') : rows.length
-      ? '<table class="table"><thead><tr><th>Record</th><th>State</th><th>Scope</th><th></th></tr></thead><tbody>' + rows.map(item => '<tr><td>' + esc(idFor(tab, item)) + '</td><td>' + esc(stateFor(tab, item) ?? '—') + '</td><td>' + esc(item.organizationCode ?? item.facilityCode ?? item.mappingCode ?? '') + '</td><td><button class="btn small" data-open="' + esc(idFor(tab, item)) + '">Open</button></td></tr>').join('') + '</tbody></table>'
+      ? '<table class="table"><thead><tr><th>Record</th><th>State</th><th>Scope</th><th></th></tr></thead><tbody>' + rows.map(item => '<tr' + (selectedId && idFor(tab, item) === selectedId ? ' class="selected" aria-current="true"' : '') + '><td>' + esc(idFor(tab, item)) + '</td><td>' + esc(stateFor(tab, item) ?? '—') + '</td><td>' + esc(item.organizationCode ?? item.facilityCode ?? item.mappingCode ?? '') + '</td><td><button class="btn small" data-open="' + esc(idFor(tab, item)) + '">Open</button></td></tr>').join('') + '</tbody></table>'
       : '<div class="empty">No authorized records are available in this page.</div>';
     const createButton = !blocked && selected?.kind === 'ManagementReviewProgram' && permission(ctx.me, 'quality.qms.manage')
       ? '<button class="btn primary" data-create-run>Start review</button>' : '';
@@ -222,11 +222,12 @@ export async function qmsReviewPage(page, ctx) {
       : !blocked && tab === 'editions' && selected ? editionActions(selected).map(name => '<button class="btn" data-edition-action="' + esc(name) + '">' + esc(name) + '</button>').join('') : '';
     page.innerHTML = '<div class="page-head"><div><h1>QMS reviews and evidence</h1><p class="sub">Review actual owner records, frozen inputs and human decisions. Evidence links do not declare conformity.</p></div><button class="btn" data-refresh>Refresh</button></div>' +
       (blocked && !error ? '<div class="notice warn" role="status">Refresh the current review records before trying another decision.</div>' : '') +
-      '<section class="panel"><div class="seg">' + TABS.map(name => '<button class="' + (tab === name ? 'on' : '') + '" data-tab="' + name + '">' + esc(TAB_LABEL[name]) + '</button>').join('') + '</div>' + sourceText +
+      '<div class="list-detail"><div class="list-detail-list"><section class="panel"><div class="seg">' + TABS.map(name => '<button class="' + (tab === name ? 'on' : '') + '" data-tab="' + name + '">' + esc(TAB_LABEL[name]) + '</button>').join('') + '</div>' + sourceText +
       (data?.nextCursor ? '<div class="toolbar"><button class="btn" data-next>Next page</button></div>' : '') + '</section>' +
-      '<div class="toolbar">' + toolbarCreate + '</div>' +
+      '<div class="toolbar">' + toolbarCreate + '</div></div><div class="list-detail-detail">' +
+      (selected ? '' : '<section class="panel"><div class="empty">Open a record from the list; it shows here beside the list.</div></section>') +
       (selected ? '<section class="panel"><div class="page-head"><div><h2>' + esc(selectedId) + '</h2><p class="sub">' + esc(stateFor(tab, selected) ?? '') + '</p></div><div class="toolbar">' + createButton + actionButtons + '</div></div>' + detailHtml(selected) +
-        (tab === 'runs' ? '<h3>Assigned actions</h3>' + detailHtml(actions) : '') + '</section>' : '');
+        (tab === 'runs' ? '<h3>Assigned actions</h3>' + detailHtml(actions) : '') + '</section>' : '') + '</div></div>';
     $$('[data-tab]', page).forEach(button => button.onclick = () => { tab = button.dataset.tab; load(); });
     $('[data-refresh]', page)?.addEventListener('click', () => load());
     $('[data-next]', page)?.addEventListener('click', () => load(data.nextCursor));

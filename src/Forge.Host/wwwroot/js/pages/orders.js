@@ -333,7 +333,8 @@ async function orderDetail(page, ctx, number) {
       <div class="head-controls">${actions.map(([k, label]) => `<button class="btn ${k === 'release' ? 'primary' : k === 'cancel' ? 'danger' : ''}" data-act="${k}">${esc(label)}</button>`).join('')}
         ${canAction(me, 'execution.orders.manage') && !['Cancelled', 'Completed'].includes(o.status) ? '<button class="btn outline" id="change-priority">Change priority</button>' : ''}</div>
     </div>
-    <section class="order-facts panel" aria-label="Work order specifics">
+    <details class="panel order-facts-more"><summary>Order details <span class="muted">· program, contract, created and released by</span></summary>
+    <section class="order-facts" aria-label="Work order specifics">
       <div><span>Part / revision</span><b>${esc(o.partNumber)} · ${esc(o.revision)}</b></div>
       <div><span>Order quantity</span><b>${fmtNumber(o.quantity, 3)}</b></div>
       <div><span>Due date</span><b>${esc(fmtDate(o.dueDate))}</b></div>
@@ -345,7 +346,7 @@ async function orderDetail(page, ctx, number) {
       <div><span>Created by</span><b>${esc(who(o.createdBy))}</b></div>
       <div><span>Released</span><b>${o.releasedBy ? `${esc(who(o.releasedBy))} · ${esc(fmtDateTime(o.releasedAt))}` : 'Not released'}</b></div>
     </section>
-    <div class="notice">The person who sets up an order cannot release it.</div>
+    <div class="faint">The person who sets up an order cannot release it.</div></details>
     <section class="grid-2">
       <div class="panel"><header><h2>Readiness now</h2></header>
         ${readiness.error ? errorBlock(readiness.error, 'readiness') : `
@@ -441,12 +442,12 @@ async function orderDetail(page, ctx, number) {
   await appendAttachments(page, { type: 'ProductionOrder', id: o.orderNumber, me, title: 'Documentation',
     note: 'Documents this order must also follow, and files kept with it (customer PO, certificates, photos). Attaching never changes which revision of the item applies.' });
 
+  // Overview first: readiness, drop-dead dates and the manufacturing flow together (UI density audit 2026-10-27).
   tabifyPanels(page, [
-    ...(flowEnabled ? [{ label: 'Flow', match: ['manufacturing flow'] }] : []),
-    { label: 'Summary', match: ['readiness now', 'drop-dead dates', 'contract commitment'] },
+    { label: 'Overview', match: ['readiness now', 'drop-dead dates', 'contract commitment', ...(flowEnabled ? ['manufacturing flow'] : [])] },
     { label: 'Operations', match: ['operations'] },
     { label: 'Bill of materials', match: ['bill of materials'] },
-    { label: 'Execution', match: ['direct labor', 'reports and training', 'target vs actual labor', 'quantity states'] },
+    { label: 'Labor & reports', match: ['direct labor', 'reports and training', 'target vs actual labor', 'quantity states'] },
     { label: 'Material', match: ['as built and genealogy', 'material to the machine', 'what became of the material'] },
     { label: 'Quality', match: ['quality', 'holds'] },
     { label: 'Documents', match: ['applicable documentation', 'documentation'] },

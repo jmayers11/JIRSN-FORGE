@@ -1,5 +1,19 @@
 # AI_HANDOFF.md
 
+## Claude: Codex backend committed; UI density pass implemented (2026-10-27)
+
+- **Codex work committed:** the uncommitted operational evidence backend (`OperationalEvidenceService`, `GET /api/planning/operational-evidence`, maintenance downtime source references) and `docs/ui-ux-density-audit.md`, plus a new PostgreSQL test `OperationalEvidenceApiTests` (one shared snapshot, exact order links on NCR and stoppage signals, no cause identifier without a root-cause record, quality withheld as NotAuthorized from a terminal, 403 without readiness). Codex's earlier `b63bd45` (operational views) was already committed.
+- **UI density audit, implemented (all seven findings):**
+  1. Machine Readiness: 4 lanes on wide screens, 2 at ≤1280px, 1 on phones; each lane has a sticky heading and scrolls its cards inside (`.machine-lane-cards`).
+  2. Workforce Kanban: work-center tiles have a bounded height; worker lists scroll inside each tile.
+  3. Production Order detail: tabs are now Overview (readiness, drop-dead dates, manufacturing flow), Operations, Bill of materials, Labor & reports, Material, Quality, Documents; the long order-facts grid is a collapsed "Order details" disclosure (the header already shows part, quantity, due date, priority and status).
+  4. Scenarios: tabs Your scenarios (list beside the selected result) / New scenario / WhiskerWorks demo center; a pre-filled launch opens New scenario, running a scenario returns to Your scenarios.
+  5. QMS Audit, Review and Planning: list/detail panes (`.list-detail`); the open record shows beside the list and its row is highlighted.
+  6. Program and Project detail: summary and KPIs on top, work areas in tabs (Programs: Deliveries & orders, Contracts, WBS & milestones, Funding; Projects: Material, Tasks & milestones, Change requests (n), Purchases & returns, Outages).
+  7. Shift Continuity: tabs This shift (capture, checklist, closeout) / Recent handoffs (list beside the selected handoff).
+  - Shared: Daily Mission lanes wrap to fit (`auto-fit`, no sideways scroll); workspace tab bars no longer stick under the sticky record header (one sticky band at a time).
+- Not done from the audit's "consider" notes: tabs for My Work and Notifications, Analyst/Integrity list/detail. Rendered sizes still need a look in the live preview at a few screen widths.
+
 ## Codex: operational evidence backend for future Risk Radar (2026-10-27)
 
 - **Owner request:** Develop the backends needed to establish cause identifiers and compatible freshness data for the operational visualizations.

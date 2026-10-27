@@ -50,3 +50,7 @@ The route inventory below covers every primary navigation area. “Keep” means
 This was a source-level audit of all route modules and shared CSS. The local Forge browser opened at the sign-in screen, so I did not inspect authenticated rendered states or measure screen heights across different resolutions. The findings above are supported by the page markup and responsive CSS; final sizing should be checked in the live UI after implementation.
 
 Suggested order: Machine Readiness lane sizing; Workforce Kanban tile/list sizing; Production Order tabs; Scenarios split workspace; QMS master/detail; Program/Project tabs; then responsive cleanup across the remaining pages. No application source code was changed for this audit.
+
+## Implementation status (Claude, 2026-10-27)
+
+Findings 1–7 and the Daily Mission row are implemented; see `AI_HANDOFF.md` ("UI density pass implemented") for what changed on each page. The "consider" items for My Work, Notifications, Analyst and Integrity are not done. Rendered sizes still need checking in the live UI at laptop, tablet and phone widths.

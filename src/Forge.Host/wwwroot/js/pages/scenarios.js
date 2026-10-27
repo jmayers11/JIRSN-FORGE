@@ -1,6 +1,6 @@
 import { appendDemoControl } from '../demo-clock.js';
 import { command, get } from '../api.js';
-import { $, $$, esc, fmtDateTime, toast, confirmWithReason } from '../ui.js';
+import { $, $$, esc, fmtDateTime, toast, confirmWithReason, wireWorkspaceTabs } from '../ui.js';
 import { formModal } from '../forms.js';
 import { scenarioCatalog } from '../data/whiskerworks-scenarios.js';
 import { cnc02MaintenanceWindowEvidence, delayedPromiseDate, healthyBaselineAssertions, selectAsm03Callout, selectCnc02ExpiringQualification, selectDayShiftScenarioRoster, sisalQuantityEvidence, sisalSplitSteps } from '../data/whiskerworks-demo.js';
@@ -127,6 +127,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
   let items = [];
   let resources = {};
   let result = null;
+  let activeTab = null;
   let demoWorkers = null;
   let loading = false;
   let profile = null;
@@ -155,9 +156,17 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     const isGanttLaunch = !!(prefilled.orderNumber || prefilled.sequence || prefilled.workCenterCode);
     const defaultStart = prefilled.kind === 'PersonUnavailable' ? localTime(new Date().toISOString()) : '';
     const whiskerworks = (resources.sites ?? []).some(site => site.code === 'WW-P01');
+    // Saved scenarios beside the selected result; the new-scenario form and the demo center in their own tabs (UI density audit 2026-10-27).
+    activeTab ??= prefilled.kind || isGanttLaunch || prefilled.name ? 'new' : 'mine';
+    if (result) activeTab = 'mine';
+    if (activeTab === 'demo' && !whiskerworks) activeTab = 'mine';
+    const tabs = [['mine', `Your scenarios (${scenarios.length})`], ['new', 'New scenario'], ...(whiskerworks ? [['demo', 'WhiskerWorks demo center']] : [])];
+    const tabButton = ([key, label]) => `<button class="workspace-tab" id="scenario-tab-${key}" type="button" role="tab" data-workspace-tab="${key}" aria-controls="scenario-panel-${key}" aria-selected="${key === activeTab}" ${key === activeTab ? '' : 'tabindex="-1"'}>${esc(label)}</button>`;
+    const panelOpen = key => `<div id="scenario-panel-${key}" data-workspace-panel="${key}" role="tabpanel" aria-labelledby="scenario-tab-${key}" ${key === activeTab ? '' : 'hidden'}>`;
     root.innerHTML = `<div class="page-head"><div><h1>Scenarios and recovery</h1><p class="muted">Save private what-if cases, compare them against today’s authorized material, capacity and schedule inputs, and review recovery actions. Running a scenario does not change the approved schedule or source records.</p></div></div>
-      ${whiskerworks ? renderWhiskerWorksCenter() : ''}
-      <section class="panel"><header><h2>New scenario</h2></header><form id="scenario-form" class="form-grid">
+      <section class="workspace-tabs scenario-workspace"><div class="workspace-tablist" role="tablist" aria-label="Scenario views">${tabs.map(tabButton).join('')}</div><div class="workspace-panels">
+      ${whiskerworks ? `${panelOpen('demo')}${renderWhiskerWorksCenter()}</div>` : ''}
+      ${panelOpen('new')}<section class="panel"><header><h2>New scenario</h2></header><form id="scenario-form" class="form-grid">
         ${field('name', 'Private scenario name', 'text', true, 'e.g. Slitter outage next shift', prefilled.name)}
         <label class="field"><span>Change to test</span><select class="input" name="kind">${KINDS.map((kind, index) => `<option ${prefilled.kind ? kind === prefilled.kind ? 'selected' : '' : isGanttLaunch && kind === 'OperationMachine' || !isGanttLaunch && index === 0 ? 'selected' : ''}>${kind}</option>`).join('')}</select></label>
         ${selectField('machineCode', 'Machine', (resources.machines ?? []).map(machine => [machine.code, `${machine.name ?? machine.code} · ${machine.code}`]), prefilled.machineCode)}
@@ -168,10 +177,14 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         ${field('startsAt', 'Starts at', 'datetime-local', false, '', prefilled.startsAt || defaultStart)}${field('durationHours', 'Hours (outage, overtime)', 'number', false, '', prefilled.durationHours || (prefilled.kind === 'PersonUnavailable' ? '8' : ''))}${field('delayDays', 'Supplier delay days', 'number', false, '', prefilled.delayDays)}
         ${field('reason', 'Why save this scenario', 'text', true, 'Required for the audit record')}
         <div class="field"><span>&nbsp;</span><button class="btn primary" type="submit">Save private scenario</button></div>
-      </form><p class="muted small">The selected change uses only its relevant fields. Person and order lookups are checked again using your current access when you run the scenario.</p></section>
+      </form><p class="muted small">The selected change uses only its relevant fields. Person and order lookups are checked again using your current access when you run the scenario.</p></section></div>
+      ${panelOpen('mine')}<div class="list-detail"><div class="list-detail-list">
       <section class="panel"><header><h2>Your private scenarios</h2><span class="spacer"></span><button class="btn" id="refresh-scenarios">Refresh</button></header>
-        ${scenarios.length ? `<div class="stack">${scenarios.map(s => `<article class="card"><div class="card-head"><div><h3>${esc(s.name)}</h3><p class="muted">${esc(s.change.kind)} · created ${esc(fmtDateTime(s.createdAt))}${s.change.recoverySelections?.length ? ` · ${s.change.recoverySelections.length} independent recovery trial${s.change.recoverySelections.length === 1 ? '' : 's'} saved` : ''}</p></div><span class="spacer"></span><button class="btn primary" data-run="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Run preview</button><button class="btn danger" data-delete="${esc(s.scenarioId)}">Delete</button></div><div class="actions"><label class="field"><span>Recovery option</span><select class="input" data-option-picker="${esc(s.scenarioId)}"><option value="">Choose an option</option>${RECOVERY_FORMS.map(f => `<option value="${esc(f.id)}">${esc(f.title)}</option>`).join('')}</select></label><button class="btn" data-evaluate-scenario="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Evaluate option</button></div></article>`).join('')}</div>` : '<div class="empty">No private scenarios saved yet.</div>'}</section>
-      ${result ? renderResult(result) : ''}`;
+        ${scenarios.length ? `<div class="stack">${scenarios.map(s => `<article class="card"><div class="card-head"><div><h3>${esc(s.name)}</h3><p class="muted">${esc(s.change.kind)} · created ${esc(fmtDateTime(s.createdAt))}${s.change.recoverySelections?.length ? ` · ${s.change.recoverySelections.length} independent recovery trial${s.change.recoverySelections.length === 1 ? '' : 's'} saved` : ''}</p></div><span class="spacer"></span><button class="btn primary" data-run="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Run preview</button><button class="btn danger" data-delete="${esc(s.scenarioId)}">Delete</button></div><div class="actions"><label class="field"><span>Recovery option</span><select class="input" data-option-picker="${esc(s.scenarioId)}"><option value="">Choose an option</option>${RECOVERY_FORMS.map(f => `<option value="${esc(f.id)}">${esc(f.title)}</option>`).join('')}</select></label><button class="btn" data-evaluate-scenario="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Evaluate option</button></div></article>`).join('')}</div>` : '<div class="empty">No private scenarios saved yet. Use <b>New scenario</b> to save one.</div>'}</section></div>
+      <div class="list-detail-detail">${result ? renderResult(result) : '<section class="panel"><div class="empty">Run a preview or evaluate a recovery option; its result appears here beside your list.</div></section>'}</div></div></div>
+      </div></section>`;
+    wireWorkspaceTabs(root);
+    $$('[data-workspace-tab]', root).forEach(button => button.addEventListener('click', () => { activeTab = button.dataset.workspaceTab; }));
 
     $('#refresh-scenarios', root)?.addEventListener('click', () => scenariosPage(root, ctx).catch(e => toast(e.message, true)));
     $('#ww-capture-baseline', root)?.addEventListener('click', () => captureDemoBaseline());
@@ -1434,7 +1447,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     try {
       const saved = await command('/api/planning/scenarios', { name: f.get('name'), change }, f.get('reason'));
       toast('Private scenario saved.');
-      await read(); result = null; render();
+      await read(); result = null; activeTab = 'mine'; render();
       if (saved.entityId) await runScenario(saved.entityId);
     } catch (error) { toast(error.message, true); }
   }

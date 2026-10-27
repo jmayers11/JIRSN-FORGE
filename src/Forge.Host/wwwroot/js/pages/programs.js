@@ -1,6 +1,6 @@
 import { tryGet, command } from '../api.js';
 import { who } from '../people.js';
-import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, confirmWithReason } from '../ui.js';
+import { esc, $, $$, fmtDate, fmtDateTime, errorBlock, emptyBlock, toast, confirmWithReason, tabifyPanels } from '../ui.js';
 import { formModal, qty, canAction, today, plusDays } from '../forms.js';
 
 // Programs (spec §7, §72): program → contract → CLIN/SLIN → delivery → demand → production orders.
@@ -104,7 +104,7 @@ async function programDetail(page, ctx, id) {
         <td class="faint">${esc(o.explanation ?? '')}</td></tr>`).join('')}</tbody></table>`}
     </section>
 
-    ${contracts.error ? errorBlock(contracts.error, 'contracts') : all.map(c => contractPanel(c, h, manager && active)).join('') || `<section class="panel">${emptyBlock('No contracts', manager ? 'Add the contract or award this program works under.' : 'The program manager records contracts.')}</section>`}
+    ${contracts.error ? errorBlock(contracts.error, 'contracts') : all.map(c => contractPanel(c, h, manager && active)).join('') || `<section class="panel"><h2 class="sr-only">Contracts</h2>${emptyBlock('No contracts', manager ? 'Add the contract or award this program works under.' : 'The program manager records contracts.')}</section>`}
 
     <section class="panel"><header><h2>Work breakdown structure</h2><span class="spacer"></span>${manager && active ? '<button class="btn small" id="wbs">+ WBS element</button>' : ''}</header>
       ${!h.wbs.length ? emptyBlock('No WBS yet', 'Break the program into elements (1, 1.1, 1.2…) and charge orders to them to see progress by element.') : `
@@ -127,6 +127,13 @@ async function programDetail(page, ctx, id) {
           <td>${manager && !m.completedOn ? `<button class="btn small" data-done="${m.milestoneId}">Mark done</button>` : ''}</td></tr>`;
       }).join('')}</tbody></table>`}
     </section>`;
+  // Summary and KPIs stay on top; each work area gets its own tab (UI density audit 2026-10-27).
+  tabifyPanels(page, [
+    { label: 'Deliveries & orders', match: ['deliveries', 'production orders'] },
+    { label: 'Contracts', match: ['contract'] },
+    { label: 'WBS & milestones', match: ['work breakdown', 'milestones'] },
+    { label: 'Funding', match: ['earned value', 'funding'] },
+  ]);
 
   const contractById = cid => all.find(c => c.contractId === Number(cid));
   $('#contract', page)?.addEventListener('click', () => formModal({ title: `Add a contract to ${p.code}`, confirmLabel: 'Add contract',
@@ -225,7 +232,7 @@ function kpi(label, value, sub, tone = '') {
 function contractPanel(c, h, edit) {
   const summary = h.contracts.find(s => s.contractId === c.contractId);
   return `<section class="panel">
-    <header><h2>${esc(c.number)}</h2><span class="muted">${esc(c.title)} · ${esc(c.customer)}</span><span class="pill ${c.status === 'Active' ? 'ok' : 'none'}">${esc(c.status)}</span><span class="spacer"></span>
+    <header><h2><span class="sr-only">Contract </span>${esc(c.number)}</h2><span class="muted">${esc(c.title)} · ${esc(c.customer)}</span><span class="pill ${c.status === 'Active' ? 'ok' : 'none'}">${esc(c.status)}</span><span class="spacer"></span>
       ${edit && c.status === 'Active' ? `<button class="btn small" data-clin="${c.contractId}">+ CLIN</button> <button class="btn small" data-delivery="${c.contractId}">+ Delivery</button> <button class="btn small" data-requirement="${c.contractId}">+ Requirement</button> <button class="btn small" data-funding="${c.contractId}">+ Funding</button> <button class="btn small ghost" data-modify="${c.contractId}">Modify</button>` : ''}</header>
     <div class="faint" style="margin-bottom:6px">Period of performance ${esc(fmtDate(c.periodStart))} – ${esc(fmtDate(c.periodEnd))} · ceiling ${money(c.ceiling)}${summary?.value != null ? ` · CLIN value ${money(summary.value)}` : ''}
       · funded ${money(summary?.funded ?? 0)} · delivered ${money(summary?.deliveredValue ?? 0)} of ${money(summary?.scheduledValue ?? 0)} scheduled</div>
