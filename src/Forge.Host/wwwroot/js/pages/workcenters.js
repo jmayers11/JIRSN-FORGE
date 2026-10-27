@@ -8,6 +8,12 @@ import { appendOperations, appendPresence, appendHolds } from '../executable.js'
 
 const DAY = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+// One section per tab (owner feedback 2026-10-27); each tab's content scrolls inside a screen-high box.
+const SECTIONS = [
+  ['readiness', 'Can it run now?'], ['presence', 'Presence'], ['support', 'Stoppages'], ['tools', 'Tools &amp; gauges'],
+  ['tooling', 'Tooling required'], ['holds', 'Holds'], ['reasons', 'Reason codes'],
+];
+
 export async function workCentersPage(page, ctx) {
   const now = Date.now();
   const iso = ms => new Date(ms).toISOString();
@@ -41,17 +47,14 @@ export async function workCentersPage(page, ctx) {
       ? `${esc(current.wc.code)} · ${esc(current.area?.name ?? current.wc.safetyAreaCode)} · ${current.ms.length} machine${current.ms.length === 1 ? '' : 's'} · ${current.shifts.length} shift${current.shifts.length === 1 ? '' : 's'} · ${current.down.length ? `<span class="pill bad">${current.down.length} down</span>` : '<span class="pill ok">All up</span>'}`
       : esc(r.sites.map(s => `${s.name} (${s.timeZone})`).join(' · ') || 'No site set up yet')}</div></div><div class="spacer"></div>${picker}<a class="btn" href="#/plant-setup">Add or edit work centers</a></div>
     ${selected && !current ? emptyBlock('Unknown work center', selected) : ''}
-    <section class="workspace-tabs">
+    <section class="workspace-tabs wc-workspace">
     <div class="workspace-tablist" role="tablist" aria-label="Work center views">
       ${current ? tab('overview', 'Capacity &amp; downtime', true) : tab('list', `All work centers (${rows.length})`, true)}
-      ${tab('readiness', 'Readiness &amp; presence', false)}
-      ${tab('support', 'Stoppages', false)}
-      ${tab('tools', 'Tools', false)}
-      ${tab('holds', 'Holds &amp; reason codes', false)}
+      ${SECTIONS.map(([id, label]) => tab(id, label, false)).join('')}
     </div>
     <div class="workspace-panels">
       ${current ? panel('overview', detail(current), true) : panel('list', listHtml(), true)}
-      ${panel('readiness')}${panel('support')}${panel('tools')}${panel('holds')}
+      ${SECTIONS.map(([id]) => panel(id)).join('')}
     </div></section>`;
 
   // A compact card grid: one card per work center, shifts as short chips with the full hours on hover (owner feedback 2026-10-27:
@@ -114,13 +117,13 @@ export async function workCentersPage(page, ctx) {
   });
   const into = id => $(`[data-workspace-panel="${id}"]`, page);
   const machines = current ? current.ms : r.machines;
-  await appendStoppages(into('support'), machines, ctx.me);
-  await appendTools(into('tools'), current ? current.ms : r.machines, ctx.me);
-  await appendToolRequirements(into('tools'), ctx.me);
   await appendOperations(into('readiness'), current?.wc.code);
-  await appendPresence(into('readiness'), current?.wc.code);
+  await appendPresence(into('presence'), current?.wc.code);
+  await appendStoppages(into('support'), machines, ctx.me);
+  await appendTools(into('tools'), machines, ctx.me);
+  await appendToolRequirements(into('tooling'), ctx.me);
   await appendHolds(into('holds'), ctx.me);
-  await appendReasonCodes(into('holds'), ctx.me);
+  await appendReasonCodes(into('reasons'), ctx.me);
   wireWorkspaceTabs(page);
   const focus = ctx.query?.get('focus') ?? ctx.query?.get('tab');
   const focused = focus ? $(`[data-workspace-tab="${focus}"]`, page) : null;

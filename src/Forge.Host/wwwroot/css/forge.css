@@ -1669,3 +1669,6 @@ button.pill.linkish:hover { text-decoration: underline; }
 .wc-card-chips .chip { padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 11px; white-space: nowrap; }
 .wc-card-chips .chip.info { border-color: rgba(59,130,246,.45); color: #93c5fd; }
 .wc-card-chips .chip.bad { border-color: rgba(185,28,28,.6); color: #fca5a5; }
+.wc-workspace [data-workspace-panel] > .panel { max-height: calc(100vh - 230px); overflow: auto; overscroll-behavior: contain; }
+.wc-workspace [data-workspace-panel] > .panel > header { position: sticky; top: -14px; z-index: 2; background: var(--panel); }
+.wc-workspace [data-workspace-panel="list"] > .wc-card-grid { max-height: calc(100vh - 230px); overflow-y: auto; overscroll-behavior: contain; padding: 2px; }

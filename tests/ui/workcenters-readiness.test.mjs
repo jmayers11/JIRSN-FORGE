@@ -35,7 +35,7 @@ test('work centers open as tabs: the list first, each other view in its own tab 
 
   await workCentersPage(page, { params: [], query: new URLSearchParams(), me: { personId: 'viewer', permissions: [] } });
   const tabs = [...page.querySelectorAll('[data-workspace-tab]')].map(b => b.dataset.workspaceTab);
-  assert.deepEqual(tabs, ['list', 'readiness', 'support', 'tools', 'holds']);
+  assert.deepEqual(tabs, ['list', 'readiness', 'presence', 'support', 'tools', 'tooling', 'holds', 'reasons']);
   const shown = [...page.querySelectorAll('[data-workspace-panel]')].filter(p => !p.hidden).map(p => p.dataset.workspacePanel);
   assert.deepEqual(shown, ['list']);
   assert.equal(page.querySelectorAll('.wc-card-grid .wc-card[data-wc]').length, 2);
