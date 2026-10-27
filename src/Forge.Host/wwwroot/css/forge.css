@@ -334,6 +334,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .daily-mission-card h3 { margin: 5px 0 2px; font-size: 15px; }
 .daily-mission-card p { margin: 0; color: #C9CDD3; }
 .daily-mission-card-foot { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 6px; color: var(--faint); font-size: 11px; }
+.daily-mission-related { margin-top: 8px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 5px; background: rgba(22,31,40,.62); }
+.daily-mission-related > summary { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 11px; font-weight: 650; cursor: pointer; }
+.daily-mission-related ul { display: grid; gap: 5px; margin: 7px 0; padding-left: 18px; }
+.daily-mission-related li { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.daily-mission-related li span { display: block; color: var(--faint); font-size: 10px; }
+.daily-mission-related small { display: block; color: var(--faint); font-size: 10px; line-height: 1.35; }
+.daily-mission-related a { color: var(--info); text-decoration: underline; text-underline-offset: 2px; }
+.daily-mission-related a:focus-visible, .daily-mission-related > summary:focus-visible { outline: 2px solid var(--forge-orange); outline-offset: 2px; }
 .daily-mission-card-actions { display: grid; justify-items: end; gap: 6px; min-width: 150px; }
 .daily-mission-recovery { grid-column: 1 / -1; width: min(680px, 100%); padding: 10px 12px; border: 1px solid var(--line-strong); border-left: 3px solid var(--info); border-radius: 5px; background: var(--panel-2); text-align: left; }
 .daily-mission-recovery h4 { margin: 0 0 5px; font-size: 13px; }
@@ -1384,6 +1392,11 @@ button.pill.linkish:hover { text-decoration: underline; }
 .ww-scenario-card p { margin: 0; flex: 1; }
 .ww-scenario-events { display: grid; gap: 8px; padding-left: 22px; }
 .ww-scenario-events li { padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
+.scenario-recovery-comparison { display: grid; gap: 8px; margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
+.scenario-recovery-comparison > header h3, .scenario-recovery-comparison > header p { margin: 0 0 4px; }
+.scenario-recovery-comparison > p { margin: 0; }
+.scenario-recovery-comparison .table { min-width: 720px; }
+.scenario-recovery-comparison th { vertical-align: top; }
 #ww-evidence-comparison { margin-top: 12px; }
 
 /* Sprint 10: auditable attendance schedule and independent-review controls. */
@@ -1403,6 +1416,21 @@ button.pill.linkish:hover { text-decoration: underline; }
 .workforce-intelligence-recovery-list li { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .workforce-intelligence-correction { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 8px; }
 .workforce-intelligence-attendance-tools { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.workforce-intelligence-matrix { display: grid; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.workforce-intelligence-matrix > header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.workforce-intelligence-matrix > header h3 { margin: 0; }
+.workforce-intelligence-matrix-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.workforce-intelligence-matrix-profile { min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.workforce-intelligence-matrix-profile > summary { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(230px, 1.2fr) auto; align-items: center; gap: 8px; padding: 10px; cursor: pointer; }
+.workforce-intelligence-matrix-profile > summary:focus-visible { outline: 2px solid var(--forge-orange); outline-offset: -3px; }
+.workforce-intelligence-matrix-profile > summary span { color: var(--muted); font-size: 11px; }
+.workforce-intelligence-matrix-content { display: grid; gap: 8px; padding: 0 10px 10px; border-top: 1px solid var(--line); }
+.workforce-intelligence-matrix-content > p { margin: 8px 0 0; }
+.workforce-intelligence-matrix-preview { display: grid; gap: 6px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); }
+.workforce-intelligence-matrix-preview > p { margin: 0; }
+.workforce-intelligence-matrix-preview .skill-capacity { margin-top: 6px; }
+.workforce-intelligence-matrix-content .table { min-width: 760px; }
+@media (max-width: 760px) { .workforce-intelligence-matrix-profile > summary { grid-template-columns: 1fr; gap: 3px; } }
 
 /* Sprint 9 simulated demo clock: always visible so simulated time is never mistaken for real time. */
 .demo-clock-banner { padding: 6px 16px; background: #7a4b00; color: #fff; font-size: 13px; letter-spacing: .02em; }
@@ -1501,3 +1529,103 @@ button.pill.linkish:hover { text-decoration: underline; }
 .tp-queue-col h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .linkish { background: none; border: 0; padding: 0; color: var(--forge-orange); cursor: pointer; font: inherit; }
 @media (max-width: 1100px) { .tp-layout { grid-template-columns: 1fr; } .tp-roster { position: static; max-height: 420px; order: -1; } }
+
+
+/* Work-order manufacturing flow: evidence-first route map with native, keyboard-operable disclosure. */
+.manufacturing-flow { display: grid; gap: 14px; }
+.manufacturing-flow-overview { display: grid; grid-template-columns: 42px minmax(180px, 1fr) minmax(190px, .8fr) auto; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: linear-gradient(115deg, var(--panel-2), var(--panel)); }
+.manufacturing-flow-overview > div:nth-child(2), .manufacturing-flow-freshness { display: grid; gap: 3px; }
+.manufacturing-flow-overview > div:nth-child(2) > span, .manufacturing-flow-freshness > span { color: var(--muted); font-size: 12px; }
+.manufacturing-flow-scope { font-size: 11px !important; }
+.manufacturing-flow-overview-icon { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line-strong); border-radius: 11px; background: var(--panel); color: var(--forge-orange); font: 700 19px var(--font-display); }
+.manufacturing-flow-freshness { min-width: 0; padding-left: 12px; border-left: 1px solid var(--line); }
+.manufacturing-flow-track { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.manufacturing-flow-track > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.manufacturing-flow-track > header h3 { margin: 0; font-size: 14px; }
+.manufacturing-flow-track > header span { color: var(--muted); font-size: 11px; }
+.manufacturing-flow-steps { display: grid; grid-auto-columns: minmax(210px, 1fr); grid-auto-flow: column; gap: 22px; margin: 0; padding: 2px 2px 10px; overflow-x: auto; overscroll-behavior-inline: contain; list-style: none; }
+.manufacturing-flow-step { position: relative; min-width: 0; }
+.manufacturing-flow-step:not(:last-child)::after { position: absolute; z-index: 0; top: 21px; right: -20px; width: 18px; color: var(--muted); content: '›'; font-size: 24px; line-height: 1; text-align: center; }
+.manufacturing-flow-node { position: relative; z-index: 1; min-height: 110px; overflow: hidden; border: 1px solid var(--line); border-top: 3px solid var(--none); border-radius: 9px; background: var(--panel-2); }
+.manufacturing-flow-node.ready { border-top-color: var(--ok); }
+.manufacturing-flow-node.complete { border-top-color: var(--ok); background: color-mix(in srgb, var(--panel-2) 86%, var(--ok) 14%); }
+.manufacturing-flow-node.running { border-top-color: var(--info); }
+.manufacturing-flow-node.waiting { border-top-color: var(--warn); }
+.manufacturing-flow-node.blocked { border-top-color: var(--bad); }
+.manufacturing-flow-node.unknown { border-top-color: var(--none); }
+.manufacturing-flow-node > summary { display: grid; gap: 7px; min-height: 104px; padding: 10px; cursor: pointer; list-style: none; }
+.manufacturing-flow-node > summary::-webkit-details-marker { display: none; }
+.manufacturing-flow-node > summary:focus-visible { outline: 2px solid var(--forge-orange); outline-offset: -3px; }
+.manufacturing-flow-node-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.manufacturing-flow-op { color: var(--muted); font: 700 10px var(--font-display); letter-spacing: .08em; }
+.manufacturing-flow-state { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; }
+.manufacturing-flow-state i { display: grid; place-items: center; width: 17px; height: 17px; border: 1px solid currentColor; border-radius: 50%; font-size: 9px; font-style: normal; }
+.manufacturing-flow-node.ready .manufacturing-flow-state, .manufacturing-flow-node.complete .manufacturing-flow-state { color: var(--ok); }
+.manufacturing-flow-node.running .manufacturing-flow-state { color: var(--info); }
+.manufacturing-flow-node.waiting .manufacturing-flow-state { color: var(--warn); }
+.manufacturing-flow-node.blocked .manufacturing-flow-state { color: var(--bad); }
+.manufacturing-flow-node.unknown .manufacturing-flow-state { color: var(--muted); }
+.manufacturing-flow-title { line-height: 1.3; }
+.manufacturing-flow-center { color: var(--muted); font-size: 11px; }
+.manufacturing-flow-cause { display: -webkit-box; overflow: hidden; color: var(--bad); font-size: 11px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.manufacturing-flow-node.unknown .manufacturing-flow-cause { color: var(--warn); }
+.manufacturing-flow-progress { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 8px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.manufacturing-flow-node-detail { display: grid; gap: 10px; padding: 0 10px 10px; border-top: 1px solid var(--line); }
+.manufacturing-flow-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; padding-top: 9px; }
+.manufacturing-flow-meta > span { display: grid; gap: 3px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.manufacturing-flow-meta b { color: var(--text); font-size: 10px; }
+.manufacturing-flow-impact { display: grid; justify-items: start; gap: 5px; padding: 9px; border: 1px solid color-mix(in srgb, var(--bad) 42%, var(--line)); border-radius: 7px; background: color-mix(in srgb, var(--panel-2) 92%, var(--bad) 8%); font-size: 12px; }
+.manufacturing-flow-evidence { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.manufacturing-flow-evidence li { display: grid; gap: 2px; padding: 6px 8px; border-left: 2px solid var(--line-strong); background: var(--panel-2); font-size: 11px; }
+.manufacturing-flow-evidence li span { color: var(--muted); }
+.manufacturing-flow-evidence .is-pass { border-left-color: var(--ok); }
+.manufacturing-flow-evidence .is-fail { border-left-color: var(--bad); }
+.manufacturing-flow-evidence .is-unknown { border-left-color: var(--warn); }
+.manufacturing-flow-note { margin: 0; color: var(--muted); font-size: 11px; }
+.order-readiness-preview { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.order-readiness-preview > span { flex: 1 1 280px; }
+
+/* Inventory location map: visual hierarchy is derived from configured parent paths, never floor coordinates. */
+.inventory-location-map { display: grid; gap: 12px; }
+.inventory-map-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 9px; background: linear-gradient(115deg, var(--panel-2), var(--panel)); }
+.inventory-map-intro > div { display: grid; gap: 3px; }
+.inventory-map-intro > div > span { color: var(--muted); font-size: 11px; }
+.inventory-map-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted); font-size: 11px; }
+.inventory-map-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.inventory-map-legend i { width: 9px; height: 9px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--none); }
+.inventory-map-legend i.ok { background: var(--ok); border-color: var(--ok); }
+.inventory-map-legend i.info { background: var(--info); border-color: var(--info); }
+.inventory-map-legend i.warn { background: var(--warn); border-color: var(--warn); }
+.inventory-map-filters { display: grid; grid-template-columns: minmax(220px, 1.6fr) repeat(2, minmax(150px, .8fr)) auto; gap: 8px; align-items: end; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+.inventory-map-filters .field { min-width: 0; margin: 0; }
+.inventory-map-caveat { margin: 0; }
+.inventory-location-map-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 10px; align-items: start; }
+.inventory-map-location { min-width: 0; margin-left: calc(var(--map-depth, 0) * 3px); padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 3px 12px rgba(0, 0, 0, .12); }
+.inventory-map-location[hidden], .inventory-map-stock[hidden], .inventory-map-table tr[hidden] { display: none; }
+.inventory-map-location > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inventory-map-level, .inventory-map-code, .inventory-map-path { color: var(--muted); font-size: 10px; }
+.inventory-map-location h3 { margin: 8px 0 3px; font-size: 15px; }
+.inventory-map-path { overflow-wrap: anywhere; margin-bottom: 8px; }
+.inventory-map-stock-list { display: grid; gap: 5px; margin-top: 8px; }
+.inventory-map-stock { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 7px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); font-size: 11px; }
+.inventory-map-stock > :nth-child(2) { font-variant-numeric: tabular-nums; }
+.inventory-map-stock > :nth-child(3), .inventory-map-stock > :nth-child(4) { grid-column: 1 / -1; }
+.inventory-map-empty { padding: 8px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--muted); font-size: 11px; }
+.inventory-map-capacity { display: grid; gap: 3px; margin-top: 8px; padding: 8px; border-left: 3px solid var(--info); border-radius: 5px; background: var(--panel-2); font-size: 11px; }
+.inventory-map-capacity > span { color: var(--muted); }
+.inventory-map-capacity.unknown { border-left-color: var(--warn); }
+.inventory-map-table { border: 1px solid var(--line); border-radius: 8px; padding: 9px; }
+.inventory-map-table > summary { cursor: pointer; color: var(--forge-orange); font-size: 12px; }
+.inventory-map-order-results:empty { display: none; }
+.inventory-map-order-results > .panel { margin: 0; }
+@media (max-width: 760px) { .inventory-map-filters { grid-template-columns: 1fr 1fr; } .inventory-map-filters .field:first-child { grid-column: 1 / -1; } .inventory-map-filters > button { justify-self: start; } }
+@media (max-width: 680px) {
+  .manufacturing-flow-overview { grid-template-columns: 38px minmax(0, 1fr); }
+  .manufacturing-flow-overview > button { grid-column: 1 / -1; justify-self: start; }
+  .manufacturing-flow-freshness { grid-column: 1 / -1; padding: 8px 0 0; border-top: 1px solid var(--line); border-left: 0; }
+  .manufacturing-flow-steps { grid-auto-columns: minmax(235px, 82vw); }
+  .manufacturing-flow-meta { grid-template-columns: 1fr; }
+  .inventory-map-intro { align-items: start; }
+  .inventory-map-filters { grid-template-columns: 1fr; }
+  .inventory-map-filters .field:first-child { grid-column: auto; }
+}

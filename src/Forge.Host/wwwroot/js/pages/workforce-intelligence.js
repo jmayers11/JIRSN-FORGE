@@ -189,6 +189,93 @@ export function readinessHtml(r) {
     <div>${esc(r.benefit)}</div>`;
 }
 
+/** Current qualification evidence by configured machine/activity; this is not a staffing approval. */
+export function workforceCoverageMatrixHtml(sources, options, me, at = options.asOf ?? new Date()) {
+  sources = sources.matrixSources ?? sources;
+  const permissions = new Set(me?.permissions ?? []);
+  const workers = sources.workers?.data ?? [];
+  const resources = sources.resources?.data;
+  const allProfiles = (resources?.machineActivities ?? []).map(profile => ({
+    ...profile,
+    machine: (resources.machines ?? []).find(machine => machine.code === profile.machineCode),
+  })).filter(profile => profile.machine && (!options.workCenterCode || profile.machine.workCenterCode === options.workCenterCode)
+    && (!options.machineCode || profile.machineCode === options.machineCode)
+    && (!options.qualificationCode || (profile.operatorQualifications ?? []).includes(options.qualificationCode)))
+    .sort((a, b) => a.machine.workCenterCode.localeCompare(b.machine.workCenterCode)
+      || a.machineCode.localeCompare(b.machineCode) || a.activityCode.localeCompare(b.activityCode));
+  const maxRows = 2500;
+  const profileLimit = Math.max(1, Math.floor(maxRows / Math.max(1, workers.length)));
+  const profiles = allProfiles.slice(0, profileLimit);
+  const qualificationsKnown = Array.isArray(sources.qualifications?.data) && !sources.qualifications?.error;
+  const authorizationsKnown = Array.isArray(sources.machineAuthorizations?.data) && !sources.machineAuthorizations?.error;
+  const availabilityKnown = !sources.unavailability?.error && Array.isArray(sources.unavailability?.data);
+  const now = at.getTime();
+  const siteName = options.siteCode ? options.sites.find(site => site.code === options.siteCode)?.name ?? options.siteCode : 'All authorized sites';
+  const shiftName = options.shiftCode ? options.shifts.find(shift => shift.code === options.shiftCode)?.name ?? options.shiftCode : 'All shifts';
+  const centerName = options.workCenterCode ? options.workCenters.find(center => center.code === options.workCenterCode)?.name ?? options.workCenterCode : 'All work centers';
+  const qualifies = (record, code) => record.code === code && record.status === 'Qualified'
+    && (!record.expiresAt || new Date(record.expiresAt).getTime() > now);
+  const currentAuthorization = (personId, profile, qualificationCode) => (sources.machineAuthorizations?.data ?? []).some(record =>
+    record.personId === personId && record.machineCode === profile.machineCode && record.activityCode === profile.activityCode
+      && record.qualificationCode === qualificationCode && record.status === 'Authorized' && record.independentOperationAllowed === true
+      && (!record.expiresAt || new Date(record.expiresAt).getTime() > now)
+      && (!record.courseExpiresAt || new Date(record.courseExpiresAt).getTime() > now));
+  const profileHtml = profiles.map((profile, index) => {
+    const required = profile.operatorQualifications ?? [];
+    const rows = workers.map(worker => {
+      const records = (sources.qualifications?.data ?? []).filter(record => record.personId === worker.personId && required.includes(record.code));
+      const activeQualification = records.find(record => qualifies(record, record.code));
+      const expired = records.filter(record => record.status === 'Qualified' && record.expiresAt && new Date(record.expiresAt).getTime() <= now);
+      const inTraining = records.filter(record => record.status === 'InTraining');
+      const requirementsReadable = qualificationsKnown && (!profile.requiresMachineAuthorization || authorizationsKnown);
+      const unavailableWindow = (sources.unavailability?.data ?? []).some(window => window.personId === worker.personId
+        && new Date(window.startsAt).getTime() <= now && now < new Date(window.endsAt).getTime());
+      const unavailable = worker.isActive === false || !!worker.unavailability || (availabilityKnown && unavailableWindow);
+      let gate = !requirementsReadable ? 'Unknown'
+        : unavailable ? 'Unavailable'
+          : !required.length ? 'No qualification requirement listed'
+          : activeQualification ? profile.requiresMachineAuthorization
+              ? currentAuthorization(worker.personId, profile, activeQualification.code) ? (availabilityKnown ? 'Qualified · safe preview required' : 'Availability unknown') : 'Machine authorization required'
+              : availabilityKnown ? 'Qualified · safe preview required' : 'Availability unknown'
+              : inTraining.length ? 'Supervised training'
+                : expired.length ? 'Certification expired'
+                  : records.some(record => ['Suspended', 'Revoked'].includes(record.status)) ? 'Suspended / revoked' : 'Unqualified';
+      const tone = gate.startsWith('Qualified') ? 'ok' : ['Unavailable', 'Certification expired', 'Suspended / revoked', 'Machine authorization required'].includes(gate) ? 'warn' : 'none';
+      const qualificationText = !qualificationsKnown ? 'Qualification source unavailable'
+        : activeQualification ? `${activeQualification.code}${activeQualification.expiresAt ? ` · expires ${formatDate(activeQualification.expiresAt)}` : ' · no expiry recorded'}`
+          : inTraining.length ? inTraining.map(record => `${record.code} · in training`).join(', ')
+            : expired.length ? expired.map(record => `${record.code} · expired ${formatDate(record.expiresAt)}`).join(', ')
+              : records.length ? records.map(record => `${record.code} · ${record.status}`).join(', ') : 'No matching qualification record';
+      const authText = !profile.requiresMachineAuthorization ? 'Not required by this profile'
+        : !authorizationsKnown ? 'Authorization source unavailable'
+          : !activeQualification ? 'Requires current matching qualification'
+            : currentAuthorization(worker.personId, profile, activeQualification.code) ? 'Authorized for independent operation'
+              : 'No current independent authorization found';
+      const presenceText = unavailable ? 'Unavailable now'
+        : worker.presenceKind && worker.presentUntil && new Date(worker.presentUntil).getTime() > now ? `Presence recorded · ${esc(worker.presenceKind)}`
+          : worker.presenceKind ? 'Presence evidence expired' : 'Presence not confirmed';
+      return `<tr><td>${esc(worker.displayName)}<div class="faint">${esc(worker.jobTitle ?? worker.homeWorkCenterCode ?? '')}</div></td><td>${esc(worker.shiftCode ?? 'Shift not recorded')}</td><td>${esc(qualificationText)}</td><td>${esc(authText)}</td><td>${presenceText}</td><td><span class="pill ${tone}">${esc(gate)}</span></td></tr>`;
+    }).join('');
+    const requirementText = required.length ? required.join(' or ') : 'No operator qualification configured';
+    const preview = permissions.has('planning.readiness.read') && (permissions.has('workforce.supervise') || permissions.has('workforce.manage'))
+      ? `<button class="btn small" type="button" data-wi-matrix-preview data-safety-area="${escapeAttr(profile.machine.safetyAreaCode ?? '')}" data-work-center="${escapeAttr(profile.machine.workCenterCode)}" data-machine="${escapeAttr(profile.machineCode)}" data-activity="${escapeAttr(profile.activityCode)}" data-shift="${escapeAttr(options.shiftCode ?? '')}">Preview safe candidates &amp; capacity</button><div data-wi-matrix-preview-result aria-live="polite"></div>`
+      : '';
+    return `<details class="workforce-intelligence-matrix-profile"><summary><b>${esc(profile.machine.workCenterCode)} · ${esc(profile.machineCode)} / ${esc(profile.activityCode)}</b><span>Requires ${esc(requirementText)}${profile.requiresMachineAuthorization ? ' · machine authorization' : ''}</span><span>${workers.length} employee record${workers.length === 1 ? '' : 's'} · open for evidence</span></summary>
+      <div class="workforce-intelligence-matrix-content"><p class="faint">${esc(profile.machine.name)} · qualification and current authorization evidence only. Assignment safety, required crew, active work and recency-based capacity are checked separately by the safe preview.</p>
+        ${preview}<div class="table-wrap"><table class="table"><thead><tr><th>Employee</th><th>Shift</th><th>Qualification</th><th>Machine authorization</th><th>Presence / availability</th><th>Qualification gate</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No employees in the current filters.</td></tr>'}</tbody></table></div>
+      </div></details>`;
+  }).join('');
+  const capNote = allProfiles.length > profiles.length ? `<p class="notice warn small">Showing ${profiles.length} of ${allProfiles.length} configured machine/activity profiles to keep this view responsive. Filter by work center or machine to inspect the rest.</p>` : '';
+  const sourceMissing = !resources || !Array.isArray(sources.workers?.data)
+    ? 'Workforce or resource records are unavailable; coverage is unknown.'
+    : !profiles.length ? 'No configured machine/activity profiles match these filters.' : '';
+  return `<section class="workforce-intelligence-matrix"><header><h3>Operation coverage matrix</h3><span class="spacer"></span><span class="muted">Site: ${esc(siteName)} · Shift: ${esc(shiftName)} · Scope: ${esc(centerName)} · Page data reads completed ${esc(formatMoment(at))}</span></header>
+    <p class="faint">Expand an operation to compare each employee's recorded qualifications and machine authorization. “Qualified” is not a placement approval; presence, required crew, safety, current workload and capacity recency need a separate safe preview. No employee score is calculated.</p>
+    <div class="workforce-intelligence-matrix-legend" aria-label="Coverage matrix status legend"><span class="pill ok">Qualified · safe preview required</span><span class="pill warn">Training / expired / unavailable / authorization gap</span><span class="pill none">Unknown / unqualified</span></div>
+    ${sourceMissing ? `<p class="notice warn">${esc(sourceMissing)}</p>` : `${capNote}${profileHtml}`}
+  </section>`;
+}
+
 /** Calendar quarters are resolved by the server in the plant's time zone; the other periods are chosen here. */
 export function attendanceSummaryUrl(period, now) {
   if (period === 'quarter' || period === 'previous-quarter') return `/api/workforce/attendance-intelligence?period=${period}`;
@@ -362,9 +449,10 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
       <section class="workforce-intelligence-forecast"><h3>Upcoming training windows · next 14 days</h3><p class="faint">Forecasts compare scheduled workers and trainer credentials with the approved production schedule to find shared time clear of assigned work on the pair and training machine. A forecast is a review opportunity; it does not book training, estimate course duration, or assume employee interest.</p>${trainingForecastRows}</section>
       ${trainingRecommendationRows ? `<section><h3>Human-reviewed training opportunities</h3><ul class="workforce-intelligence-list">${trainingRecommendationRows}</ul></section>` : ''}
       <section><h3>Employee qualification matrix</h3><p class="faint workforce-intelligence-note">${fmtNumber(summary.qualificationCounts.inTraining)} record(s) are In Training; they grant no capability until certified in Competency.</p>${qualificationMatrixRows ? `<div class="table-wrap"><table class="table"><thead><tr><th>Employee / profile</th><th>Recorded qualification status</th></tr></thead><tbody>${qualificationMatrixRows}</tbody></table></div>` : '<p class="faint">Qualification records are not available to this account.</p>'}</section>`;
+  const coverageMatrix = workforceCoverageMatrixHtml(sources, options, me);
   const coverage = recoveryRows
     ? `<section class="workforce-intelligence-recovery"><h3>Safe coverage options</h3><p class="faint">Ranked from current visible workers. The preview checks qualification, machine authorization, active source work, equipment/tooling, and safety composition; it does not commit assignments.</p>${recoveryRows}</section>`
-    : `<p class="faint">${!canRecoverCoverage ? 'Coverage recovery needs readiness read and Workforce supervise or manage permissions.' : coverageKnown ? 'Every listed machine and shift capability has a current qualified worker in this view.' : 'Coverage is unknown until resources and qualifications are readable.'}</p>`;
+    : `<p class="faint">${!canRecoverCoverage ? 'Safe candidate previews need readiness read and Workforce supervise or manage permissions.' : coverageKnown ? 'Every listed machine and shift capability has a current qualified worker in this view.' : 'Coverage is unknown until resources and qualifications are readable.'}</p>`;
   const attendanceTab = `
         <div class="workforce-intelligence-attendance"><b>Attendance reliability${summary.attendance.period ? ` · ${esc(summary.attendance.period)}` : ''}: ${esc(summary.attendance.status)}</b><span>${esc(summary.attendance.detail)}</span></div>
         ${sources.attendance?.error ? errorBlock(sources.attendance.error, 'attendance summary') : ''}
@@ -413,7 +501,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
     ...(options.extraTabs ?? []).map(tab => ({ key: tab.key, label: tab.label, badge: tab.badge ?? null, html: `<div data-wi-extra="${escapeAttr(tab.key)}"></div>` })),
     ...(options.employeesTab === false ? [] : [{ key: 'employees', label: 'Employees', badge: null, html: '<div data-wi-employee-cards><p class="faint">Open this tab to gather each employee’s review card.</p></div>' }]),
     { key: 'training', label: 'Training & qualifications', badge: summary.trainingRecommendations?.length || null, html: training },
-    { key: 'coverage', label: 'Coverage', badge: canRecoverCoverage && coverageKnown ? summary.capabilityGaps.length : null, html: coverage },
+    { key: 'coverage', label: 'Coverage', badge: canRecoverCoverage && coverageKnown ? summary.capabilityGaps.length : null, html: `${coverage}${options.operationalVisualizationsEnabled === false ? '' : coverageMatrix}` },
     { key: 'attendance', label: 'Attendance', badge: canReview ? pendingEvents.length : null, html: attendanceTab },
     { key: 'labor', label: 'Labor evidence', badge: null, html: labor },
     ...(development ? [{ key: 'development', label: 'Development', badge: (sources.nominations?.data ?? []).length || null, html: development }] : []),
@@ -434,7 +522,7 @@ function render(summary, sources, options, me, selectedPersonId = null, personOp
     </section>`;
 }
 
-export async function appendWorkforceIntelligence(page, me, selectedPersonId = null, { after = false, employeesTab = true, extraTabs = [], tab = null } = {}) {
+export async function appendWorkforceIntelligence(page, me, selectedPersonId = null, { after = false, employeesTab = true, extraTabs = [], tab = null, operationalVisualizationsEnabled = true } = {}) {
   const now = new Date();
   const activityFrom = new Date(now.getTime() - 30 * DAY);
   const through = new Date(now.getTime() + 30 * DAY);
@@ -464,6 +552,7 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
   const workers = Array.isArray(workersResult.data) ? workersResult.data : undefined;
   const qualificationsResult = workers ? await qualificationRecords(workers) : { error: workersResult.error };
   const machineAuthorizationsResult = workers ? await machineAuthorizationRecords(workers) : { error: workersResult.error };
+  const sourceReadCompletedAt = new Date();
   const resources = resourcesResult.data ?? undefined;
   const personOperationHistory = await loadPersonOperationHistory(selectedPersonId, activityResult, me, now);
   const inputs = {
@@ -494,15 +583,48 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     .sort((a, b) => a.localeCompare(b)).map(code => ({ code, name: code }));
   if ((workers ?? []).some(worker => !worker.department?.trim())) departments.push({ code: '__unassigned', name: 'Unassigned' });
   const workerNames = new Map((workers ?? []).map(worker => [worker.personId, worker.displayName]));
-  const sources = { workers: workersResult, types: typesResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult, resources: resourcesResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult, policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult, suspectReports: suspectReportsResult, schedule: scheduleResult, workerNames };
+  const sources = { workers: workersResult, types: typesResult, qualifications: qualificationsResult, machineAuthorizations: machineAuthorizationsResult,
+    resources: resourcesResult, unavailability: unavailabilityResult, activity: activityResult, attendance: attendanceResult, pending: pendingResult,
+    policies: policiesResult, opportunities: opportunitiesResult, nominations: nominationsResult, materialTasks: materialTasksResult,
+    suspectReports: suspectReportsResult, schedule: scheduleResult, workerNames };
   const filteredView = () => {
     const scoped = filterWorkforceIntelligenceInputs(inputs, current);
     const ids = new Set((scoped.workers ?? []).map(worker => worker.personId));
+    // Matrix columns are the selected operations, while its employee rows must still include
+    // qualified people from other work centers at the same authorized plant. The regular
+    // roster's work-center filter intentionally narrows employees to their home center.
+    const resourceData = resources ?? {};
+    const centerByCode = new Map((resourceData.workCenters ?? []).map(center => [center.code, center]));
+    const areaByCode = new Map((resourceData.safetyAreas ?? []).map(area => [area.code, area]));
+    const targetCenter = current.workCenterCode || (current.machineCode
+      ? resourceData.machines?.find(machine => machine.code === current.machineCode)?.workCenterCode : null);
+    const targetArea = centerByCode.get(targetCenter)?.safetyAreaCode;
+    const matrixSiteCode = current.siteCode || areaByCode.get(targetArea)?.siteCode || '';
+    const matrixWorkers = (workers ?? []).filter(worker => {
+      const homeCenter = worker.assignment?.workCenterCode || worker.homeWorkCenterCode;
+      const homeArea = centerByCode.get(homeCenter)?.safetyAreaCode;
+      return (!current.shiftCode || worker.shiftCode === current.shiftCode)
+        && (!matrixSiteCode || areaByCode.get(homeArea)?.siteCode === matrixSiteCode)
+        && (!current.areaCode || homeArea === current.areaCode)
+        && (!current.department || (current.department === '__unassigned' ? !worker.department : worker.department === current.department))
+        && (!current.roleTitle || (worker.jobTitle ?? '').trim() === current.roleTitle)
+        && (current.workerStatus === 'all' || !current.workerStatus || (current.workerStatus === 'active' ? worker.isActive : !worker.isActive));
+    });
+    const matrixIds = new Set(matrixWorkers.map(worker => worker.personId));
+    const matrixSources = {
+      ...sources,
+      workers: { ...sources.workers, data: matrixWorkers },
+      qualifications: { ...sources.qualifications, data: (sources.qualifications.data ?? []).filter(row => matrixIds.has(row.personId)) },
+      machineAuthorizations: { ...sources.machineAuthorizations, data: (sources.machineAuthorizations.data ?? []).filter(row => matrixIds.has(row.personId)) },
+      unavailability: { ...sources.unavailability, data: (sources.unavailability.data ?? []).filter(row => matrixIds.has(row.personId)) },
+      resources: { ...sources.resources, data: scoped.resources },
+    };
     const filteredSources = {
       ...sources,
       workers: { ...sources.workers, data: scoped.workers },
       qualifications: { ...sources.qualifications, data: scoped.qualificationRecords },
       machineAuthorizations: { ...sources.machineAuthorizations, data: scoped.machineAuthorizations },
+      unavailability: { ...sources.unavailability, data: scoped.unavailability },
       activity: { ...sources.activity, data: scoped.activity },
       resources: { ...sources.resources, data: scoped.resources },
       pending: { ...sources.pending, data: (sources.pending.data ?? []).filter(row => ids.has(row.personId)) },
@@ -511,12 +633,13 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
       materialTasks: { ...sources.materialTasks, data: scoped.materialTasks },
       suspectReports: { ...sources.suspectReports, data: scoped.suspectReports },
       workerNames: new Map(scoped.workers.map(worker => [worker.personId, worker.displayName])),
+      matrixSources,
     };
     return { scoped, filteredSources };
   };
   const renderPanel = () => {
     const { scoped, filteredSources } = filteredView();
-    const options = { ...current, shifts: scoped.resources?.shifts ?? shifts, workCenters: scoped.resources?.workCenters ?? workCenters,
+    const options = { ...current, asOf: sourceReadCompletedAt, operationalVisualizationsEnabled, shifts: scoped.resources?.shifts ?? shifts, workCenters: scoped.resources?.workCenters ?? workCenters,
       sites: sites.filter(site => !current.siteCode || site.code === current.siteCode),
       areas: safetyAreas.filter(area => (!current.siteCode || area.siteCode === current.siteCode) && (!current.areaCode || area.code === current.areaCode)),
       machines: machines.filter(machine => (!current.workCenterCode || machine.workCenterCode === current.workCenterCode)
@@ -666,12 +789,13 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
     const causePerformance = event.target.closest('[data-wi-cause-performance]');
     if (causePerformance) { await openCausePerformance(causePerformance.dataset.wiCausePerformance, causePerformance.dataset.wiCauseName, me); return; }
     const recovery = event.target.closest('[data-wi-recovery]');
+    const matrixPreview = event.target.closest('[data-wi-matrix-preview]');
     const materialRecovery = event.target.closest('[data-wi-material-recovery]');
     const review = event.target.closest('[data-wi-review]');
     const correction = event.target.closest('[data-wi-correct]');
     const classification = event.target.closest('[data-wi-classify]');
     const nominationAdvance = event.target.closest('[data-wi-nom-advance]');
-    if (!recovery && !materialRecovery && !review && !correction && !classification && !nominationAdvance) return;
+    if (!recovery && !matrixPreview && !materialRecovery && !review && !correction && !classification && !nominationAdvance) return;
     try {
       if (recovery) {
         const output = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-result]');
@@ -718,6 +842,28 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
           : `<p class="faint">No ${summary.projectedShift ? 'qualified workers scheduled' : 'safe candidates among visible, currently present workers'} found (${fmtNumber(summary.evaluatedCandidates)} evaluated). ${summary.currentConstraint ? `Current target constraint: ${esc(summary.currentConstraint)}.` : ''}</p><p class="faint">${summary.limitations.map(esc).join(' ')}</p>`;
         recovery.disabled = false;
         return;
+      } else if (matrixPreview) {
+        const profile = matrixPreview.closest('.workforce-intelligence-matrix-profile');
+        const output = profile?.querySelector('[data-wi-matrix-preview-result]');
+        if (!output) throw new Error('The coverage preview area is unavailable.');
+        matrixPreview.disabled = true;
+        output.innerHTML = '<p class="faint">Checking current qualified workers, safety and skill-capacity evidence…</p>';
+        const request = {
+          safetyAreaCode: matrixPreview.dataset.safetyArea || null,
+          workCenterCode: matrixPreview.dataset.workCenter || null,
+          machineCode: matrixPreview.dataset.machine || null,
+          activityCode: matrixPreview.dataset.activity,
+          ...(matrixPreview.dataset.shift ? { shiftCode: matrixPreview.dataset.shift } : {}),
+        };
+        const result = await readPost('/api/readiness/workforce-recovery-capacity', { ...request, scheduledMinutes: 480 });
+        const summary = result?.recovery?.output;
+        if (!summary) throw new Error('The safe capacity preview returned no result.');
+        const capacities = capacityByPerson(result);
+        output.innerHTML = `<div class="workforce-intelligence-matrix-preview"><b>${esc(matrixPreview.dataset.machine)} · ${esc(matrixPreview.dataset.activity)} · current evidence</b>
+          ${summary.candidates?.length ? `<ul class="workforce-intelligence-recovery-list">${summary.candidates.map(candidate => `<li><b>${esc(candidate.personName)}</b><span>${candidate.moves.map(move => `${esc(move.personName)} → ${esc(move.assignment.machineCode || move.assignment.workCenterCode || move.assignment.safetyAreaCode)}`).join(' · ')}</span>${candidate.sourceImpacts?.length ? `<span>Origin work: ${candidate.sourceImpacts.map(item => esc(item.detail)).join(' · ')}</span>` : '<span>No currently executable source operation is made unready using current assignments carried forward.</span>'}${candidateCapacityHtml(capacities.get(candidate.personId))}</li>`).join('')}</ul>` : `<p>No safe, currently present candidates passed the recorded qualification, authorization and safety gates (${fmtNumber(summary.evaluatedCandidates)} evaluated). ${summary.currentConstraint ? `Current constraint: ${esc(summary.currentConstraint)}.` : ''}</p>`}
+          <p class="faint">${(summary.limitations ?? []).map(esc).join(' ')} Preview only; no employee is moved or assigned. Skill-capacity estimates show their evidence and confidence.</p></div>`;
+        matrixPreview.disabled = false;
+        return;
       } else if (materialRecovery) {
         const output = materialRecovery.closest('li')?.querySelector('[data-wi-material-recovery-result]');
         materialRecovery.disabled = true;
@@ -763,6 +909,12 @@ export async function appendWorkforceIntelligence(page, me, selectedPersonId = n
         recovery.disabled = false;
         const output = recovery.closest('.workforce-intelligence-recovery-item')?.querySelector('[data-wi-recovery-result]');
         if (output) output.innerHTML = `<p class="notice warn">${esc(error?.message ?? 'The recovery preview could not be evaluated.')}</p>`;
+        return;
+      }
+      if (matrixPreview) {
+        matrixPreview.disabled = false;
+        const output = matrixPreview.closest('.workforce-intelligence-matrix-profile')?.querySelector('[data-wi-matrix-preview-result]');
+        if (output) output.innerHTML = `<p class="notice warn">${esc(error?.message ?? 'The safe coverage preview could not be evaluated.')}</p>`;
         return;
       }
       if (materialRecovery) {

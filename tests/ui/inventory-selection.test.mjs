@@ -133,3 +133,54 @@ test('inventory defers heavy tab data until selected and exposes a focused Recei
   assert.equal(receivingHost.querySelectorAll('[data-tab]').length, 1);
   assert.match(receivingHost.querySelector('h1').textContent, /Receiving/);
 });
+
+test('inventory location map shows ledger quality separately from allocatable stock and resolves work-order movement links on demand', async t => {
+  const browser = installBrowser(t), calls = [], page = browser.document.createElement('div'); browser.document.body.append(page);
+  globalThis.fetch = path => {
+    calls.push(path);
+    if (path === '/api/resources/') return Promise.resolve(response({ sites: [{ code: 'WW', name: 'WhiskerWorks' }] }));
+    if (path === '/api/inventory/locations') return Promise.resolve(response([
+      { code: 'STORES', siteCode: 'WW', name: 'Stores', kind: 'Stores', level: 'Area', active: true, nettable: true },
+      { code: 'RACK-1', siteCode: 'WW', parentCode: 'STORES', name: 'Rack 1', kind: 'Stores', level: 'Rack', active: true, nettable: true },
+      { code: 'WIP-1', siteCode: 'WW', name: 'WIP 1', kind: 'WipStorage', level: 'Zone', active: true, nettable: false },
+    ]));
+    if (path === '/api/inventory/positions') return Promise.resolve(response([
+      { partNumber: 'MOTOR-1', lotNumber: 'LOT-OK', locationCode: 'RACK-1', locationPath: 'STORES / RACK-1', quantity: 6, qualityStatus: 'Released', custody: 'Company', nettable: true, usable: true, availableForPlanning: true },
+      { partNumber: 'MOTOR-1', lotNumber: 'LOT-HOLD', locationCode: 'WIP-1', locationPath: 'WIP-1', quantity: 4, qualityStatus: 'Hold', custody: 'Company', nettable: false, usable: true, availableForPlanning: false },
+    ]));
+    if (path === '/api/inventory/storage-rules') return Promise.resolve(response([{ rule: { locationCode: 'WIP-1', partNumber: 'MOTOR-1', safetyReference: 'SAFE-22', maxDwellHours: 24 }, availability: { free: null, operationalLimit: 10, occupancy: { onHand: 4, reserved: 2, otherParts: ['PLATE-1'] } } }]));
+    if (path === '/api/inventory/transactions?order=1042&take=200') return Promise.resolve(response([
+      { at: '2026-10-20T10:00:00Z', kind: 'Issue', partNumber: 'MOTOR-1', lotNumber: 'LOT-OK', fromLocation: 'STORES', toLocation: 'WO-1042', quantity: 6, reason: 'WO 1042' },
+    ]));
+    return Promise.resolve(response([]));
+  };
+  const controller = await inventoryPage(page, { me: { personId: 'viewer', permissions: ['inventory.read'] }, query: new URLSearchParams('tab=map'), params: [], refreshBell() {} });
+  t.after(controller.dispose);
+  assert.ok(calls.includes('/api/inventory/positions'));
+  assert.ok(calls.includes('/api/inventory/storage-rules'));
+  assert.match(page.innerHTML, /Site: WhiskerWorks/);
+  assert.match(page.innerHTML, /STORES \/ RACK-1/);
+  assert.match(page.innerHTML, /Available for planning/);
+  assert.match(page.innerHTML, /LOT-HOLD/);
+  assert.match(page.innerHTML, /mixed with PLATE-1/);
+  assert.match(page.innerHTML, /may predate the current location/);
+
+  const search = page.querySelector('[data-inventory-map-search]');
+  search.value = 'WO 1042';
+  fire(search, 'input');
+  fire(page.querySelector('[data-inventory-map-search-form]'), 'submit');
+  await flush();
+  assert.ok(calls.includes('/api/inventory/transactions?order=1042&take=200'));
+  assert.match(page.querySelector('[data-inventory-map-order-results]').innerHTML, /Work order #1042/);
+  assert.match(page.querySelector('[data-inventory-map-order-results]').innerHTML, /do not prove that material remains/);
+});
+
+test('operational visualization feature flag hides and avoids loading the inventory location map', async t => {
+  const browser = installBrowser(t), calls = [], page = browser.document.createElement('div'); browser.document.body.append(page);
+  globalThis.fetch = path => { calls.push(path); return Promise.resolve(response([])); };
+  const controller = await inventoryPage(page, { me: { personId: 'viewer', permissions: ['inventory.read'] }, query: new URLSearchParams(), params: [], operationalVisualizationsEnabled: false, refreshBell() {} });
+  t.after(controller.dispose);
+  assert.equal(page.querySelector('[data-tab="map"]'), null);
+  assert.equal(calls.includes('/api/inventory/positions'), false);
+  assert.equal(calls.includes('/api/inventory/storage-rules'), false);
+});

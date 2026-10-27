@@ -36,6 +36,7 @@ export async function inventoryPage(page, ctx) {
   const inventoryManager = canAction(me, 'inventory.manage');
   const mroManager = canAction(me, 'inventory.mro.manage');
   const scrapRequester = canAction(me, 'inventory.scrap.request');
+  const operationalVisualizationsEnabled = ctx.operationalVisualizationsEnabled !== false;
   let tab = ctx.query.get('tab') ?? 'stock';
   let data = {};
   let disposed = false, pageGeneration = 0;
@@ -56,15 +57,20 @@ export async function inventoryPage(page, ctx) {
     const taskHistory = tab === 'tasks' && inventoryManager ? await tryGet('/api/inventory/tasks?open=false&take=200') : null;
     let ledger = { data: [] }, programs = { data: [] }, due = { data: [] };
     let shelf = { pending: { data: [] } }, receiving = null, outside = { data: [] };
+    let mapPositions = null, mapStorageRules = null;
     if (tab === 'ledger') ledger = await tryGet('/api/inventory/transactions?take=200');
     if (tab === 'counts') [programs, due] = await Promise.all([tryGet('/api/inventory/count-programs'), tryGet('/api/inventory/counts-due')]);
     if (tab === 'shelf') shelf = await loadShelfLife();
     if (tab === 'receiving') receiving = await loadReceiving();
     if (tab === 'outside') outside = await tryGet('/api/inventory/outside-processing');
+    if (tab === 'map' && operationalVisualizationsEnabled) {
+      [mapPositions, mapStorageRules] = await Promise.all([tryGet('/api/inventory/positions'), tryGet('/api/inventory/storage-rules')]);
+    }
     const scrap = tab === 'scrap' ? await loadScrap() : null;
     if (disposed || generation !== loadGeneration) return;
     data = { shelf, receiving, outside, scrap, summary, locations, requests, ledger, items, orders, mro,
-      tasks: taskHistory?.error ? tasks : taskHistory ?? tasks, programs, due, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
+      tasks: taskHistory?.error ? tasks : taskHistory ?? tasks, programs, due, mapPositions, mapStorageRules,
+      mapAsOf: mapPositions ? new Date().toISOString() : null, sites: resources.data?.sites ?? [], workCenters: resources.data?.workCenters ?? [], machines: resources.data?.machines ?? [], suppliers: suppliers.data ?? [] };
   }
 
   const locs = (active = true, ours = true) => (data.locations.data ?? []).filter(l => (!active || l.active) && (!ours || l.inCompanyCustody)).map(l => [l.code, `${l.code} — ${l.name} (${l.kind})`]);
@@ -462,6 +468,95 @@ export async function inventoryPage(page, ctx) {
       </tbody></table>`;
   }
 
+  function locationMapTab() {
+    if (!data.locations || data.locations.error) return errorBlock(data.locations?.error, 'inventory locations');
+    if (!data.mapPositions || data.mapPositions.error) return errorBlock(data.mapPositions?.error ?? 'Position data was not loaded.', 'stock positions');
+    const locations = data.locations.data ?? [];
+    const positions = data.mapPositions.data ?? [];
+    const rules = data.mapStorageRules?.data ?? [];
+    const rulesUnavailable = !!data.mapStorageRules?.error;
+    const byLocation = new Map();
+    for (const position of positions) byLocation.set(position.locationCode, [...(byLocation.get(position.locationCode) ?? []), position]);
+    const rulesByLocation = new Map();
+    for (const entry of rules) {
+      const code = entry.rule?.locationCode;
+      if (code) rulesByLocation.set(code, [...(rulesByLocation.get(code) ?? []), entry]);
+    }
+    const siteOptions = [...new Map(locations.map(location => [location.siteCode, data.sites.find(site => site.code === location.siteCode)?.name ?? location.siteCode])).entries()];
+    const locationByCode = new Map(locations.map(location => [location.code, location]));
+    const configuredPath = location => {
+      const path = [location.code], seen = new Set(path);
+      let current = location;
+      while (current?.parentCode && !seen.has(current.parentCode) && path.length < 10) {
+        path.unshift(current.parentCode); seen.add(current.parentCode); current = locationByCode.get(current.parentCode);
+      }
+      return path.join(' / ');
+    };
+    const ordered = [];
+    const byParent = new Map();
+    for (const location of locations) byParent.set(location.parentCode ?? '', [...(byParent.get(location.parentCode ?? '') ?? []), location]);
+    const visit = (parent, depth, ancestors = new Set()) => {
+      for (const location of (byParent.get(parent) ?? []).sort((a, b) => a.code.localeCompare(b.code))) {
+        if (ancestors.has(location.code)) continue;
+        ordered.push({ location, depth });
+        if (depth < 8) visit(location.code, depth + 1, new Set([...ancestors, location.code]));
+      }
+    };
+    visit('', 0);
+    for (const location of locations) if (!ordered.some(entry => entry.location.code === location.code)) ordered.push({ location, depth: 0 });
+    const cards = ordered.map(({ location, depth }) => {
+      const stock = byLocation.get(location.code) ?? [];
+      const capacity = rulesByLocation.get(location.code) ?? [];
+      const conditions = new Set(stock.map(position => position.qualityStatus === 'Hold' || position.usable === false ? 'Hold / unusable'
+        : position.qualityStatus === 'Inspection' ? 'Inspection pending' : position.availableForPlanning ? 'Released stock' : 'Not allocatable'));
+      const quality = conditions.size > 1 ? 'Mixed conditions' : conditions.values().next().value ?? 'No on-hand stock';
+      const tone = quality === 'Hold / unusable' || quality === 'Mixed conditions' ? 'warn' : quality === 'Inspection pending' ? 'info' : quality === 'Released stock' ? 'ok' : 'none';
+      const capacityHtml = capacity.length ? capacity.map(entry => {
+        const rule = entry.rule, available = entry.availability;
+        const free = available?.free;
+        const limit = available?.operationalLimit;
+        const onHand = available?.occupancy?.onHand;
+        const reserved = available?.occupancy?.reserved;
+        const content = free == null ? `Unknown capacity · ${available?.occupancy?.otherParts?.length ? `mixed with ${available.occupancy.otherParts.map(esc).join(', ')}` : 'not measurable from current evidence'}`
+          : `${qty(onHand)} on hand + ${qty(reserved)} reserved · ${qty(free)} free of ${qty(limit)} approved units`;
+        return `<div class="inventory-map-capacity"><b>WIP · ${esc(rule.partNumber)}</b><span>${content}</span><span class="faint">${esc(rule.safetyReference)}${rule.maxDwellHours == null ? '' : ` · max dwell ${rule.maxDwellHours} h`}</span></div>`;
+      }).join('') : location.kind === 'WipStorage' ? `<div class="inventory-map-capacity unknown"><b>WIP capacity</b><span>${rulesUnavailable ? 'Capacity rules could not be read; available space is unknown.' : 'No active approved capacity rule for this location.'}</span></div>` : '';
+      const rows = stock.length ? stock.map(position => `<div class="inventory-map-stock" data-map-position data-part="${esc(position.partNumber)}" data-lot="${esc(position.lotNumber ?? '')}">
+        <span><b>${esc(position.partNumber)}</b>${position.lotNumber ? ` · lot ${esc(position.lotNumber)}` : ''}</span><b class="num">${qty(position.quantity)}</b>
+        <span class="pill ${position.qualityStatus === 'Released' ? 'ok' : position.qualityStatus === 'Hold' ? 'warn' : 'info'}">${esc(position.qualityStatus)}${position.usable === false ? ' · shelf-life restricted' : ''}</span>
+        <span class="faint">${position.availableForPlanning ? 'Available for planning' : position.custody !== 'Company' ? `${esc(position.custody)} custody` : !position.nettable ? 'Non-nettable' : position.usable === false ? 'Not shelf-life usable' : 'Excluded from planning'}</span>
+      </div>`).join('') : '<div class="inventory-map-empty">No on-hand position is recorded here.</div>';
+      const tokens = [location.code, location.name, location.siteCode, location.kind, location.level, location.workCenterCode, location.machineCode,
+        ...stock.flatMap(position => [position.partNumber, position.lotNumber, position.qualityStatus])].filter(Boolean).join(' ').toLowerCase();
+      return `<article class="inventory-map-location" data-map-location data-map-site="${esc(location.siteCode)}" data-map-state="${esc(quality)}" data-map-search="${esc(tokens)}" style="--map-depth:${Math.min(depth, 5)}">
+        <header><span class="inventory-map-level">${esc(location.level)} · ${esc(KIND_NAME[location.kind] ?? location.kind)}</span><span class="pill ${tone}">${esc(quality)}</span></header>
+        <h3>${esc(location.name)}</h3><div class="inventory-map-code">${esc(location.code)} · ${esc(location.siteCode)}${location.workCenterCode ? ` · ${esc(location.workCenterCode)}` : ''}${location.machineCode ? ` · ${esc(location.machineCode)}` : ''}</div>
+        <div class="inventory-map-path" title="Configured parent path">${esc(stock[0]?.locationPath ?? configuredPath(location))}</div>
+        ${capacityHtml}<div class="inventory-map-stock-list">${rows}</div>
+      </article>`;
+    }).join('');
+    const tableRows = positions.map(position => {
+      const location = locationByCode.get(position.locationCode);
+      const state = position.qualityStatus === 'Hold' || position.usable === false ? 'Hold / unusable'
+        : position.qualityStatus === 'Inspection' ? 'Inspection pending' : position.availableForPlanning ? 'Released stock' : 'Not allocatable';
+      return `<tr data-map-table-row data-map-site="${esc(location?.siteCode ?? '')}" data-map-state="${esc(state)}" data-map-search="${esc(`${position.locationPath} ${position.partNumber} ${position.lotNumber ?? ''} ${position.qualityStatus}`.toLowerCase())}"><td>${esc(position.locationPath)}</td><td>${esc(position.partNumber)}</td><td>${esc(position.lotNumber ?? 'Not lot tracked')}</td><td class="num">${qty(position.quantity)}</td><td>${esc(position.qualityStatus)}${position.usable === false ? ' · shelf-life restricted' : ''}</td><td>${position.availableForPlanning ? '<span class="pill ok">Available for planning</span>' : '<span class="pill warn">Excluded from planning</span>'}</td><td>${esc(position.custody)}${position.custodianSupplier ? ` · ${esc(position.custodianSupplier)}` : ''}</td><td>${esc(position.machineCode ?? position.pointOfUseWorkCenter ?? '—')}</td></tr>`;
+    }).join('');
+    const stale = !data.mapAsOf ? 'Read time unavailable' : `Page read completed ${esc(fmtDateTime(data.mapAsOf))}`;
+    return `<div class="inventory-location-map" data-inventory-location-map>
+      <div class="inventory-map-intro"><div><b>Stockroom location view</b><span>Site: ${siteOptions.length === 1 ? esc(siteOptions[0][1]) : 'All authorized sites'} · Current on-hand scope · Shift: not applicable · ${stale}</span></div><button class="btn small" type="button" data-map-refresh>Refresh positions</button></div>
+      <div class="inventory-map-legend" aria-label="Inventory status legend"><span><i class="ok"></i> Released and usable</span><span><i class="info"></i> Inspection pending</span><span><i class="warn"></i> Hold, restricted, or mixed</span><span><i></i> Not allocatable / empty</span></div>
+      <form class="inventory-map-filters" data-inventory-map-search-form><label class="field"><span>Find location, part, lot or work order</span><input class="input" type="search" data-inventory-map-search placeholder="e.g. BIN-12, FOIL-24, LOT-008, or WO 1042"></label>
+        <label class="field"><span>Site</span><select class="input" data-inventory-map-site><option value="">All authorized sites</option>${siteOptions.map(([code, name]) => `<option value="${esc(code)}">${esc(name)}</option>`).join('')}</select></label>
+        <label class="field"><span>Stock condition</span><select class="input" data-inventory-map-state><option value="">All</option><option>Released stock</option><option>Inspection pending</option><option>Hold / unusable</option><option>Mixed conditions</option><option>Not allocatable</option><option>No on-hand stock</option></select></label>
+        <button class="btn" type="submit">Search</button></form>
+      <p class="faint inventory-map-caveat">The cards follow configured location hierarchy; they do not imply floor-plan coordinates. Position records identify current quantity, quality, custody and planning usability. Aging and a direct work-order link are not carried on each position; work-order search below shows linked ledger movements, which may predate the current location.</p>
+      ${cards ? `<div class="inventory-location-map-grid" data-inventory-map-grid>${cards}</div>` : emptyBlock('No configured locations', inventoryManager ? 'Add a location before receiving stock.' : 'An inventory controller configures stock locations.')}
+      <div class="empty" data-map-no-match hidden>No locations or positions match these filters.</div>
+      <details class="inventory-map-table"><summary>Accessible stock position table (${positions.length} rows)</summary><div class="table-wrap"><table class="table"><thead><tr><th>Location path</th><th>Part</th><th>Lot</th><th>Quantity</th><th>Quality / usability</th><th>Planning status</th><th>Custody</th><th>Point of use</th></tr></thead><tbody>${tableRows || '<tr><td colspan="8">No stock positions.</td></tr>'}</tbody></table></div></details>
+      <section class="inventory-map-order-results" data-inventory-map-order-results aria-live="polite"></section>
+    </div>`;
+  }
+
   const TASK_NAME = { Stage: 'Stage', Kit: 'Kit', PutAway: 'Put away', Replenish: 'Replenish' };
   function tasksTab() {
     const t = data.tasks;
@@ -541,7 +636,7 @@ export async function inventoryPage(page, ctx) {
     ]).filter(Boolean);
     const tabOptions = ctx.route === 'receiving' ? [['receiving', 'Receiving']] : [
       ['stock', 'Stock'], ['selection', 'Lot selection'], ['tasks', `Tasks${data.tasks.data?.length ? ` (${data.tasks.data.length})` : ''}`], ['ledger', 'Ledger'],
-      ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['scrap', 'Scrap requests'], ['locations', 'Locations'], ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`],
+      ['approvals', `Approvals${pending ? ` (${pending})` : ''}`], ['scrap', 'Scrap requests'], ['locations', 'Locations'], ...(operationalVisualizationsEnabled ? [['map', 'Location map']] : []), ['counts', `Counts${data.due.data?.length ? ` (${data.due.data.length} due)` : ''}`],
       ['shelf', `Shelf life${data.shelf.pending.data?.length ? ` (${data.shelf.pending.data.length})` : ''}`],
       ['receiving', `Receiving${data.receiving ? receivingCount(data.receiving) ? ` (${receivingCount(data.receiving)})` : '' : ''}`], ['outside', 'Outside processing'], ['mro', 'MRO levels'],
     ];
@@ -555,7 +650,7 @@ export async function inventoryPage(page, ctx) {
       ${kpis()}
       <section class="panel">
         <header><div class="seg" id="tabs">${tabOptions.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div></header>
-        ${tab === 'outside' ? outsideProcessingTab(data.outside, me) : tab === 'scrap' ? scrapTab(data.scrap, me) : tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : tab === 'selection' ? selectionTab() : stockTab()}
+        ${tab === 'outside' ? outsideProcessingTab(data.outside, me) : tab === 'scrap' ? scrapTab(data.scrap, me) : tab === 'tasks' ? tasksTab() : tab === 'counts' ? countsTab() : tab === 'ledger' ? ledgerTab() : tab === 'approvals' ? approvalsTab() : tab === 'locations' ? locationsTab() : tab === 'map' && operationalVisualizationsEnabled ? locationMapTab() : tab === 'mro' ? mroTab() : tab === 'shelf' ? shelfLifeTab(data.shelf, me) : tab === 'receiving' ? receivingTab(data.receiving, me) : tab === 'selection' ? selectionTab() : stockTab()}
       </section>`;
     enhanceTables(page);
     $('#trace-q', page)?.addEventListener('click', () => { const q = $('#serial-q', page).value.trim(); if (q) traceDrawer({ lot: q.toUpperCase() }); });
@@ -568,6 +663,57 @@ export async function inventoryPage(page, ctx) {
       if (ctx.route === 'receiving' && tab !== 'receiving') location.hash = `#/inventory?tab=${encodeURIComponent(tab)}`;
       else render();
     }));
+    const applyMapFilters = (queryOverride = null) => {
+      const input = $('[data-inventory-map-search]', page);
+      const query = String(queryOverride ?? input?.value ?? '').trim().toLocaleLowerCase();
+      const site = $('[data-inventory-map-site]', page)?.value ?? '';
+      const state = $('[data-inventory-map-state]', page)?.value ?? '';
+      const explicitWorkOrder = /^(?:wo\s*#?\s*|#)\d+$/i.test(query);
+      let shown = 0;
+      $$('[data-map-location]', page).forEach(card => {
+        const locationMatches = !query || explicitWorkOrder || (card.dataset.mapSearch ?? '').includes(query);
+        const positions = $$('[data-map-position]', card);
+        const matchingStock = positions.some(position => `${position.dataset.part ?? ''} ${position.dataset.lot ?? ''}`.toLocaleLowerCase().includes(query));
+        positions.forEach(position => { position.hidden = !!query && !explicitWorkOrder && matchingStock && !`${position.dataset.part ?? ''} ${position.dataset.lot ?? ''}`.toLocaleLowerCase().includes(query); });
+        const match = (!site || card.dataset.mapSite === site) && (!state || card.dataset.mapState === state) && (locationMatches || matchingStock);
+        card.hidden = !match;
+        if (match) shown++;
+      });
+      $$('[data-map-table-row]', page).forEach(row => {
+        const match = (!site || row.dataset.mapSite === site) && (!state || row.dataset.mapState === state)
+          && (!query || explicitWorkOrder || (row.dataset.mapSearch ?? '').includes(query));
+        row.hidden = !match;
+      });
+      const noMatch = $('[data-map-no-match]', page);
+      if (noMatch) noMatch.hidden = shown > 0;
+    };
+    const mapSearch = $('[data-inventory-map-search-form]', page);
+    mapSearch?.addEventListener('input', () => {
+      const output = $('[data-inventory-map-order-results]', page);
+      if (output) output.innerHTML = '';
+      applyMapFilters();
+    });
+    mapSearch?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const query = $('[data-inventory-map-search]', page)?.value.trim() ?? '';
+      const order = query.match(/^(?:wo\s*#?\s*|#)(\d+)$/i)?.[1];
+      const output = $('[data-inventory-map-order-results]', page);
+      if (!order || !output) { applyMapFilters(); return; }
+      output.innerHTML = '<p class="muted">Loading work-order material movements…</p>';
+      const generation = pageGeneration;
+      const result = await tryGet(`/api/inventory/transactions?order=${encodeURIComponent(order)}&take=200`);
+      if (generation !== pageGeneration || !output.isConnected) return;
+      if (result.error) { output.innerHTML = errorBlock(result.error, `order #${order} inventory movements`); return; }
+      const transactions = result.data ?? [];
+      output.innerHTML = `<section class="panel"><header><h3>Work order #${esc(order)} · linked inventory movements</h3><span class="spacer"></span>${canAction(me, 'execution.orders.read') ? `<a class="btn small" href="#/orders/${esc(order)}">Open work order</a>` : ''}</header>
+        <p class="faint">These are ledger movements linked to the order. They explain material flow but do not prove that material remains at the same physical location today.</p>
+        ${transactions.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>When</th><th>Part / lot</th><th>Movement</th><th>From → to</th><th>Quantity</th><th>Reason</th></tr></thead><tbody>${transactions.map(transaction => `<tr><td>${esc(fmtDateTime(transaction.at))}</td><td>${esc(transaction.partNumber)}${transaction.lotNumber ? ` · ${esc(transaction.lotNumber)}` : ''}</td><td>${esc(KIND_LABEL[transaction.kind] ?? transaction.kind)}</td><td>${esc(transaction.fromLocation ?? '—')} → ${esc(transaction.toLocation ?? '—')}</td><td class="num">${qty(transaction.quantity)}</td><td>${esc(transaction.reason ?? '—')}</td></tr>`).join('')}</tbody></table></div>` : emptyBlock('No linked inventory movements', 'No ledger transactions currently reference this order.')}
+      </section>`;
+      applyMapFilters('');
+    });
+    $('[data-inventory-map-site]', page)?.addEventListener('change', () => applyMapFilters());
+    $('[data-inventory-map-state]', page)?.addEventListener('change', () => applyMapFilters());
+    $('[data-map-refresh]', page)?.addEventListener('click', () => { void reload(); });
     $('#lot-selection-form', page)?.addEventListener('submit', async ev => {
       ev.preventDefault();
       const part = $('#lot-selection-part', page).value, order = $('#lot-selection-order', page).value;

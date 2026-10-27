@@ -87,6 +87,120 @@ export function instructionsForOperation(documents, sequence) {
   return (documents ?? []).filter(item => item.operationSequence == null || Number(item.operationSequence) === Number(sequence));
 }
 
+/** Keep the main released route and approved rework tracks distinct; the order record has no cross-track edges. */
+export function manufacturingFlowTracks(order) {
+  const operations = [...(order?.operations ?? [])].sort((a, b) => a.sequence - b.sequence);
+  const routed = operations.filter(operation => operation.reworkId == null);
+  const tracks = routed.length ? [{ id: 'route', label: 'Released routing', operations: routed }] : [];
+  const reworkGroups = new Map();
+  for (const operation of operations.filter(item => item.reworkId != null)) {
+    const key = String(operation.reworkId);
+    if (!reworkGroups.has(key)) reworkGroups.set(key, []);
+    reworkGroups.get(key).push(operation);
+  }
+  for (const [id, steps] of reworkGroups) tracks.push({ id: `rework-${id}`, label: `Approved rework plan ${id}`, operations: steps });
+  return tracks;
+}
+
+/** Resolve a route's site through the configured work-center → safety-area → site hierarchy. */
+export function orderSiteName(order, resources) {
+  if (resources?.error) return 'Unknown — site records unavailable';
+  const workCenterCode = order?.operations?.[0]?.workCenterCode;
+  const workCenter = resources?.data?.workCenters?.find(center => center.code === workCenterCode);
+  const safetyArea = resources?.data?.safetyAreas?.find(area => area.code === workCenter?.safetyAreaCode);
+  return resources?.data?.sites?.find(site => site.code === safetyArea?.siteCode)?.name ?? 'Unknown — no site mapping';
+}
+
+/** A missing readiness read or unevaluated dimensions must never look like a green operation. */
+export function manufacturingFlowState(operation, readiness) {
+  if (operation?.status === 'Complete') return { key: 'complete', label: 'Complete' };
+  if (operation?.status === 'InProgress') return { key: 'running', label: 'Running' };
+  if (!readiness) return { key: 'unknown', label: 'Unknown' };
+  if (readiness.primaryConstraint === 'Predecessor') return { key: 'waiting', label: 'Waiting' };
+  if (readiness.executable === false && readiness.primaryConstraint) return { key: 'blocked', label: 'Blocked' };
+  if (readiness.executable === true && !(readiness.notEvaluated ?? []).length) return { key: 'ready', label: 'Ready' };
+  return { key: 'unknown', label: 'Unknown' };
+}
+
+/** Accessible operation rows use the same unknown/waiting/blocker semantics as the visual flow. */
+export function orderReadinessRows(order, readiness) {
+  return (readiness?.operations ?? []).map(result => {
+    const operation = (order?.operations ?? []).find(item => Number(item.sequence) === Number(result.sequence));
+    const state = manufacturingFlowState(operation, result);
+    const tone = { complete: 'ok', ready: 'ok', running: 'info', waiting: 'warn', blocked: 'bad', unknown: 'warn' }[state.key];
+    const label = state.key === 'blocked' ? result.primaryConstraint ?? 'Blocked' : state.label;
+    const dimensions = (result.dimensions ?? []).map(dimension => `<li><span class="${dimension.outcome === 'Pass' ? 'c-ok' : dimension.outcome === 'Fail' ? 'c-bad' : 'c-warn'}">${esc(dimension.outcome)}</span> <b>${esc(dimension.name)}</b> — ${esc(dimension.detail)}</li>`).join('');
+    const notEvaluated = (result.notEvaluated ?? []).length ? `<li class="faint">Unknown, not evaluated: ${esc(result.notEvaluated.join(', '))}</li>` : '';
+    return `<tr><td>${esc(result.sequence)}</td><td>${esc(result.description)}</td><td><span class="pill ${tone}">${esc(label)}</span></td><td>${esc(result.bestMachine ?? '—')}</td></tr>
+      <tr><td></td><td colspan="3"><ul class="evidence">${dimensions}${notEvaluated}</ul></td></tr>`;
+  }).join('');
+}
+
+function flowNextStep(constraint) {
+  const steps = {
+    Order: ['Review order status', '#/orders'], Holds: ['Review quality holds', '#/quality'],
+    Quality: ['Review quality records', '#/quality'], Material: ['Review inventory and supply', '#/inventory?tab=stock'],
+    PointOfUse: ['Review point-of-use material', '#/inventory?tab=stock'], Equipment: ['Review machine readiness', '#/machine-kanban'],
+    Tooling: ['Review tooling readiness', '#/work-centers?focus=tools'], Safety: ['Review workforce safety coverage', '#/workforce-intelligence?tab=coverage'],
+    Workforce: ['Review qualified coverage', '#/workforce-intelligence?tab=coverage'], Training: ['Review training coverage', '#/workforce-intelligence?tab=training'],
+    Documentation: ['Review controlled documents', '#/engineering'], Engineering: ['Review engineering release', '#/engineering'],
+  };
+  return steps[constraint] ?? null;
+}
+
+export function renderManufacturingFlow(order, readiness, readError, asOf, shopfloor = null, siteName = null) {
+  const tracks = manufacturingFlowTracks(order);
+  if (!tracks.length) return emptyBlock('No released operations', 'The order routing is copied when the order is released.');
+  const readinessBySequence = new Map((readiness?.operations ?? []).map(operation => [Number(operation.sequence), operation]));
+  const records = tracks.flatMap(track => track.operations.map(operation => ({ track, operation, readiness: readinessBySequence.get(Number(operation.sequence)) })));
+  const focus = records.find(item => item.operation.status !== 'Complete' && item.readiness?.executable === false && item.readiness.primaryConstraint !== 'Predecessor')
+    ?? records.find(item => item.operation.status !== 'Complete');
+  const focusState = focus ? manufacturingFlowState(focus.operation, focus.readiness) : null;
+  const freshness = asOf ? fmtDateTime(asOf) : 'Not available';
+  const blockedCount = records.filter(item => manufacturingFlowState(item.operation, item.readiness).key === 'blocked').length;
+  const incompleteCoverageCount = records.filter(item => manufacturingFlowState(item.operation, item.readiness).key === 'unknown').length;
+  const summary = readError ? 'Current readiness could not be read. Operation status is shown from the order record only.'
+    : blockedCount ? `${blockedCount} operation${blockedCount === 1 ? '' : 's'} ${blockedCount === 1 ? 'has' : 'have'} a current evaluated blocker.${incompleteCoverageCount ? ` ${incompleteCoverageCount} more have unknown or unevaluated inputs.` : ''}`
+      : incompleteCoverageCount ? `${incompleteCoverageCount} operation${incompleteCoverageCount === 1 ? '' : 's'} have readiness inputs that are unknown or not evaluated.`
+        : focusState?.key === 'ready' ? 'The next unfinished operation is ready on the current evaluated checks.'
+          : focusState?.key === 'running' ? 'Work is currently reported in progress.' : 'All operations in the released routing are complete.';
+
+  const trackHtml = tracks.map(track => {
+    const ops = track.operations;
+    return `<section class="manufacturing-flow-track" aria-label="${esc(track.label)}"><header><h3>${esc(track.label)}</h3><span>${ops.length} step${ops.length === 1 ? '' : 's'}</span></header>
+      <ol class="manufacturing-flow-steps">${ops.map((operation, index) => {
+        const evidence = readinessBySequence.get(Number(operation.sequence));
+        const state = manufacturingFlowState(operation, evidence);
+        const focused = focus?.operation === operation;
+        const target = operation.plannedQuantity ?? order.quantity;
+        const primaryDimension = evidence?.dimensions?.find(dimension => dimension.name === evidence.primaryConstraint);
+        const downstream = state.key === 'blocked' ? ops.slice(index + 1).filter(next => next.status !== 'Complete') : [];
+        const nextStep = flowNextStep(evidence?.primaryConstraint);
+        const notEvaluated = evidence?.notEvaluated ?? [];
+        const activeLabor = (shopfloor?.labor ?? []).filter(entry => Number(entry.sequence) === Number(operation.sequence) && !entry.endedAt);
+        const assigned = activeLabor.length ? activeLabor.map(entry => `${esc(who(`person:${entry.personId}`))}${entry.role ? ` · ${esc(entry.role)}` : ''}${entry.machineCode ? ` · ${esc(entry.machineCode)}` : ''}`).join(', ') : 'No active labor assignment recorded';
+        const completion = operation.status === 'Complete' ? `Completed ${operation.completedAt ? esc(fmtDateTime(operation.completedAt)) : ''}`
+          : operation.status === 'InProgress' ? `Started ${operation.startedAt ? esc(fmtDateTime(operation.startedAt)) : 'time not recorded'}` : 'Not started';
+        const dimensionRows = evidence?.dimensions?.length ? `<ul class="manufacturing-flow-evidence">${evidence.dimensions.map(dimension => `<li class="${dimension.outcome === 'Fail' ? 'is-fail' : dimension.outcome === 'Indeterminate' ? 'is-unknown' : dimension.outcome === 'Pass' ? 'is-pass' : ''}"><b>${esc(dimension.outcome)} · ${esc(dimension.name)}</b><span>${esc(dimension.detail)}</span></li>`).join('')}</ul>` : '';
+        const statusIcon = { complete: '✓', running: '▶', ready: '●', waiting: 'Ⅱ', blocked: '!', unknown: '?' }[state.key];
+        return `<li class="manufacturing-flow-step ${index === 0 ? 'is-first' : ''}"><details class="manufacturing-flow-node ${state.key}" ${focused ? 'open' : ''}>
+          <summary><span class="manufacturing-flow-node-top"><span class="manufacturing-flow-op">OP ${esc(operation.sequence)}</span><span class="manufacturing-flow-state" aria-label="${esc(state.label)}"><i aria-hidden="true">${statusIcon}</i>${esc(state.label)}</span></span>
+            <b class="manufacturing-flow-title">${esc(operation.description)}</b><span class="manufacturing-flow-center">${esc(operation.workCenterCode)} · ${esc(evidence?.bestMachine ?? operation.eligibleMachines?.[0] ?? 'Machine not identified')}</span>
+            ${state.key === 'blocked' ? `<span class="manufacturing-flow-cause">${esc(evidence?.primaryConstraint ?? 'Constraint')} · ${esc(primaryDimension?.detail ?? 'See readiness evidence')}</span>` : state.key === 'unknown' ? `<span class="manufacturing-flow-cause">Readiness evidence incomplete</span>` : ''}
+            <span class="manufacturing-flow-progress"><span>${fmtNumber(operation.goodQuantity, 3)} good / ${fmtNumber(target, 3)}</span><span>${fmtNumber(operation.scrapQuantity, 3)} scrap</span></span>
+          </summary><div class="manufacturing-flow-node-detail"><div class="manufacturing-flow-meta"><span><b>Activity</b>${esc(operation.activityCode)}</span><span><b>Planned time</b>${operation.plannedMinutes == null ? 'Unknown' : `${fmtNumber(operation.plannedMinutes / 60)} h`}</span><span><b>Execution</b>${completion}</span><span><b>Active crew</b>${assigned}</span></div>
+            ${state.key === 'blocked' ? `<div class="manufacturing-flow-impact"><b>Why it is blocked</b><span>${esc(primaryDimension?.detail ?? `The readiness engine identifies ${evidence?.primaryConstraint ?? 'a constraint'}.`)}</span>${downstream.length ? `<span><b>Downstream impact:</b> later incomplete step${downstream.length === 1 ? '' : 's'} ${downstream.map(next => `OP ${next.sequence} · ${esc(next.workCenterCode)}`).join(', ')} wait on this route.</span>` : '<span>No later incomplete operation is recorded in this track.</span>'}${nextStep ? `<a class="btn small" href="${esc(nextStep[1])}">${esc(nextStep[0])}</a>` : ''}</div>` : state.key === 'waiting' ? '<p class="muted small">An earlier operation in this same route track is incomplete.</p>' : state.key === 'unknown' ? `<div class="notice warn small">${notEvaluated.length ? `Not evaluated: ${esc(notEvaluated.join(', '))}.` : 'A current readiness result is unavailable.'} This operation is not shown as ready.</div>` : ''}
+            ${dimensionRows}
+          </div></details></li>`;
+      }).join('')}</ol></section>`;
+  }).join('');
+
+  return `<div class="manufacturing-flow" data-manufacturing-flow><div class="manufacturing-flow-overview"><div class="manufacturing-flow-overview-icon" aria-hidden="true">${focusState?.key === 'blocked' ? '!' : incompleteCoverageCount ? '?' : '↗'}</div><div><b>${esc(summary)}</b><span>Order #${order.orderNumber} · ${esc(order.partNumber)} rev ${esc(order.revision)} · ${esc(order.status)}</span><span class="manufacturing-flow-scope">Site: ${esc(siteName ?? 'Unknown')} · Current horizon · Shift scope: not filtered</span></div><div class="manufacturing-flow-freshness"><b>Readiness read</b><span>${esc(freshness)} · current source snapshot</span></div><button class="btn small" type="button" data-refresh-manufacturing-flow>Refresh read</button></div>
+    ${readError ? `<div class="notice warn small">${errorBlock(readError, 'manufacturing flow readiness')}</div>` : ''}${trackHtml}
+    <p class="manufacturing-flow-note">Sequence follows Forge's released-order predecessor rules. Approved rework operations are shown in separate tracks; the order record does not provide a cross-track link to the originating operation. This view is a current source read, not live machine telemetry or a schedule commitment.</p>
+  </div>`;
+}
+
 /** Prefer the order's released revision; use current applicability only before order release. */
 export function instructionRevision(item) {
   return item?.atRelease ?? item?.applicable ?? item?.pinnedRevision ?? null;
@@ -190,14 +304,16 @@ async function newOrder() {
 }
 
 async function orderDetail(page, ctx, number) {
-  const [order, readiness, dropDead, material, issues, applicability] = await Promise.all([
+  const [order, readiness, dropDead, material, issues, applicability, floor, resources] = await Promise.all([
     tryGet(`/api/orders/${number}`), tryGet(`/api/orders/${number}/readiness`), tryGet(`/api/orders/${number}/drop-dead-dates`),
     tryGet('/api/planning/material'), tryGet(`/api/inventory/transactions?order=${number}`), tryGet(`/api/planning/applicability?order=${number}`),
+    tryGet(`/api/orders/${number}/shopfloor`), tryGet('/api/resources/'),
   ]);
   if (order.error) { page.innerHTML = `<a href="#/orders">← Production Orders</a>${errorBlock(order.error, `order #${number}`)}`; return; }
   const o = order.data;
   const me = ctx.me;
   const instructions = await orderWorkInstructions(applicability.data, o, me);
+  const flowEnabled = ctx.operationalVisualizationsEnabled !== false;
   const actions = [];
   if (canAction(me, 'execution.orders.manage') && o.status === 'Planned') actions.push(['firm', 'Firm']);
   if (canAction(me, 'execution.orders.release') && ['Planned', 'FirmPlanned'].includes(o.status)) actions.push(['release', 'Release']);
@@ -207,6 +323,7 @@ async function orderDetail(page, ctx, number) {
 
   const r = readiness.data?.output;
   const dd = dropDead.data?.output;
+  const flowSiteName = orderSiteName(o, resources);
   page.innerHTML = `
     <a href="#/orders">← Production Orders</a>
     <div class="page-head object-summary">
@@ -232,13 +349,11 @@ async function orderDetail(page, ctx, number) {
     <section class="grid-2">
       <div class="panel"><header><h2>Readiness now</h2></header>
         ${readiness.error ? errorBlock(readiness.error, 'readiness') : `
-        <p>${esc(r.summary)}</p>
-        <table class="table"><thead><tr><th>Op</th><th>Description</th><th>Status</th><th>Best machine</th></tr></thead><tbody>
-        ${r.operations.map(op => `<tr><td>${op.sequence}</td><td>${esc(op.description)}</td>
-          <td>${op.executable ? '<span class="pill ok">Executable</span>' : `<span class="pill bad">${esc(op.primaryConstraint ?? 'Blocked')}</span>`}</td>
-          <td>${esc(op.bestMachine ?? '—')}</td></tr>
-          <tr><td></td><td colspan="3"><ul class="evidence">${op.dimensions.map(dm => `<li><span class="${dm.outcome === 'Pass' ? 'c-ok' : dm.outcome === 'Fail' ? 'c-bad' : 'c-warn'}">${esc(dm.outcome)}</span> <b>${esc(dm.name)}</b> — ${esc(dm.detail)}</li>`).join('')}
-            ${op.notEvaluated.length ? `<li class="faint">Not evaluated yet: ${esc(op.notEvaluated.join(', '))}</li>` : ''}</ul></td></tr>`).join('')}
+        <p>${esc(r?.summary ?? 'The readiness service returned no operation results.')}</p>
+        ${r?.operations?.some(op => (op.notEvaluated ?? []).length) ? `<div class="notice warn small"><b>Some readiness inputs are unknown.</b> Review each operation's not-evaluated dimensions below; they are not treated as passes.</div>` : ''}
+        ${flowEnabled && o.status === 'Released' && canAction(me, 'planning.schedule.read') ? `<div class="order-readiness-preview"><button class="btn small" data-readiness-partial-build>Preview partial build…</button><span class="faint">Material and approved WIP limits only; this is not an all-constraints maximum. Review quality, staffing, equipment, tooling and document gates above.</span></div>` : ''}
+        <table class="table"><thead><tr><th>Op</th><th>Description</th><th>Status</th><th>Best machine candidate</th></tr></thead><tbody>
+        ${orderReadinessRows(o, r)}
         </tbody></table>`}
       </div>
       <div class="panel"><header><h2>Drop-dead dates</h2></header>
@@ -251,6 +366,9 @@ async function orderDetail(page, ctx, number) {
         </tbody></table>`}
       </div>
     </section>
+    ${flowEnabled ? `<section class="panel"><header><h2>Manufacturing flow</h2><span class="spacer"></span><span class="muted">Current operation path · select a step for its evidence and impact</span></header>
+      ${renderManufacturingFlow(o, r, readiness.error, readiness.data?.asOf, floor.data, flowSiteName)}
+    </section>` : ''}
     <section class="panel"><header><h2>Operations</h2><span class="spacer"></span><span class="muted">Routing copied at release · work instructions use the order's recorded revision</span></header>
         ${o.operations?.length ? `<table class="table"><thead><tr><th>Op</th><th>Description</th><th>Work center</th><th>Activity</th><th>Machines</th><th>Set-up family</th><th>Planned</th><th>Good</th><th>Scrap</th><th>Status</th><th>Work instructions</th></tr></thead><tbody>
         ${o.operations.map(op => { const forOperation = instructionsForOperation(instructions.get(op.sequence) ?? [], op.sequence); const opInstructions = forOperation.filter(item => !item.blocked); const opBlocked = forOperation.filter(item => item.blocked); return `<tr><td>${op.sequence}</td><td>${esc(op.description)}</td><td>${esc(op.workCenterCode)}</td><td>${esc(op.activityCode)}</td><td>${esc(op.eligibleMachines.join(', ') || '—')}</td><td>${esc(op.setupFamily ?? '—')}</td><td>${fmtNumber(op.plannedMinutes / 60)} h</td>
@@ -284,7 +402,6 @@ async function orderDetail(page, ctx, number) {
     page.append(section);
   }
 
-  const floor = await tryGet(`/api/orders/${number}/shopfloor`);
   if (floor.data && (floor.data.labor.length || floor.data.reports.length || floor.data.training.length || floor.data.laborMetrics?.length)) {
     const f = floor.data;
     const section = document.createElement('section');
@@ -325,6 +442,7 @@ async function orderDetail(page, ctx, number) {
     note: 'Documents this order must also follow, and files kept with it (customer PO, certificates, photos). Attaching never changes which revision of the item applies.' });
 
   tabifyPanels(page, [
+    ...(flowEnabled ? [{ label: 'Flow', match: ['manufacturing flow'] }] : []),
     { label: 'Summary', match: ['readiness now', 'drop-dead dates', 'contract commitment'] },
     { label: 'Operations', match: ['operations'] },
     { label: 'Bill of materials', match: ['bill of materials'] },
@@ -334,6 +452,8 @@ async function orderDetail(page, ctx, number) {
     { label: 'Documents', match: ['applicable documentation', 'documentation'] },
   ]);
   enhanceTables(page);
+  $('[data-refresh-manufacturing-flow]', page)?.addEventListener('click', () => { void orderDetail(page, ctx, number); });
+  $('[data-readiness-partial-build]', page)?.addEventListener('click', () => openPartialBuild(number, me));
 
   $$('[data-print-operation]', page).forEach(button => button.addEventListener('click', () => {
     const operation = o.operations.find(item => String(item.sequence) === button.dataset.printOperation);

@@ -347,7 +347,8 @@ async function route() {
   page.innerHTML = '<div class="muted">Loading…</div>';
   try {
     current = await entry.page(page, { params: rest.map(decodeURIComponent), query: new URLSearchParams(query ?? ''), route: entry.route, me: session.me, refreshBell,
-      kioskMode: isKioskMode(entry.route, session.me.roles, supervisorKioskMode), setKioskMode }) ?? null;
+      kioskMode: isKioskMode(entry.route, session.me.roles, supervisorKioskMode), setKioskMode,
+      operationalVisualizationsEnabled: session.config?.operationalVisualizationsEnabled !== false }) ?? null;
   } catch (e) {
     page.innerHTML = `<div class="empty"><b>This page could not load</b>${esc(e.message)}</div>`;
   }

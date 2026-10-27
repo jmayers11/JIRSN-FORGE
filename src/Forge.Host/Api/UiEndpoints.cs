@@ -12,6 +12,7 @@ internal static class UiEndpoints
             clientId = config["Forge:Authentication:ClientId"],
             scope = config["Forge:Authentication:Scope"] ?? "openid profile",
             environment = env.EnvironmentName,
+            operationalVisualizationsEnabled = !bool.TryParse(config["Forge:Features:OperationalVisualizations"], out var visualizationsEnabled) || visualizationsEnabled,
         })).AllowAnonymous();
     }
 }

@@ -85,10 +85,41 @@ const renderRecovery = (o, scenarioId, loading) => {
   const status = { Feasible: 'Projected feasible', Infeasible: 'Blocked', RequiresInputs: 'More inputs needed', NotAuthorized: 'Authority required' }[o.status] || o.status;
   const lines = (title, values) => values?.length ? `<h5>${title}</h5><ul>${values.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
   const candidates = o.machineAlternatives?.length ? `<h5>Evaluated machines</h5><div class="table-wrap"><table class="table"><thead><tr><th>Order / operation</th><th>Machine</th><th>Completion</th><th>Evidence</th></tr></thead><tbody>${o.machineAlternatives.map(a => `<tr><td>#${a.orderNumber} / ${a.sequence}</td><td>${esc(a.machineCode)}</td><td>${a.feasible ? esc(fmtDateTime(a.projectedCompletion)) : 'Blocked'}</td><td>${[...a.constraints, ...a.evidence].map(esc).join('<br>')}</td></tr>`).join('')}</tbody></table></div>` : '';
-  const projections = o.projections?.length ? `<h5>Affected commitments</h5><div class="table-wrap"><table class="table"><thead><tr><th>Order</th><th>Current projection</th><th>Scenario projection</th></tr></thead><tbody>${o.projections.map(p => `<tr><td><a href="#/orders/${p.orderNumber}">#${p.orderNumber}</a></td><td>${esc(fmtDateTime(p.baselineCompletion))}<br>${esc(p.baselineStatus)}</td><td>${esc(fmtDateTime(p.proposedCompletion))}<br>${esc(p.proposedStatus)}</td></tr>`).join('')}</tbody></table></div>` : '';
+  const projections = o.status === 'Feasible' && o.projections?.length ? `<h5>Affected commitments</h5><div class="table-wrap"><table class="table"><thead><tr><th>Order</th><th>Current projection</th><th>Scenario projection</th></tr></thead><tbody>${o.projections.map(p => `<tr><td><a href="#/orders/${p.orderNumber}">#${p.orderNumber}</a></td><td>${esc(fmtDateTime(p.baselineCompletion))}<br>${esc(p.baselineStatus)}</td><td>${esc(fmtDateTime(p.proposedCompletion))}<br>${esc(p.proposedStatus)}</td></tr>`).join('')}</tbody></table></div>` : '';
   const authority = o.sourceAuthority?.length ? `<details><summary>Source commands and authority</summary><ul>${o.sourceAuthority.map(a => `<li><b>${esc(a.sourceContext)} · ${esc(a.command)}</b> — ${a.permitted ? 'Permission available' : 'Authority required'}<br><span class="muted small">${esc(a.resourceType)}${a.resourceId ? ` / ${esc(a.resourceId)}` : ''} · ${esc(a.permission)}</span><p>${esc(a.commitRequirement)}</p></li>`).join('')}</ul></details>` : '';
   return `<article class="card"><div class="card-head"><h4>${esc(o.title)}</h4><span class="pill ${o.feasible ? 'ok' : 'warn'}">${esc(status)}</span><span class="spacer"></span><button class="btn primary" data-evaluate-scenario="${esc(scenarioId)}" data-evaluate-option="${esc(o.id)}" ${loading ? 'disabled' : ''}>Evaluate option</button>${o.applyPath ? `<a class="btn" href="${esc(o.applyPath)}">Open workflow</a>` : ''}</div><p>${esc(o.feasibility)}</p><p class="muted small">Required permission: <code>${esc(o.requiredPermission)}</code></p>${lines('Consequences', o.consequences)}${lines('Required inputs', o.requiredInputs)}${lines('Current blockers', o.constraints)}${projections}${candidates}${authority}<details><summary>Source evidence</summary>${lines('Evidence', o.evidence)}</details></article>`;
 };
+
+function renderRecoveryComparison(result, scenario) {
+  const selections = scenario?.change?.recoverySelections ?? [];
+  if (!selections.length) return '';
+  const chosen = selections.map(selection => result.recoveryOptions.find(option => option.id === selection.optionId)).filter(Boolean);
+  const rows = new Map((result.orders ?? []).map(row => [row.orderNumber, row]));
+  for (const option of chosen) if (option.status === 'Feasible')
+    for (const projection of option.projections ?? []) if (!rows.has(projection.orderNumber)) rows.set(projection.orderNumber, null);
+  const when = value => value ? fmtDateTime(value) : 'No projected completion';
+  const baseCell = row => row ? `${when(row.baselineCompletion)} · ${row.baselineStatus}` : 'No baseline projection returned';
+  const disruptionCell = row => row ? `${when(row.proposedCompletion)} · ${row.proposedStatus}` : 'No disruption projection returned';
+  const alternativeCell = (option, orderNumber) => {
+    if (option.status !== 'Feasible') return `No feasible recovery projection (${option.status})`;
+    const projection = option.projections?.find(item => item.orderNumber === orderNumber);
+    return projection ? `${when(projection.proposedCompletion)} · ${projection.proposedStatus}${projection.shiftHours == null ? '' : ` · ${projection.shiftHours > 0 ? '+' : ''}${projection.shiftHours} h vs disrupted scenario`}` : 'No projection returned';
+  };
+  const feasibleCount = chosen.filter(option => option.status === 'Feasible').length;
+  const prompt = chosen.length < 2
+    ? 'Evaluate another recovery option to compare alternatives against the same scenario snapshot.'
+    : feasibleCount < 2
+      ? `Only ${feasibleCount} of the selected alternatives currently pass every evaluated gate; blocked and input-incomplete options are shown for context.`
+      : `${feasibleCount} selected alternatives currently pass the evaluated gates. Review the evidence and source workflow before any human-approved action.`;
+  return `<section class="scenario-recovery-comparison" aria-labelledby="scenario-recovery-comparison-title">
+    <header><div><h3 id="scenario-recovery-comparison-title">Recovery comparison · ${chosen.length} independent trial${chosen.length === 1 ? '' : 's'}</h3><p class="muted small">Each choice is evaluated independently from the same “${esc(scenario.name)}” source snapshot as of ${esc(fmtDateTime(result.asOf))}; choices are not combined into one plan and nothing is committed.</p></div></header>
+    <p>${esc(prompt)}</p>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Order</th><th>Current baseline</th><th>Disruption scenario</th>${chosen.map(option => `<th>${esc(option.title)} · ${esc(option.status)}</th>`).join('')}</tr></thead><tbody>
+      ${[...rows.entries()].map(([orderNumber, row]) => `<tr><th scope="row"><a href="#/orders/${orderNumber}">WO ${orderNumber}</a></th><td>${esc(baseCell(row))}</td><td>${esc(disruptionCell(row))}</td>${chosen.map(option => `<td>${esc(alternativeCell(option, orderNumber))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${3 + chosen.length}">The selected trials returned no order projection rows.</td></tr>`}
+    </tbody></table></div>
+    <p class="muted small">This source contract returns order completion/status projections and each option’s stated consequences. It does not provide a complete per-operation good-output, cost, or WIP delta comparison; those dimensions remain unavailable here.</p>
+  </section>`;
+}
 
 export async function scenariosPage(root, ctx = { query: new URLSearchParams() }) {
   let scenarios = [];
@@ -139,7 +170,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
         <div class="field"><span>&nbsp;</span><button class="btn primary" type="submit">Save private scenario</button></div>
       </form><p class="muted small">The selected change uses only its relevant fields. Person and order lookups are checked again using your current access when you run the scenario.</p></section>
       <section class="panel"><header><h2>Your private scenarios</h2><span class="spacer"></span><button class="btn" id="refresh-scenarios">Refresh</button></header>
-        ${scenarios.length ? `<div class="stack">${scenarios.map(s => `<article class="card"><div class="card-head"><div><h3>${esc(s.name)}</h3><p class="muted">${esc(s.change.kind)} · created ${esc(fmtDateTime(s.createdAt))}${s.change.recoverySelections?.length ? ` · selected ${esc(RECOVERY_FORMS.find(f => f.id === s.change.recoverySelections[0].optionId)?.title ?? s.change.recoverySelections[0].optionId)}` : ''}</p></div><span class="spacer"></span><button class="btn primary" data-run="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Run preview</button><button class="btn danger" data-delete="${esc(s.scenarioId)}">Delete</button></div><div class="actions"><label class="field"><span>Recovery option</span><select class="input" data-option-picker="${esc(s.scenarioId)}"><option value="">Choose an option</option>${RECOVERY_FORMS.map(f => `<option value="${esc(f.id)}">${esc(f.title)}</option>`).join('')}</select></label><button class="btn" data-evaluate-scenario="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Evaluate option</button></div></article>`).join('')}</div>` : '<div class="empty">No private scenarios saved yet.</div>'}</section>
+        ${scenarios.length ? `<div class="stack">${scenarios.map(s => `<article class="card"><div class="card-head"><div><h3>${esc(s.name)}</h3><p class="muted">${esc(s.change.kind)} · created ${esc(fmtDateTime(s.createdAt))}${s.change.recoverySelections?.length ? ` · ${s.change.recoverySelections.length} independent recovery trial${s.change.recoverySelections.length === 1 ? '' : 's'} saved` : ''}</p></div><span class="spacer"></span><button class="btn primary" data-run="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Run preview</button><button class="btn danger" data-delete="${esc(s.scenarioId)}">Delete</button></div><div class="actions"><label class="field"><span>Recovery option</span><select class="input" data-option-picker="${esc(s.scenarioId)}"><option value="">Choose an option</option>${RECOVERY_FORMS.map(f => `<option value="${esc(f.id)}">${esc(f.title)}</option>`).join('')}</select></label><button class="btn" data-evaluate-scenario="${esc(s.scenarioId)}" ${loading ? 'disabled' : ''}>Evaluate option</button></div></article>`).join('')}</div>` : '<div class="empty">No private scenarios saved yet.</div>'}</section>
       ${result ? renderResult(result) : ''}`;
 
     $('#refresh-scenarios', root)?.addEventListener('click', () => scenariosPage(root, ctx).catch(e => toast(e.message, true)));
@@ -1316,12 +1347,18 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     });
   }
 
-  const renderResult = r => `<section class="panel"><header><h2>Scenario preview</h2><span class="spacer"></span><span class="muted">As of ${esc(fmtDateTime(r.asOf))}</span></header>
+  const renderResult = r => {
+    const scenario = scenarios.find(item => item.scenarioId === r.scenarioId);
+    return `<section class="panel"><header><h2>Scenario preview</h2><span class="spacer"></span><span class="muted">As of ${esc(fmtDateTime(r.asOf))}</span></header>
     <p><b>${esc(r.scenarioDescription)}</b></p><p class="muted">${esc(r.evidenceNote)}</p>
     <h3>Schedule impact</h3>${r.orders.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Order</th><th>Part</th><th>Change</th><th>Baseline</th><th>Scenario</th><th>Hours</th><th>Evidence</th></tr></thead><tbody>${r.orders.map(o => `<tr><td><a href="#/orders/${o.orderNumber}">#${o.orderNumber}</a></td><td>${esc(o.partNumber)}</td><td>${esc(o.change)}</td><td>${esc(fmtDateTime(o.baselineCompletion))}<br>${esc(o.baselineStatus)}</td><td>${esc(fmtDateTime(o.proposedCompletion))}<br>${esc(o.proposedStatus)}</td><td>${o.shiftHours == null ? '—' : esc(String(o.shiftHours))}</td><td>${o.evidence.map(esc).join('<br>')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No released order projection changed in this comparison.</div>'}
     <h3>Skills MRP</h3>${r.skillsCapacity.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Day</th><th>Qualification</th><th>Baseline hours</th><th>Scenario hours</th></tr></thead><tbody>${r.skillsCapacity.map(x => `<tr><td>${esc(x.day)}</td><td>${esc(x.qualification)}</td><td>${esc(String(x.baselineHours))}</td><td>${esc(String(x.proposedHours))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No qualification-hour difference was projected.</p>'}
-    <h3>Recovery options (${r.recoveryOptions.length})</h3><p class="muted">Evaluate a specific selection in a new private trial. Review its source evidence and consequences, then use the owning workflow for any human-approved action.</p>
+    ${ctx.operationalVisualizationsEnabled === false ? '' : renderRecoveryComparison(r, scenario)}
+    <h3>Recovery options (${r.recoveryOptions.length})</h3><p class="muted">${ctx.operationalVisualizationsEnabled === false
+      ? 'Evaluate a specific selection in a new private trial. Review its source evidence and consequences, then use the owning workflow for any human-approved action.'
+      : 'Evaluate one or more explicitly selected choices in new private trials. Forge runs each selected choice independently against the same saved disruption and current source snapshot; choices are never merged into an implicit plan. Review evidence and use the owning workflow for a human-approved action.'}</p>
     <div class="stack">${r.recoveryOptions.map(o => renderRecovery(o, r.scenarioId, loading)).join('')}</div></section>`;
+  };
 
   async function evaluateOption(scenarioId, optionId) {
     const scenario = scenarios.find(s => s.scenarioId === scenarioId);
@@ -1337,7 +1374,9 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       workers = await get('/api/readiness/presence');
       if (!workers.length) throw new Error('Register workers in Workforce before evaluating a staffing option.');
     }
-    const defaultName = `${scenario.name} · ${definition.title}`.slice(0, 100);
+    const comparisonEnabled = ctx.operationalVisualizationsEnabled !== false;
+    const comparisonBaseName = scenario.name.endsWith(' · recovery comparison') ? scenario.name : `${scenario.name} · recovery comparison`;
+    const defaultName = (comparisonEnabled ? comparisonBaseName : `${scenario.name} · ${definition.title}`).slice(0, 100);
     const fields = [{ name: 'name', label: 'Private trial name', required: true, value: defaultName }, ...definition.fields.flatMap(field => {
       let value = existing?.[field.name];
       if (value == null && field.name === 'orderNumber') value = orderNumber;
@@ -1367,7 +1406,10 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
       if (values.name.length > 100) throw new Error('A private trial name may contain at most 100 characters.');
       if (needsCrew) values.personIds = workers.filter((_, index) => values[`crew-${index}`]).map(worker => worker.personId);
       const selection = recoverySelection(definition, values);
-      return command('/api/planning/scenarios', { name: values.name, change: { ...scenario.change, recoverySelections: [selection] } }, reason);
+      const recoverySelections = comparisonEnabled
+        ? [...(scenario.change.recoverySelections ?? []).filter(savedSelection => savedSelection.optionId !== selection.optionId), selection]
+        : [selection];
+      return command('/api/planning/scenarios', { name: values.name, change: { ...scenario.change, recoverySelections } }, reason);
     }, async saved => {
       await read();
       result = null;

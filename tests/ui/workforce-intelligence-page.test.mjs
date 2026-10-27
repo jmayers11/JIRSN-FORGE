@@ -193,6 +193,88 @@ test('supervisors can request a read-only ranked recovery preview for a machine 
   assert.match(scheduledResult, /not proof of clock-in/);
 });
 
+test('coverage matrix separates qualification evidence from safe capacity preview', async t => {
+  const browser = installBrowser(t), page = browser.document.createElement('div');
+  browser.document.body.append(page);
+  let previewRequest;
+  const workers = [
+    { personId: 'qualified', displayName: 'Ari Qualified', homeWorkCenterCode: 'WC-ASM', jobTitle: 'Slitter Operator', isActive: true, shiftCode: 'DAY', presenceKind: 'ClockedIn', presentUntil: '2026-10-24T16:00:00Z' },
+    { personId: 'training', displayName: 'Bea Training', jobTitle: 'Operator Trainee', isActive: true, shiftCode: 'DAY' },
+    { personId: 'expired', displayName: 'Cal Expired', jobTitle: 'Operator', isActive: true, shiftCode: 'DAY' },
+    { personId: 'away', displayName: 'Dee Away', jobTitle: 'Operator', isActive: true, shiftCode: 'DAY' },
+  ];
+  globalThis.fetch = (path, options = {}) => {
+    if (path === '/api/workforce/workers') return Promise.resolve(response(workers));
+    if (path === '/api/resources/') return Promise.resolve(response({
+      sites: [{ code: 'PLANT', name: 'Main Plant' }], safetyAreas: [{ code: 'SLIT-AREA', siteCode: 'PLANT', name: 'Slitting' }],
+      shifts: [{ code: 'DAY', name: 'Day Shift' }], workCenters: [{ code: 'WC-SLIT', name: 'Slitting', safetyAreaCode: 'SLIT-AREA' }, { code: 'WC-ASM', name: 'Assembly', safetyAreaCode: 'SLIT-AREA' }],
+      machines: [{ code: 'SL-01', workCenterCode: 'WC-SLIT', safetyAreaCode: 'SLIT-AREA', name: 'Slitter 1' }],
+      machineActivities: [{ machineCode: 'SL-01', activityCode: 'SLIT', operatorQualifications: ['SLIT-OP'], requiresMachineAuthorization: true }],
+      workCenterShifts: [{ workCenterCode: 'WC-SLIT', shiftCode: 'DAY' }],
+    }));
+    if (path === '/api/competency/qualification-types') return Promise.resolve(response([{ code: 'SLIT-OP', name: 'Slitting operator' }]));
+    if (path.startsWith('/api/competency/people/qualifications?')) return Promise.resolve(response([
+      { personId: 'qualified', code: 'SLIT-OP', status: 'Qualified', expiresAt: '2027-10-24T00:00:00Z' },
+      { personId: 'training', code: 'SLIT-OP', status: 'InTraining' },
+      { personId: 'expired', code: 'SLIT-OP', status: 'Qualified', expiresAt: '2026-10-23T00:00:00Z' },
+    ]));
+    if (path.startsWith('/api/competency/machine-authorizations?')) return Promise.resolve(response([
+      { personId: 'qualified', machineCode: 'SL-01', activityCode: 'SLIT', qualificationCode: 'SLIT-OP', status: 'Authorized', independentOperationAllowed: true },
+    ]));
+    if (path.startsWith('/api/workforce/unavailability?')) return Promise.resolve(response([
+      { personId: 'away', kind: 'ApprovedPto', startsAt: '2026-10-24T00:00:00Z', endsAt: '2026-10-26T00:00:00Z', privateNote: 'PRIVATE MEDICAL DETAIL' },
+    ]));
+    if (path === '/api/readiness/workforce-recovery-capacity') {
+      previewRequest = JSON.parse(options.body);
+      return Promise.resolve(response({
+        recovery: { output: { evaluatedCandidates: 1, candidates: [{ rank: 1, personId: 'qualified', personName: 'Ari Qualified', moves: [
+          { personId: 'qualified', personName: 'Ari Qualified', assignment: { machineCode: 'SL-01', workCenterCode: 'WC-SLIT', activityCode: 'SLIT' } },
+        ], sourceImpacts: [], limitations: ['Material and due-date effects are not evaluated.'] }] } },
+        candidates: [{ personId: 'qualified', explanation: 'Verified operation history supports a planning estimate.', atTarget: {
+          lastOperatedAt: '2026-10-21T10:00:00Z', expectedSetupMinutes: 15, requiredRefresher: null, notes: [], forecast: {
+            isEligible: true, expectedGoodUnits: 6, conservativeGoodUnits: 4, optimisticGoodUnits: 8, confidence: 'Medium',
+            estimateBasis: 'Based on verified productive operation history.', daysSinceLastVerifiedProductiveExecution: 3,
+          },
+        } }],
+      }));
+    }
+    return Promise.resolve(response([]));
+  };
+
+  await appendWorkforceIntelligence(page, { permissions: ['planning.readiness.read', 'workforce.supervise'] });
+  assert.match(page.innerHTML, /Operation coverage matrix/);
+  assert.match(page.innerHTML, /WC-SLIT · SL-01 \/ SLIT/);
+  assert.match(page.innerHTML, /Ari Qualified/);
+  assert.match(page.innerHTML, /Qualified · safe preview required/);
+  assert.match(page.innerHTML, /Bea Training[\s\S]*?Supervised training/);
+  assert.match(page.innerHTML, /Cal Expired[\s\S]*?Certification expired/);
+  assert.match(page.innerHTML, /Dee Away[\s\S]*?Unavailable now/);
+  assert.doesNotMatch(page.innerHTML, /PRIVATE MEDICAL DETAIL/);
+  assert.match(page.innerHTML, /Assignment safety, required crew, active work and recency-based capacity are checked separately by the safe preview/);
+
+  const preview = page.querySelector('[data-wi-matrix-preview]');
+  assert.ok(preview);
+  fire(preview, 'click'); await flush(); await flush();
+  assert.deepEqual(previewRequest, { safetyAreaCode: 'SLIT-AREA', workCenterCode: 'WC-SLIT', machineCode: 'SL-01', activityCode: 'SLIT', scheduledMinutes: 480 });
+  const result = page.querySelector('[data-wi-matrix-preview-result]').innerHTML;
+  assert.match(result, /Ari Qualified/);
+  assert.match(result, /Expected good units/);
+  assert.match(result, /4–8 good units \(expected 6\)/);
+  assert.match(result, /Confidence/);
+  assert.match(result, /Medium/);
+  assert.match(result, /Preview only; no employee is moved or assigned/);
+
+  const centerFilter = page.querySelector('[data-wi-filter="center"]');
+  centerFilter.value = 'WC-SLIT'; fire(centerFilter, 'change');
+  assert.match(page.querySelector('.workforce-intelligence-matrix').textContent, /Ari Qualified/,
+    'the operation filter narrows matrix columns but retains cross-center candidates in the same site');
+
+  const disabledPage = browser.document.createElement('div'); browser.document.body.append(disabledPage);
+  await appendWorkforceIntelligence(disabledPage, { permissions: ['planning.readiness.read', 'workforce.supervise'] }, null,
+    { operationalVisualizationsEnabled: false });
+  assert.doesNotMatch(disabledPage.innerHTML, /Operation coverage matrix/);
+});
+
 test('employee profile links personal labor intervals to shared operation targets and downtime context', async t => {
   const browser = installBrowser(t), page = browser.document.createElement('div');
   browser.document.body.append(page);

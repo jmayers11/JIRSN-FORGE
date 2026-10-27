@@ -171,3 +171,28 @@ test('the Daily Mission is a kanban board with one lane per group, side by side'
   assert.match(html, /data-lane="decision"[\s\S]*Approve schedule[\s\S]*data-lane="ready"[\s\S]*Nothing from the connected sources/);
   assert.match(html, /data-lane="assigned"[\s\S]*Inspect order 7/);
 });
+
+test('Daily Mission connects cards only through their exact production-order source links', async t => {
+  installBrowser(t);
+  const { missionBoardHtml } = await import('../../src/Forge.Host/wwwroot/js/pages/daily-mission.js');
+  const items = [
+    { id: 'materials-42', group: 'Requires Attention', title: 'Material readiness · Order 42', reason: 'Shortfall recorded.', sourceLifecycle: 'MaterialReadinessProjection', sourceStatus: 'Shortfall', sourceTimestamp: '2026-10-27T10:00:00Z', deepLink: '#/orders/42' },
+    { id: 'staffing-42', group: 'Requires Attention', title: 'Staffing readiness · Order 42 · Slitting', reason: 'Workforce is the primary blocker.', sourceLifecycle: 'WorkforceOrderReadinessProjection', sourceStatus: 'WorkforceBlocked', sourceTimestamp: '2026-10-27T10:01:00Z', deepLink: '#/orders/42' },
+    { id: 'quality-42', group: 'Watch/Upcoming', title: 'Quality hold · NCR 9', reason: 'Active order hold.', sourceLifecycle: 'QualityHoldProjection', sourceStatus: 'Active', sourceTimestamp: '2026-10-27T09:55:00Z', deepLink: '#/orders/42' },
+    { id: 'other-420', group: 'Requires Attention', title: 'Order 420', reason: 'Different order.', sourceLifecycle: 'GoalRiskProjection', sourceStatus: 'Late', sourceTimestamp: '2026-10-27T10:00:00Z', deepLink: '#/orders/420' },
+    { id: 'not-linked', group: 'Requires Attention', title: 'Order 42 in an unrelated workflow', reason: 'No direct order link.', sourceLifecycle: 'OtherProjection', sourceStatus: 'Open', sourceTimestamp: '2026-10-27T10:00:00Z', deepLink: '#/quality?order=42' },
+  ];
+  const html = missionBoardHtml(items, new Set(), 'America/New_York');
+  const materialCard = html.match(/<article id="daily-mission-item-0"[\s\S]*?<\/article>/)?.[0] ?? '';
+  assert.match(materialCard, /tabindex="-1"/);
+  assert.match(materialCard, /Related signals for order #42/);
+  assert.match(materialCard, /href="#daily-mission-item-1"/);
+  assert.match(materialCard, /href="#daily-mission-item-2"/);
+  assert.match(materialCard, /not a combined risk score/);
+  assert.doesNotMatch(materialCard, /Order 420/);
+  assert.doesNotMatch(materialCard, /unrelated workflow/);
+  assert.doesNotMatch(html, /Related signals for order #420/);
+
+  const disabled = missionBoardHtml(items, new Set(), 'America/New_York', false, false, false);
+  assert.doesNotMatch(disabled, /daily-mission-related/);
+});

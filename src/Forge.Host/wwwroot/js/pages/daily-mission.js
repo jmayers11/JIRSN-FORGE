@@ -30,7 +30,7 @@ const sourceLabel = status => ({
   Unavailable: 'Refresh needed',
 }[status] ?? status);
 
-function itemCard(item, priorities, timeZone, stale = false, canReviewRecovery = false) {
+function itemCard(item, priorities, timeZone, stale = false, canReviewRecovery = false, related = [], itemIndex = 0) {
   const deadline = dateOnly(item.deadline);
   const assignmentId = item.sourceLifecycle === 'WorkAssignment' && item.id?.startsWith('assignment:')
     ? item.id.slice('assignment:'.length) : '';
@@ -44,11 +44,13 @@ function itemCard(item, priorities, timeZone, stale = false, canReviewRecovery =
     ? item.sourceId?.match(/^(\d+):(\d+)$/) : null;
   const recoveryAction = canReviewRecovery && blockedOperation
     ? `<button class="btn small" type="button" data-recovery-order="${esc(blockedOperation[1])}" data-recovery-sequence="${esc(blockedOperation[2])}">Review safe coverage</button><div class="daily-mission-recovery" data-recovery-panel="${esc(blockedOperation[1])}:${esc(blockedOperation[2])}" hidden></div>` : '';
-  return `<article class="daily-mission-card ${priorities.has(item.id) ? 'priority' : ''}">
+  const relatedHtml = related.length ? `<details class="daily-mission-related"><summary>Related signals for order #${esc(related[0].orderNumber)} <span class="badge gray">${related.length}</span></summary><ul>${related.map(signal => `<li><a href="#daily-mission-item-${signal.index}">${esc(signal.item.title)}</a><span>${esc(signal.item.sourceLifecycle)} · ${esc(signal.item.sourceStatus)} · ${esc(dateTime(signal.item.sourceTimestamp, timeZone))}</span></li>`).join('')}</ul><small>These records link to the same production order. Each source has its own status and update time; this is not a combined risk score or a shared-cause determination.</small></details>` : '';
+  return `<article id="daily-mission-item-${itemIndex}" tabindex="-1" class="daily-mission-card ${priorities.has(item.id) ? 'priority' : ''}">
     <div class="daily-mission-card-main">
       <div class="daily-mission-card-meta"><span class="daily-mission-group-tag">${esc(item.group)}</span><span class="badge gray">${esc(item.sourceLifecycle)} · ${esc(item.sourceStatus)}</span></div>
       <h3>${esc(item.title)}</h3>
       <p>${esc(item.reason)}</p>
+      ${relatedHtml}
       <div class="daily-mission-card-foot"><span>Updated ${esc(dateTime(item.sourceTimestamp, timeZone))}</span>${deadline ? `<span>Expected / due ${esc(deadline)}</span>` : ''}</div>
     </div>
     <div class="daily-mission-card-actions"><a class="btn small" href="${esc(item.deepLink)}" aria-label="Open ${esc(item.title)} in its source workflow">Open source</a>${recoveryAction}${assignmentAction}</div>
@@ -79,17 +81,37 @@ function renderRecoveryPreview(result) {
 const LANE = { 'Requires Decision': 'decision', 'Ready to Execute': 'ready', 'Requires Attention': 'attention', 'Assigned Work': 'assigned', 'Watch/Upcoming': 'watch' };
 
 /** The mission as a kanban board: one lane per group, side by side, each scrolling on its own. */
-export function missionBoardHtml(items, priorities, timeZone, stale = false, canReviewRecovery = false) {
+function linkedOrderNumber(item) {
+  const match = /^#\/orders\/(\d+)(?:$|[?#])/.exec(item.deepLink ?? '');
+  return match?.[1] ?? null;
+}
+
+export function missionBoardHtml(items, priorities, timeZone, stale = false, canReviewRecovery = false, showRelatedSignals = true) {
+  const indices = new Map(items.map((item, index) => [item, index]));
+  const byOrder = new Map();
+  if (showRelatedSignals) items.forEach(item => {
+    const orderNumber = linkedOrderNumber(item);
+    if (!orderNumber) return;
+    const signals = byOrder.get(orderNumber) ?? [];
+    signals.push({ item, index: indices.get(item), orderNumber });
+    byOrder.set(orderNumber, signals);
+  });
   return `<div class="daily-mission-board" aria-label="Daily Mission board">${GROUPS.map(group => {
     const inGroup = items.filter(item => item.group === group);
     const id = `mission-lane-${LANE[group]}`;
     return `<section class="daily-mission-section daily-mission-lane" data-lane="${LANE[group]}" data-mission-group="${esc(group)}" aria-labelledby="${id}">
       <header class="daily-mission-lane-head"><h2 id="${id}">${esc(group)}</h2><span class="badge gray">${inGroup.length}</span></header>
-      <div class="daily-mission-list">${inGroup.length ? inGroup.map(item => itemCard(item, priorities, timeZone, stale, canReviewRecovery)).join('') : '<p class="daily-mission-empty">Nothing from the connected sources needs attention here.</p>'}</div></section>`;
+      <div class="daily-mission-list">${inGroup.length ? inGroup.map(item => {
+        const orderNumber = linkedOrderNumber(item);
+        const related = orderNumber && (byOrder.get(orderNumber)?.length ?? 0) > 1
+          ? byOrder.get(orderNumber).filter(signal => signal.item !== item)
+          : [];
+        return itemCard(item, priorities, timeZone, stale, canReviewRecovery, related, indices.get(item));
+      }).join('') : '<p class="daily-mission-empty">Nothing from the connected sources needs attention here.</p>'}</div></section>`;
   }).join('')}</div>`;
 }
 
-export async function dailyMissionPage(root, { me }) {
+export async function dailyMissionPage(root, { me, operationalVisualizationsEnabled = true }) {
   const renderHeader = (preferences = null) => `<section class="page-head daily-mission-head"><div><p class="eyebrow">SHIFT BRIEFING · LIVE SOURCE LINKS</p><h1>Daily Mission</h1><p class="sub">A role-aware view of decisions, assigned work and operational risks. Source workflows remain authoritative.</p></div><div class="daily-mission-header-actions"><button class="btn" data-reopen-briefing type="button" aria-controls="daily-mission-intro" aria-expanded="false">View shift briefing</button><button class="btn" data-refresh type="button">Refresh mission</button></div></section>
     ${preferences ? `<details class="daily-mission-preferences"><summary>Personalize your workspace</summary><div class="daily-mission-preference-fields"><label>Default workspace on sign-in<select class="input" data-landing-route>${preferences.options.map(option => `<option value="${esc(option.route)}" ${option.route === preferences.landingRoute ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select></label><label>Program view<select class="input" data-program-scope>${(preferences.programOptions ?? [{ route: 'all', label: 'All authorized programs' }]).map(option => `<option value="${esc(option.route)}" ${option.route === (preferences.programScope ?? 'all') ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select></label><label>Hawk accents<select class="input" data-hawk-accents><option value="off" ${preferences.hawkAccents === 'off' ? 'selected' : ''}>Off</option><option value="subtle" ${preferences.hawkAccents === 'subtle' ? 'selected' : ''}>Subtle</option><option value="expressive" ${preferences.hawkAccents === 'expressive' ? 'selected' : ''}>Expressive</option></select></label><button class="btn small" data-save-preferences type="button">Save preferences</button><small>The program view can narrow your authorized scope; it cannot grant access. Shared site context stays governed by its own permissions. The sidebar remains available as your Classic Workspace.</small></div></details>` : ''}`;
   root.innerHTML = `${renderHeader()}<div class="muted">Loading authorized mission sources…</div>`;
@@ -108,7 +130,7 @@ export async function dailyMissionPage(root, { me }) {
   }
   catch (error) {
     root.innerHTML = `${renderHeader()}${errorBlock(error, 'Daily Mission')}`;
-    root.querySelector('[data-refresh]')?.addEventListener('click', () => dailyMissionPage(root, { me }));
+    root.querySelector('[data-refresh]')?.addEventListener('click', () => dailyMissionPage(root, { me, operationalVisualizationsEnabled }));
     return;
   }
   try {
@@ -124,7 +146,7 @@ export async function dailyMissionPage(root, { me }) {
   const permissions = me?.permissions ?? [];
   const canReviewRecovery = permissions.includes('workforce.supervise') || permissions.includes('workforce.manage');
   const priorities = new Set(items.slice(0, 5).map(item => item.id));
-  const sections = missionBoardHtml(items, priorities, timeZone, stale, canReviewRecovery);
+  const sections = missionBoardHtml(items, priorities, timeZone, stale, canReviewRecovery, operationalVisualizationsEnabled !== false);
 
   root.innerHTML = `${renderHeader(preferences)}
     ${briefing.scopeChanged ? `<div class="notice info daily-mission-scope-notice" role="status">Your role, site, shift, or program access changed. This mission now reflects your current authorized scope. Your briefing has not been repeated.</div>` : ''}
@@ -143,7 +165,7 @@ export async function dailyMissionPage(root, { me }) {
     <details class="section daily-mission-sources"><summary><b>Source coverage</b><span>${sources.length} sources · ${data.isPartial ? 'some coverage is missing or limited' : 'available'}</span></summary>
       <div class="daily-mission-source-list">${sources.map(source => `<div><span class="daily-source-state ${source.status === 'Available' ? 'ok' : source.status === 'PendingIntegration' || source.status === 'Limited' ? 'warn' : ''}">${esc(sourceLabel(source.status))}</span><b>${esc(source.code.replaceAll('-', ' '))}</b><span>${esc(source.scope)}</span>${source.asOf ? `<time>${esc(dateTime(source.asOf, timeZone))}</time>` : ''}${source.note ? `<small>${esc(source.note)}</small>` : ''}</div>`).join('')}</div>
     </details>`;
-  root.querySelector('[data-refresh]')?.addEventListener('click', () => dailyMissionPage(root, { me }));
+  root.querySelector('[data-refresh]')?.addEventListener('click', () => dailyMissionPage(root, { me, operationalVisualizationsEnabled }));
   root.querySelectorAll('[data-assignment-id]').forEach(button => button.addEventListener('click', () => {
     if (!Number.isFinite(generatedAt) || Date.now() - generatedAt > 5 * 60_000) {
       button.disabled = true;
@@ -159,7 +181,7 @@ export async function dailyMissionPage(root, { me }) {
     }, async reason => {
       await command(`/api/work-inbox/assignments/${button.dataset.assignmentId}/status`, { status: nextStatus }, reason);
       toast(`Assignment ${nextStatus.toLowerCase()}.`);
-      await dailyMissionPage(root, { me });
+      await dailyMissionPage(root, { me, operationalVisualizationsEnabled });
     });
   }));
   root.querySelectorAll('[data-recovery-order]').forEach(button => button.addEventListener('click', async () => {
@@ -222,7 +244,7 @@ export async function dailyMissionPage(root, { me }) {
       const programScopeChanged = (preferences?.programScope ?? 'all') !== saved.programScope;
       preferences = saved;
       button.textContent = 'Saved';
-      if (programScopeChanged) await dailyMissionPage(root, { me });
+      if (programScopeChanged) await dailyMissionPage(root, { me, operationalVisualizationsEnabled });
     } catch (error) { button.title = error.message; }
     finally { button.disabled = false; }
   });
