@@ -1,5 +1,15 @@
 # AI_HANDOFF.md
 
+## Claude: whole-plant impact in the recovery simulator; My Work / Notifications tabs; Analyst and Integrity list/detail (2026-10-31)
+
+- **Owner request (2026-10-31): "Please start #2 and #3."**
+- **#3 density (committed `33e82fd`):** My Work tabs "Waiting for my decision / Assigned to me / Assign work"; Notifications tabs "My alerts / Notification rules"; Analyst shows a "Questions this visit" list beside the selected answer; Integrity lists finding kinds beside the selected kind's findings. Test `tests/ui/admin-density.test.mjs`.
+- **#2 recovery simulator (committed `66a252c`):** new `Forge.Planning/ScenarioPlantImpacts.cs`. Every scenario run (`PlanningScenarioResult.PlantImpact`) and every recovery trial (`RecoveryOption.PlantImpact`) compares the two finite-capacity schedules over the 14-day horizon: units and operations finished in the horizon (units count only when the final routed operation finishes), scheduled labor hours (segment overlap × operators), set-up minutes (same-family vs full set-up from the scheduler's set-up decision), orders and units in process at the horizon end, orders not on time, each operation that moves (machine, end, enters/leaves the horizon; first 200 listed with the total count), and every order whose delivery status changes with contract, CLIN and program.
+- **Cost:** only for readers with `costing.read` and a costing policy: finished units at the latest standard total cost effective at the snapshot; labor at the policy labor + overhead rate. Otherwise the response says no cost figures are shown. These are projections from the schedules, not recorded production.
+- **UI:** `#/scenarios` recovery comparison now has a whole-plant table (baseline, disruption, each feasible option) and per-option "operations moved" lists; a single scenario run shows "Whole-plant impact" with changed commitments.
+- **Verification (2026-10-31):** Release build clean; Planning scenario/recovery tests 33/33, Architecture 32/32, recovery integration tests 6/6 on PostgreSQL, full UI suite passed. Tests: `ScenarioPlantImpactTests` (2), `RecoveryGovernanceTests` asserts `plantImpact` on a real PostgreSQL trial, `tests/ui/scenario-recovery-comparison.test.mjs` updated.
+- **Still not modelled:** material consumption/WIP by location and scrap; the WIP figure is in-process orders/units at the horizon end only.
+
 ## Claude: Codex hub committed; full verification after the 2026-10-27 changes (2026-10-31)
 
 - **Committed Codex's Operations Visualizations hub** (`c914007`) after the full UI suite passed with it.

@@ -1,3 +1,7 @@
+## Whole-plant recovery comparison and admin density (2026-10-31)
+
+Recovery trials and scenario runs now return a whole-plant comparison of the baseline and proposed schedules over the 14-day horizon (output, labor hours, set-up minutes, in-process orders/units, orders not on time, moved operations and changed commitments, standard-cost value and labor cost when costing is readable). Scenarios shows it side by side. My Work and Notifications are tabbed; Analyst and Integrity use list/detail.
+
 ## Operations Visualizations hub (2026-10-27)
 
 Added a permission-aware `#/operations-visualizations` route in the Supervisor menu so the seven visualization experiences are discoverable from one compact page. Its cards open the existing owning workspaces and explain where embedded views live; Coverage now opens directly on its tab using `#/performance?tab=coverage`. Daily Mission related-order signals are available as a supplemental shortcut. The feature flag and current action grants are respected; no duplicate reads or production writes were added.
