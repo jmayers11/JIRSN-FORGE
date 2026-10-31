@@ -1,5 +1,12 @@
 # AI_HANDOFF.md
 
+## Claude: Codex hub committed; full verification after the 2026-10-27 changes (2026-10-31)
+
+- **Committed Codex's Operations Visualizations hub** (`c914007`) after the full UI suite passed with it.
+- **Full `verify.cmd` (isolated output) on `c914007`:** build 0 warnings/errors; Kernel 52/52, Planning 388/388, Architecture 32/32, Integration 414/415. The one failure, `V22Tests.Documents_attached_to_orders_and_purchase_orders_stay_in_their_history`, used a Purchasing Manager as the "no order access" outsider; since the owner's 2026-10-27 decision purchasing managers see orders. The outsider is now a Maintenance Technician (may attach documents, cannot read orders). Rerun: V22Tests 3/3, UI suite 66/66 files passed. `.forge-logs/verify-20261031-full.log`.
+- **Consequence to confirm with the owner:** a Purchasing Manager (or another widened manager role that already held `documents.attach`) can now attach a reference document to a production order they can see. Nothing else on the order is writable by them.
+- Dev loop note: in a job, redirect per-test output to a file (`> .forge-logs\ui-one.log`), not `> nul`; after the 2026-10-31 restart `> nul` made every UI file report failure.
+
 ## Codex: Operations Visualizations hub (2026-10-27)
 
 - **Owner request:** Make all seven operational visualizations easy to find in the local Forge app because they were spread across existing screens.

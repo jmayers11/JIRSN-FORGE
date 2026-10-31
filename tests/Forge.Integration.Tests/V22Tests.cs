@@ -194,9 +194,12 @@ public sealed class V22Tests(PostgresFixture postgres)
         Assert.Equal("Current", drawing.GetProperty("state").GetString());
         Assert.Equal("A", drawing.GetProperty("revision").GetProperty("revision").GetString());
 
-        // The order's record decides who may see and attach: no order access, no order.
-        Assert.Equal(HttpStatusCode.NotFound, (await Try(plant, pat, orderUrl, new { documentNumber = "DWG-100", purpose = "Information" })).Status);
-        Assert.Equal(HttpStatusCode.NotFound, (await pat.GetAsync(orderUrl)).StatusCode);
+        // The order's record decides who may see and attach: no order access, no order. (Purchasing managers see every area since the
+        // owner's 2026-10-27 decision, so a maintenance technician, who may attach documents but not read orders, is the outsider here.)
+        await plant.Person("doc-outsider", "MaintenanceTechnician");
+        var outsider = plant.As("doc-outsider");
+        Assert.Equal(HttpStatusCode.NotFound, (await Try(plant, outsider, orderUrl, new { documentNumber = "DWG-100", purpose = "Information" })).Status);
+        Assert.Equal(HttpStatusCode.NotFound, (await outsider.GetAsync(orderUrl)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await planner.GetAsync("/api/engineering/attachments/ProductionOrder/999999")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await planner.GetAsync("/api/engineering/attachments/Spaceship/1")).StatusCode);
 
