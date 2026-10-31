@@ -1619,6 +1619,35 @@ button.pill.linkish:hover { text-decoration: underline; }
 .inventory-map-order-results:empty { display: none; }
 .inventory-map-order-results > .panel { margin: 0; }
 @media (max-width: 760px) { .inventory-map-filters { grid-template-columns: 1fr 1fr; } .inventory-map-filters .field:first-child { grid-column: 1 / -1; } .inventory-map-filters > button { justify-self: start; } }
+
+/* Operations visualizations: a compact, permission-aware entry point to the existing workflows. */
+.ops-viz-page { display: grid; gap: 12px; }
+.ops-viz-hero { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--line-strong); border-left: 3px solid var(--forge-orange); border-radius: var(--radius); background: radial-gradient(ellipse at 8% 0%, rgba(249,115,22,.13), transparent 42%), linear-gradient(115deg, var(--panel-2), var(--panel)); }
+.ops-viz-mark { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid rgba(249,115,22,.35); border-radius: 13px; background: rgba(249,115,22,.1); color: var(--forge-orange); }
+.ops-viz-mark svg { width: 27px; height: 27px; }
+.ops-viz-hero-copy .eyebrow { margin: 0 0 2px; font-size: 9px; }
+.ops-viz-hero h1 { margin: 0; font: 700 22px var(--font-display); }
+.ops-viz-hero p:last-child { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.ops-viz-count { justify-self: end; padding: 6px 9px; border: 1px solid var(--line); border-radius: 99px; background: rgba(15,20,25,.5); color: var(--muted); font-size: 11px; white-space: nowrap; }
+.ops-viz-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 265px), 1fr)); gap: 10px; align-items: stretch; }
+.ops-viz-card { display: grid; grid-template-rows: auto auto 1fr auto auto; gap: 7px; min-width: 0; min-height: 206px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 9px; background: linear-gradient(145deg, rgba(37,99,235,.045), transparent 50%), var(--panel); box-shadow: 0 3px 12px rgba(0,0,0,.13); transition: border-color .14s ease, transform .14s ease, box-shadow .14s ease; }
+.ops-viz-card:hover { border-color: var(--line-strong); box-shadow: 0 7px 20px rgba(0,0,0,.2); transform: translateY(-1px); }
+.ops-viz-card-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ops-viz-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--forge-orange); }
+.ops-viz-icon svg { width: 17px; height: 17px; }
+.ops-viz-area { overflow: hidden; color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .04em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.ops-viz-number { margin-left: auto; color: var(--faint); font: 700 10px var(--font-display); }
+.ops-viz-card h2 { margin: 1px 0 0; font-size: 15px; line-height: 1.25; }
+.ops-viz-card > p { margin: 0; color: #c8d0d8; font-size: 11px; line-height: 1.42; }
+.ops-viz-steps { padding-top: 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; line-height: 1.35; }
+.ops-viz-open { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--forge-orange); font-size: 11px; font-weight: 700; text-decoration: none; }
+.ops-viz-open span, .ops-viz-related > span:last-child { font-size: 17px; transition: transform .12s ease; }
+.ops-viz-open:hover span, .ops-viz-related:hover > span:last-child { transform: translateX(3px); }
+.ops-viz-open:focus-visible, .ops-viz-related:focus-visible { outline: 2px solid var(--forge-orange); outline-offset: 3px; }
+.ops-viz-related { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); text-decoration: none; }
+.ops-viz-related > span:first-child { display: grid; gap: 2px; }
+.ops-viz-related small { color: var(--muted); font-size: 10px; }
+@media (max-width: 680px) { .ops-viz-hero { grid-template-columns: 42px minmax(0,1fr); gap: 10px; padding: 11px; } .ops-viz-mark { width: 40px; height: 40px; } .ops-viz-count { grid-column: 2; justify-self: start; } .ops-viz-grid { grid-template-columns: 1fr; } .ops-viz-card { min-height: 0; } }
 @media (max-width: 680px) {
   .manufacturing-flow-overview { grid-template-columns: 38px minmax(0, 1fr); }
   .manufacturing-flow-overview > button { grid-column: 1 / -1; justify-self: start; }

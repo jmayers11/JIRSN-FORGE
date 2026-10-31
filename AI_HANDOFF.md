@@ -1,5 +1,14 @@
 # AI_HANDOFF.md
 
+## Codex: Operations Visualizations hub (2026-10-27)
+
+- **Owner request:** Make all seven operational visualizations easy to find in the local Forge app because they were spread across existing screens.
+- **Implemented:** Added the `operations-visualizations` route and a permission-aware card hub under Supervisor navigation. Cards link to the existing Flow/Readiness order workspace, Risk Radar, Workforce Kanban, Training & Performance Coverage, Scenarios recovery comparison, and Inventory Location Map. Each embedded view states the next navigation step; Coverage opens directly on its tab. Daily Mission's related-signal view is linked as a supplemental feature. No duplicate data reads or production actions were added.
+- **Local access:** `http://localhost:5080/#/operations-visualizations`. `GET /api/ui/config` currently reports Development mode and `operationalVisualizationsEnabled: true`; port 5080 serves the new page module and stylesheet (HTTP 200). If the app was already open, hard refresh (Ctrl+F5) to load the new JavaScript module, then expand Supervisor → Operations Visualizations.
+- **Permissions/flag:** The hub shows only views permitted by the signed-in user's existing grants. Operational-visualization cards respect `Forge:Features:OperationalVisualizations`; the existing floor and base readiness workflows remain available when the flag is off.
+- **Verification:** Focused UI regression set passed 13/13; `node --check` and `git diff --check` passed. The full UI suite was not completed for this incremental navigation change.
+- **Files:** `src/Forge.Host/wwwroot/js/pages/operations-visualizations.js`, `src/Forge.Host/wwwroot/js/app.js`, `src/Forge.Host/wwwroot/js/pages/performance.js`, `src/Forge.Host/wwwroot/css/forge.css`, and `tests/ui/operations-visualizations.test.mjs`. See `docs/operational-visualizations-audit.md` for the seven-view status.
+
 ## Claude: Production Risk Radar built (2026-10-27)
 
 - **Owner decisions (2026-10-27):** three adjustable views — current (today), next 7 days, next 30 days. Bands by days until the impact: **High** today up to 6 days, **Medium** 7–29 days, **Low** 30 days or more. Configurable as `Forge:RiskRadar:HighMaxDays` (6) and `Forge:RiskRadar:MediumMaxDays` (29).

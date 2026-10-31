@@ -1,3 +1,9 @@
+## Operations Visualizations hub (2026-10-27)
+
+Added a permission-aware `#/operations-visualizations` route in the Supervisor menu so the seven visualization experiences are discoverable from one compact page. Its cards open the existing owning workspaces and explain where embedded views live; Coverage now opens directly on its tab using `#/performance?tab=coverage`. Daily Mission related-order signals are available as a supplemental shortcut. The feature flag and current action grants are respected; no duplicate reads or production writes were added.
+
+Confirmed `localhost:5080` serves the hub module and stylesheet (HTTP 200) and `/api/ui/config` reports `operationalVisualizationsEnabled: true`. Focused UI tests passed **13/13**, JavaScript syntax checks and `git diff --check` passed. The full UI suite was not run to completion for this incremental navigation change. Refresh the already-open browser tab with Ctrl+F5, then open Supervisor → Operations Visualizations or `http://localhost:5080/#/operations-visualizations`.
+
 ## Operational evidence backend for future Risk Radar (2026-10-27)
 
 Added `GET /api/planning/operational-evidence` with typed source record identifiers, attribution state, evidence links, non-causal context associations, per-source authorization status, and a repeatable-read snapshot compatibility token. It gathers current readiness blockers, recomputed material-risk findings and exact visible supply links, order-linked NCRs, production stoppages and proposed/confirmed root causes, typed downtime source refs, and direct or explicitly propagated holds in one UOW. It avoids persisting another material-risk cache, interpreting free text, or labeling an order/machine relationship as a common cause. `DowntimeWindow.SourceReference` is now populated for recorded downtime, PM work orders and asset lifecycle events.

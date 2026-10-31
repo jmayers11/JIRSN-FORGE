@@ -31,6 +31,7 @@ export async function performancePage(page, ctx) {
     workers: [], requests: [], requirements: [], types: [], centers: [], nominations: [],
     selected: ctx.query?.get?.('personId') ?? null, personTab: 'review', search: '', filter: 'all',
     highlight: ctx.query?.get?.('training') ?? null,
+    plantTab: ctx.query?.get?.('tab') === 'coverage' ? 'coverage' : null,
   };
   const period = () => periods.find(item => item.key === state.periodKey) ?? periods[0];
   const cardData = () => state.cards.get(state.periodKey) ?? null;
@@ -261,7 +262,7 @@ export async function performancePage(page, ctx) {
     { key: 'queue', label: 'Training queue', badge: state.requests.filter(r => r.status === 'Requested').length || null, mount: host => { host.innerHTML = queueHtml(); } },
     { key: 'onboarding', label: 'New employee training', badge: null, mount: host => { host.innerHTML = onboardingHtml(); } },
   ];
-  const plant = await appendWorkforceIntelligence(center.plant, me, null, { employeesTab: false, extraTabs, tab: state.highlight ? 'queue' : null,
+  const plant = await appendWorkforceIntelligence(center.plant, me, null, { employeesTab: false, extraTabs, tab: state.highlight ? 'queue' : state.plantTab,
     operationalVisualizationsEnabled: ctx.operationalVisualizationsEnabled !== false });
 
   const refreshAll = () => { renderRoster(); renderEmployee(); plant?.refreshExtra?.(); };
