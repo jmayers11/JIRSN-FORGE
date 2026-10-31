@@ -1,5 +1,5 @@
 import { get, command } from '../api.js';
-import { esc, toast } from '../ui.js';
+import { esc, toast, tabifyPanels } from '../ui.js';
 import { canAction } from '../forms.js';
 
 const field = (label, name, value = '', type = 'text', extra = '') => `<label class="field"><span>${esc(label)}</span><input class="input" name="${esc(name)}" type="${type}" value="${esc(value)}" ${extra}></label>`;
@@ -41,6 +41,11 @@ export async function notificationsPage(root, { me, refreshBell }) {
       <div class="actions"><button class="btn primary" type="submit">Create rule</button></div>
     </form><div class="stack">${rules.map(renderRule).join('') || '<div class="empty">No notification rules configured.</div>'}</div></section>` : ''}`;
 
+  // Alerts and rule management in separate tabs (UI density audit 2026-10-27).
+  tabifyPanels(root, [
+    { label: `My alerts (${alerts.length})`, match: ['my alerts'] },
+    { label: 'Notification rules', match: ['notification rules'] },
+  ]);
   root.querySelector('#refresh-alerts')?.addEventListener('click', () => notificationsPage(root, { me, refreshBell }).catch(e => toast(e.message, true)));
   root.querySelectorAll('[data-ack]').forEach(button => button.addEventListener('click', async () => {
     try { await command(`/api/notifications/alerts/${button.dataset.ack}/acknowledge`, {}, 'Acknowledged after review'); await refreshBell(); await notificationsPage(root, { me, refreshBell }); }

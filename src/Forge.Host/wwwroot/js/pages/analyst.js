@@ -10,6 +10,7 @@ import { traceLink, cellHtml, authHeaders } from './reports.js';
 const TONE_DOT = { ok: 'ok', bad: 'bad', warn: 'warn', info: 'info' };
 const CONFIDENCE = { High: ['ok', 'Understood'], Medium: ['warn', 'Partly understood'], Low: ['bad', 'Not sure'] };
 const history = []; // this visit's questions and answers, newest last
+let selectedAnswer = null; // which answer the detail pane shows; null = the newest
 
 async function post(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
@@ -104,9 +105,11 @@ export async function analystPage(page, ctx) {
   let directBrief = null, briefError = null, briefing = false;
   let generation = 0;
 
+  const shown = () => selectedAnswer != null && selectedAnswer < history.length ? selectedAnswer : history.length - 1;
   function render() {
     page.innerHTML = `
       <div class="page-head"><div><h1>Forge Analyst</h1><div class="sub">Ask about your operation in plain language. Forge works out what you mean, shows what it understood, and answers from its own records with your access. ${s.narration ? '' : 'No AI provider is configured: every answer is computed by Forge.'}</div></div></div>
+      <div class="list-detail analyst-layout"><div class="list-detail-list">
       <section class="panel analyst-ask">
         <form id="ask" class="analyst-form">
           <input class="input" id="q" value="${esc(questionText)}" placeholder="e.g. Why is order 10001 late?" autocomplete="off" maxlength="500">
@@ -122,13 +125,17 @@ export async function analystPage(page, ctx) {
           </div>
         </div>
       </section>
+      ${history.length ? `<section class="panel"><header><h2>Questions this visit</h2></header><div class="stack analyst-history">${history.map((h, n) => `<button type="button" class="btn ghost analyst-history-item${n === shown() ? ' on' : ''}" data-show="${n}" ${n === shown() ? 'aria-current="true"' : ''}>${esc(h.question)}</button>`).reverse().join('')}</div></section>` : ''}
+      </div><div class="list-detail-detail">
       ${briefing ? '<section class="panel" aria-live="polite">Preparing the authorized operations brief…</section>' : briefError ? `<section class="panel">${errorBlock(briefError, 'the operations brief')}</section>` : directBrief ? `<section class="panel"><header><h2>Operations brief</h2></header>${briefHtml(directBrief)}</section>` : ''}
-      <div id="conversation">${history.map((h, n) => answerHtml(h, n)).reverse().join('')}</div>`;
+      ${!history.length && !briefing && !briefError && !directBrief ? '<section class="panel"><div class="empty">Ask a question or choose Brief me; the answer shows here beside the question list.</div></section>' : ''}
+      <div id="conversation">${history.length ? answerHtml(history[shown()], shown()) : ''}</div></div></div>`;
 
     $('#ask', page).addEventListener('submit', e => { e.preventDefault(); ask($('#q', page).value); });
     $('#clear-questions', page).addEventListener('click', () => {
       generation++;
       history.length = 0;
+      selectedAnswer = null;
       questionText = '';
       directBrief = null;
       briefError = null;
@@ -137,6 +144,7 @@ export async function analystPage(page, ctx) {
       $('#q', page).focus();
     });
     $$('[data-q]', page).forEach(b => b.addEventListener('click', () => ask(b.dataset.q)));
+    $$('[data-show]', page).forEach(b => b.addEventListener('click', () => { selectedAnswer = Number(b.dataset.show); render(); }));
     $('#brief', page).addEventListener('click', () => brief($('#brief-shift', page).value));
     $('#narrate', page)?.addEventListener('change', e => { narrate = e.target.checked; });
     $$('[data-export]', page).forEach(b => b.addEventListener('click', () => download(history[Number(b.dataset.export)].answer.interpretation.report, b.dataset.format)));
@@ -157,6 +165,7 @@ export async function analystPage(page, ctx) {
     }
     if (requestGeneration !== generation || !page.isConnected) return;
     history.push(pending);
+    selectedAnswer = null;
     render();
   }
 
