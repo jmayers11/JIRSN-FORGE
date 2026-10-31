@@ -107,6 +107,9 @@ public sealed record RecoveryOption(
 {
     /// <summary>Real source commands and their scoped permission decisions; a trial never invokes them.</summary>
     public IReadOnlyList<RecoverySourceAuthority> SourceAuthority { get; init; } = [];
+
+    /// <summary>Whole-plant comparison of the scenario baseline and this option's trial schedule, when a trial ran.</summary>
+    public ScenarioPlantImpact? PlantImpact { get; init; }
 }
 
 public sealed record RecoverySourceAuthority(
@@ -138,7 +141,11 @@ public sealed record PlanningScenarioResult(
     IReadOnlyList<ScenarioOrderImpact> Orders,
     IReadOnlyList<ScenarioCapacityImpact> SkillsCapacity,
     IReadOnlyList<RecoveryOption> RecoveryOptions,
-    string EvidenceNote);
+    string EvidenceNote)
+{
+    /// <summary>Whole-plant comparison of the baseline and scenario schedules (output, labor, set-up, WIP, commitments, standard cost).</summary>
+    public ScenarioPlantImpact? PlantImpact { get; init; }
+}
 
 public interface IPlanningScenarioStore
 {

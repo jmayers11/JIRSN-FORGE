@@ -96,6 +96,7 @@ public sealed class PlanningScenarioService(
         IReadOnlyDictionary<long, OrderQuality> quality;
         RecoverySourceFacts recoverySources;
         MaterialSourceVisibility sourceVisibility;
+        ScenarioCosting? costing;
         await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
         {
             snapshot = await SnapshotLoader.LoadAsync(read, time, ct);
@@ -115,6 +116,8 @@ public sealed class PlanningScenarioService(
             quality = await ScheduleQuality.LoadAsync(read, orders, ct);
             recoverySources = await RecoverySourceFacts.LoadAsync(read, principal, scenario.Change, snapshot, orders, materialInputs,
                 positions, locations, inventoryReadiness, ct, sourceVisibility);
+            costing = await CostingAsync(read, principal, snapshot.AsOf, ct);
+            recoverySources = recoverySources with { Costing = costing };
         }
 
         var asOf = snapshot.AsOf;
@@ -155,9 +158,26 @@ public sealed class PlanningScenarioService(
                     : Array.Empty<string>())))
             .Where(x => x.BaselineHours != x.ProposedHours).Take(100).ToArray();
 
+        var plantImpact = ScenarioPlantImpacts.Compare(baseline, proposed, proposedOrders, costing);
         return new PlanningScenarioResult(id, asOf, 14, description, impacts, skills,
             RecoveryOptionEvaluator.Evaluate(scenario.Change, proposedSnapshot, proposedOrders, proposedMaterial, quality, baseline, proposed, principal, authorizer, recoverySources),
-            "Scenario-only comparison. Both plans use the same authorized current snapshot, released-order set, MRP material readiness, quality gates and finite-capacity engines. No source record or approved schedule was changed.");
+            "Scenario-only comparison. Both plans use the same authorized current snapshot, released-order set, MRP material readiness, quality gates and finite-capacity engines. No source record or approved schedule was changed.")
+        {
+            PlantImpact = plantImpact,
+        };
+    }
+
+    /// <summary>Standard cost in force now, only for readers who may see costs (owner decision 2026-10-25: US GAAP standard cost).</summary>
+    private async Task<ScenarioCosting?> CostingAsync(IKernelUnitOfWork read, ForgePrincipal principal, DateTimeOffset at, CancellationToken ct)
+    {
+        if (!authorizer.Authorize(principal, Permissions.CostingRead, ResourceRef.Of("Costing")).IsPermitted) return null;
+        var lookup = read.Store<Forge.Inventory.Contracts.ICostingLookup>();
+        var policy = Forge.Inventory.Contracts.Costing.PolicyAt(await lookup.ListPoliciesAsync(ct), at);
+        if (policy is null) return null;
+        var standards = (await lookup.ListStandardCostsAsync(null, ct)).Where(c => c.EffectiveFrom <= at)
+            .GroupBy(c => c.PartNumber).ToDictionary(g => g.Key, g => g.MaxBy(c => (c.EffectiveFrom, c.CostId))!.Total, StringComparer.Ordinal);
+        decimal? rate = policy.LaborRatePerHour is null && policy.OverheadRatePerHour is null ? null : (policy.LaborRatePerHour ?? 0) + (policy.OverheadRatePerHour ?? 0);
+        return new ScenarioCosting(policy.Currency, rate, standards);
     }
 
     private static (SiteSnapshot Snapshot, List<OrderInfo> Orders, IReadOnlyList<OrderMaterialStatus> Material, string Description) Apply(

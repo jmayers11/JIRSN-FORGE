@@ -24,7 +24,8 @@ internal sealed record RecoverySourceFacts(
     IReadOnlyList<WorkOrderInfo> MaintenanceOrders,
     IReadOnlyDictionary<long, RecoveryOrderChecks> OrderChecks,
     IReadOnlyDictionary<string, RecoverySourceCheck> SourceChecks,
-    MaterialSourceVisibility? Visibility = null)
+    MaterialSourceVisibility? Visibility = null,
+    ScenarioCosting? Costing = null)
 {
     /// <summary>Retain the original private scenario's material changes before any independent recovery trial.</summary>
     public static MaterialSnapshot ApplyScenarioMaterial(ScenarioChange change, IReadOnlyList<OrderInfo> proposedOrders,

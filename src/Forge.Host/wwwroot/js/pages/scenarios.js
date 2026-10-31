@@ -90,6 +90,33 @@ const renderRecovery = (o, scenarioId, loading) => {
   return `<article class="card"><div class="card-head"><h4>${esc(o.title)}</h4><span class="pill ${o.feasible ? 'ok' : 'warn'}">${esc(status)}</span><span class="spacer"></span><button class="btn primary" data-evaluate-scenario="${esc(scenarioId)}" data-evaluate-option="${esc(o.id)}" ${loading ? 'disabled' : ''}>Evaluate option</button>${o.applyPath ? `<a class="btn" href="${esc(o.applyPath)}">Open workflow</a>` : ''}</div><p>${esc(o.feasibility)}</p><p class="muted small">Required permission: <code>${esc(o.requiredPermission)}</code></p>${lines('Consequences', o.consequences)}${lines('Required inputs', o.requiredInputs)}${lines('Current blockers', o.constraints)}${projections}${candidates}${authority}<details><summary>Source evidence</summary>${lines('Evidence', o.evidence)}</details></article>`;
 };
 
+/** Whole-plant totals over the horizon, one column per schedule (owner request 2026-10-31). */
+export function plantImpactTable(columns) {
+  const shown = columns.filter(([, totals]) => totals);
+  if (!shown.length) return '';
+  const currency = shown.find(([, , cur]) => cur)?.[2];
+  const n = value => value == null ? '—' : Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const money = value => value == null ? '—' : `${n(value)} ${esc(currency ?? '')}`;
+  const rows = [
+    ['Units finished in horizon', t => n(t.unitsCompleted)], ['Operations finished', t => n(t.operationsCompleted)],
+    ['Scheduled labor hours', t => n(t.laborHours)], ['Set-up minutes', t => n(t.setupMinutes)],
+    ['Orders in process at horizon end', t => n(t.ordersInProcess)], ['WIP units at horizon end', t => n(t.wipUnits)],
+    ['Orders not on time', t => n(t.ordersNotOnTime)],
+    ...(currency ? [['Standard value of finished units', t => money(t.outputValue)], ['Labor and overhead cost', t => money(t.laborCost)]] : []),
+  ];
+  return `<div class="table-wrap"><table class="table plant-impact"><thead><tr><th>Whole plant, next 14 days</th>${shown.map(([label]) => `<th>${esc(label)}</th>`).join('')}</tr></thead><tbody>
+    ${rows.map(([label, value]) => `<tr><th scope="row">${esc(label)}</th>${shown.map(([, totals]) => `<td class="num">${value(totals)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+/** The operations an alternative moves, with output and labor inside the horizon. */
+export function operationImpactTable(impact) {
+  if (!impact?.operations?.length) return '';
+  const when = value => value ? fmtDateTime(value) : 'Not scheduled';
+  return `<details><summary>${impact.operationsChanged} operation${impact.operationsChanged === 1 ? '' : 's'} moved</summary><div class="table-wrap"><table class="table"><thead><tr><th>Order / op</th><th>Machine</th><th>Finish</th><th class="num">Units</th><th class="num">Labor h</th><th class="num">Set-up min</th></tr></thead><tbody>
+    ${impact.operations.map(o => `<tr><td><a href="#/orders/${o.orderNumber}">#${o.orderNumber}</a> · ${o.sequence}</td><td>${esc(o.baselineMachine ?? '—')} → ${esc(o.proposedMachine ?? '—')}</td><td>${esc(when(o.baselineEnd))} → ${esc(when(o.proposedEnd))}${o.baselineWithinHorizon && !o.proposedWithinHorizon ? ' <span class="pill warn">leaves horizon</span>' : !o.baselineWithinHorizon && o.proposedWithinHorizon ? ' <span class="pill ok">enters horizon</span>' : ''}</td><td class="num">${o.units}</td><td class="num">${o.baselineLaborHours} → ${o.proposedLaborHours}</td><td class="num">${o.baselineSetupMinutes} → ${o.proposedSetupMinutes}</td></tr>`).join('')}</tbody></table></div>
+    ${(impact.notes ?? []).map(note => `<p class="muted small">${esc(note)}</p>`).join('')}</details>`;
+}
+
 function renderRecoveryComparison(result, scenario) {
   const selections = scenario?.change?.recoverySelections ?? [];
   if (!selections.length) return '';
@@ -117,7 +144,10 @@ function renderRecoveryComparison(result, scenario) {
     <div class="table-wrap"><table class="table"><thead><tr><th>Order</th><th>Current baseline</th><th>Disruption scenario</th>${chosen.map(option => `<th>${esc(option.title)} · ${esc(option.status)}</th>`).join('')}</tr></thead><tbody>
       ${[...rows.entries()].map(([orderNumber, row]) => `<tr><th scope="row"><a href="#/orders/${orderNumber}">WO ${orderNumber}</a></th><td>${esc(baseCell(row))}</td><td>${esc(disruptionCell(row))}</td>${chosen.map(option => `<td>${esc(alternativeCell(option, orderNumber))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${3 + chosen.length}">The selected trials returned no order projection rows.</td></tr>`}
     </tbody></table></div>
-    <p class="muted small">This source contract returns order completion/status projections and each option’s stated consequences. It does not provide a complete per-operation good-output, cost, or WIP delta comparison; those dimensions remain unavailable here.</p>
+    ${plantImpactTable([['Current baseline', result.plantImpact?.baseline, result.plantImpact?.currency], ['Disruption scenario', result.plantImpact?.proposed, result.plantImpact?.currency],
+      ...chosen.map(option => [option.title, option.status === 'Feasible' ? option.plantImpact?.proposed : null, option.plantImpact?.currency])])}
+    ${chosen.filter(option => option.status === 'Feasible' && option.plantImpact).map(option => `<h4>${esc(option.title)}</h4>${operationImpactTable(option.plantImpact)}`).join('')}
+    <p class="muted small">Whole-plant figures compare finite-capacity schedules over the next 14 days: units and operations finished, scheduled labor, set-up, work in process and on-time orders, plus standard-cost value when your role can see costing. They are projections from the same snapshot, not production records.</p>
   </section>`;
 }
 
@@ -1366,6 +1396,7 @@ export async function scenariosPage(root, ctx = { query: new URLSearchParams() }
     <p><b>${esc(r.scenarioDescription)}</b></p><p class="muted">${esc(r.evidenceNote)}</p>
     <h3>Schedule impact</h3>${r.orders.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Order</th><th>Part</th><th>Change</th><th>Baseline</th><th>Scenario</th><th>Hours</th><th>Evidence</th></tr></thead><tbody>${r.orders.map(o => `<tr><td><a href="#/orders/${o.orderNumber}">#${o.orderNumber}</a></td><td>${esc(o.partNumber)}</td><td>${esc(o.change)}</td><td>${esc(fmtDateTime(o.baselineCompletion))}<br>${esc(o.baselineStatus)}</td><td>${esc(fmtDateTime(o.proposedCompletion))}<br>${esc(o.proposedStatus)}</td><td>${o.shiftHours == null ? '—' : esc(String(o.shiftHours))}</td><td>${o.evidence.map(esc).join('<br>')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No released order projection changed in this comparison.</div>'}
     <h3>Skills MRP</h3>${r.skillsCapacity.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Day</th><th>Qualification</th><th>Baseline hours</th><th>Scenario hours</th></tr></thead><tbody>${r.skillsCapacity.map(x => `<tr><td>${esc(x.day)}</td><td>${esc(x.qualification)}</td><td>${esc(String(x.baselineHours))}</td><td>${esc(String(x.proposedHours))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No qualification-hour difference was projected.</p>'}
+    ${r.plantImpact ? `<h3>Whole-plant impact</h3>${plantImpactTable([['Current baseline', r.plantImpact.baseline, r.plantImpact.currency], ['Scenario', r.plantImpact.proposed, r.plantImpact.currency]])}${operationImpactTable(r.plantImpact)}${r.plantImpact.commitments?.length ? `<h4>Commitments whose delivery status changes</h4><ul>${r.plantImpact.commitments.map(c => `<li><a href="#/orders/${c.orderNumber}">#${c.orderNumber}</a> ${esc(c.partNumber)} due ${esc(c.dueDate)}: ${esc(c.baselineStatus)} → ${esc(c.proposedStatus)}${c.contractId ? ` · contract ${c.contractId}${c.clin ? ` CLIN ${esc(c.clin)}` : ''}` : ''}</li>`).join('')}</ul>` : ''}` : ''}
     ${ctx.operationalVisualizationsEnabled === false ? '' : renderRecoveryComparison(r, scenario)}
     <h3>Recovery options (${r.recoveryOptions.length})</h3><p class="muted">${ctx.operationalVisualizationsEnabled === false
       ? 'Evaluate a specific selection in a new private trial. Review its source evidence and consequences, then use the owning workflow for any human-approved action.'

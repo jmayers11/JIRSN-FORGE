@@ -28,6 +28,7 @@ internal static class RecoveryTrialEvaluator
         var target = orders.FirstOrDefault(o => o.OrderNumber == selection.OrderNumber);
         var trialSnapshot = snapshot;
         var trialOrders = orders;
+        ScenarioPlantImpact? plantImpact = null;
         var trialMaterial = material;
         var selectedNumbers = target is null ? new HashSet<long>() : new HashSet<long> { target.OrderNumber };
         var sourceActionOnly = false;
@@ -298,6 +299,7 @@ internal static class RecoveryTrialEvaluator
             new ScheduleRequest(baseline.From, baseline.To, trialOrders, trialMaterial, quality), snapshot.AsOf).Output;
         constraints.AddRange(PlanConstraints(trialSnapshot, candidate, selectedNumbers, sources, trialMaterial, evidence));
         var projections = Impacts(baseline, candidate, selectedNumbers);
+        plantImpact = ScenarioPlantImpacts.Compare(baseline, candidate, trialOrders, sources.Costing);
         consequences.AddRange(projections.Select(p => $"Order {p.OrderNumber}: {p.BaselineStatus} at {p.BaselineCompletion:u} → {p.ProposedStatus} at {p.ProposedCompletion:u}; shift {p.ShiftHours?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unavailable"} hour(s)."));
         evidence.Add("The independent trial uses full material allocation and the full visible finite-capacity queue. Documentation, training, tooling, point of use, active equipment, holds, qualification and safety checks remain binding.");
         return Finish(projections);
@@ -323,7 +325,7 @@ internal static class RecoveryTrialEvaluator
                     : "The complete selected trial is infeasible under the recorded constraints.",
                 AffectedOrders = selectedNumbers.Order().ToArray(), Projections = projections ?? option.Projections,
                 Constraints = constraints.Distinct(StringComparer.Ordinal).ToArray(), Evidence = evidence, Consequences = consequences,
-                SourceAuthority = authority,
+                SourceAuthority = authority, PlantImpact = plantImpact,
             };
         }
     }

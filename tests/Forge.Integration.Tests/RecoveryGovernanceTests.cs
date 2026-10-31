@@ -177,7 +177,13 @@ public sealed class RecoveryGovernanceTests(PostgresFixture postgres)
         Assert.Contains("REC-L-03", alternate.GetProperty("constraints").GetRawText(), StringComparison.Ordinal);
         Assert.Equal(sourceCounts, await SourceCountsAsync(connection));
         await plant.Ok(planner, $"/api/holds/{hold}/release", new { reason = "Independent guard verification accepted" });
-        Assert.True(Option((await RunAsync(planner, flexibleScenario)).GetProperty("recoveryOptions"), "alternate-machine").GetProperty("feasible").GetBoolean());
+        var released = await RunAsync(planner, flexibleScenario);
+        Assert.True(Option(released.GetProperty("recoveryOptions"), "alternate-machine").GetProperty("feasible").GetBoolean());
+        // Whole-plant comparison (owner request 2026-10-31): both schedules are totalled over the horizon; planners see standard cost in USD.
+        var plant14 = released.GetProperty("plantImpact");
+        Assert.True(plant14.GetProperty("baseline").GetProperty("laborHours").GetDecimal() >= 0m);
+        Assert.Equal("USD", plant14.GetProperty("currency").GetString());
+        Assert.True(plant14.GetProperty("notes").GetArrayLength() >= 3);
         await AssertOpenAsync(plant, from, to, "SLITTER-B");
 
         // A human chooses repair at the owning maintenance command; the resulting event clears the

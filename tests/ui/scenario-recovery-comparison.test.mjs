@@ -32,7 +32,9 @@ test('recovery trials accumulate as independent alternatives and compare on one 
       requiredInputs: [], constraints: [], evidence: [], machineAlternatives: [], affectedOrders: [101],
       projections: selections.some(item => item.optionId === 'resequence') ? [{ orderNumber: 101, partNumber: 'PART-A',
         baselineCompletion: '2026-10-30T12:00:00Z', proposedCompletion: '2026-10-30T08:00:00Z', shiftHours: -4,
-        baselineStatus: 'Late', proposedStatus: 'Late', evidence: [] }] : [] },
+        baselineStatus: 'Late', proposedStatus: 'Late', evidence: [] }] : [],
+      plantImpact: selections.some(item => item.optionId === 'resequence') ? { currency: 'USD', baseline: { unitsCompleted: 30, operationsCompleted: 4, laborHours: 40, setupMinutes: 30, ordersInProcess: 1, wipUnits: 5, ordersNotOnTime: 1, outputValue: 600, laborCost: 3000 }, proposed: { unitsCompleted: 36, operationsCompleted: 4, laborHours: 44, setupMinutes: 30, ordersInProcess: 1, wipUnits: 5, ordersNotOnTime: 0, outputValue: 720, laborCost: 3300 },
+        operationsChanged: 1, operations: [{ orderNumber: 101, sequence: 10, baselineMachine: 'SL-01', proposedMachine: 'SL-02', baselineEnd: '2026-10-31T12:00:00Z', proposedEnd: '2026-10-30T08:00:00Z', baselineWithinHorizon: false, proposedWithinHorizon: true, units: 6, baselineLaborHours: 0, baselineSetupMinutes: 0, proposedLaborHours: 4, proposedSetupMinutes: 30 }], commitments: [], notes: [] } : null },
     { id: 'additional-shift', title: 'Additional Shift', feasible: false, status: 'RequiresInputs',
       feasibility: 'The source shift and crew are not selected.', requiredPermission: 'planning.schedule.propose', consequences: [],
       requiredInputs: ['Select a shift and qualified crew.'], constraints: [], evidence: [], machineAlternatives: [], affectedOrders: [101],
@@ -44,7 +46,8 @@ test('recovery trials accumulate as independent alternatives and compare on one 
     scenarioDescription: 'SL-01 unavailable for eight hours.', evidenceNote: 'Read-only scenario comparison.',
     orders: [{ orderNumber: 101, partNumber: 'PART-A', change: 'Changed', baselineCompletion: '2026-10-30T12:00:00Z',
       proposedCompletion: '2026-10-31T12:00:00Z', shiftHours: 24, baselineStatus: 'Late', proposedStatus: 'Late', evidence: [] }],
-    skillsCapacity: [], recoveryOptions: optionsFor(scenario.change.recoverySelections ?? []) });
+    skillsCapacity: [], recoveryOptions: optionsFor(scenario.change.recoverySelections ?? []),
+    plantImpact: { currency: 'USD', baseline: { unitsCompleted: 40, operationsCompleted: 4, laborHours: 48, setupMinutes: 30, ordersInProcess: 1, wipUnits: 5, ordersNotOnTime: 0, outputValue: 800, laborCost: 3600 }, proposed: { unitsCompleted: 30, operationsCompleted: 4, laborHours: 40, setupMinutes: 30, ordersInProcess: 1, wipUnits: 5, ordersNotOnTime: 1, outputValue: 600, laborCost: 3000 }, operationsChanged: 0, operations: [], commitments: [], notes: [] } });
 
   globalThis.fetch = (path, request = {}) => {
     const method = request.method ?? 'GET';
@@ -101,7 +104,14 @@ test('recovery trials accumulate as independent alternatives and compare on one 
   assert.match(page.innerHTML, /Resequencing · Feasible/);
   assert.match(page.innerHTML, /same “Slitter outage recovery comparison” source snapshot as of/);
   assert.match(page.innerHTML, /choices are not combined into one plan and nothing is committed/);
-  assert.match(page.innerHTML, /does not provide a complete per-operation good-output, cost, or WIP delta comparison/);
+  // Whole-plant figures for the baseline, the disruption and each feasible option, side by side.
+  const plant = page.querySelector('.scenario-recovery-comparison table.plant-impact');
+  assert.ok(plant);
+  assert.match(plant.textContent, /Units finished in horizon/);
+  assert.match(plant.textContent, /Standard value of finished units/);
+  assert.match(plant.textContent, /720 USD/);
+  assert.match(page.innerHTML, /1 operation moved/);
+  assert.match(page.innerHTML, /enters horizon/);
   assert.match(page.innerHTML, /WO 101/);
 
   scenarios[2].change.recoverySelections.push({ optionId: 'additional-shift', orderNumber: 101 });
