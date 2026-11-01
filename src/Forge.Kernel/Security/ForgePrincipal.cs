@@ -106,4 +106,8 @@ public static class SystemActors
     public const string StockReservations = "system:stock-reservations";
 
     public const string SpcMonitor = "system:spc";
+
+    public const string Interchange = "system:edi";
+
+    public const string Webhooks = "system:webhooks";
 }

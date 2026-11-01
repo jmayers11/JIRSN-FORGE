@@ -91,6 +91,13 @@ builder.Services.AddSingleton<Forge.Host.Sales.PromiseDateService>();
 // Owner decisions 2026-11-01: statistical process control and supplier scorecards.
 builder.Services.AddSingleton<Forge.Host.Quality.SpcChartService>();
 builder.Services.AddSingleton<Forge.Host.Procurement.SupplierScorecardService>();
+// Owner decisions 2026-11-01: API and EDI (ANSI X12 through a folder, partner API keys, signed webhooks).
+Forge.Interchange.Infrastructure.InterchangeRegistration.AddForgeInterchange(builder.Services);
+builder.Services.AddSingleton<Forge.Interchange.IInterchangePartyResolver, Forge.Host.Interchange.InterchangePartyResolver>();
+builder.Services.AddSingleton<Forge.Host.Interchange.FolderExchange>();
+builder.Services.AddSingleton<Forge.Host.Interchange.WebhookDispatcher>();
+builder.Services.AddHttpClient("forge-webhooks");
+builder.Services.AddSingleton<Forge.Host.Interchange.IWebhookTransport, Forge.Host.Interchange.HttpWebhookTransport>();
 builder.Services.AddForgePlanning();
 builder.Services.AddSingleton<Forge.Host.Analyst.QmsAnalystService>();
 
@@ -163,6 +170,8 @@ builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Sales.SalesDemandSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Sales.StockReservationSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Quality.SpcSubscriber>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Interchange.InterchangeProcessor>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Interchange.WebhookSubscriber>();
 builder.Services.AddSingleton<Forge.Host.Moves.TemporaryMoveReconciler>();
 builder.Services.AddSingleton<Forge.Host.Training.TrainingExpiryScanner>();
 builder.Services.AddSingleton<Forge.Host.Planning.MaterialRiskScanner>();
@@ -208,6 +217,7 @@ if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
     builder.Services.AddForgeKernelBackgroundServices();
     builder.Services.AddHostedService<Forge.Host.Propagation.PropagationRetryService>();
     builder.Services.AddHostedService<NotificationDeliveryWorker>();
+    builder.Services.AddHostedService<Forge.Host.Interchange.InterchangeWorker>();
     builder.Services.AddHostedService<Forge.Host.Moves.TemporaryMoveMonitor>();
     builder.Services.AddHostedService<Forge.Host.Training.TrainingExpiryMonitor>();
     builder.Services.AddHostedService<Forge.Host.Planning.MaterialRiskMonitor>();
@@ -351,6 +361,7 @@ app.MapTimekeepingEndpoints();
 app.MapAmendmentEndpoints();
 app.MapReservationEndpoints();
 app.MapSpcEndpoints();
+app.MapInterchangeEndpoints();
 app.MapInvestigationEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();

@@ -170,6 +170,21 @@ public static class Permissions
 
     /// <summary>Record control-chart signals (the system, after an inspection).</summary>
     public const string SpcRecord = "quality.spc.record";
+
+    /// <summary>Keep trading partners, API keys and webhooks (integration administrators; owner decisions 2026-11-01).</summary>
+    public const string InterchangeManage = "interchange.manage";
+
+    /// <summary>Read the EDI document log, partners, keys and webhooks; never a key or secret.</summary>
+    public const string InterchangeRead = "interchange.read";
+
+    /// <summary>Receive X12 files (an upload, the folder, the partner API).</summary>
+    public const string InterchangeReceive = "interchange.receive";
+
+    /// <summary>Reprocess or reject EDI documents that need review.</summary>
+    public const string InterchangeReview = "interchange.review";
+
+    /// <summary>Process EDI documents and send webhooks (the system).</summary>
+    public const string InterchangeProcess = "interchange.process";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -372,6 +387,9 @@ public static class Roles
     /// <summary>Invoices shipped quantities and exports them for the accounting system.</summary>
     public const string BillingClerk = "BillingClerk";
 
+    /// <summary>Keeps trading partners, API keys and webhooks (owner decisions 2026-11-01).</summary>
+    public const string IntegrationAdministrator = "IntegrationAdministrator";
+
     private static readonly Dictionary<string, string[]> Map = new(StringComparer.Ordinal)
     {
         [Employee] = [Permissions.AttendanceCorrectionRequest],
@@ -420,6 +438,7 @@ public static class Roles
         [SalesRepresentative] = [Permissions.SalesRead, Permissions.SalesManage, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.MaterialPlanRead],
         [SalesManager] = [Permissions.SalesRead, Permissions.SalesApprove, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse],
         [BillingClerk] = [Permissions.SalesRead, Permissions.BillingManage, Permissions.AccountingExport, Permissions.InventoryRead],
+        [IntegrationAdministrator] = [Permissions.InterchangeManage, Permissions.InterchangeRead, Permissions.InterchangeReceive, Permissions.InterchangeReview, Permissions.SalesRead, Permissions.PurchasingRead],
         [ShopFloorTerminal] = [Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.InventoryMaterialRequest, Permissions.QualityReportSuspect, Permissions.ReadinessRead, Permissions.OrdersRead, Permissions.ResourcesRead, Permissions.ScheduleRead],
     };
 
@@ -437,6 +456,7 @@ public static class Roles
         [SalesDemand] = [Permissions.DemandManage, Permissions.SalesRead, Permissions.EngineeringRead],
         [StockReservations] = [Permissions.InventoryReserve, Permissions.InventoryRead, Permissions.OrdersRead],
         [SpcMonitor] = [Permissions.SpcRecord, Permissions.QualityRead],
+        [Interchange] = [Permissions.InterchangeProcess, Permissions.InterchangeReceive, Permissions.InterchangeRead, Permissions.SalesManage, Permissions.SalesRead, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.EngineeringRead],
     };
 
     static Roles()
@@ -476,6 +496,11 @@ public static class Roles
         Map[InventoryController] = [.. Map[InventoryController], Permissions.InventoryReserve];
         // Owner decision 2026-11-01: quality managers keep the SPC policy and critical characteristics; engineers acknowledge signals (quality.plan).
         Map[QualityManager] = [.. Map[QualityManager], Permissions.SpcManage];
+        // Owner decisions 2026-11-01 (API and EDI): sales representatives and buyers fix or reject what EDI could not map; their managers read the log.
+        foreach (var role in new[] { SalesRepresentative, Buyer })
+            Map[role] = [.. Map[role], Permissions.InterchangeRead, Permissions.InterchangeReview];
+        foreach (var role in new[] { SalesManager, PurchasingManager })
+            Map[role] = [.. Map[role], Permissions.InterchangeRead];
         // Owner decision 2026-10-27: supervisors and managers answer to several areas, so they can see every area of Forge. Seeing is all
         // this adds; recording, proposing and approving stay with each area's role. People views (attendance, development packets,
         // training requests) go to supervisors and the plant manager only; pay, the audit trail and access administration go to nobody new.
@@ -528,6 +553,9 @@ public static class Roles
 
     /// <summary>The system role that records control-chart signals after inspections (owner decision 2026-11-01).</summary>
     public const string SpcMonitor = "system.SpcMonitor";
+
+    /// <summary>The system role that processes EDI, the folder exchange, webhooks and the partner API (owner decisions 2026-11-01).</summary>
+    public const string Interchange = "system.Interchange";
 
     public static IReadOnlyCollection<string> All => Map.Keys;
 

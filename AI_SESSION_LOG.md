@@ -1,3 +1,7 @@
+## API and EDI (2026-11-01)
+
+Forge now exchanges ANSI X12 with customers and suppliers through an inbox/outbox folder: an incoming purchase order becomes a draft sales order for a Sales Manager to approve (or waits for review with the reasons), and Forge sends acknowledgments, ship notices, invoices and purchase orders, with 997s both ways. Partners and other systems get scoped API keys and signed, retried webhooks. New Integration Administrator role and Integrations page.
+
 ## SPC and supplier scorecards (2026-11-01)
 
 Measured characteristics now have individuals control charts with capability (Cpk 1.33, 1.67 critical) and rule checks; quality engineers are told when a new measurement breaks a rule and acknowledge it with a note. Supplier scorecards show on-time delivery, received quality (PPM) and past-due lines with an A/B/C grade under a company policy. Neither holds anything.
