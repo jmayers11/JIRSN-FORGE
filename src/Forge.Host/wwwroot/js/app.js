@@ -44,6 +44,8 @@ import { scenariosPage } from './pages/scenarios.js';
 import { costingPage } from './pages/costing.js';
 import { salesPage } from './pages/sales.js';
 import { timesheetPage } from './pages/timesheet.js';
+import { spcPage } from './pages/spc.js';
+import { supplierScorecardPage } from './pages/supplier-scorecard.js';
 import { riskRadarPage } from './pages/risk-radar.js';
 import { operationsVisualizationsPage } from './pages/operations-visualizations.js';
 import { loadDirectory } from './people.js';
@@ -82,7 +84,9 @@ const NAV = [
   { route: 'inventory', label: 'Inventory', icon: 'inventory', page: inventoryPage },
   { route: 'receiving', label: 'Receiving', icon: 'inventory', page: receivingPage },
   { route: 'procurement', label: 'Procurement', icon: 'purchasing', page: procurementPage },
+  { route: 'supplier-scorecard', label: 'Supplier Scorecards', icon: 'purchasing', page: supplierScorecardPage },
   { route: 'quality', label: 'Quality', icon: 'quality', page: qualityPage },
+  { route: 'spc', label: 'Statistical Process Control', icon: 'analytics', page: spcPage },
   { route: 'acceptance', label: 'Product Acceptance', icon: 'acceptance', page: acceptancePage },
   { route: 'investigations', label: 'Investigations', icon: 'trace', page: investigationsPage },
   { route: 'qms', label: 'Quality Management', icon: 'qms', page: qmsPage },
@@ -105,8 +109,8 @@ const NAV_GROUPS = [
   ['Supervisor', ['supervisor', 'operations-visualizations', 'risk-radar', 'workforce-kanban', 'machine-kanban', 'performance']],
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
   ['Sell', ['sales']],
-  ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'maintenance', 'shipping']],
-  ['Quality', ['quality', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
+  ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'supplier-scorecard', 'maintenance', 'shipping']],
+  ['Quality', ['quality', 'spc', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
   ['Admin', ['my-work', 'timesheet', 'notifications', 'workforce', 'costing', 'integrity', 'reports', 'analyst', 'access']],
 ];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
@@ -117,6 +121,7 @@ const NAV_ACCESS = {
   performance: ['workforce.read'],
   costing: ['costing.read'],
   sales: ['sales.read'],
+  spc: ['quality.read'], 'supplier-scorecard': ['procurement.read'],
   timesheet: ['timekeeping.record', 'timekeeping.approve', 'timekeeping.read', 'timekeeping.codes.manage'],
   'risk-radar': ['planning.readiness.read'],
   'operations-visualizations': ['execution.orders.read', 'planning.readiness.read', 'workforce.read', 'workforce.supervise', 'workforce.manage', 'resources.floor-map.manage', 'planning.schedule.read', 'inventory.read'],

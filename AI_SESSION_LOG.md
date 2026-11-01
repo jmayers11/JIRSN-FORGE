@@ -1,3 +1,7 @@
+## SPC and supplier scorecards (2026-11-01)
+
+Measured characteristics now have individuals control charts with capability (Cpk 1.33, 1.67 critical) and rule checks; quality engineers are told when a new measurement breaks a rule and acknowledge it with a note. Supplier scorecards show on-time delivery, received quality (PPM) and past-due lines with an A/B/C grade under a company policy. Neither holds anything.
+
 ## Released-order amendments, reservations and promise dates (2026-10-31)
 
 Released production orders can now be amended (engineer proposes, planner approves, applied atomically against an unchanged order); releasing an order or approving a sales order reserves free stock that others cannot issue or ship; the Sales page gives an available-to-promise date.

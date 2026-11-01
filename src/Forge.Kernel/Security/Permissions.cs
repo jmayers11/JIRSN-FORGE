@@ -164,6 +164,12 @@ public static class Permissions
 
     /// <summary>Reserve stock for released orders and approved sales orders, and bring reservations in step.</summary>
     public const string InventoryReserve = "inventory.reserve";
+
+    /// <summary>Set the SPC policy (required Cpk) and mark characteristics critical (quality managers; owner decision 2026-11-01).</summary>
+    public const string SpcManage = "quality.spc.manage";
+
+    /// <summary>Record control-chart signals (the system, after an inspection).</summary>
+    public const string SpcRecord = "quality.spc.record";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -430,6 +436,7 @@ public static class Roles
         [MaterialRisk] = [Permissions.MaterialPlanRead, Permissions.ReadinessRead, Permissions.OrdersRead],
         [SalesDemand] = [Permissions.DemandManage, Permissions.SalesRead, Permissions.EngineeringRead],
         [StockReservations] = [Permissions.InventoryReserve, Permissions.InventoryRead, Permissions.OrdersRead],
+        [SpcMonitor] = [Permissions.SpcRecord, Permissions.QualityRead],
     };
 
     static Roles()
@@ -467,6 +474,8 @@ public static class Roles
         Map[ManufacturingEngineer] = [.. Map[ManufacturingEngineer], Permissions.OrderAmendPropose];
         Map[Planner] = [.. Map[Planner], Permissions.OrderAmendApprove];
         Map[InventoryController] = [.. Map[InventoryController], Permissions.InventoryReserve];
+        // Owner decision 2026-11-01: quality managers keep the SPC policy and critical characteristics; engineers acknowledge signals (quality.plan).
+        Map[QualityManager] = [.. Map[QualityManager], Permissions.SpcManage];
         // Owner decision 2026-10-27: supervisors and managers answer to several areas, so they can see every area of Forge. Seeing is all
         // this adds; recording, proposing and approving stay with each area's role. People views (attendance, development packets,
         // training requests) go to supervisors and the plant manager only; pay, the audit trail and access administration go to nobody new.
@@ -516,6 +525,9 @@ public static class Roles
 
     /// <summary>The system role that keeps stock reservations in step with released orders and approved sales orders (owner decision 2026-10-31).</summary>
     public const string StockReservations = "system.StockReservations";
+
+    /// <summary>The system role that records control-chart signals after inspections (owner decision 2026-11-01).</summary>
+    public const string SpcMonitor = "system.SpcMonitor";
 
     public static IReadOnlyCollection<string> All => Map.Keys;
 

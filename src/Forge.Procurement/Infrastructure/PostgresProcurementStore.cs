@@ -290,6 +290,9 @@ public static class ProcurementRegistration
         services.AddForgeStore<ISourcingLookup>(uow => new PostgresSourcingStore(uow));
         services.AddForgeStore<ISourcingStore>(uow => new PostgresSourcingStore(uow));
         services.AddSingleton<SourcingService>();
+        services.AddForgeStore<IScorecardPolicyStore>(uow => new PostgresScorecardPolicyStore(uow));
+        services.AddForgeStore<IScorecardPolicyLookup>(uow => new PostgresScorecardPolicyStore(uow));
+        services.AddSingleton<ScorecardPolicyService>();
         return services;
     }
 }

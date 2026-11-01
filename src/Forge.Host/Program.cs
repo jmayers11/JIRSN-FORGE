@@ -88,6 +88,9 @@ builder.Services.AddSingleton<Forge.Workforce.Contracts.ITimeChargeResolver, For
 builder.Services.AddSingleton<Forge.Host.Costing.JobCostService>();
 builder.Services.AddSingleton<Forge.Execution.IOrderIssueLookup, Forge.Host.Api.OrderIssueLookup>();
 builder.Services.AddSingleton<Forge.Host.Sales.PromiseDateService>();
+// Owner decisions 2026-11-01: statistical process control and supplier scorecards.
+builder.Services.AddSingleton<Forge.Host.Quality.SpcChartService>();
+builder.Services.AddSingleton<Forge.Host.Procurement.SupplierScorecardService>();
 builder.Services.AddForgePlanning();
 builder.Services.AddSingleton<Forge.Host.Analyst.QmsAnalystService>();
 
@@ -159,6 +162,7 @@ builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Replanning.QualityReplanSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Sales.SalesDemandSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Sales.StockReservationSubscriber>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Quality.SpcSubscriber>();
 builder.Services.AddSingleton<Forge.Host.Moves.TemporaryMoveReconciler>();
 builder.Services.AddSingleton<Forge.Host.Training.TrainingExpiryScanner>();
 builder.Services.AddSingleton<Forge.Host.Planning.MaterialRiskScanner>();
@@ -346,6 +350,7 @@ app.MapSalesEndpoints();
 app.MapTimekeepingEndpoints();
 app.MapAmendmentEndpoints();
 app.MapReservationEndpoints();
+app.MapSpcEndpoints();
 app.MapInvestigationEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();

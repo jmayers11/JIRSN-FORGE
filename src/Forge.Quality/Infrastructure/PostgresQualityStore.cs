@@ -402,6 +402,9 @@ public static class QualityRegistration
         services.AddForgeStore<IDeterminationLookup>(uow => new PostgresDeterminationStore(uow));
         services.AddForgeStore<IDeterminationStore>(uow => new PostgresDeterminationStore(uow));
         services.AddSingleton<DeterminationService>();
+        services.AddForgeStore<ISpcStore>(uow => new PostgresSpcStore(uow));
+        services.AddForgeStore<Forge.Quality.Contracts.ISpcLookup>(uow => new PostgresSpcStore(uow));
+        services.AddSingleton<SpcService>();
         return services;
     }
 }

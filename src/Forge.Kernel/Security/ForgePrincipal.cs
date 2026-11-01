@@ -104,4 +104,6 @@ public static class SystemActors
 
     /// <summary>Keeps stock reservations in step with released orders and approved sales orders.</summary>
     public const string StockReservations = "system:stock-reservations";
+
+    public const string SpcMonitor = "system:spc";
 }
