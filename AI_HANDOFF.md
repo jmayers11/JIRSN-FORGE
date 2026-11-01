@@ -1,5 +1,17 @@
 # AI_HANDOFF.md
 
+## Claude: quote to cash — customers, quotes, sales orders, invoices, accounting export (2026-10-31)
+
+- **Owner request (2026-10-31):** work through the ERP gap list in order; step 1 is quote to cash. **Owner decisions:** a Sales Representative drafts, a Sales Manager (never the author) approves with configurable dollar limits, a Billing Clerk invoices; invoices bill shipped quantities only; generic CSV export (Forge keeps no general ledger); sales tax as a rate per customer or a tax-exemption certificate.
+- **New context `Forge.Sales`** (schema `sales`, migration `0001_sales.sql`): customers (terms, tax rate or exemption certificate, currency, status), quotes (draft → approved → accepted/declined/cancelled, valid-until), sales orders (draft → approved → closed/cancelled; customer PO entered once per customer), invoices (issued/voided; each line is one confirmed shipment billed whole at the order line's price; a shipment is on at most one issued invoice). Approvals carry the amount in `ResourceRef` so V3.15 approval thresholds apply.
+- **Roles (`0039_sales_roles.sql`):** SalesRepresentative, SalesManager (in `OperationalOverview`, sees every area), BillingClerk; `accounting.export` also to CostAccountant; `sales.read` added to `SeeEveryArea`. System role `system.SalesDemand`.
+- **Planning:** `DemandService.PlanSalesOrderAsync` syncs one CustomerOrder demand per open line of an approved order (source `sales:{order}/{line}`); `SalesDemandSubscriber` runs it on every `SalesOrderChanged`. Manual demand cannot use or edit sales sources (`use_sales_order`). Ship against that demand from Shipping; `SalesShipmentResolver` (host) maps shipped shipments back to order lines.
+- **Accounting export:** `GET /api/accounting/export?from&to` (summary) and `/api/accounting/export/{invoices|invoice-lines|sales-journal|inventory-journal}`. Sales journal: AR / revenue / sales tax, voids reversed on their void date. Inventory journal (needs `costing.read`): every movement into or out of stock at the standard cost in force, against WIP, COGS, scrap, received-not-invoiced, etc.; parts without a standard cost are listed and left out. Account codes default to 1200/1300/1400/2100/2300/4000/5000/5100/5200/6100/6200, configurable under `Forge:Accounting:Accounts:*`.
+- **UI:** `#/sales` ("Sales & Invoicing" under a new Sell menu): tabs for sales orders, quotes, customers, invoices and accounting export.
+- **Tests:** `SalesTests` (PostgreSQL, end to end), `tests/ui/sales.test.mjs`, Sales added to `ContextRules`; migration count 177.
+- **Not yet:** supplier-invoice (AP) matching, customer payments/credit memos, multi-currency conversion, ATP promise dates on quotes.
+- **Dev loop note:** the 5080 preview started by `start ""` inside a job inherited `dev-job.log`, which blocked the old helper. The helper now runs as `.forge-logs\dev-loop2.cmd` logging to `dev-job2.log`; start previews with PowerShell `Start-Process` so they do not inherit job handles.
+
 ## Claude: whole-plant impact in the recovery simulator; My Work / Notifications tabs; Analyst and Integrity list/detail (2026-10-31)
 
 - **Owner request (2026-10-31): "Please start #2 and #3."**

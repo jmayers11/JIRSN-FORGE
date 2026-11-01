@@ -18,6 +18,7 @@
     <ProjectReference Include="..\Forge.Quality\Forge.Quality.csproj" />
     <ProjectReference Include="..\Forge.Programs\Forge.Programs.csproj" />
     <ProjectReference Include="..\Forge.Projects\Forge.Projects.csproj" />
+    <ProjectReference Include="..\Forge.Sales\Forge.Sales.csproj" />
     <PackageReference Include="NodaTime" />
   </ItemGroup>
   <ItemGroup>

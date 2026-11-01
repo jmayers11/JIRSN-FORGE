@@ -128,6 +128,21 @@ public static class Permissions
 
     /// <summary>Set the costing policy, standard costs and labor and overhead rates.</summary>
     public const string CostingManage = "costing.manage";
+
+    /// <summary>Read customers, quotes, sales orders and invoices (owner decisions 2026-10-31).</summary>
+    public const string SalesRead = "sales.read";
+
+    /// <summary>Keep customers and draft quotes and sales orders.</summary>
+    public const string SalesManage = "sales.manage";
+
+    /// <summary>Approve quotes and sales orders written by someone else, and put customers on hold.</summary>
+    public const string SalesApprove = "sales.approve";
+
+    /// <summary>Issue and void invoices of shipped quantities.</summary>
+    public const string BillingManage = "sales.billing.manage";
+
+    /// <summary>Export invoices and journal entries for the accounting system.</summary>
+    public const string AccountingExport = "accounting.export";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -321,6 +336,15 @@ public static class Roles
     /// </summary>
     public const string PlantManager = "PlantManager";
 
+    /// <summary>Keeps customers and drafts quotes and sales orders (owner decision 2026-10-31).</summary>
+    public const string SalesRepresentative = "SalesRepresentative";
+
+    /// <summary>Approves quotes and sales orders written by someone else and puts customers on hold.</summary>
+    public const string SalesManager = "SalesManager";
+
+    /// <summary>Invoices shipped quantities and exports them for the accounting system.</summary>
+    public const string BillingClerk = "BillingClerk";
+
     private static readonly Dictionary<string, string[]> Map = new(StringComparer.Ordinal)
     {
         [Employee] = [Permissions.AttendanceCorrectionRequest],
@@ -366,6 +390,9 @@ public static class Roles
         [ChangeBoard] = [Permissions.HoldsPlace, Permissions.HoldsRead, Permissions.ChangesApprove, Permissions.ChangesReview, Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.QualityRead, Permissions.ProgramsRead, Permissions.ResourcesRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.AlternatesApprove],
         [FacilitiesManager] = [Permissions.ProjectsRead, Permissions.ProjectsManage, Permissions.ProjectsApprove, Permissions.RequisitionRaise, Permissions.DemandManage, Permissions.InventoryRead, Permissions.MaintenanceRead, Permissions.EngineeringRead, Permissions.PurchasingRead, Permissions.MaterialPlanRead, Permissions.ResourcesRead, Permissions.ResourcesFloorMapManage, Permissions.WorkforcePhotosManage, Permissions.WorkforceRead, Permissions.WorkforceSupervise, Permissions.CompetencyRead, Permissions.ScheduleRead, Permissions.ReportsSave, Permissions.AnalystUse, Permissions.DocumentsAttach],
         [PlantManager] = [Permissions.AnalystUse, Permissions.ReportsSave],
+        [SalesRepresentative] = [Permissions.SalesRead, Permissions.SalesManage, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.MaterialPlanRead],
+        [SalesManager] = [Permissions.SalesRead, Permissions.SalesApprove, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse],
+        [BillingClerk] = [Permissions.SalesRead, Permissions.BillingManage, Permissions.AccountingExport, Permissions.InventoryRead],
         [ShopFloorTerminal] = [Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.InventoryMaterialRequest, Permissions.QualityReportSuspect, Permissions.ReadinessRead, Permissions.OrdersRead, Permissions.ResourcesRead, Permissions.ScheduleRead],
     };
 
@@ -380,6 +407,7 @@ public static class Roles
         [WorkforceMoves] = [Permissions.WorkforceRead, Permissions.WorkforceSupervise],
         [TrainingRequests] = [Permissions.WorkforceRead, Permissions.CompetencyRead, Permissions.TrainingRequestsRequest],
         [MaterialRisk] = [Permissions.MaterialPlanRead, Permissions.ReadinessRead, Permissions.OrdersRead],
+        [SalesDemand] = [Permissions.DemandManage, Permissions.SalesRead, Permissions.EngineeringRead],
     };
 
     static Roles()
@@ -405,6 +433,8 @@ public static class Roles
         Map[Planner] = [.. Map[Planner], Permissions.CostingRead];
         Map[InventoryController] = [.. Map[InventoryController], Permissions.CostingRead];
         Map[QualityManager] = [.. Map[QualityManager], Permissions.CostingRead];
+        // Cost accountants and billing clerks hand Forge's figures to the accounting system (owner decision 2026-10-31).
+        Map[CostAccountant] = [.. Map[CostAccountant], Permissions.AccountingExport];
         // Owner decision 2026-10-27: supervisors and managers answer to several areas, so they can see every area of Forge. Seeing is all
         // this adds; recording, proposing and approving stay with each area's role. People views (attendance, development packets,
         // training requests) go to supervisors and the plant manager only; pay, the audit trail and access administration go to nobody new.
@@ -415,7 +445,7 @@ public static class Roles
     }
 
     /// <summary>Roles that see every operational area (owner decision 2026-10-27).</summary>
-    public static readonly IReadOnlyList<string> OperationalOverview = [Supervisor, PlantManager, QualityManager, PurchasingManager, ProgramManager, FacilitiesManager];
+    public static readonly IReadOnlyList<string> OperationalOverview = [Supervisor, PlantManager, QualityManager, PurchasingManager, ProgramManager, FacilitiesManager, SalesManager];
 
     /// <summary>Read access to every operational area of Forge.</summary>
     public static readonly IReadOnlyList<string> SeeEveryArea =
@@ -424,7 +454,7 @@ public static class Roles
         Permissions.EngineeringRead, Permissions.OrdersRead, Permissions.MaintenanceRead, Permissions.ScheduleRead, Permissions.ShopFloorRead,
         Permissions.HoldsRead, Permissions.InventoryRead, Permissions.PurchasingRead, Permissions.QualityRead, Permissions.QmsRead,
         Permissions.IdentificationRead, Permissions.MaterialPlanRead, Permissions.ProgramsRead, Permissions.ProjectsRead, Permissions.CostingRead,
-        Permissions.AnalystUse, Permissions.ReportsSave,
+        Permissions.AnalystUse, Permissions.ReportsSave, Permissions.SalesRead,
     ];
 
     /// <summary>The people views a supervisor works from: attendance intelligence, development packets and training requests.</summary>
@@ -448,6 +478,9 @@ public static class Roles
 
     /// <summary>The system role that records a part issued to a work order as installed on its asset (V2.9).</summary>
     public const string MaintenanceInstallation = "system.MaintenanceInstallation";
+
+    /// <summary>The system role that keeps an approved sales order's customer-order demand in step with it (owner decision 2026-10-31).</summary>
+    public const string SalesDemand = "system.SalesDemand";
 
     public static IReadOnlyCollection<string> All => Map.Keys;
 

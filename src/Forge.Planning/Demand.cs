@@ -1,6 +1,7 @@
 using Forge.Engineering.Contracts;
 using Forge.Kernel.Access;
 using Forge.Programs.Contracts;
+using Forge.Sales.Contracts;
 using Forge.Kernel.Commands;
 using Forge.Kernel.Events;
 using Forge.Kernel.Identity;
@@ -67,6 +68,12 @@ public sealed record CloseDemand(long DemandId, bool Cancel);
 /// <summary>Turns a contract delivery into demand, or brings that demand back in step with the contract.</summary>
 public sealed record PlanDelivery(long DeliveryId, int? Priority);
 
+/// <summary>
+/// Brings a sales order's customer-order demand in step with the order (owner decision 2026-10-31): one demand per open line of an
+/// approved order, at the line's quantity and due date; cancelled lines and cancelled orders cancel theirs, a closed order closes theirs.
+/// </summary>
+public sealed record PlanSalesOrder(long OrderNumber);
+
 public sealed record DemandChanged(long DemandId, string PartNumber, string Change) : IDomainEvent
 {
     public static string EventType => nameof(DemandChanged);
@@ -119,6 +126,11 @@ public sealed class DemandService(CommandPipeline pipeline)
             }
 
             var source = Source(c.Kind, c.SourceKey);
+            if (SalesOrderInfo.ParseDemandSource(source) is not null || source?.StartsWith("sales:", StringComparison.Ordinal) == true)
+            {
+                throw new CommandRejectedException("use_sales_order", "Sales order demand is planned from the approved sales order itself.");
+            }
+
             if (source is not null && await uow.Store<IDemandStore>().FindBySourceAsync(source, ct) is { } existing)
             {
                 throw new CommandRejectedException("source_exists", $"Demand {existing.DemandId} ({existing.Status}) already stands for {source}; change that demand instead.");
@@ -199,6 +211,68 @@ public sealed class DemandService(CommandPipeline pipeline)
         }, ct);
     }
 
+    public Task<CommandResult> PlanSalesOrderAsync(PlanSalesOrder c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var orderId = c.OrderNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var spec = new CommandSpec(SourceContext, nameof(PlanSalesOrder), Permissions.DemandManage, ResourceRef.Of("SalesOrder", orderId));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var order = await uow.Store<ISalesLookup>().FindOrderAsync(c.OrderNumber, ct)
+                ?? throw new CommandRejectedException("sales_order_not_found", $"Sales order {orderId} does not exist.");
+            if (order.Status == SalesOrderStatus.Draft)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(orderId, $"Sales order {orderId} is a draft; it is planned once approved."));
+            }
+
+            var store = uow.Store<IDemandStore>();
+            var events = new List<EventEnvelope>();
+            var changes = new List<object>();
+            var said = new List<string>();
+            foreach (var line in order.Lines.OrderBy(l => l.LineNumber))
+            {
+                var source = SalesOrderInfo.DemandSource(order.OrderNumber, line.LineNumber);
+                var label = $"SO {order.OrderNumber} line {line.LineNumber}{(order.CustomerPo is null ? string.Empty : $" (customer PO {order.CustomerPo})")}";
+                var wanted = order.Status == SalesOrderStatus.Approved && line.Status == SalesLineStatus.Open;
+                var existing = await store.FindBySourceAsync(source, ct);
+                if (existing is null)
+                {
+                    if (!wanted) continue;
+                    var demand = new DemandInfo(0, line.PartNumber, line.Quantity, line.DueDate, 3, DemandKind.CustomerOrder, order.CustomerName, label, null, DemandStatus.Open, context.Actor, now, source);
+                    var demandId = await store.InsertAsync(demand, ct);
+                    var id = demandId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    events.Add(pipeline.Event(new DemandChanged(demandId, line.PartNumber, "Recorded"), context, SourceContext, Entity, id));
+                    changes.Add(demand with { DemandId = demandId });
+                    said.Add($"demand {id} for line {line.LineNumber} ({line.Quantity} {line.PartNumber} by {line.DueDate:yyyy-MM-dd})");
+                    continue;
+                }
+
+                if (existing.Status != DemandStatus.Open) continue;
+                var updated = wanted
+                    ? existing with { Quantity = line.Quantity, NeedDate = line.DueDate, Customer = order.CustomerName, Reference = label }
+                    : existing with { Status = order.Status == SalesOrderStatus.Closed ? DemandStatus.Closed : DemandStatus.Cancelled };
+                if (updated == existing) continue;
+                await store.UpdateAsync(updated, now, context.Actor, ct);
+                var existingId = existing.DemandId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                events.Add(pipeline.Event(new DemandChanged(existing.DemandId, existing.PartNumber, updated.Status == DemandStatus.Open ? "Changed" : updated.Status.ToString()), context, SourceContext, Entity, existingId));
+                changes.Add(updated);
+                said.Add(updated.Status == DemandStatus.Open
+                    ? $"demand {existingId} now {updated.Quantity} by {updated.NeedDate:yyyy-MM-dd}"
+                    : $"demand {existingId} {updated.Status.ToString().ToLowerInvariant()}");
+            }
+
+            if (events.Count == 0)
+            {
+                return CommandOutcome.NoChange(CommandResult.NoChange(orderId, $"Demand already matches sales order {orderId}."));
+            }
+
+            return new CommandOutcome(
+                CommandResult.Ok(orderId, $"Sales order {orderId} planned: {string.Join("; ", said)}."),
+                events,
+                new AuditChange("SalesOrderDemand", orderId, null, CanonicalJson.Serialize(changes)));
+        }, ct);
+    }
+
     public Task<CommandResult> ChangeAsync(ChangeDemand c, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(c);
@@ -231,6 +305,11 @@ public sealed class DemandService(CommandPipeline pipeline)
             if (demand.Status != DemandStatus.Open)
             {
                 throw new CommandRejectedException("demand_closed", $"Demand {id} is {demand.Status}.");
+            }
+
+            if (SalesOrderInfo.ParseDemandSource(demand.SourceKey) is { } sales)
+            {
+                throw new CommandRejectedException("use_sales_order", $"Demand {id} follows sales order {sales.OrderNumber} line {sales.LineNumber}; change the sales order instead.");
             }
 
             var updated = change(demand);

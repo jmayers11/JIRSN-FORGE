@@ -1,3 +1,7 @@
+## Quote to cash (2026-10-31)
+
+Added the Sales context: customers with terms and tax, quotes and sales orders approved by a second person, approved orders planned as customer-order demand, invoices of confirmed shipments only, and a CSV accounting export (invoices, sales journal, inventory journal at standard cost). New roles: Sales Representative, Sales Manager, Billing Clerk.
+
 ## Whole-plant recovery comparison and admin density (2026-10-31)
 
 Recovery trials and scenario runs now return a whole-plant comparison of the baseline and proposed schedules over the 14-day horizon (output, labor hours, set-up minutes, in-process orders/units, orders not on time, moved operations and changed commitments, standard-cost value and labor cost when costing is readable). Scenarios shows it side by side. My Work and Notifications are tabbed; Analyst and Integrity use list/detail.

@@ -28,6 +28,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Forge.Planning.Infrastructure;
 using Forge.Resources.Infrastructure;
 using Forge.SafetyRules.Infrastructure;
+using Forge.Sales.Infrastructure;
 using Forge.Workforce.Infrastructure;
 using Npgsql;
 
@@ -79,6 +80,10 @@ builder.Services.AddSingleton<Forge.Quality.Contracts.ICommercialQualitySourceRe
 builder.Services.AddSingleton<Forge.Inventory.Contracts.IReturnAcceptanceSourceResolver, ReturnAcceptanceSourceResolver>();
 builder.Services.AddForgeProcurement();
 builder.Services.AddForgeInventory();
+// Owner decisions 2026-10-31: quote to cash. Sales migrations follow inventory (invoice lines name shipments).
+builder.Services.AddForgeSales();
+builder.Services.AddSingleton<Forge.Sales.Contracts.ISalesShipmentResolver, Forge.Host.Sales.SalesShipmentResolver>();
+builder.Services.AddSingleton<Forge.Host.Sales.AccountingExportService>();
 builder.Services.AddForgePlanning();
 builder.Services.AddSingleton<Forge.Host.Analyst.QmsAnalystService>();
 
@@ -148,6 +153,7 @@ builder.Services.AddSingleton<Forge.Host.Propagation.PropagationRetry>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Propagation.ChangePropagationSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Installation.InstallationSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Replanning.QualityReplanSubscriber>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Sales.SalesDemandSubscriber>();
 builder.Services.AddSingleton<Forge.Host.Moves.TemporaryMoveReconciler>();
 builder.Services.AddSingleton<Forge.Host.Training.TrainingExpiryScanner>();
 builder.Services.AddSingleton<Forge.Host.Planning.MaterialRiskScanner>();
@@ -331,6 +337,7 @@ app.MapCommercialQualityEndpoints();
 app.MapReturnAcceptanceEndpoints();
 app.MapProductAcceptanceEndpoints();
 app.MapCostingEndpoints();
+app.MapSalesEndpoints();
 app.MapInvestigationEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();

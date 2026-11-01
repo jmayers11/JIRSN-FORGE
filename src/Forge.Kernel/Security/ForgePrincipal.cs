@@ -98,4 +98,7 @@ public static class SystemActors
 
     /// <summary>Tells planners when released orders become, or stop being, at risk from material.</summary>
     public const string MaterialRisk = "system:material-risk";
+
+    /// <summary>Keeps an approved sales order's customer-order demand in step with the order.</summary>
+    public const string SalesDemand = "system:sales-demand";
 }
