@@ -1,3 +1,11 @@
+## Released-order amendments, reservations and promise dates (2026-10-31)
+
+Released production orders can now be amended (engineer proposes, planner approves, applied atomically against an unchanged order); releasing an order or approving a sales order reserves free stock that others cannot issue or ship; the Sales page gives an available-to-promise date.
+
+## Actual job cost and timesheets (2026-10-31)
+
+Added actual job cost per production order (material at standard, labor and overhead at plant rates, against the standard of the output) and DCAA-style timesheets: daily recording against orders or charge codes, late-entry reasons, signing, independent approval, immutable entries with superseding corrections, and reconciliation with shop-floor labor.
+
 ## Quote to cash (2026-10-31)
 
 Added the Sales context: customers with terms and tax, quotes and sales orders approved by a second person, approved orders planned as customer-order demand, invoices of confirmed shipments only, and a CSV accounting export (invoices, sales journal, inventory journal at standard cost). New roles: Sales Representative, Sales Manager, Billing Clerk.

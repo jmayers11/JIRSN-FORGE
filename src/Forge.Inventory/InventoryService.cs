@@ -442,6 +442,8 @@ public sealed partial class InventoryService(CommandPipeline pipeline, ProductRe
         var lot = RequireLot(item, c.LotNumber);
         await RequireStockAsync(uow, item.PartNumber, location.Code, lot, StockStatus.Released, quantity, ct);
         await RequireUsableAsync(uow, item, lot, now, ct);
+        // Owner decision 2026-10-31: stock reserved for another order or demand is not issued here.
+        await ReservationGate.RequireUnreservedAsync(uow, item.PartNumber, location.Code, lot, quantity, ReservationTarget.ProductionOrder, order.OrderNumber, now, ct);
         await Forge.Kernel.Holds.HoldGate.RequireNoneAsync(uow, new Forge.Kernel.Holds.HoldCheck(
             Forge.Kernel.Holds.HoldActivity.IssueMaterial, order.OrderNumber, null, [item.PartNumber], lot is null ? null : new[] { new Forge.Kernel.Holds.HoldLot(item.PartNumber, lot) }, ProgramId: order.ProgramId), ct);
         return new(order, needed, alternate, quantity, primaryQuantity, location, lot);

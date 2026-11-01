@@ -23,6 +23,22 @@ export function reconciliationHtml(r) {
     ${r.notes.map(n => `<div class="faint">${esc(n)}</div>`).join('')}`;
 }
 
+/** Actual job cost against standard (owner decisions 2026-10-31): material issued at standard, labor and overhead at the plant rates. */
+export function jobCostHtml(j) {
+  const m = v => money(v, j.currency);
+  const variance = v => v == null ? '—' : `<span class="${v > 0 ? 'c-bad' : 'c-ok'}">${v > 0 ? '+' : ''}${esc(m(v))}</span>`;
+  return `<div class="faint">Order #${j.orderNumber} · ${esc(j.partNumber)} · ${esc(j.status)} · ${qty(j.goodReceived)} good of ${qty(j.orderQuantity)}${j.scrapReported ? ` · ${qty(j.scrapReported)} scrapped` : ''} · standard ${esc(m(j.unitStandard))} each</div>
+    <table class="table"><thead><tr><th>Element</th><th class="num">Actual</th><th class="num">Standard of output</th><th class="num">Variance</th></tr></thead><tbody>
+    ${j.elements.map(e => `<tr><td>${esc(e.element)}</td><td class="num">${esc(m(e.actual))}</td><td class="num">${esc(m(e.standard))}</td><td class="num">${variance(e.variance)}</td></tr>`).join('')}
+    <tr><td><b>Total</b></td><td class="num"><b>${esc(m(j.actualTotal))}</b></td><td class="num"><b>${esc(m(j.standardOfOutput))}</b></td><td class="num"><b>${j.variance != null ? variance(j.variance) : j.workInProcess != null ? `WIP ${esc(m(j.workInProcess))}` : '—'}</b></td></tr></tbody></table>
+    <div>Hours: shop floor ${qty(j.shopFloorHours, 2)} · timesheets ${qty(j.timesheetHours, 2)} (${qty(j.timesheetHoursApproved, 2)} approved)</div>
+    ${j.material.length ? `<details><summary>Material (${j.material.length})</summary><table class="table"><thead><tr><th>Part</th><th class="num">Issued</th><th class="num">Returned</th><th class="num">Credited</th><th class="num">Value</th></tr></thead><tbody>
+      ${j.material.map(x => `<tr><td>${esc(x.partNumber)}</td><td class="num">${qty(x.issued)}</td><td class="num">${qty(x.returned)}</td><td class="num">${qty(x.credited)}</td><td class="num">${esc(m(x.value))}</td></tr>`).join('')}</tbody></table></details>` : ''}
+    ${j.labor.length ? `<details><summary>Labor (${j.labor.length} operation(s))</summary><table class="table"><thead><tr><th>Op</th><th>Work center</th><th class="num">Operator h</th><th class="num">Trainer h</th><th class="num">Trainee h</th><th class="num">Labor</th><th class="num">Overhead</th></tr></thead><tbody>
+      ${j.labor.map(x => `<tr><td>${x.sequence}</td><td>${esc(x.workCenterCode)}</td><td class="num">${qty(x.operatorHours, 2)}</td><td class="num">${qty(x.trainerHours, 2)}</td><td class="num">${qty(x.traineeHours, 2)}</td><td class="num">${esc(m(x.labor))}</td><td class="num">${esc(m(x.overhead))}</td></tr>`).join('')}</tbody></table></details>` : ''}
+    ${j.notes.map(n => `<div class="faint">${esc(n)}</div>`).join('')}`;
+}
+
 export async function costingPage(page, ctx) {
   const me = ctx?.me;
   const manager = canAction(me, 'costing.manage');
@@ -43,6 +59,9 @@ export async function costingPage(page, ctx) {
       <section class="panel"><header><h2>Standard costs</h2></header>
         ${costs.error ? errorBlock(costs.error, 'standard costs') : latest.length ? `<table class="table"><thead><tr><th>Part</th><th class="num">Material</th><th class="num">Labor</th><th class="num">Overhead</th><th class="num">Unit cost</th><th>From</th><th>Reason</th></tr></thead><tbody>
           ${latest.map(c => `<tr><td>${esc(c.partNumber)}</td><td class="num">${esc(money(c.material, c.currency))}</td><td class="num">${esc(money(c.labor, c.currency))}</td><td class="num">${esc(money(c.overhead, c.currency))}</td><td class="num"><b>${esc(money(c.material + c.labor + c.overhead, c.currency))}</b></td><td class="nowrap">${esc(fmtDateTime(c.effectiveFrom))}</td><td>${esc(c.reason)}</td></tr>`).join('')}</tbody></table>` : emptyBlock('No standard costs yet', 'A Cost Accountant sets each part\'s material, labor and overhead per unit.')}</section>
+      <section class="panel"><header><h2>Job cost</h2></header>
+        <form id="job-cost" class="inline"><input class="input mono" id="job-cost-order" type="number" min="1" placeholder="Order number" style="width:140px"> <button class="btn">Show job cost</button></form>
+        <div id="job-cost-result" class="faint">Actual material, labor and overhead of a production order against the standard of what it produced.</div></section>
       <section class="panel"><header><h2>NCR cost reconciliation</h2></header>
         <form id="ncr-cost" class="inline"><input class="input mono" id="ncr-cost-id" type="number" min="1" placeholder="NCR number" style="width:140px"> <button class="btn">Reconcile</button></form>
         <div id="ncr-cost-result" class="faint">Shows how a nonconformance's standard value splits across its dispositions, including NCRs split from it.</div></section>`;
@@ -64,6 +83,15 @@ export async function costingPage(page, ctx) {
         { name: 'overhead', label: 'Overhead per unit', type: 'number', min: 0, step: 'any', required: true },
       ],
     }, (v, reason) => command('/api/costing/standard-costs', { ...v, partNumber: String(v.partNumber).trim().toUpperCase() }, reason), load));
+    $('#job-cost', page)?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const order = Number($('#job-cost-order', page).value);
+      const host = $('#job-cost-result', page);
+      if (!order) return;
+      const result = await tryGet(`/api/costing/orders/${order}/job-cost`);
+      host.className = '';
+      host.innerHTML = result.error ? errorBlock(result.error, 'job cost') : jobCostHtml(result.data);
+    });
     $('#ncr-cost', page)?.addEventListener('submit', async event => {
       event.preventDefault();
       const id = Number($('#ncr-cost-id', page).value);

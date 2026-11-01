@@ -181,6 +181,9 @@ public sealed partial class InventoryService
         {
             await RequireStockAsync(uow, group.Key.PartNumber, group.Key.LocationCode, group.Key.LotNumber, StockStatus.Released, group.Sum(l => l.Quantity), ct);
             await RequireUsableAsync(uow, await ItemAsync(uow, group.Key.PartNumber, ct), group.Key.LotNumber, now, ct); // never ship what has expired (V3.6)
+            // Owner decision 2026-10-31: stock reserved for another order or demand is not shipped here.
+            await ReservationGate.RequireUnreservedAsync(uow, group.Key.PartNumber, group.Key.LocationCode, group.Key.LotNumber, group.Sum(l => l.Quantity),
+                shipment.DemandId is null ? null : ReservationTarget.Demand, shipment.DemandId, now, ct);
         }
 
         var ncrs = (await uow.Store<IQualityLookup>().ListNcrsAsync(false, ct))

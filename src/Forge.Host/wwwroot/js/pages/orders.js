@@ -9,6 +9,7 @@ import { appendOrderQuantityStates } from '../actuals.js';
 import { appendHolds } from '../executable.js';
 import { openPartialBuild } from '../partial-build.js';
 import { appendReplacementOrders } from '../replacement-orders.js';
+import { appendOrderAmendments } from '../order-amendments.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, errorBlock, emptyBlock, confirmWithReason, toast, tabifyPanels, enhanceTables } from '../ui.js';
 
 const STATUS_TONE = { Planned: 'none', FirmPlanned: 'info', Released: 'ok', Held: 'warn', Cancelled: 'bad', Completed: 'ok' };
@@ -442,6 +443,8 @@ async function orderDetail(page, ctx, number) {
   await appendAttachments(page, { type: 'ProductionOrder', id: o.orderNumber, me, title: 'Documentation',
     note: 'Documents this order must also follow, and files kept with it (customer PO, certificates, photos). Attaching never changes which revision of the item applies.' });
 
+  await appendOrderAmendments(page, o, me, () => orderDetail(page, ctx, number));
+
   // Overview first: readiness, drop-dead dates and the manufacturing flow together (UI density audit 2026-10-27).
   tabifyPanels(page, [
     { label: 'Overview', match: ['readiness now', 'drop-dead dates', 'contract commitment', ...(flowEnabled ? ['manufacturing flow'] : [])] },
@@ -451,6 +454,7 @@ async function orderDetail(page, ctx, number) {
     { label: 'Material', match: ['as built and genealogy', 'material to the machine', 'what became of the material'] },
     { label: 'Quality', match: ['quality', 'holds'] },
     { label: 'Documents', match: ['applicable documentation', 'documentation'] },
+    { label: 'Amendments', match: ['amendments'] },
   ]);
   enhanceTables(page);
   $('[data-refresh-manufacturing-flow]', page)?.addEventListener('click', () => { void orderDetail(page, ctx, number); });

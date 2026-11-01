@@ -98,6 +98,10 @@ internal static class MaterialData
         var reservations = (await WipStorageQueries.OutstandingReservationsAsync(uow, ct))
             .Select(r => new MaterialReservation("PB" + r.BuildId.ToString(System.Globalization.CultureInfo.InvariantCulture), r.OrderNumber, r.PartNumber, r.Outstanding))
             .ToList();
+        // Owner decision 2026-10-31: stock reserved for a released order is that order's, in readiness as on the floor.
+        reservations.AddRange((await StockReservationQueries.OutstandingAsync(uow, null, ct))
+            .Where(r => r.Reservation.Target == ReservationTarget.ProductionOrder && r.Outstanding > 0)
+            .Select(r => new MaterialReservation("SR" + r.Reservation.ReservationId.ToString(System.Globalization.CultureInfo.InvariantCulture), r.Reservation.OrderNumber!.Value, r.Reservation.PartNumber, r.Outstanding)));
         return new MaterialSnapshot(await TodayAsync(uow, time, ct), stock, issued, supplies, orders, reservations);
     }
 

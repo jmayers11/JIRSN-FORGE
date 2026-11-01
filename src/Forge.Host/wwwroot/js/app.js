@@ -43,6 +43,7 @@ import { integrityPage } from './pages/integrity.js';
 import { scenariosPage } from './pages/scenarios.js';
 import { costingPage } from './pages/costing.js';
 import { salesPage } from './pages/sales.js';
+import { timesheetPage } from './pages/timesheet.js';
 import { riskRadarPage } from './pages/risk-radar.js';
 import { operationsVisualizationsPage } from './pages/operations-visualizations.js';
 import { loadDirectory } from './people.js';
@@ -93,6 +94,7 @@ const NAV = [
   { route: 'maintenance', label: 'Maintenance', icon: 'maintenance', page: maintenancePage },
   { route: 'shipping', label: 'Shipping', icon: 'truck', page: shippingPage },
   { route: 'sales', label: 'Sales & Invoicing', icon: 'commercial', page: salesPage },
+  { route: 'timesheet', label: 'Timekeeping', icon: 'calendar', page: timesheetPage },
   { route: 'costing', label: 'Costing', icon: 'analytics', page: costingPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: analystPage },
@@ -105,7 +107,7 @@ const NAV_GROUPS = [
   ['Sell', ['sales']],
   ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'maintenance', 'shipping']],
   ['Quality', ['quality', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
-  ['Admin', ['my-work', 'notifications', 'workforce', 'costing', 'integrity', 'reports', 'analyst', 'access']],
+  ['Admin', ['my-work', 'timesheet', 'notifications', 'workforce', 'costing', 'integrity', 'reports', 'analyst', 'access']],
 ];
 const SETTINGS = { route: 'settings', label: 'Settings', icon: 'settings', page: settingsPage };
 
@@ -115,6 +117,7 @@ const NAV_ACCESS = {
   performance: ['workforce.read'],
   costing: ['costing.read'],
   sales: ['sales.read'],
+  timesheet: ['timekeeping.record', 'timekeeping.approve', 'timekeeping.read', 'timekeeping.codes.manage'],
   'risk-radar': ['planning.readiness.read'],
   'operations-visualizations': ['execution.orders.read', 'planning.readiness.read', 'workforce.read', 'workforce.supervise', 'workforce.manage', 'resources.floor-map.manage', 'planning.schedule.read', 'inventory.read'],
   home: ['planning.readiness.read', 'planning.schedule.read', 'execution.orders.read', 'resources.read', 'quality.read', 'inventory.read'],

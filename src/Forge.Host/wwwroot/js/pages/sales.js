@@ -40,6 +40,9 @@ export function salesOrderCard(o, can = {}) {
   </article>`;
 }
 
+/** A promise-date answer in one line. */
+export const promiseText = p => `${p.quantity} ${p.partNumber}: earliest ${fmtDate(p.earliest)}. ${p.basis} Free now: ${p.freeNow}.`;
+
 /** The accounting export's summary: what the period contains, whether every entry balances, and what was left out. */
 export function exportSummaryHtml(s) {
   const ok = (flag, yes, no) => flag == null ? '<span class="pill none">Not included</span>' : flag ? `<span class="pill ok">${esc(yes)}</span>` : `<span class="pill bad">${esc(no)}</span>`;
@@ -68,7 +71,7 @@ export async function salesPage(page, ctx) {
     const awaitingInvoice = orderList.reduce((n, o) => n + (o.uninvoicedShipments?.length ?? 0), 0);
     page.innerHTML = `
       <div class="page-head"><div><h1>Sales</h1><div class="sub">Quotes, sales orders and invoices. A different person approves what a representative writes; invoices bill confirmed shipments only.</div></div><div class="spacer"></div>
-        ${can.manage ? '<button class="btn" data-new-customer>+ Customer</button> <button class="btn" data-new-quote>+ Quote</button> <button class="btn primary" data-new-order>+ Sales order</button>' : ''}</div>
+        <button class="btn" data-promise>Promise date</button> ${can.manage ? '<button class="btn" data-new-customer>+ Customer</button> <button class="btn" data-new-quote>+ Quote</button> <button class="btn primary" data-new-order>+ Sales order</button>' : ''}</div>
       <section class="panel"><header><h2>Sales orders (${orderList.filter(o => o.status === 'Draft' || o.status === 'Approved').length} open)</h2></header>
         ${orderList.length ? orderList.map(o => salesOrderCard(o, can)).join('') : emptyBlock('No sales orders yet', 'Draft one, or turn an approved quote into one.')}</section>
       <section class="panel"><header><h2>Quotes (${quoteList.filter(q => q.quote.status === 'Draft' || q.quote.status === 'Approved').length} open)</h2></header>
@@ -120,6 +123,10 @@ export async function salesPage(page, ctx) {
   ];
 
   function wire({ customerList, activeCustomers, parts, orderList }) {
+    $('[data-promise]', page)?.addEventListener('click', () => formModal({
+      title: 'Earliest promise date', detail: 'Free stock (available less reservations), then open purchase and production orders, then the part\'s lead time. Advice for the quote, not a commitment.', confirmLabel: 'Check',
+      fields: [{ name: 'part', label: 'Part', code: true, required: true, list: parts }, { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any', required: true }],
+    }, async v => { const r = await tryGet(`/api/sales/promise?part=${encodeURIComponent(v.part)}&quantity=${encodeURIComponent(v.quantity)}`); if (r.error) throw r.error; return { message: promiseText(r.data) }; }));
     const customerField = { name: 'customer', label: 'Customer', type: 'select', required: true, options: activeCustomers };
     $('[data-new-customer]', page)?.addEventListener('click', () => formModal({ title: 'Add a customer', detail: 'Invoices take the customer\'s terms and sales-tax rate, or no tax with an exemption certificate.', confirmLabel: 'Add customer', fields: customerFields() },
       (v, reason) => command('/api/sales/customers', v, reason), load));

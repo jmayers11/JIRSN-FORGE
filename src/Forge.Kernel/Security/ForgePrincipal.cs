@@ -101,4 +101,7 @@ public static class SystemActors
 
     /// <summary>Keeps an approved sales order's customer-order demand in step with the order.</summary>
     public const string SalesDemand = "system:sales-demand";
+
+    /// <summary>Keeps stock reservations in step with released orders and approved sales orders.</summary>
+    public const string StockReservations = "system:stock-reservations";
 }

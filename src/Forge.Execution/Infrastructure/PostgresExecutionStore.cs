@@ -489,6 +489,8 @@ public static class ExecutionRegistration
         services.AddForgeStore<IShiftContinuityStore>(uow => new PostgresShiftContinuityStore(uow));
         services.AddForgeStore<Forge.Maintenance.Contracts.IMachineUsageLookup>(uow => new MachineUsage(uow));
         services.AddSingleton<ProductionOrderService>();
+        services.AddForgeStore<IOrderAmendmentStore>(uow => new PostgresOrderAmendmentStore(uow));
+        services.AddSingleton<OrderAmendmentService>();
         services.AddSingleton<OrderCommitmentService>();
         services.AddSingleton<PriorityGovernanceService>();
         services.AddSingleton<ShiftContinuityService>();

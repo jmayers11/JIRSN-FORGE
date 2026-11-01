@@ -143,6 +143,27 @@ public static class Permissions
 
     /// <summary>Export invoices and journal entries for the accounting system.</summary>
     public const string AccountingExport = "accounting.export";
+
+    /// <summary>Record, correct and sign one's own timesheet (owner decision 2026-10-31: DCAA-style timekeeping).</summary>
+    public const string TimekeepingRecord = "timekeeping.record";
+
+    /// <summary>Approve or return other people's signed timesheets.</summary>
+    public const string TimekeepingApprove = "timekeeping.approve";
+
+    /// <summary>Read everyone's timesheets.</summary>
+    public const string TimekeepingRead = "timekeeping.read";
+
+    /// <summary>Keep the charge codes time is recorded against.</summary>
+    public const string TimekeepingCodesManage = "timekeeping.codes.manage";
+
+    /// <summary>Propose an amendment to a released production order (owner decision 2026-10-31: manufacturing engineers).</summary>
+    public const string OrderAmendPropose = "execution.orders.amend.propose";
+
+    /// <summary>Approve, and so apply, an amendment someone else proposed (planners).</summary>
+    public const string OrderAmendApprove = "execution.orders.amend.approve";
+
+    /// <summary>Reserve stock for released orders and approved sales orders, and bring reservations in step.</summary>
+    public const string InventoryReserve = "inventory.reserve";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -408,6 +429,7 @@ public static class Roles
         [TrainingRequests] = [Permissions.WorkforceRead, Permissions.CompetencyRead, Permissions.TrainingRequestsRequest],
         [MaterialRisk] = [Permissions.MaterialPlanRead, Permissions.ReadinessRead, Permissions.OrdersRead],
         [SalesDemand] = [Permissions.DemandManage, Permissions.SalesRead, Permissions.EngineeringRead],
+        [StockReservations] = [Permissions.InventoryReserve, Permissions.InventoryRead, Permissions.OrdersRead],
     };
 
     static Roles()
@@ -435,6 +457,16 @@ public static class Roles
         Map[QualityManager] = [.. Map[QualityManager], Permissions.CostingRead];
         // Cost accountants and billing clerks hand Forge's figures to the accounting system (owner decision 2026-10-31).
         Map[CostAccountant] = [.. Map[CostAccountant], Permissions.AccountingExport];
+        // Owner decision 2026-10-31: DCAA-style timesheets. Employees record and sign their own; supervisors approve; cost accountants keep the codes.
+        Map[Employee] = [.. Map[Employee], Permissions.TimekeepingRecord];
+        Map[Supervisor] = [.. Map[Supervisor], Permissions.TimekeepingApprove, Permissions.TimekeepingRead];
+        Map[CostAccountant] = [.. Map[CostAccountant], Permissions.TimekeepingRead, Permissions.TimekeepingCodesManage];
+        foreach (var role in new[] { HumanResources, Auditor })
+            Map[role] = [.. Map[role], Permissions.TimekeepingRead];
+        // Owner decisions 2026-10-31: engineers propose released-order amendments and planners approve them; inventory controllers keep reservations.
+        Map[ManufacturingEngineer] = [.. Map[ManufacturingEngineer], Permissions.OrderAmendPropose];
+        Map[Planner] = [.. Map[Planner], Permissions.OrderAmendApprove];
+        Map[InventoryController] = [.. Map[InventoryController], Permissions.InventoryReserve];
         // Owner decision 2026-10-27: supervisors and managers answer to several areas, so they can see every area of Forge. Seeing is all
         // this adds; recording, proposing and approving stay with each area's role. People views (attendance, development packets,
         // training requests) go to supervisors and the plant manager only; pay, the audit trail and access administration go to nobody new.
@@ -459,7 +491,7 @@ public static class Roles
 
     /// <summary>The people views a supervisor works from: attendance intelligence, development packets and training requests.</summary>
     public static readonly IReadOnlyList<string> SeePeople =
-        [Permissions.AttendanceIntelligenceRead, Permissions.WorkforceNominationRead, Permissions.TrainingRequestsRead];
+        [Permissions.AttendanceIntelligenceRead, Permissions.WorkforceNominationRead, Permissions.TrainingRequestsRead, Permissions.TimekeepingRead];
 
     /// <summary>The system role the propagation of a released engineering change acts with (V2.5).</summary>
     public const string ChangePropagation = "system.ChangePropagation";
@@ -481,6 +513,9 @@ public static class Roles
 
     /// <summary>The system role that keeps an approved sales order's customer-order demand in step with it (owner decision 2026-10-31).</summary>
     public const string SalesDemand = "system.SalesDemand";
+
+    /// <summary>The system role that keeps stock reservations in step with released orders and approved sales orders (owner decision 2026-10-31).</summary>
+    public const string StockReservations = "system.StockReservations";
 
     public static IReadOnlyCollection<string> All => Map.Keys;
 

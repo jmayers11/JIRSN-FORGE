@@ -84,6 +84,10 @@ builder.Services.AddForgeInventory();
 builder.Services.AddForgeSales();
 builder.Services.AddSingleton<Forge.Sales.Contracts.ISalesShipmentResolver, Forge.Host.Sales.SalesShipmentResolver>();
 builder.Services.AddSingleton<Forge.Host.Sales.AccountingExportService>();
+builder.Services.AddSingleton<Forge.Workforce.Contracts.ITimeChargeResolver, Forge.Host.Workforce.TimeChargeResolver>();
+builder.Services.AddSingleton<Forge.Host.Costing.JobCostService>();
+builder.Services.AddSingleton<Forge.Execution.IOrderIssueLookup, Forge.Host.Api.OrderIssueLookup>();
+builder.Services.AddSingleton<Forge.Host.Sales.PromiseDateService>();
 builder.Services.AddForgePlanning();
 builder.Services.AddSingleton<Forge.Host.Analyst.QmsAnalystService>();
 
@@ -154,6 +158,7 @@ builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Installation.InstallationSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Replanning.QualityReplanSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Sales.SalesDemandSubscriber>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Sales.StockReservationSubscriber>();
 builder.Services.AddSingleton<Forge.Host.Moves.TemporaryMoveReconciler>();
 builder.Services.AddSingleton<Forge.Host.Training.TrainingExpiryScanner>();
 builder.Services.AddSingleton<Forge.Host.Planning.MaterialRiskScanner>();
@@ -338,6 +343,9 @@ app.MapReturnAcceptanceEndpoints();
 app.MapProductAcceptanceEndpoints();
 app.MapCostingEndpoints();
 app.MapSalesEndpoints();
+app.MapTimekeepingEndpoints();
+app.MapAmendmentEndpoints();
+app.MapReservationEndpoints();
 app.MapInvestigationEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();
