@@ -47,6 +47,7 @@ import { timesheetPage } from './pages/timesheet.js';
 import { spcPage } from './pages/spc.js';
 import { supplierScorecardPage } from './pages/supplier-scorecard.js';
 import { interchangePage } from './pages/interchange.js';
+import { oeePage } from './pages/oee.js';
 import { riskRadarPage } from './pages/risk-radar.js';
 import { operationsVisualizationsPage } from './pages/operations-visualizations.js';
 import { loadDirectory } from './people.js';
@@ -102,13 +103,14 @@ const NAV = [
   { route: 'timesheet', label: 'Timekeeping', icon: 'calendar', page: timesheetPage },
   { route: 'costing', label: 'Costing', icon: 'analytics', page: costingPage },
   { route: 'integrations', label: 'Integrations', icon: 'knowledge', page: interchangePage },
+  { route: 'oee', label: 'Machines & OEE', icon: 'analytics', page: oeePage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: analystPage },
   { route: 'access', label: 'Access Control', icon: 'access', page: accessPage },
 ];
 const NAV_GROUPS = [
   ['Daily', ['daily-mission']],
-  ['Supervisor', ['supervisor', 'operations-visualizations', 'risk-radar', 'workforce-kanban', 'machine-kanban', 'performance']],
+  ['Supervisor', ['supervisor', 'operations-visualizations', 'risk-radar', 'workforce-kanban', 'machine-kanban', 'oee', 'performance']],
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
   ['Sell', ['sales']],
   ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'supplier-scorecard', 'maintenance', 'shipping']],
@@ -123,7 +125,7 @@ const NAV_ACCESS = {
   performance: ['workforce.read'],
   costing: ['costing.read'],
   sales: ['sales.read'],
-  integrations: ['interchange.read', 'interchange.manage'], spc: ['quality.read'], 'supplier-scorecard': ['procurement.read'],
+  integrations: ['interchange.read', 'interchange.manage'], oee: ['resources.read'], spc: ['quality.read'], 'supplier-scorecard': ['procurement.read'],
   timesheet: ['timekeeping.record', 'timekeeping.approve', 'timekeeping.read', 'timekeeping.codes.manage'],
   'risk-radar': ['planning.readiness.read'],
   'operations-visualizations': ['execution.orders.read', 'planning.readiness.read', 'workforce.read', 'workforce.supervise', 'workforce.manage', 'resources.floor-map.manage', 'planning.schedule.read', 'inventory.read'],

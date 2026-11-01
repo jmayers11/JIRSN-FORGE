@@ -12,7 +12,8 @@ public sealed record ReasonCodeRequest(string Code, ReasonKind Kind, StoppageCat
 
 public sealed record ReasonCodeChangeRequest(string Description, bool Active, string? Reason);
 
-public sealed record StoppageRequest(string MachineCode, StoppageCategory Category, string ReasonCode, long? OrderNumber, int? Sequence, string? Note, DateTimeOffset? StartedAt, string? Reason);
+/// <param name="ReportedBy">The operator who told the person entering it (owner decisions 2026-11-01).</param>
+public sealed record StoppageRequest(string MachineCode, StoppageCategory Category, string ReasonCode, long? OrderNumber, int? Sequence, string? Note, DateTimeOffset? StartedAt, string? Reason, Guid? ReportedBy = null);
 
 public sealed record StoppageEndRequest(DateTimeOffset? EndedAt, string? Reason);
 
@@ -45,7 +46,7 @@ internal static class ProductionActualsEndpoints
             return principal is null ? NotRegistered() : Results.Ok(await q.StoppagesAsync(principal, open ?? false, machine, days ?? 7, ct));
         });
         execution.MapPost("/stoppages", (HttpContext http, StoppageRequest b, ProductionActualsService s, CancellationToken ct) =>
-            Command(http, b.Reason, c => s.StartStoppageAsync(new StartStoppage(b.MachineCode, b.Category, b.ReasonCode, b.OrderNumber, b.Sequence, b.Note, b.StartedAt), c, ct)));
+            Command(http, b.Reason, c => s.StartStoppageAsync(new StartStoppage(b.MachineCode, b.Category, b.ReasonCode, b.OrderNumber, b.Sequence, b.Note, b.StartedAt, b.ReportedBy is { } p ? $"person:{p:D}" : null), c, ct)));
         execution.MapPost("/stoppages/{id:long}/end", (HttpContext http, long id, StoppageEndRequest b, ProductionActualsService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.EndStoppageAsync(new EndStoppage(id, b.EndedAt), c, ct)));
         execution.MapPost("/stoppages/{id:long}/root-causes", (HttpContext http, long id, RootCauseRequest b, ProductionActualsService s, CancellationToken ct) =>

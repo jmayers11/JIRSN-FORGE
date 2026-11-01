@@ -110,4 +110,6 @@ public static class SystemActors
     public const string Interchange = "system:edi";
 
     public const string Webhooks = "system:webhooks";
+
+    public const string Connectivity = "system:machines";
 }

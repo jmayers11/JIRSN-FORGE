@@ -36,6 +36,25 @@ public enum StoppageCategory
     Blocked,
 }
 
+/// <summary>How a stoppage reached Forge (owner decisions 2026-11-01).</summary>
+public enum StoppageSource
+{
+    /// <summary>Entered by a supervisor, maintenance or planner, possibly on behalf of the operator who reported it.</summary>
+    Recorded,
+
+    /// <summary>Entered by the operator at the shop-floor terminal.</summary>
+    Kiosk,
+
+    /// <summary>Detected from the machine's connection; it waits for a person to give it a reason.</summary>
+    Connector,
+}
+
+public static class StoppageReasons
+{
+    /// <summary>The reason a stoppage detected from the machine carries until a person explains it.</summary>
+    public const string Unexplained = "UNEXPLAINED";
+}
+
 /// <summary>A reason in the plant's own words. A reason code says what was reported, never a proven root cause.</summary>
 /// <param name="Category">For downtime reasons, the stoppage category the reason belongs to; null otherwise.</param>
 public sealed record ReasonCodeInfo(string Code, ReasonKind Kind, StoppageCategory? Category, string Description, bool Active, DateTimeOffset ChangedAt, string ChangedBy);
@@ -63,9 +82,16 @@ public sealed record StoppageInfo(
     DateTimeOffset StartedAt,
     string StartedBy,
     DateTimeOffset? EndedAt,
-    string? EndedBy)
+    string? EndedBy,
+    string? ReportedBy = null,
+    StoppageSource Source = StoppageSource.Recorded,
+    string? ReclassifiedBy = null,
+    DateTimeOffset? ReclassifiedAt = null)
 {
     public bool Open => EndedAt is null;
+
+    /// <summary>Detected from the machine and not yet given a reason.</summary>
+    public bool Unexplained => ReasonCode == StoppageReasons.Unexplained;
 
     /// <summary>Minutes stopped, up to <paramref name="now"/> while still open.</summary>
     public decimal Minutes(DateTimeOffset now) => Math.Round((decimal)((EndedAt ?? now) - StartedAt).TotalMinutes, 1);
@@ -100,6 +126,8 @@ public interface IProductionActualsStore
     Task<long?> InsertStoppageAsync(StoppageInfo stoppage, CancellationToken ct);
 
     Task EndStoppageAsync(long stoppageId, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task ReclassifyStoppageAsync(long stoppageId, StoppageCategory category, string reasonCode, string? note, string? reportedBy, DateTimeOffset at, string actor, CancellationToken ct);
 
     Task<long> InsertRootCauseAsync(RootCauseInfo cause, CancellationToken ct);
 

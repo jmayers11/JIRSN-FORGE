@@ -463,7 +463,7 @@ export async function shopFloorPage(page, ctx) {
           ${canAction(ctx.me, 'inventory.read') ? '<button class="btn" id="material-reconciliation" type="button">Material &amp; remnants</button>' : '<button class="btn" type="button" disabled title="Inventory read access is required">Material view unavailable</button>'}
           ${canAction(ctx.me, 'quality.inspect') ? '<button class="btn danger" id="flag-ncr" type="button">Flag defect / NCR</button>' : ''}
           ${canAction(ctx.me, 'holds.place') ? '<button class="btn danger" id="quality-hold" type="button">Place quality hold</button>' : ''}
-          ${labor.machineCode && canAction(ctx.me, 'maintenance.downtime.report') ? `<button class="btn danger big" id="kiosk-machine-down" type="button">Report machine down · ${esc(labor.machineCode)}</button>` : ''}
+          ${labor.machineCode && canAction(ctx.me, 'maintenance.downtime.report') ? `<button class="btn danger big" id="kiosk-machine-down" type="button">Report machine down · ${esc(labor.machineCode)}</button><button class="btn big" id="kiosk-downtime" type="button">Machine stopped — why? · ${esc(labor.machineCode)}</button><button class="btn" id="kiosk-downtime-end" type="button">Machine running again</button>` : ''}
           <button class="btn danger" id="stop">Stop work</button></div>
       </section>` : ''}
       ${awaiting.length ? `
@@ -525,6 +525,20 @@ export async function shopFloorPage(page, ctx) {
       confirmLabel: 'Report machine down', reasonRequired: true,
       fields: [{ name: 'description', label: 'What happened?', type: 'textarea', required: true, placeholder: 'Describe the observed fault or stop condition' }],
     }, (values, reason) => command(`/api/maintenance/machines/${encodeURIComponent(labor.machineCode)}/down`, { description: values.description }, reason), () => identify(session.badge, session)));
+    // Owner decisions 2026-11-01: the operator says why the machine stopped (explaining a stop the machine reported, if it did) and can ask maintenance to come.
+    $('#kiosk-downtime', page)?.addEventListener('click', async () => {
+      const codes = ((await tryGet('/api/execution/reason-codes')).data ?? []).filter(r => r.kind === 'Downtime' && r.active && r.code !== 'UNEXPLAINED');
+      await formModal({
+        title: `Why did ${labor.machineCode} stop?`, detail: 'Pick the reason. If the machine already reported the stop, this explains it.', confirmLabel: 'Report downtime', reasonRequired: false,
+        fields: [{ name: 'reasonCode', label: 'Reason', type: 'select', options: codes.map(r => [r.code, `${r.description} (${r.category})`]) },
+          { name: 'note', label: 'What happened', type: 'textarea' }, { name: 'requestMaintenance', label: 'Maintenance', type: 'check', text: 'Ask maintenance to come' }],
+      }, v => command('/api/shopfloor/downtime', { badge: session.badge, machineCode: labor.machineCode, category: codes.find(r => r.code === v.reasonCode)?.category, reasonCode: v.reasonCode,
+        note: v.note || null, requestMaintenance: !!v.requestMaintenance }), () => identify(session.badge, session));
+    });
+    $('#kiosk-downtime-end', page)?.addEventListener('click', async () => {
+      try { const r = await command('/api/shopfloor/downtime/end', { badge: session.badge, machineCode: labor.machineCode }); toast(r.message ?? 'Running again'); }
+      catch (error) { toast(error.message, true); }
+    });
     $('#work-instructions', page)?.addEventListener('click', () => attachmentsDrawer(`Work instructions — order #${labor.orderNumber}`, {
       type: 'ProductionOrder', id: labor.orderNumber, me: ctx.me,
       note: 'Current controlled instructions and reference documents attached to this production order.',

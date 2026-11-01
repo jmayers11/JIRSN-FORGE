@@ -98,6 +98,17 @@ builder.Services.AddSingleton<Forge.Host.Interchange.FolderExchange>();
 builder.Services.AddSingleton<Forge.Host.Interchange.WebhookDispatcher>();
 builder.Services.AddHttpClient("forge-webhooks");
 builder.Services.AddSingleton<Forge.Host.Interchange.IWebhookTransport, Forge.Host.Interchange.HttpWebhookTransport>();
+// Owner decisions 2026-11-01: machine connections a plant picks per machine, downtime at the terminal, OEE per shift.
+Forge.Connectivity.Infrastructure.ConnectivityRegistration.AddForgeConnectivity(builder.Services);
+builder.Services.AddHttpClient("forge-machines");
+builder.Services.AddSingleton<Forge.Host.Connectivity.IMachineConnector, Forge.Host.Connectivity.MTConnectConnector>();
+builder.Services.AddSingleton<Forge.Host.Connectivity.IMachineConnector, Forge.Host.Connectivity.OpcUaConnector>();
+builder.Services.AddSingleton<Forge.Host.Connectivity.IMachineConnector, Forge.Host.Connectivity.MqttConnector>();
+builder.Services.AddSingleton<Forge.Host.Connectivity.IMachineConnector, Forge.Host.Connectivity.ModbusTcpConnector>();
+builder.Services.AddSingleton<Forge.Host.Connectivity.IMachineConnector, Forge.Host.Connectivity.FileDropConnector>();
+builder.Services.AddSingleton<Forge.Host.Connectivity.IMachineConnector, Forge.Host.Connectivity.SimulatorConnector>();
+builder.Services.AddSingleton<Forge.Host.Connectivity.MachinePoller>();
+builder.Services.AddSingleton<Forge.Host.Connectivity.OeeService>();
 builder.Services.AddForgePlanning();
 builder.Services.AddSingleton<Forge.Host.Analyst.QmsAnalystService>();
 
@@ -172,6 +183,7 @@ builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Quality.SpcSubscriber>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Interchange.InterchangeProcessor>();
 builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Interchange.WebhookSubscriber>();
+builder.Services.AddSingleton<Forge.Kernel.Postgres.IEventSubscriber, Forge.Host.Connectivity.MachineDowntimeSubscriber>();
 builder.Services.AddSingleton<Forge.Host.Moves.TemporaryMoveReconciler>();
 builder.Services.AddSingleton<Forge.Host.Training.TrainingExpiryScanner>();
 builder.Services.AddSingleton<Forge.Host.Planning.MaterialRiskScanner>();
@@ -218,6 +230,7 @@ if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
     builder.Services.AddHostedService<Forge.Host.Propagation.PropagationRetryService>();
     builder.Services.AddHostedService<NotificationDeliveryWorker>();
     builder.Services.AddHostedService<Forge.Host.Interchange.InterchangeWorker>();
+    builder.Services.AddHostedService<Forge.Host.Connectivity.MachinePollingWorker>();
     builder.Services.AddHostedService<Forge.Host.Moves.TemporaryMoveMonitor>();
     builder.Services.AddHostedService<Forge.Host.Training.TrainingExpiryMonitor>();
     builder.Services.AddHostedService<Forge.Host.Planning.MaterialRiskMonitor>();
@@ -362,6 +375,7 @@ app.MapAmendmentEndpoints();
 app.MapReservationEndpoints();
 app.MapSpcEndpoints();
 app.MapInterchangeEndpoints();
+app.MapConnectivityEndpoints();
 app.MapInvestigationEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();

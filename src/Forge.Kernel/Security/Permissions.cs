@@ -185,6 +185,15 @@ public static class Permissions
 
     /// <summary>Process EDI documents and send webhooks (the system).</summary>
     public const string InterchangeProcess = "interchange.process";
+
+    /// <summary>Choose how each machine reports to Forge (manufacturing engineers, maintenance planners; owner decisions 2026-11-01).</summary>
+    public const string ConnectivityManage = "connectivity.manage";
+
+    /// <summary>See machine connections and what machines report.</summary>
+    public const string ConnectivityRead = "connectivity.read";
+
+    /// <summary>Record what machine connections report (the system).</summary>
+    public const string ConnectivityRecord = "connectivity.record";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -456,6 +465,7 @@ public static class Roles
         [SalesDemand] = [Permissions.DemandManage, Permissions.SalesRead, Permissions.EngineeringRead],
         [StockReservations] = [Permissions.InventoryReserve, Permissions.InventoryRead, Permissions.OrdersRead],
         [SpcMonitor] = [Permissions.SpcRecord, Permissions.QualityRead],
+        [Connectivity] = [Permissions.ConnectivityRecord, Permissions.ConnectivityRead, Permissions.DowntimeReport, Permissions.ResourcesRead, Permissions.ShopFloorRead, Permissions.OrdersRead],
         [Interchange] = [Permissions.InterchangeProcess, Permissions.InterchangeReceive, Permissions.InterchangeRead, Permissions.SalesManage, Permissions.SalesRead, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.EngineeringRead],
     };
 
@@ -501,6 +511,13 @@ public static class Roles
             Map[role] = [.. Map[role], Permissions.InterchangeRead, Permissions.InterchangeReview];
         foreach (var role in new[] { SalesManager, PurchasingManager })
             Map[role] = [.. Map[role], Permissions.InterchangeRead];
+        // Owner decisions 2026-11-01: engineers and maintenance planners choose machine connections; supervisors and technicians see them;
+        // the terminal reports downtime (and can ask maintenance to come) for the badged operator.
+        foreach (var role in new[] { ManufacturingEngineer, MaintenancePlanner })
+            Map[role] = [.. Map[role], Permissions.ConnectivityManage, Permissions.ConnectivityRead];
+        foreach (var role in new[] { Supervisor, MaintenanceTechnician })
+            Map[role] = [.. Map[role], Permissions.ConnectivityRead];
+        Map[ShopFloorTerminal] = [.. Map[ShopFloorTerminal], Permissions.DowntimeReport];
         // Owner decision 2026-10-27: supervisors and managers answer to several areas, so they can see every area of Forge. Seeing is all
         // this adds; recording, proposing and approving stay with each area's role. People views (attendance, development packets,
         // training requests) go to supervisors and the plant manager only; pay, the audit trail and access administration go to nobody new.
@@ -556,6 +573,9 @@ public static class Roles
 
     /// <summary>The system role that processes EDI, the folder exchange, webhooks and the partner API (owner decisions 2026-11-01).</summary>
     public const string Interchange = "system.Interchange";
+
+    /// <summary>The system role machine connections act as (owner decisions 2026-11-01).</summary>
+    public const string Connectivity = "system.Connectivity";
 
     public static IReadOnlyCollection<string> All => Map.Keys;
 

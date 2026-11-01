@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Forge.Connectivity</RootNamespace>
+    <Description>Machine connections a plant chooses per machine, and the state and counts they report.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Forge.Kernel\Forge.Kernel.csproj" />
+    <ProjectReference Include="..\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
+    <ProjectReference Include="..\Forge.Resources\Forge.Resources.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Infrastructure\Migrations\*.sql" />
+  </ItemGroup>
+</Project>

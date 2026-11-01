@@ -1,3 +1,7 @@
+## Machine connections, downtime and OEE (2026-11-01)
+
+Each machine can now report through MTConnect, MQTT, Modbus TCP, a CSV folder, a simulator or nothing (manual); OPC UA is listed but needs its library added. A connected machine that stops gets a stoppage that waits for a reason; operators explain stops at the terminal and can ask maintenance to come, and supervisors enter stops operators told them about. OEE is shown per machine per shift on the new Machines & OEE page.
+
 ## API and EDI (2026-11-01)
 
 Forge now exchanges ANSI X12 with customers and suppliers through an inbox/outbox folder: an incoming purchase order becomes a draft sales order for a Sales Manager to approve (or waits for review with the reasons), and Forge sends acknowledgments, ship notices, invoices and purchase orders, with 997s both ways. Partners and other systems get scoped API keys and signed, retried webhooks. New Integration Administrator role and Integrations page.

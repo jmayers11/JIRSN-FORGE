@@ -10,7 +10,8 @@ internal sealed class PostgresProductionActualsStore(PostgresUnitOfWork uow) : I
 {
     private const string StoppageSql =
         """
-        SELECT stoppage_id, machine_code, work_center_code, category, reason_code, order_number, sequence, expected_minutes, note, started_at, started_by, ended_at, ended_by
+        SELECT stoppage_id, machine_code, work_center_code, category, reason_code, order_number, sequence, expected_minutes, note, started_at, started_by, ended_at, ended_by,
+               reported_by, source, reclassified_by, reclassified_at
         FROM execution.stoppage
         """;
 
@@ -64,8 +65,8 @@ internal sealed class PostgresProductionActualsStore(PostgresUnitOfWork uow) : I
         ArgumentNullException.ThrowIfNull(stoppage);
         await using var cmd = uow.Command(
             """
-            INSERT INTO execution.stoppage (machine_code, work_center_code, category, reason_code, order_number, sequence, expected_minutes, note, started_at, started_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO execution.stoppage (machine_code, work_center_code, category, reason_code, order_number, sequence, expected_minutes, note, started_at, started_by, reported_by, source)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (machine_code) WHERE ended_at IS NULL DO NOTHING
             RETURNING stoppage_id
             """,
@@ -73,13 +74,21 @@ internal sealed class PostgresProductionActualsStore(PostgresUnitOfWork uow) : I
             new NpgsqlParameter { Value = (object?)stoppage.OrderNumber ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Bigint },
             new NpgsqlParameter { Value = (object?)stoppage.Sequence ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Integer },
             new NpgsqlParameter { Value = (object?)stoppage.ExpectedMinutes ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Numeric },
-            Text(stoppage.Note), stoppage.StartedAt, stoppage.StartedBy);
+            Text(stoppage.Note), stoppage.StartedAt, stoppage.StartedBy, Text(stoppage.ReportedBy), stoppage.Source.ToString());
         return await cmd.ExecuteScalarAsync(ct) is long id ? id : null;
     }
 
     public async Task EndStoppageAsync(long stoppageId, DateTimeOffset at, string actor, CancellationToken ct)
     {
         await using var cmd = uow.Command("UPDATE execution.stoppage SET ended_at = $2, ended_by = $3 WHERE stoppage_id = $1 AND ended_at IS NULL", stoppageId, at, actor);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task ReclassifyStoppageAsync(long stoppageId, StoppageCategory category, string reasonCode, string? note, string? reportedBy, DateTimeOffset at, string actor, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            "UPDATE execution.stoppage SET category = $2, reason_code = $3, note = COALESCE($4, note), reported_by = COALESCE($5, reported_by), reclassified_at = $6, reclassified_by = $7 WHERE stoppage_id = $1",
+            stoppageId, category.ToString(), reasonCode, Text(note), Text(reportedBy), at, actor);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -102,7 +111,9 @@ internal sealed class PostgresProductionActualsStore(PostgresUnitOfWork uow) : I
         r.GetInt64(0), r.GetString(1), r.GetString(2), Enum.Parse<StoppageCategory>(r.GetString(3)), r.GetString(4),
         r.IsDBNull(5) ? null : r.GetInt64(5), r.IsDBNull(6) ? null : r.GetInt32(6), r.IsDBNull(7) ? null : r.GetDecimal(7) / 1.0000000000000000000000000000m,
         r.IsDBNull(8) ? null : r.GetString(8), r.GetFieldValue<DateTimeOffset>(9), r.GetString(10),
-        r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11), r.IsDBNull(12) ? null : r.GetString(12));
+        r.IsDBNull(11) ? null : r.GetFieldValue<DateTimeOffset>(11), r.IsDBNull(12) ? null : r.GetString(12),
+        r.IsDBNull(13) ? null : r.GetString(13), Enum.Parse<StoppageSource>(r.GetString(14)), r.IsDBNull(15) ? null : r.GetString(15),
+        r.IsDBNull(16) ? null : r.GetFieldValue<DateTimeOffset>(16));
 
     private static RootCauseInfo ReadRootCause(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetInt64(1), r.GetString(2), r.GetString(3), r.GetFieldValue<DateTimeOffset>(4), r.GetString(5),

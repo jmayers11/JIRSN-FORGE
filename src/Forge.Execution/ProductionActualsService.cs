@@ -16,7 +16,12 @@ public sealed record DefineReasonCode(string Code, ReasonKind Kind, StoppageCate
 public sealed record ChangeReasonCode(string Code, string Description, bool Active);
 
 /// <param name="StartedAt">When the machine stopped, if earlier than now (reported after the fact, at most 7 days back).</param>
-public sealed record StartStoppage(string MachineCode, StoppageCategory Category, string ReasonCode, long? OrderNumber = null, int? Sequence = null, string? Note = null, DateTimeOffset? StartedAt = null);
+/// <param name="ReportedBy">The person who reported it ("person:{id}") when someone else enters it for them, or the operator at the terminal.</param>
+public sealed record StartStoppage(string MachineCode, StoppageCategory Category, string ReasonCode, long? OrderNumber = null, int? Sequence = null, string? Note = null, DateTimeOffset? StartedAt = null,
+    string? ReportedBy = null, StoppageSource Source = StoppageSource.Recorded);
+
+/// <summary>Gives a stoppage its reason after the fact: most often one detected from the machine (owner decisions 2026-11-01).</summary>
+public sealed record ReclassifyStoppage(long StoppageId, StoppageCategory Category, string ReasonCode, string? Note = null, string? ReportedBy = null);
 
 public sealed record EndStoppage(long StoppageId, DateTimeOffset? EndedAt = null);
 
@@ -34,6 +39,13 @@ public sealed record ReasonCodeChanged(string Code, string Change) : IDomainEven
 public sealed record StoppageStarted(long StoppageId, string MachineCode, string Category, string ReasonCode, long? OrderNumber, int? Sequence) : IDomainEvent
 {
     public static string EventType => nameof(StoppageStarted);
+
+    public static int SchemaVersion => 1;
+}
+
+public sealed record StoppageReclassified(long StoppageId, string MachineCode, string Category, string ReasonCode, string FromReasonCode) : IDomainEvent
+{
+    public static string EventType => nameof(StoppageReclassified);
 
     public static int SchemaVersion => 1;
 }
@@ -135,6 +147,14 @@ public sealed class ProductionActualsService(CommandPipeline pipeline)
                 throw new CommandRejectedException("category_mismatch", $"{reason.Code} is a {reason.Category} reason, not {c.Category}. Choose a {c.Category} reason or the {reason.Category} category.");
             }
 
+            if ((reason.Code == StoppageReasons.Unexplained) != (c.Source == StoppageSource.Connector))
+            {
+                throw new CommandRejectedException("reason_required", c.Source == StoppageSource.Connector
+                    ? "A stoppage detected from the machine starts unexplained."
+                    : "Choose the reason the machine stopped; unexplained is only for stoppages a machine connection detects.");
+            }
+
+            var reportedBy = await ReporterAsync(uow, c.ReportedBy, ct);
             var startedAt = c.StartedAt ?? now;
             if (startedAt > now || startedAt < now - MaxBackdate)
             {
@@ -150,7 +170,7 @@ public sealed class ProductionActualsService(CommandPipeline pipeline)
 
             var (orderNumber, sequence, expected, program) = await OperationAsync(uow, context, machine, c, ct);
             var stoppage = new StoppageInfo(0, machineCode, machine.WorkCenterCode, c.Category, reason.Code, orderNumber, sequence, expected,
-                string.IsNullOrWhiteSpace(c.Note) ? null : c.Note.Trim(), startedAt, context.Actor, null, null);
+                string.IsNullOrWhiteSpace(c.Note) ? null : c.Note.Trim(), startedAt, context.Actor, null, null, reportedBy, c.Source);
             var id = await uow.Store<IProductionActualsStore>().InsertStoppageAsync(stoppage, ct)
                 ?? throw new CommandRejectedException("machine_already_stopped", $"{machineCode} already has an open stoppage; end it first.");
             var key = id.ToString(CultureInfo.InvariantCulture);
@@ -159,6 +179,45 @@ public sealed class ProductionActualsService(CommandPipeline pipeline)
                 [pipeline.Event(new StoppageStarted(id, machineCode, c.Category.ToString(), reason.Code, orderNumber, sequence), context, SourceContext, StoppageEntity, key, program)],
                 new AuditChange(StoppageEntity, key, null, CanonicalJson.Serialize(stoppage with { StoppageId = id }), program));
         }, ct);
+    }
+
+    public Task<CommandResult> ReclassifyStoppageAsync(ReclassifyStoppage c, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(c);
+        var key = c.StoppageId.ToString(CultureInfo.InvariantCulture);
+        var spec = new CommandSpec(SourceContext, nameof(ReclassifyStoppage), Permissions.DowntimeReport, ResourceRef.Of(StoppageEntity, key));
+        return pipeline.ExecuteAsync(spec, c, context, async (uow, now) =>
+        {
+            var stoppage = await uow.Store<IProductionActualsLookup>().FindStoppageAsync(c.StoppageId, ct)
+                ?? throw new CommandRejectedException("stoppage_not_found", $"Stoppage {key} does not exist.");
+            var reason = await ActiveReasonAsync(uow, c.ReasonCode, ReasonKind.Downtime, ct);
+            if (reason.Code == StoppageReasons.Unexplained)
+                throw new CommandRejectedException("reason_required", "Choose the reason the machine stopped.");
+            if (reason.Category != c.Category)
+                throw new CommandRejectedException("category_mismatch", $"{reason.Code} is a {reason.Category} reason, not {c.Category}.");
+            if (c.Category is StoppageCategory.Setup or StoppageCategory.Changeover && stoppage.OrderNumber is null)
+                throw new CommandRejectedException("operation_required", "A setup or changeover names the operation it prepares; record it as a new stoppage instead.");
+            if (stoppage.ReasonCode == reason.Code && stoppage.Category == c.Category && string.IsNullOrWhiteSpace(c.Note))
+                return CommandOutcome.NoChange(CommandResult.NoChange(key, "Nothing to change."));
+            var reportedBy = await ReporterAsync(uow, c.ReportedBy, ct);
+            var note = string.IsNullOrWhiteSpace(c.Note) ? null : c.Note.Trim();
+            await uow.Store<IProductionActualsStore>().ReclassifyStoppageAsync(c.StoppageId, c.Category, reason.Code, note, reportedBy, now, context.Actor, ct);
+            var changed = stoppage with { Category = c.Category, ReasonCode = reason.Code, Note = note ?? stoppage.Note, ReportedBy = reportedBy ?? stoppage.ReportedBy, ReclassifiedAt = now, ReclassifiedBy = context.Actor };
+            return new CommandOutcome(
+                CommandResult.Ok(key, $"{stoppage.MachineCode} stoppage {key}: {c.Category}, {reason.Code} ({reason.Description}){(stoppage.Unexplained ? " — explained" : $" (was {stoppage.ReasonCode})")}."),
+                [pipeline.Event(new StoppageReclassified(c.StoppageId, stoppage.MachineCode, c.Category.ToString(), reason.Code, stoppage.ReasonCode), context, SourceContext, StoppageEntity, key)],
+                new AuditChange(StoppageEntity, key, CanonicalJson.Serialize(stoppage), CanonicalJson.Serialize(changed)));
+        }, ct);
+    }
+
+    /// <summary>The person a stoppage was reported by, checked to be someone Forge knows.</summary>
+    private static async Task<string?> ReporterAsync(IKernelUnitOfWork uow, string? reportedBy, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(reportedBy)) return null;
+        var raw = reportedBy.Trim();
+        if (!raw.StartsWith("person:", StringComparison.Ordinal) || !Guid.TryParse(raw[7..], out var id) || await uow.People.LoadPrincipalAsync(new PersonId(id), ct) is null)
+            throw new CommandRejectedException("unknown_reporter", "The person who reported the stoppage is not known to Forge.");
+        return "person:" + id.ToString("D", CultureInfo.InvariantCulture);
     }
 
     public Task<CommandResult> EndStoppageAsync(EndStoppage c, CommandContext context, CancellationToken ct)
