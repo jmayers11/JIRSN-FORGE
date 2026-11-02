@@ -410,6 +410,7 @@ app.MapCustomerPartEndpoints();
 app.MapHazcomEndpoints();
 app.MapFinanceEndpoints();
 app.MapCarrierEndpoints();
+app.MapForecastEndpoints();
 app.MapInvestigationEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();

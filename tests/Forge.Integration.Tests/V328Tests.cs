@@ -23,7 +23,7 @@ public sealed class V328Tests(PostgresFixture postgres)
                 await using var baseline = new NpgsqlConnection(sourceConnection);
                 await baseline.OpenAsync();
                 await using var migrations = new NpgsqlCommand("SELECT count(*) FROM public.forge_schema_migrations", baseline);
-                Assert.Equal(201L, await migrations.ExecuteScalarAsync());
+                Assert.Equal(204L, await migrations.ExecuteScalarAsync());
             }
             await using (var app = new ForgeApp(sourceConnection))
             {

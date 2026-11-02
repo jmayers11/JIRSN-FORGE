@@ -48,11 +48,31 @@ public static class StockReservationQueries
         var lookup = uow.Store<IInventoryLookup>();
         var issued = (await lookup.ListOrderIssuesAsync(ct)).ToDictionary(i => (i.OrderNumber, i.PartNumber), i => i.NetIssued);
         var shipped = (await lookup.ListShippedByDemandAsync(ct)).ToDictionary(s => (s.DemandId, s.PartNumber), s => s.Shipped);
+        // Owner decisions 2026-11-02: a reservation of an approved alternate is drawn by issues of that alternate; those issues do not
+        // also draw the order's reservation of the part the BOM calls for.
+        var alternates = (await uow.Store<IAllocationLookup>().ListReservationAlternatesAsync(ct)).ToDictionary(a => a.ReservationId);
+        IReadOnlyList<AlternateIssue> altIssues = alternates.Count == 0 ? [] : await uow.Store<IAllocationLookup>().ListAlternateIssuesAsync(ct);
+        var altReservations = active.Where(r => alternates.ContainsKey(r.ReservationId)).ToList();
         return active.Select(r =>
         {
-            var drawn = Math.Max(0m, r.Target == ReservationTarget.ProductionOrder
-                ? issued.GetValueOrDefault((r.OrderNumber!.Value, r.PartNumber))
-                : shipped.GetValueOrDefault((r.DemandId!.Value, r.PartNumber)));
+            decimal drawn;
+            if (alternates.TryGetValue(r.ReservationId, out var alt))
+            {
+                drawn = altIssues.Where(i => i.OrderNumber == r.OrderNumber && i.PartNumber == r.PartNumber && i.PrimaryPart == alt.PrimaryPart).Sum(i => i.Quantity);
+            }
+            else if (r.Target == ReservationTarget.ProductionOrder)
+            {
+                var covered = altReservations.Where(x => x.OrderNumber == r.OrderNumber && alternates[x.ReservationId].PrimaryPart == r.PartNumber)
+                    .Sum(x => Math.Min(altIssues.Where(i => i.OrderNumber == x.OrderNumber && i.PartNumber == x.PartNumber && i.PrimaryPart == r.PartNumber).Sum(i => i.PrimaryQuantity),
+                        x.Quantity / alternates[x.ReservationId].Factor));
+                drawn = issued.GetValueOrDefault((r.OrderNumber!.Value, r.PartNumber)) - covered;
+            }
+            else
+            {
+                drawn = shipped.GetValueOrDefault((r.DemandId!.Value, r.PartNumber));
+            }
+
+            drawn = Math.Max(0m, drawn);
             return new ReservationBalance(r, drawn, Math.Max(0m, r.Quantity - drawn));
         }).ToList();
     }

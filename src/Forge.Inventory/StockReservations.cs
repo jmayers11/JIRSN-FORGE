@@ -64,6 +64,21 @@ public sealed class StockReservationService(CommandPipeline pipeline)
                 ? order.Materials.GroupBy(m => m.ComponentPartNumber).ToDictionary(g => g.Key, g => Math.Max(0m, g.Sum(m => m.RequiredQuantity) - issued.GetValueOrDefault(g.Key)))
                 : new Dictionary<string, decimal>();
             var existing = (await uow.Store<IStockReservationLookup>().ListReservationsAsync(ReservationTarget.ProductionOrder, order.OrderNumber, ct)).Where(r => r.Status == ReservationStatus.Active).ToList();
+            // Owner decisions 2026-11-02: an approved alternate's reservation stands in for part of its primary's need, and is kept while the order holds material.
+            var alternates = (await uow.Store<IAllocationLookup>().ListReservationAlternatesAsync(ct)).ToDictionary(a => a.ReservationId);
+            if (holding && existing.Any(r => alternates.ContainsKey(r.ReservationId)))
+            {
+                var balances = (await StockReservationQueries.OutstandingAsync(uow, null, ct)).ToDictionary(x => x.Reservation.ReservationId);
+                foreach (var alt in existing.Where(r => alternates.ContainsKey(r.ReservationId)))
+                {
+                    var a = alternates[alt.ReservationId];
+                    if (needs.TryGetValue(a.PrimaryPart, out var n))
+                        needs[a.PrimaryPart] = Math.Max(0m, n - (balances.TryGetValue(alt.ReservationId, out var balance) ? balance.Outstanding : 0m) / a.Factor);
+                }
+
+                existing = existing.Where(r => !alternates.ContainsKey(r.ReservationId)).ToList();
+            }
+
             var parts = needs.Keys.Concat(existing.Select(r => r.PartNumber)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
             return await SyncAsync(uow, context, now, ReservationTarget.ProductionOrder, order.OrderNumber, parts.Select(p => (p, needs.GetValueOrDefault(p))).ToList(), existing,
                 holding ? $"order {id} released" : $"order {id} is {order.Status}", ct);

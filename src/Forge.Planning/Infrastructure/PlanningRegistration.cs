@@ -15,6 +15,8 @@ public static class PlanningRegistration
         services.AddForgeStore<IResourceUsage>(uow => new ResourceUsage(uow));
         services.AddForgeStore<Forge.Kernel.Holds.IHoldPropagationLookup>(uow => new HoldPropagationLookup(uow));
         services.AddForgeStore<IDemandStore>(uow => new PostgresDemandStore(uow));
+        services.AddForgeStore<IForecastStore>(uow => new PostgresForecastStore(uow));
+        services.AddSingleton<ForecastService>();
         services.AddForgeStore<IGoalStore>(uow => new PostgresGoalStore(uow));
         services.AddForgeStore<IMaterialRiskStore>(uow => new PostgresMaterialRiskStore(uow));
         services.AddForgeStore<IReplacementOrderStore>(uow => new PostgresReplacementOrderStore(uow));

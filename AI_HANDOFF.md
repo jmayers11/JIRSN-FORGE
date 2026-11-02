@@ -1822,3 +1822,31 @@ opt-in, a shortage is flagged and never blocks production.
 
 Migrations: resources `0009`, inventory `0033`, `0034`, procurement `0008`, sales `0003`, kernel `0046` (201 in total). Tests:
 `FinanceTests` (4), `tests/ui/finance-pages.test.mjs`.
+
+## Claude: demand forecasting and the V5 allocation optimizer, on simulated history (2026-11-02)
+
+Owner request 2026-11-02: no real history or rules yet, so build both with simulated history and default rules. Both only propose; a
+person approves.
+
+- **Forecasting** (Planning `ForecastEngine`, `ForecastService`; `planning.demand_history`, `forecast_policy`, `forecast_run`,
+  `forecast_line`; page Plan → Forecast & Allocation). History = shipped quantities by month + imported months + simulated months
+  (`GenerateSimulatedHistory`: finished parts, deterministic by seed, trend/season/noise, some sparse parts), each counted by source and
+  flagged "simulated" wherever shown. Checks: short history, months without records, sparse demand, one-off spikes. Methods: last month,
+  same month last year (13+ months), 3-month average, smoothed average (fitted weight), Croston (sparse). Each is tested one step ahead on
+  the last 6 months; lowest mean absolute error wins (ties to the simpler method); the range is from the winner's test errors (80 % by
+  default). Defaults 6 months ahead, 6 held out; `SetForecastPolicy` changes them and whether simulated history counts. A planner approves
+  a part from the latest run: each month becomes `Forecast` demand `forecast:PART/yyyy-MM`, less customer orders already due that month;
+  re-approval updates or cancels. Clear simulated history once real history exists. Permission `planning.forecast.manage` (Planner);
+  approval uses `planning.demand.manage`.
+- **Allocation optimizer** (Inventory `AllocationOptimizer`, `AllocationService`; `inventory.allocation_policy`,
+  `inventory.reservation_alternate`). For every released order still short after issues and its own reservations, free stock (usable and not
+  reserved) is ranked to orders by the plant rules (default earliest due date, highest priority, smallest shortage); the rest is offered from
+  approved alternates the BOM line allows (automatic when the line is Automatic and the alternate is an equivalent kind, otherwise review
+  first). Stock reserved for other work is never taken; each line says why, what was ruled out and which lower-ranked orders stay short.
+  Approving a line (`planning.allocation.approve`: Planner, InventoryController) re-reads the proposal and reserves it; an alternate
+  reservation is linked to its primary and factor. `StockReservationQueries.OutstandingAsync` draws alternate reservations by issues of the
+  alternate (those issues no longer also draw the primary reservation), and `SyncOrderReservations` keeps alternate reservations while the
+  order holds material and nets them from the primary's need. Not covered: WIP, remnants and process-aware netting.
+
+Migrations: planning `0011`, inventory `0035`, kernel `0047` (204 in total). Tests: `ForecastAllocationTests` (2), Planning
+`ForecastEngineTests` (5), `tests/ui/forecast-page.test.mjs`.

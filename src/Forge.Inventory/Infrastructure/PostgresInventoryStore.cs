@@ -560,6 +560,9 @@ public static class InventoryRegistration
         services.AddForgeStore<ICarrierLookup>(uow => new PostgresCarrierStore(uow));
         services.AddForgeStore<ICarrierStore>(uow => new PostgresCarrierStore(uow));
         services.AddSingleton<CarrierService>();
+        services.AddForgeStore<IAllocationLookup>(uow => new PostgresAllocationStore(uow));
+        services.AddForgeStore<IAllocationStore>(uow => new PostgresAllocationStore(uow));
+        services.AddSingleton<AllocationService>();
         services.AddForgeStore<ICostingStore>(uow => new PostgresCostingStore(uow));
         services.AddForgeStore<ICostingLookup>(uow => new PostgresCostingStore(uow));
         services.AddSingleton<CostingService>();

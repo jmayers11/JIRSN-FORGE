@@ -1981,3 +1981,7 @@ Owner asked whether SDS was a gap, then for HazCom training as a site-wide requi
 ## Claude: credit, supplier invoices, carriers and backflush - 2026-11-02
 
 Owner asked to add customer payments and credit holds, supplier invoices with matching, shipping carriers and automatic material deduction, each one a company can turn off, and what demand forecasting and the V5 optimizer need from them. Built all four behind plant feature switches (Settings → Features) with new Credit Manager and Accounts Payable Clerk roles; explained that forecasting needs real demand history and rules, and the optimizer needs scope approval and priority and substitute rules.
+
+## Claude: forecasting and allocation on simulated history - 2026-11-02
+
+Owner has no demand history or rules yet and asked for simulated history and rules. Built demand forecasting (simulated history marked everywhere, five methods tested on held-out months, planner approval into forecast demand) and the V5 allocation optimizer (free stock and approved alternates ranked to short released orders, never taking reserved stock, approved into reservations), with default rules the plant can change.
