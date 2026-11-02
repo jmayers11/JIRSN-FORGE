@@ -8,6 +8,7 @@
     <ProjectReference Include="..\Forge.Kernel.Postgres\Forge.Kernel.Postgres.csproj" />
     <ProjectReference Include="..\Forge.Resources\Forge.Resources.csproj" />
     <ProjectReference Include="..\Forge.Engineering\Forge.Engineering.csproj" />
+    <ProjectReference Include="..\Forge.Hazcom\Forge.Hazcom.csproj" />
     <ProjectReference Include="..\Forge.Execution\Forge.Execution.csproj" />
     <ProjectReference Include="..\Forge.Procurement\Forge.Procurement.csproj" />
     <ProjectReference Include="..\Forge.Quality\Forge.Quality.csproj" />

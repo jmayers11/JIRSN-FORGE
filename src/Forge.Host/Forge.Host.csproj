@@ -20,6 +20,7 @@
     <ProjectReference Include="..\Forge.Sales\Forge.Sales.csproj" />
     <ProjectReference Include="..\Forge.Interchange\Forge.Interchange.csproj" />
     <ProjectReference Include="..\Forge.Connectivity\Forge.Connectivity.csproj" />
+    <ProjectReference Include="..\Forge.Hazcom\Forge.Hazcom.csproj" />
     <ProjectReference Include="..\Forge.Planning\Forge.Planning.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Client" />

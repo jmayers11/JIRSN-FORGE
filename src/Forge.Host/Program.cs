@@ -107,6 +107,9 @@ var dataProtection = Microsoft.AspNetCore.DataProtection.DataProtectionBuilderEx
 if (OperatingSystem.IsWindows()) Microsoft.AspNetCore.DataProtection.DataProtectionBuilderExtensions.ProtectKeysWithDpapi(dataProtection);
 builder.Services.AddSingleton<Forge.Host.Security.ISecretProtector, Forge.Host.Security.DataProtectionSecretProtector>();
 builder.Services.AddSingleton<Forge.Sales.CustomerPartService>();
+// Owner decisions 2026-11-01: hazard communication (chemical register and safety data sheets).
+Forge.Hazcom.Infrastructure.HazcomRegistration.AddForgeHazcom(builder.Services);
+builder.Services.AddSingleton<Forge.Host.Hazcom.HazcomReviewScanner>();
 // Owner decisions 2026-11-01: machine connections a plant picks per machine, downtime at the terminal, OEE per shift.
 Forge.Connectivity.Infrastructure.ConnectivityRegistration.AddForgeConnectivity(builder.Services);
 builder.Services.AddHttpClient("forge-machines");
@@ -240,6 +243,7 @@ if (builder.Configuration.GetValue("Forge:BackgroundServices:Enabled", true))
     builder.Services.AddHostedService<NotificationDeliveryWorker>();
     builder.Services.AddHostedService<Forge.Host.Interchange.InterchangeWorker>();
     builder.Services.AddHostedService<Forge.Host.Connectivity.MachinePollingWorker>();
+    builder.Services.AddHostedService<Forge.Host.Hazcom.HazcomReviewMonitor>();
     builder.Services.AddHostedService<Forge.Host.Moves.TemporaryMoveMonitor>();
     builder.Services.AddHostedService<Forge.Host.Training.TrainingExpiryMonitor>();
     builder.Services.AddHostedService<Forge.Host.Planning.MaterialRiskMonitor>();
@@ -386,6 +390,7 @@ app.MapSpcEndpoints();
 app.MapInterchangeEndpoints();
 app.MapConnectivityEndpoints();
 app.MapCustomerPartEndpoints();
+app.MapHazcomEndpoints();
 app.MapInvestigationEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();

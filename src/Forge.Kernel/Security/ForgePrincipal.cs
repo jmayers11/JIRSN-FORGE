@@ -112,4 +112,6 @@ public static class SystemActors
     public const string Webhooks = "system:webhooks";
 
     public const string Connectivity = "system:machines";
+
+    public const string Hazcom = "system:hazcom";
 }

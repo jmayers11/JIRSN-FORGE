@@ -48,6 +48,7 @@ import { spcPage } from './pages/spc.js';
 import { supplierScorecardPage } from './pages/supplier-scorecard.js';
 import { interchangePage } from './pages/interchange.js';
 import { oeePage } from './pages/oee.js';
+import { chemicalsPage } from './pages/chemicals.js';
 import { riskRadarPage } from './pages/risk-radar.js';
 import { operationsVisualizationsPage } from './pages/operations-visualizations.js';
 import { loadDirectory } from './people.js';
@@ -104,6 +105,7 @@ const NAV = [
   { route: 'costing', label: 'Costing', icon: 'analytics', page: costingPage },
   { route: 'integrations', label: 'Integrations', icon: 'knowledge', page: interchangePage },
   { route: 'oee', label: 'Machines & OEE', icon: 'analytics', page: oeePage },
+  { route: 'chemicals', label: 'Chemicals & SDS', icon: 'quality', page: chemicalsPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: analystPage },
   { route: 'access', label: 'Access Control', icon: 'access', page: accessPage },
@@ -113,7 +115,7 @@ const NAV_GROUPS = [
   ['Supervisor', ['supervisor', 'operations-visualizations', 'risk-radar', 'workforce-kanban', 'machine-kanban', 'oee', 'performance']],
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
   ['Sell', ['sales']],
-  ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'supplier-scorecard', 'maintenance', 'shipping']],
+  ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'chemicals', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'supplier-scorecard', 'maintenance', 'shipping']],
   ['Quality', ['quality', 'spc', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
   ['Admin', ['my-work', 'timesheet', 'notifications', 'workforce', 'costing', 'integrations', 'integrity', 'reports', 'analyst', 'access']],
 ];

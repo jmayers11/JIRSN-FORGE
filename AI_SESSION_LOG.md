@@ -1973,3 +1973,7 @@ Reviewed the handoffs and the device working tree. Codex had committed the opera
 ## Claude: Production Risk Radar — 2026-10-27
 
 Owner chose the views (current, 7 days, 30 days) and bands (High to 6 days, Medium 7–29, Low 30+). Added a stated impact time to each operational evidence signal in the same read snapshot, a Risk Radar service and endpoint, and a three-lane page. Work Centers also got one section per tab and a card grid after owner feedback.
+
+## Claude: SDS and HazCom training - 2026-11-01
+
+Owner asked whether SDS was a gap, then for HazCom training as a site-wide requirement plants can change. Added the Hazcom context (chemical register, SDS approval by a new EHS Coordinator, purchase and receipt gate, kiosk and binder access, three-year reviews) and HazCom training: a seeded Safety qualification renewed every 365 days, a site-wide new-employee requirement, a plant-editable renewal period, a training status view with bulk requests, and a notice when a new hazardous chemical needs a training decision.

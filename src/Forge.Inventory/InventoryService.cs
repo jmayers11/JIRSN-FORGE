@@ -311,6 +311,8 @@ public sealed partial class InventoryService(CommandPipeline pipeline, ProductRe
         var reasonRequired = c.PoNumber is null;
         return PostAsync(nameof(ReceiveStock), c.PartNumber, c, context, Permissions.InventoryTransact, reasonRequired, async (uow, item, now) =>
         {
+            // Owner decision 2026-11-01: a hazardous chemical is received only once its safety data sheet is approved.
+            await Forge.Hazcom.Contracts.SdsGate.RequireAsync(uow, item.PartNumber, "Receipt", ct);
             var location = await CompanyLocationAsync(uow, c.LocationCode, ct);
             var lot = RequireLot(item, c.LotNumber);
             var quantity = RequireQuantity(item, c.Quantity);

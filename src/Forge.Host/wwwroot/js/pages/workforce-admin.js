@@ -99,7 +99,7 @@ export async function appendWorkforceAdmin(page, me, initialPersonId = null) {
     const worker = workers.find(p => p.personId === selected?.personId) ?? null;
     const actions = personActionsForWorker(me, worker, selected?.personId);
     section.innerHTML = `<header><h2>Manage people</h2><div class="spacer"></div>
-        ${canAction(me, 'competency.manage') ? '<button class="btn small ghost" id="prerequisite">Add qualification prerequisite</button>' : ''}</header>
+        ${canAction(me, 'competency.manage') ? '<button class="btn small ghost" id="validity">Change renewal period</button><button class="btn small ghost" id="prerequisite">Add qualification prerequisite</button>' : ''}</header>
       ${people.error ? errorBlock(people.error, 'people') : !list.length ? emptyBlock('Nobody registered', 'Register people under Access Control.') : `
       <div class="toolbar"><label for="wf-person">Person</label><select class="select" id="wf-person"><option value="">— choose —</option>
         ${list.map(p => `<option value="${p.personId}" ${selected?.personId === p.personId ? 'selected' : ''}>${esc(p.displayName)}</option>`).join('')}</select></div>
@@ -128,6 +128,7 @@ export async function appendWorkforceAdmin(page, me, initialPersonId = null) {
         </tbody></table>`}` : '<div class="muted">Choose a person to manage their work, presence, badge and qualifications.</div>'}`}`;
     $('#wf-person', section)?.addEventListener('change', e => select(e.target.value));
     $('#prerequisite', section)?.addEventListener('click', prerequisite);
+    $('#validity', section)?.addEventListener('click', validity);
     $('[data-reallocation-preview]', section)?.addEventListener('click', previewAssignment);
     $$('[data-wf]', section).forEach(b => b.addEventListener('click', () => run(b.dataset.wf)));
     $('#wf-photo-file', section)?.addEventListener('change', async event => {
@@ -301,6 +302,16 @@ export async function appendWorkforceAdmin(page, me, initialPersonId = null) {
     formModal({ title: `${word} ${typeName(code)} for ${selected.displayName}`, detail: kind === 'suspensions' ? 'They cannot do work needing it until it is reinstated by certification.' : 'Revocation is final; a new certification is needed.',
       fields: [], confirmLabel: word, reasonRequired: true },
     (_, reason) => command(`/api/competency/people/${selected.personId}/${kind}`, { code }, reason), after);
+  }
+
+  // Each plant sets how often a qualification must be renewed (HazCom training starts at 365 days). Leave it empty for no expiry.
+  function validity() {
+    formModal({ title: 'Change renewal period', detail: 'How long a certification stays valid. Qualifications already held keep their expiry until they are renewed.',
+      fields: [{ name: 'code', label: 'Qualification', type: 'select', required: true, blank: '— choose —', options: typeOptions() },
+        { name: 'validityDays', label: 'Valid for (days, empty for no expiry)', type: 'number', min: 1, max: 3650 }],
+      confirmLabel: 'Save', reasonRequired: true },
+    (v, reason) => command(`/api/competency/qualification-types/${encodeURIComponent(v.code)}/validity`, { validityDays: v.validityDays === '' || v.validityDays == null ? null : Number(v.validityDays) }, reason),
+    async () => { types = await tryGet('/api/competency/qualification-types'); render(); });
   }
 
   function prerequisite() {

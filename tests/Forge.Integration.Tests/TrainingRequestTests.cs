@@ -58,15 +58,16 @@ public sealed class TrainingRequestTests(PostgresFixture postgres)
         await plant.Ok(e, "/api/workforce/onboarding-requirements", new { qualificationCode = "FIRST-AID", dueDays = 14, note = "Before working alone", reason = "EHS onboarding" });
         await plant.Ok(trainer, "/api/workforce/onboarding-requirements", new { workCenterCode = "SLIT-WC", qualificationCode = "SLIT-II", dueDays = 30, reason = "Slitting onboarding" });
         Assert.Contains("requirement_exists", await (await plant.Try(e, "/api/workforce/onboarding-requirements", new { qualificationCode = "FIRST-AID", dueDays = 7, reason = "Again" })).Content.ReadAsStringAsync(), StringComparison.Ordinal);
-        Assert.Equal(2, (await Get(sup, "/api/workforce/onboarding-requirements")).GetArrayLength());
+        // HazCom training is a site-wide requirement out of the box (owner decision 2026-11-01); the plant adds its own on top.
+        Assert.Equal(3, (await Get(sup, "/api/workforce/onboarding-requirements")).GetArrayLength());
 
         // Registering a new hire in Slitting opens both requests, and technical trainers hear about them.
         await plant.Worker("newbie", "SLIT-WC");
         var newbie = plant.People["newbie"];
         var opened = await Get(trainer, $"/api/workforce/training-requests?personId={newbie}&open=true");
-        Assert.Equal(new[] { "FIRST-AID", "SLIT-II" }, opened.EnumerateArray().Select(r => r.GetProperty("qualificationCode").GetString()).ToArray());
+        Assert.Equal(new[] { "FIRST-AID", "HAZCOM", "SLIT-II" }, opened.EnumerateArray().Select(r => r.GetProperty("qualificationCode").GetString()).Order(StringComparer.Ordinal).ToArray());
         Assert.All(opened.EnumerateArray(), r => Assert.Equal("Onboarding", r.GetProperty("source").GetString()));
-        var firstAid = opened[0];
+        var firstAid = opened.EnumerateArray().Single(r => r.GetProperty("qualificationCode").GetString() == "FIRST-AID");
         var due = DateTimeOffset.Parse(firstAid.GetProperty("dueOn").GetString()!, CultureInfo.InvariantCulture);
         Assert.InRange((due - clock.GetUtcNow()).TotalDays, 12.5, 14.5);
         await PropagateAsync(app);
@@ -114,9 +115,10 @@ public sealed class TrainingRequestTests(PostgresFixture postgres)
         await plant.Ok(hr, $"/api/workforce/development-nominations/{packet}/advance", new { status = "InReview", note = "Reviewing", reason = "Reviewing" });
         // The packet is advisory: whoever wrote it cannot decide it, and nothing is opened until another person approves it.
         Assert.Contains("independent_review_required", await (await plant.Try(e, $"/api/workforce/development-nominations/{packet}/advance", new { status = "Approved", note = "My own packet", reason = "Self" })).Content.ReadAsStringAsync(), StringComparison.Ordinal);
-        Assert.Empty((await Get(trainer, $"/api/workforce/training-requests?personId={michael}&open=true")).EnumerateArray());
+        // Michael's own site-wide HazCom onboarding request stays open throughout; only Development requests matter here.
+        Assert.DoesNotContain((await Get(trainer, $"/api/workforce/training-requests?personId={michael}&open=true")).EnumerateArray(), r => r.GetProperty("source").GetString() == "Development");
         await plant.Ok(hr, $"/api/workforce/development-nominations/{packet}/advance", new { status = "Approved", note = "Approved for Q1", reason = "Approved" });
-        var development = Assert.Single((await Get(trainer, $"/api/workforce/training-requests?personId={michael}&open=true")).EnumerateArray());
+        var development = Assert.Single((await Get(trainer, $"/api/workforce/training-requests?personId={michael}&open=true")).EnumerateArray(), r => r.GetProperty("source").GetString() == "Development");
         Assert.Equal("Development", development.GetProperty("source").GetString());
         Assert.Equal("Slitter setup technician", development.GetProperty("title").GetString());
 
@@ -126,7 +128,7 @@ public sealed class TrainingRequestTests(PostgresFixture postgres)
         Assert.Contains("Opened 5 reassessment request(s)", scan.GetProperty("message").GetString(), StringComparison.Ordinal);
         Assert.Equal("no_change", (await plant.Ok(trainer, "/api/workforce/training-requests/expiry-scan", new { reason = "Again" })).GetProperty("code").GetString());
         var sarah = await Get(sup, $"/api/workforce/training-requests?personId={plant.People["sarah"]}&open=true");
-        Assert.Equal(new[] { "Expiry", "Expiry" }, sarah.EnumerateArray().Select(r => r.GetProperty("source").GetString()).ToArray());
+        Assert.Equal(new[] { "Expiry", "Expiry" }, sarah.EnumerateArray().Select(r => r.GetProperty("source").GetString()).Where(s => s != "Onboarding").ToArray());
 
         // Supervisors run the reviews, so they read attendance rates now.
         Assert.Equal(HttpStatusCode.OK, (await sup.GetAsync("/api/workforce/attendance-intelligence")).StatusCode);

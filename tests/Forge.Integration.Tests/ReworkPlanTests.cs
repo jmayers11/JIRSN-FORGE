@@ -159,7 +159,8 @@ public sealed class ReworkPlanTests(PostgresFixture postgres)
         // The named people are not qualified, so the trainers are asked to train each of them for each qualification; nobody is certified.
         foreach (var person in new[] { dana, sarah })
         {
-            var requests = (await Get(trainer, $"/api/workforce/training-requests?personId={person}&open=true")).EnumerateArray().ToList();
+            var requests = (await Get(trainer, $"/api/workforce/training-requests?personId={person}&open=true")).EnumerateArray()
+                .Where(r => r.GetProperty("source").GetString() != "Onboarding").ToList(); // site-wide HazCom onboarding opens its own
             Assert.Equal(new[] { "SOLDER-J", "TEST-INSP" }, requests.Select(r => r.GetProperty("qualificationCode").GetString()).Order(StringComparer.Ordinal).ToArray());
             Assert.All(requests, r => Assert.Equal("Rework", r.GetProperty("source").GetString()));
         }

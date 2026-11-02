@@ -335,6 +335,8 @@ public sealed class PurchasingService(CommandPipeline pipeline, ITechnicalPackag
     private static async Task<PurchaseLineInfo> ValidLineAsync(Kernel.Access.IKernelUnitOfWork uow, int lineNumber, string rawPart, decimal quantity, DateOnly promised, DateTimeOffset now, string? supplierCode, decimal? unitPrice, string? currency, CancellationToken ct)
     {
         var part = BusinessCode.Require(rawPart, "Part");
+        // Owner decision 2026-11-01: a hazardous chemical is bought only once its safety data sheet is approved.
+        await Forge.Hazcom.Contracts.SdsGate.RequireAsync(uow, part, $"Line {lineNumber}", ct);
         if (unitPrice is < 0 or > 100_000_000_000m)
             throw new CommandRejectedException("invalid_unit_price", $"Line {lineNumber}: unit price must be zero or greater and within the supported range.");
         var normalizedCurrency = string.IsNullOrWhiteSpace(currency) ? "USD" : currency.Trim().ToUpperInvariant();

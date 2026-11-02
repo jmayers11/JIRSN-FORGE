@@ -26,6 +26,8 @@ public sealed record WorkCenterActivityRequest(string ActivityCode, string? Reas
 public sealed record QualificationTypeRequest(string Code, string Name, QualificationKind Kind, int? ValidityDays, string? Reason);
 
 public sealed record PrerequisiteRequest(string PrerequisiteCode, string? Reason);
+
+public sealed record QualificationValidityRequest(int? ValidityDays, string? Reason);
 public sealed record PrerequisiteAlternativesRequest(string GroupCode, string Name, IReadOnlyList<string> PrerequisiteCodes, string? Reason);
 
 public sealed record CourseCompletionRequest(string CourseCode, string CourseVersion, DateTimeOffset? ExpiresAt, string Evidence, string? Reason);
@@ -212,6 +214,8 @@ public static class OperationsEndpoints
 
         api.MapPost("/qualification-types", (HttpContext http, QualificationTypeRequest b, CompetencyService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.DefineTypeAsync(new DefineQualificationType(b.Code, b.Name, b.Kind, b.ValidityDays), c, ct)));
+        api.MapPost("/qualification-types/{code}/validity", (HttpContext http, string code, QualificationValidityRequest b, CompetencyService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.ChangeValidityAsync(new ChangeQualificationValidity(code, b.ValidityDays), c, ct)));
         api.MapPost("/qualification-types/{code}/prerequisites", (HttpContext http, string code, PrerequisiteRequest b, CompetencyService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.AddPrerequisiteAsync(new AddPrerequisite(code, b.PrerequisiteCode), c, ct)));
         api.MapPost("/qualification-types/{code}/prerequisite-alternatives", (HttpContext http, string code, PrerequisiteAlternativesRequest b, CompetencyService s, CancellationToken ct) =>

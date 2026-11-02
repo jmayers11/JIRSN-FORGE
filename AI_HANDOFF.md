@@ -1757,3 +1757,31 @@ do not update live assignments.
 with **0 warnings and 0 errors**; the local Forge `/health/ready` endpoint returned HTTP 200 after restart. No new
 database write or migration was required. Refresh `http://localhost:5080/#/workforce-kanban` to load the update.
 No commit has been made.
+
+## Claude: Safety data sheets and HazCom training (2026-11-01)
+
+Owner decisions 2026-11-01 (hazard communication, OSHA 29 CFR 1910.1200). New context `Forge.Hazcom`:
+
+- **Chemical register and SDS.** A new **EHS Coordinator** role keeps the register (hazardous, GHS signal word and pictograms, hazard
+  statements, PPE, storage) and approves or rejects safety data sheets. Buyers, purchasing managers, manufacturing engineers and inventory
+  controllers may upload a supplier's SDS for review. One approved SDS is in force per material; a newer revision supersedes the old.
+- **Gate.** A hazardous material without a current, approved SDS cannot be put on a purchase order line or received (`SdsGate`,
+  `sds_required`).
+- **Right to know.** Every signed-in person reads the register and opens approved SDS on **Make → Chemicals & SDS**, at the kiosk
+  ("Safety data sheets" for the operation in hand), and in a printable binder download (`/api/hazcom/binder.zip`, optionally per location).
+- **Reviews.** An SDS review falls due three years after its revision date or last review; the `HazcomReviewMonitor` flags reviews due
+  within 30 days and the EHS Coordinator is notified.
+- **HazCom training.** `HAZCOM` "Hazard Communication (HazCom)" is seeded as a Safety qualification (competency `0005`), renewed every 365
+  days, and as a site-wide onboarding requirement for every new employee due within 7 days (workforce `0016`). Plants change both with the
+  existing tools: **Workforce → Change renewal period** (new `ChangeQualificationValidity`, `POST /api/competency/qualification-types/{code}/validity`;
+  qualifications already held keep their expiry) and **Training & Performance → new-employee training** (retire, add work-center or new
+  timing). Expiring HazCom qualifications get expiry training requests like any other qualification.
+- **HazCom training view.** The Chemicals & SDS page has a HazCom training tab (`GET /api/hazcom/training`, competency.read): every active
+  employee as Current, Expiring (30 days), Expired, In training, Suspended or Not trained, with open requests, and a "Request HazCom training
+  for selected" action (`POST /api/hazcom/training/requests`) that opens ordinary training requests and skips any already open.
+- **New hazards.** When a material becomes hazardous, the EHS and training coordinators are notified ("New hazardous chemical - review
+  HazCom training"). The EHS Coordinator records whether site training covers it or refresher training is needed
+  (`POST /api/hazcom/chemicals/{part}/training-review`). A person decides; nothing is assigned or blocked automatically.
+
+Migrations: hazcom `0001`, kernel `0045`, competency `0005`, workforce `0016` (195 in total). Tests: `HazcomTests`, `tests/ui/chemicals.test.mjs`;
+`TrainingRequestTests` and `ReworkPlanTests` now expect the seeded HazCom onboarding request.

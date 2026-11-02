@@ -46,6 +46,32 @@ public sealed class CompetencyService(CommandPipeline pipeline)
         }, ct);
     }
 
+    /// <summary>
+    /// A plant sets its own renewal period for a qualification (for example HazCom training, seeded at 365 days). Qualifications already
+    /// held keep the expiry they were certified with; the new period applies from the next certification.
+    /// </summary>
+    public Task<CommandResult> ChangeValidityAsync(ChangeQualificationValidity command, CommandContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        var code = BusinessCode.Require(command.Code, "Qualification");
+        var spec = new CommandSpec(SourceContext, nameof(ChangeQualificationValidity), Permissions.CompetencyManage, ResourceRef.Of(TypeEntity, code), ReasonRequired: true);
+        return pipeline.ExecuteAsync(spec, command, context, async (uow, _) =>
+        {
+            if (command.ValidityDays is <= 0 or > 3650)
+                throw new CommandRejectedException("invalid_validity", "Validity must be between 1 and 3650 days, or empty for no expiry.");
+            var store = uow.Store<ICompetencyStore>();
+            var type = await RequireTypeAsync(store, code, ct);
+            if (type.ValidityDays == command.ValidityDays)
+                return CommandOutcome.NoChange(CommandResult.NoChange(code, $"{type.Name} already has that renewal period."));
+            await store.UpdateValidityAsync(code, command.ValidityDays, ct);
+            static string Words(int? days) => days is { } d ? $"{d} days" : "no expiry";
+            return new CommandOutcome(
+                CommandResult.Ok(code, $"{type.Name} is now valid for {Words(command.ValidityDays)} (was {Words(type.ValidityDays)}). Qualifications already held keep their expiry until renewed."),
+                [pipeline.Event(new QualificationValidityChanged(code, type.ValidityDays, command.ValidityDays), context, SourceContext, TypeEntity, code)],
+                new AuditChange(TypeEntity, code, CanonicalJson.Serialize(type), CanonicalJson.Serialize(type with { ValidityDays = command.ValidityDays })));
+        }, ct);
+    }
+
     public Task<CommandResult> AddPrerequisiteAsync(AddPrerequisite command, CommandContext context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);

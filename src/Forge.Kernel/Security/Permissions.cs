@@ -194,6 +194,15 @@ public static class Permissions
 
     /// <summary>Record what machine connections report (the system).</summary>
     public const string ConnectivityRecord = "connectivity.record";
+
+    /// <summary>Keep the chemical register and approve, reject and review safety data sheets (EHS Coordinators; owner decisions 2026-11-01).</summary>
+    public const string HazcomManage = "hazcom.manage";
+
+    /// <summary>Upload a supplier's safety data sheet for review.</summary>
+    public const string HazcomSubmit = "hazcom.submit";
+
+    /// <summary>Flag safety data sheet reviews that fall due (the system).</summary>
+    public const string HazcomFlag = "hazcom.flag";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -399,6 +408,9 @@ public static class Roles
     /// <summary>Keeps trading partners, API keys and webhooks (owner decisions 2026-11-01).</summary>
     public const string IntegrationAdministrator = "IntegrationAdministrator";
 
+    /// <summary>Keeps the chemical register and safety data sheets (owner decisions 2026-11-01).</summary>
+    public const string EhsCoordinator = "EHSCoordinator";
+
     private static readonly Dictionary<string, string[]> Map = new(StringComparer.Ordinal)
     {
         [Employee] = [Permissions.AttendanceCorrectionRequest],
@@ -447,6 +459,7 @@ public static class Roles
         [SalesRepresentative] = [Permissions.SalesRead, Permissions.SalesManage, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.MaterialPlanRead],
         [SalesManager] = [Permissions.SalesRead, Permissions.SalesApprove, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse],
         [BillingClerk] = [Permissions.SalesRead, Permissions.BillingManage, Permissions.AccountingExport, Permissions.InventoryRead],
+        [EhsCoordinator] = [Permissions.HazcomManage, Permissions.HazcomSubmit, Permissions.DocumentsAttach, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.PurchasingRead, Permissions.CompetencyRead, Permissions.WorkforceRead, Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest],
         [IntegrationAdministrator] = [Permissions.InterchangeManage, Permissions.InterchangeRead, Permissions.InterchangeReceive, Permissions.InterchangeReview, Permissions.SalesRead, Permissions.PurchasingRead],
         [ShopFloorTerminal] = [Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.InventoryMaterialRequest, Permissions.QualityReportSuspect, Permissions.ReadinessRead, Permissions.OrdersRead, Permissions.ResourcesRead, Permissions.ScheduleRead],
     };
@@ -465,6 +478,7 @@ public static class Roles
         [SalesDemand] = [Permissions.DemandManage, Permissions.SalesRead, Permissions.EngineeringRead],
         [StockReservations] = [Permissions.InventoryReserve, Permissions.InventoryRead, Permissions.OrdersRead],
         [SpcMonitor] = [Permissions.SpcRecord, Permissions.QualityRead],
+        [Hazcom] = [Permissions.HazcomFlag],
         [Connectivity] = [Permissions.ConnectivityRecord, Permissions.ConnectivityRead, Permissions.DowntimeReport, Permissions.ResourcesRead, Permissions.ShopFloorRead, Permissions.OrdersRead],
         [Interchange] = [Permissions.InterchangeProcess, Permissions.InterchangeReceive, Permissions.InterchangeRead, Permissions.SalesManage, Permissions.SalesRead, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.EngineeringRead],
     };
@@ -518,6 +532,9 @@ public static class Roles
         foreach (var role in new[] { Supervisor, MaintenanceTechnician })
             Map[role] = [.. Map[role], Permissions.ConnectivityRead];
         Map[ShopFloorTerminal] = [.. Map[ShopFloorTerminal], Permissions.DowntimeReport];
+        // Owner decisions 2026-11-01: those who buy, receive or specify materials may upload a supplier's SDS for the EHS Coordinator.
+        foreach (var role in new[] { Buyer, PurchasingManager, ManufacturingEngineer, InventoryController })
+            Map[role] = [.. Map[role], Permissions.HazcomSubmit];
         // Owner decision 2026-10-27: supervisors and managers answer to several areas, so they can see every area of Forge. Seeing is all
         // this adds; recording, proposing and approving stay with each area's role. People views (attendance, development packets,
         // training requests) go to supervisors and the plant manager only; pay, the audit trail and access administration go to nobody new.
@@ -576,6 +593,9 @@ public static class Roles
 
     /// <summary>The system role machine connections act as (owner decisions 2026-11-01).</summary>
     public const string Connectivity = "system.Connectivity";
+
+    /// <summary>The system role that flags safety data sheet reviews (owner decisions 2026-11-01).</summary>
+    public const string Hazcom = "system.Hazcom";
 
     public static IReadOnlyCollection<string> All => Map.Keys;
 

@@ -1,4 +1,4 @@
-import { command, fetchProtectedImage, get, tryGet } from '../api.js';
+import { command, download, fetchProtectedImage, get, tryGet } from '../api.js';
 import { img } from '../icons.js';
 import { esc, $, $$, fmtNumber, fmtDate, fmtDateTime, relative, toast, emptyBlock, manageDialogFocus, liveRegion, drawer } from '../ui.js';
 import { who } from '../people.js';
@@ -459,6 +459,7 @@ export async function shopFloorPage(page, ctx) {
           ${canAction(ctx.me, 'inventory.material-request') ? '<button class="btn primary" id="request-parts" type="button">Request parts</button><button class="btn" id="material-request-status" type="button">View request status</button>' : ''}
           ${canAction(ctx.me, 'inventory.material-request') ? '<button class="btn" id="request-additional-parts" type="button">Request additional part</button>' : ''}
           ${canAction(ctx.me, 'quality.suspect.report') ? '<button class="btn danger" id="report-suspect-scrap" type="button">Report scrap</button><button class="btn" id="report-quality-issue" type="button">Report quality issue</button>' : ''}
+          <button class="btn" id="kiosk-sds" type="button">Safety data sheets</button>
           ${canAction(ctx.me, 'engineering.read') ? '<button class="btn" id="work-instructions" type="button">Work instructions &amp; drawings</button>' : '<button class="btn" type="button" disabled title="Engineering document access is required">Work instructions unavailable</button>'}
           ${canAction(ctx.me, 'inventory.read') ? '<button class="btn" id="material-reconciliation" type="button">Material &amp; remnants</button>' : '<button class="btn" type="button" disabled title="Inventory read access is required">Material view unavailable</button>'}
           ${canAction(ctx.me, 'quality.inspect') ? '<button class="btn danger" id="flag-ncr" type="button">Flag defect / NCR</button>' : ''}
@@ -534,6 +535,17 @@ export async function shopFloorPage(page, ctx) {
           { name: 'note', label: 'What happened', type: 'textarea' }, { name: 'requestMaintenance', label: 'Maintenance', type: 'check', text: 'Ask maintenance to come' }],
       }, v => command('/api/shopfloor/downtime', { badge: session.badge, machineCode: labor.machineCode, category: codes.find(r => r.code === v.reasonCode)?.category, reasonCode: v.reasonCode,
         note: v.note || null, requestMaintenance: !!v.requestMaintenance }), () => identify(session.badge, session));
+    });
+    // Owner decisions 2026-11-01: the SDS for the hazardous materials of this operation, open at the terminal.
+    $('#kiosk-sds', page)?.addEventListener('click', async () => {
+      const r = await tryGet(`/api/shopfloor/sds?order=${labor.orderNumber}&sequence=${labor.sequence}`);
+      const list = r.data ?? [];
+      const { element } = drawer(`Safety data sheets — order #${labor.orderNumber}, op ${labor.sequence}`, r.error ? `<div class="notice bad">${esc(r.error.message ?? 'Could not load safety data sheets.')}</div>`
+        : list.length ? list.map(v => `<article class="card"><header><b>${esc(v.partNumber)}</b> ${esc(v.current?.productName ?? v.description ?? '')} <span class="pill ${v.chemical.signalWord === 'Danger' ? 'bad' : 'warn'}">${esc(v.chemical.signalWord)}</span></header>
+            ${v.chemical.ppe ? `<div><b>PPE:</b> ${esc(v.chemical.ppe)}</div>` : ''}${v.chemical.hazardStatements ? `<div class="faint">${esc(v.chemical.hazardStatements)}</div>` : ''}
+            ${v.current ? `<button class="btn big" data-kiosk-sds="${v.current.sdsId}">Open SDS</button>` : '<div class="notice bad">No approved SDS. Tell your supervisor.</div>'}</article>`).join('')
+        : '<div class="muted">No hazardous materials on this operation. The full list is under Chemicals &amp; SDS.</div>');
+      for (const b of element.querySelectorAll('[data-kiosk-sds]')) b.addEventListener('click', () => download(`/api/hazcom/sds/${b.dataset.kioskSds}/file`, 'SDS.pdf').catch(e => toast(e.message, true)));
     });
     $('#kiosk-downtime-end', page)?.addEventListener('click', async () => {
       try { const r = await command('/api/shopfloor/downtime/end', { badge: session.badge, machineCode: labor.machineCode }); toast(r.message ?? 'Running again'); }

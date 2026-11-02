@@ -6,6 +6,9 @@ namespace Forge.Competency;
 
 public sealed record DefineQualificationType(string Code, string Name, QualificationKind Kind, int? ValidityDays);
 
+/// <summary>A plant changes how long a qualification stays valid (null: it never expires). Applies to certifications from now on.</summary>
+public sealed record ChangeQualificationValidity(string Code, int? ValidityDays);
+
 public sealed record AddPrerequisite(string Code, string PrerequisiteCode);
 
 public sealed record DefinePrerequisiteAlternatives(string Code, string GroupCode, string Name, IReadOnlyList<string> PrerequisiteCodes);
@@ -51,6 +54,13 @@ public sealed record MachineAuthorizationChanged(Guid PersonId, string MachineCo
 public sealed record QualificationTypeDefined(string Code, string Name, string Kind, int? ValidityDays) : IDomainEvent
 {
     public static string EventType => nameof(QualificationTypeDefined);
+
+    public static int SchemaVersion => 1;
+}
+
+public sealed record QualificationValidityChanged(string Code, int? FromDays, int? ToDays) : IDomainEvent
+{
+    public static string EventType => nameof(QualificationValidityChanged);
 
     public static int SchemaVersion => 1;
 }
@@ -103,6 +113,8 @@ public interface ICompetencyStore
     Task<QualificationTypeInfo?> FindTypeAsync(string code, CancellationToken ct);
 
     Task InsertTypeAsync(QualificationTypeInfo type, DateTimeOffset at, string actor, CancellationToken ct);
+
+    Task UpdateValidityAsync(string code, int? validityDays, CancellationToken ct);
 
     Task<bool> AddPrerequisiteAsync(string code, string prerequisite, CancellationToken ct);
 

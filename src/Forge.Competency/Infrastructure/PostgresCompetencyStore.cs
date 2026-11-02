@@ -28,6 +28,13 @@ internal sealed class PostgresCompetencyStore(PostgresUnitOfWork uow) : ICompete
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task UpdateValidityAsync(string code, int? validityDays, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE competency.qualification_type SET validity_days = $2 WHERE code = $1",
+            code, new NpgsqlParameter { Value = (object?)validityDays ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer });
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task<bool> AddPrerequisiteAsync(string code, string prerequisite, CancellationToken ct)
     {
         await using var cmd = uow.Command("INSERT INTO competency.prerequisite (code, prerequisite_code) VALUES ($1, $2) ON CONFLICT DO NOTHING", code, prerequisite);
