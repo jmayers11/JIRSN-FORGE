@@ -1,3 +1,7 @@
+## Connectors ready to use (2026-11-01)
+
+OPC UA now works through the OPC Foundation client; MQTT supports TLS and a login; webhook secrets and machine passwords are encrypted at rest and never shown. Customers' own part numbers map their EDI orders, and EDI order changes (860) are shown to a sales representative to apply and close.
+
 ## Machine connections, downtime and OEE (2026-11-01)
 
 Each machine can now report through MTConnect, MQTT, Modbus TCP, a CSV folder, a simulator or nothing (manual); OPC UA is listed but needs its library added. A connected machine that stops gets a stoppage that waits for a reason; operators explain stops at the terminal and can ask maintenance to come, and supervisors enter stops operators told them about. OEE is shown per machine per shift on the new Machines & OEE page.

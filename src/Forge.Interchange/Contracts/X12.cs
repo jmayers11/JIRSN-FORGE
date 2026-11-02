@@ -38,10 +38,11 @@ public static class X12
     {
         "850" => "PO",
         "855" => "PR",
+        "860" => "PC",
         "856" => "SH",
         "810" => "IN",
         "997" => "FA",
-        _ => throw new ArgumentOutOfRangeException(nameof(transactionSet), transactionSet, "Forge reads and writes 850, 855, 856, 810 and 997."),
+        _ => throw new ArgumentOutOfRangeException(nameof(transactionSet), transactionSet, "Forge reads and writes 850, 855, 856, 860, 810 and 997."),
     };
 
     public static IReadOnlyList<X12Interchange> Parse(string text)

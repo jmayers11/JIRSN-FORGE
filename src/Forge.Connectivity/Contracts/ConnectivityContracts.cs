@@ -62,7 +62,8 @@ public sealed record MachineStatus(string MachineCode, MachineState State, DateT
     bool StopReported);
 
 /// <summary>A setting a connector needs.</summary>
-public sealed record ConnectorSetting(string Name, string Description, bool Required, string? Default = null);
+/// <param name="Secret">A password or key: stored encrypted and never shown again.</param>
+public sealed record ConnectorSetting(string Name, string Description, bool Required, string? Default = null, bool Secret = false);
 
 public sealed record ConnectorDescription(ConnectorKind Kind, string Name, string Description, IReadOnlyList<ConnectorSetting> Settings);
 
@@ -73,10 +74,15 @@ public static class ConnectorCatalog
     [
         new(ConnectorKind.MTConnect, "MTConnect", "Reads an MTConnect agent's current document: execution state, part count and conditions.",
             [new("url", "Agent address, e.g. http://10.0.0.21:5000", true), new("device", "Device name when the agent serves several", false)]),
-        new(ConnectorKind.OpcUa, "OPC UA", "Reads node values from an OPC UA server.",
-            [new("endpoint", "opc.tcp://host:4840", true), new("stateNode", "Node id of the running state (true or 1 = running)", true), new("countNode", "Node id of the part counter", false), new("scrapNode", "Node id of the scrap counter", false)]),
+        new(ConnectorKind.OpcUa, "OPC UA", "Reads node values from an OPC UA server (OPC Foundation client). Security None needs no certificates; Sign or SignAndEncrypt uses Forge's own certificate.",
+            [new("endpoint", "opc.tcp://host:4840", true), new("stateNode", "Node id of the running state, e.g. ns=2;s=Machine.Running", true),
+             new("runningValue", "Value meaning running (default true or 1)", false), new("countNode", "Node id of the part counter", false), new("scrapNode", "Node id of the scrap counter", false),
+             new("security", "None, Sign or SignAndEncrypt", false, "None"), new("trustServer", "true to accept the server's certificate without adding it to the trusted folder", false, "false"),
+             new("username", "User name, when the server needs one", false), new("password", "Password", false, null, true)]),
         new(ConnectorKind.Mqtt, "MQTT", "Subscribes to a topic carrying JSON {\"state\":\"Running\",\"partCount\":123,\"scrapCount\":2,\"alarm\":null}; retained messages are read on each poll.",
-            [new("host", "Broker host", true), new("port", "Broker port", false, "1883"), new("topic", "Topic, e.g. plant/press-1/status", true)]),
+            [new("host", "Broker host", true), new("port", "Broker port (1883, or 8883 with TLS)", false), new("topic", "Topic, e.g. plant/press-1/status", true),
+             new("tls", "true to connect with TLS (the broker's certificate must be trusted by this computer)", false, "false"),
+             new("username", "User name, when the broker needs one", false), new("password", "Password", false, null, true)]),
         new(ConnectorKind.ModbusTcp, "Modbus TCP", "Reads holding registers: running state, part counter and scrap counter.",
             [new("host", "PLC or counter address", true), new("port", "Port", false, "502"), new("unit", "Unit id", false, "1"),
              new("stateRegister", "Holding register of the running state", true), new("runningValue", "Value meaning running", false, "1"),

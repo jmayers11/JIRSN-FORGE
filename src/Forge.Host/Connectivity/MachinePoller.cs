@@ -32,7 +32,7 @@ public static class ConnectivitySystem
 
 /// <summary>Polls each active machine connection when it is due and records what it reported, or why it did not answer.</summary>
 public sealed class MachinePoller(IEnumerable<IMachineConnector> connectors, ConnectivityService connectivity, IKernelUnitOfWorkFactory unitOfWork, TimeProvider time,
-    ILogger<MachinePoller> logger)
+    ILogger<MachinePoller> logger, Forge.Host.Security.ISecretProtector secrets)
 {
     private readonly Dictionary<ConnectorKind, IMachineConnector> byKind = connectors.ToDictionary(c => c.Kind);
     private readonly ConcurrentDictionary<string, DateTimeOffset> lastPoll = new(StringComparer.Ordinal);
@@ -53,7 +53,7 @@ public sealed class MachinePoller(IEnumerable<IMachineConnector> connectors, Con
             try
             {
                 readings = byKind.TryGetValue(connection.Kind, out var connector)
-                    ? await connector.ReadAsync(connection, now, ct)
+                    ? await connector.ReadAsync(Revealed(connection), now, ct)
                     : throw new MachineConnectorException($"No {connection.Kind} connector is installed.");
             }
             catch (MachineConnectorException ex)
@@ -75,6 +75,14 @@ public sealed class MachinePoller(IEnumerable<IMachineConnector> connectors, Con
         }
 
         return polled;
+    }
+
+    /// <summary>The connection with its secret settings decrypted, for the connector only.</summary>
+    private MachineConnection Revealed(MachineConnection connection)
+    {
+        var secret = ConnectorCatalog.Of(connection.Kind).Settings.Where(s => s.Secret).Select(s => s.Name).ToHashSet(StringComparer.Ordinal);
+        if (!connection.Settings.Keys.Any(secret.Contains)) return connection;
+        return connection with { Settings = connection.Settings.ToDictionary(p => p.Key, p => secret.Contains(p.Key) ? secrets.Unprotect(p.Value) : p.Value, StringComparer.Ordinal) };
     }
 }
 

@@ -297,6 +297,8 @@ public static class SalesRegistration
         services.AddSingleton<QuoteService>();
         services.AddSingleton<SalesOrderService>();
         services.AddSingleton<InvoiceService>();
+        services.AddForgeStore<ICustomerPartStore>(uow => new PostgresCustomerPartStore(uow));
+        services.AddForgeStore<ICustomerPartLookup>(uow => new PostgresCustomerPartStore(uow));
         return services;
     }
 }

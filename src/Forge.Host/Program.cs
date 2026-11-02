@@ -98,6 +98,15 @@ builder.Services.AddSingleton<Forge.Host.Interchange.FolderExchange>();
 builder.Services.AddSingleton<Forge.Host.Interchange.WebhookDispatcher>();
 builder.Services.AddHttpClient("forge-webhooks");
 builder.Services.AddSingleton<Forge.Host.Interchange.IWebhookTransport, Forge.Host.Interchange.HttpWebhookTransport>();
+// Owner decisions 2026-11-01: secrets Forge must reuse (webhook signing secrets, machine passwords) are encrypted at rest.
+var secretKeys = builder.Configuration["Forge:Secrets:KeyFolder"] is { Length: > 0 } keyFolder
+    ? keyFolder
+    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JISRN Forge", "keys");
+var dataProtection = Microsoft.AspNetCore.DataProtection.DataProtectionBuilderExtensions.PersistKeysToFileSystem(
+    Microsoft.AspNetCore.DataProtection.DataProtectionBuilderExtensions.SetApplicationName(builder.Services.AddDataProtection(), "JISRN Forge"), new DirectoryInfo(secretKeys));
+if (OperatingSystem.IsWindows()) Microsoft.AspNetCore.DataProtection.DataProtectionBuilderExtensions.ProtectKeysWithDpapi(dataProtection);
+builder.Services.AddSingleton<Forge.Host.Security.ISecretProtector, Forge.Host.Security.DataProtectionSecretProtector>();
+builder.Services.AddSingleton<Forge.Sales.CustomerPartService>();
 // Owner decisions 2026-11-01: machine connections a plant picks per machine, downtime at the terminal, OEE per shift.
 Forge.Connectivity.Infrastructure.ConnectivityRegistration.AddForgeConnectivity(builder.Services);
 builder.Services.AddHttpClient("forge-machines");
@@ -376,6 +385,7 @@ app.MapReservationEndpoints();
 app.MapSpcEndpoints();
 app.MapInterchangeEndpoints();
 app.MapConnectivityEndpoints();
+app.MapCustomerPartEndpoints();
 app.MapInvestigationEndpoints();
 app.MapProgramsEndpoints();
 app.MapProjectEndpoints();

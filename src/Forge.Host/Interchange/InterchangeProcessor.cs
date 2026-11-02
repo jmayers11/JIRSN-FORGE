@@ -127,6 +127,12 @@ public sealed class InterchangeProcessor(InterchangeService interchange, SalesOr
             case "850":
                 outcome = await OrderAsync(doc, partner, segments, attempt, correlation, ct);
                 break;
+            case "860" when partner.Kind != PartnerKind.Customer:
+                outcome = (DocumentStatus.NeedsReview, "A purchase order change (860) from a partner that is not a customer.", ["Only customer partners send order changes."], null);
+                break;
+            case "860":
+                outcome = await OrderChangeAsync(partner, segments, ct);
+                break;
             case "997":
             {
                 var (group, accepted, note) = EdiMaps.Read997(segments);
@@ -160,7 +166,22 @@ public sealed class InterchangeProcessor(InterchangeService interchange, SalesOr
         string attempt, Guid correlation, CancellationToken ct)
     {
         var order = EdiMaps.Read850(segments);
-        if (order.Problems.Count > 0) return (DocumentStatus.NeedsReview, $"Purchase order {order.CustomerPo} from {partner.Name} needs review.", order.Problems, null);
+        var problems = order.Problems.ToList();
+        IReadOnlyList<CustomerPartInfo> theirs;
+        await using (var read = await unitOfWork.BeginSnapshotAsync(ct)) theirs = await read.Store<ICustomerPartLookup>().ListCustomerPartsAsync(partner.PartyCode, ct);
+        var map = theirs.ToDictionary(p => p.CustomerPart, p => p.PartNumber, StringComparer.Ordinal);
+        // The customer's own number maps only through the part numbers a sales representative recorded; nothing is guessed.
+        order = order with
+        {
+            Lines = order.Lines.Select(l =>
+            {
+                if (l.PartNumber is not null || l.BuyerPart is null) return l;
+                if (map.TryGetValue(l.BuyerPart, out var ours)) return l with { PartNumber = ours };
+                problems.Add($"Line {l.LineId}: {partner.Name}'s part {l.BuyerPart} has no Forge part. Record it under the customer's part numbers, then reprocess.");
+                return l;
+            }).ToList(),
+        };
+        if (problems.Count > 0) return (DocumentStatus.NeedsReview, $"Purchase order {order.CustomerPo} from {partner.Name} needs review.", problems, null);
         try
         {
             var lines = order.Lines.Select(l => new NewSalesLine(l.PartNumber!, l.Quantity!.Value, l.UnitPrice!.Value, l.DueDate!.Value)).ToList();
@@ -175,20 +196,44 @@ public sealed class InterchangeProcessor(InterchangeService interchange, SalesOr
         }
     }
 
+    private async Task<(DocumentStatus, string, IReadOnlyList<string>, string?)> OrderChangeAsync(TradingPartnerInfo partner, IReadOnlyList<X12Segment> segments, CancellationToken ct)
+    {
+        var change = EdiMaps.Read860(segments);
+        SalesOrderInfo? order = null;
+        if (change.CustomerPo is { } po)
+        {
+            await using var read = await unitOfWork.BeginSnapshotAsync(ct);
+            order = (await read.Store<ISalesLookup>().ListOrdersAsync(ct)).FirstOrDefault(o => o.CustomerCode == partner.PartyCode && o.Status != SalesOrderStatus.Cancelled
+                && string.Equals(o.CustomerPo, po, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Owner decision 2026-11-01: a change never applies itself. A sales representative makes it on the sales order and closes this document.
+        var summary = order is null
+            ? $"{partner.Name} sent a change to PO {change.CustomerPo}, which matches no sales order."
+            : $"{partner.Name} asks to change PO {change.CustomerPo} (sales order {order.OrderNumber}): {change.Purpose}. Make the change on the sales order, then close this document.";
+        return (DocumentStatus.NeedsReview, summary, change.Changes, order is null ? null : $"sales-order:{order.OrderNumber}");
+    }
+
+    private static async Task<IReadOnlyDictionary<string, string>> TheirPartsAsync(IKernelUnitOfWork read, string customer, CancellationToken ct) =>
+        (await read.Store<ICustomerPartLookup>().ListCustomerPartsAsync(customer, ct)).GroupBy(p => p.PartNumber, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.OrderBy(p => p.CustomerPart, StringComparer.Ordinal).First().CustomerPart, StringComparer.Ordinal);
+
     private async Task AcknowledgeOrderAsync(long orderNumber, Guid correlation, CancellationToken ct)
     {
         SalesOrderInfo? order;
         TradingPartnerInfo? partner;
         DateOnly today;
+        IReadOnlyDictionary<string, string> theirs = new Dictionary<string, string>();
         await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
         {
             order = await read.Store<ISalesLookup>().FindOrderAsync(orderNumber, ct);
             partner = order is null ? null : await read.Store<IInterchangeLookup>().FindPartnerByPartyAsync(PartnerKind.Customer, order.CustomerCode, ct);
             today = siteClock.DateAt(order?.ApprovedAt ?? DateTimeOffset.UnixEpoch);
+            if (order is not null) theirs = await TheirPartsAsync(read, order.CustomerCode, ct);
         }
 
         if (order is null || partner?.Sends("855") != true) return;
-        await interchange.QueueOutboundAsync(new QueueOutbound(partner.Code, "855", $"sales-order:{orderNumber}", EdiMaps.Build855(order, today),
+        await interchange.QueueOutboundAsync(new QueueOutbound(partner.Code, "855", $"sales-order:{orderNumber}", EdiMaps.Build855(order, today, theirs),
                 $"sales order {orderNumber} (PO {order.CustomerPo}) accepted"),
             InterchangeSystem.Context(correlation, $"system:edi:855:{orderNumber}", "Order acknowledgment"), ct);
     }
@@ -199,6 +244,7 @@ public sealed class InterchangeProcessor(InterchangeService interchange, SalesOr
         SalesOrderInfo? order = null;
         TradingPartnerInfo? partner = null;
         var line = 0;
+        IReadOnlyDictionary<string, string> theirs = new Dictionary<string, string>();
         await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
         {
             shipment = await read.Store<IInventoryLookup>().FindShipmentAsync(shipmentId, ct);
@@ -208,13 +254,14 @@ public sealed class InterchangeProcessor(InterchangeService interchange, SalesOr
                 order = await read.Store<ISalesLookup>().FindOrderAsync(source.OrderNumber, ct);
                 line = source.LineNumber;
                 partner = order is null ? null : await read.Store<IInterchangeLookup>().FindPartnerByPartyAsync(PartnerKind.Customer, order.CustomerCode, ct);
+                if (order is not null) theirs = await TheirPartsAsync(read, order.CustomerCode, ct);
             }
         }
 
         if (shipment is null || order is null || partner?.Sends("856") != true) return;
         var unit = order.Lines.FirstOrDefault(l => l.LineNumber == line)?.UnitOfMeasure ?? "EA";
         var shipped = siteClock.DateAt(shipment.ShippedAt ?? shipment.CreatedAt);
-        await interchange.QueueOutboundAsync(new QueueOutbound(partner.Code, "856", $"shipment:{shipmentId}", EdiMaps.Build856(shipment, order, line, unit, shipped),
+        await interchange.QueueOutboundAsync(new QueueOutbound(partner.Code, "856", $"shipment:{shipmentId}", EdiMaps.Build856(shipment, order, line, unit, shipped, theirs),
                 $"shipment {shipmentId} for sales order {order.OrderNumber} (PO {order.CustomerPo})"),
             InterchangeSystem.Context(correlation, $"system:edi:856:{shipmentId}", "Ship notice"), ct);
     }
@@ -225,6 +272,7 @@ public sealed class InterchangeProcessor(InterchangeService interchange, SalesOr
         SalesOrderInfo? order = null;
         CustomerInfo? customer = null;
         TradingPartnerInfo? partner = null;
+        IReadOnlyDictionary<string, string> theirs = new Dictionary<string, string>();
         await using (var read = await unitOfWork.BeginSnapshotAsync(ct))
         {
             var lookup = read.Store<ISalesLookup>();
@@ -234,12 +282,13 @@ public sealed class InterchangeProcessor(InterchangeService interchange, SalesOr
                 order = await lookup.FindOrderAsync(invoice.OrderNumber, ct);
                 customer = await lookup.FindCustomerAsync(invoice.CustomerCode, ct);
                 partner = await read.Store<IInterchangeLookup>().FindPartnerByPartyAsync(PartnerKind.Customer, invoice.CustomerCode, ct);
+                theirs = await TheirPartsAsync(read, invoice.CustomerCode, ct);
             }
         }
 
         if (invoice is null || partner?.Sends("810") != true) return;
         var units = (order?.Lines ?? []).ToDictionary(l => l.LineNumber, l => l.UnitOfMeasure);
-        await interchange.QueueOutboundAsync(new QueueOutbound(partner.Code, "810", $"invoice:{invoiceNumber}", EdiMaps.Build810(invoice, units, customer?.PaymentTermsDays ?? 30),
+        await interchange.QueueOutboundAsync(new QueueOutbound(partner.Code, "810", $"invoice:{invoiceNumber}", EdiMaps.Build810(invoice, units, customer?.PaymentTermsDays ?? 30, theirs),
                 $"invoice {invoiceNumber} for sales order {invoice.OrderNumber}, {invoice.Total.ToString("0.00", CultureInfo.InvariantCulture)} {invoice.Currency}"),
             InterchangeSystem.Context(correlation, $"system:edi:810:{invoiceNumber}", "Invoice"), ct);
     }

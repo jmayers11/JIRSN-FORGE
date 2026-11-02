@@ -7,7 +7,7 @@ import { who } from '../people.js';
 // signed webhooks for other systems. An order that arrives is a draft sales order a Sales Manager approves; what Forge cannot map waits
 // here for a person to fix and reprocess, or reject.
 
-export const SETS = { 850: 'Purchase order', 855: 'Order acknowledgment', 856: 'Ship notice', 810: 'Invoice', 997: 'Functional acknowledgment' };
+export const SETS = { 850: 'Purchase order', 855: 'Order acknowledgment', 856: 'Ship notice', 860: 'Order change', 810: 'Invoice', 997: 'Functional acknowledgment' };
 const TONE = { Received: 'none', Processed: 'ok', NeedsReview: 'bad', Rejected: 'none', Ready: 'warn', Sent: 'ok', Accepted: 'ok', Refused: 'bad' };
 const LABEL = { NeedsReview: 'Needs review' };
 export const statusPill = s => `<span class="pill ${TONE[s] ?? 'none'}">${esc(LABEL[s] ?? s)}</span>`;
@@ -21,7 +21,7 @@ export function documentsHtml(docs, { canReview = false } = {}) {
     ${docs.map(d => `<tr><td>${d.documentId}</td><td>${esc(fmtDateTime(d.createdAt))}</td><td>${d.direction === 'Inbound' ? '⬇ In' : '⬆ Out'}</td><td class="mono">${esc(d.partnerCode ?? '—')}</td>
       <td>${setName(d.transactionSet)}</td><td class="mono">${esc(d.interchangeControl)}</td><td>${statusPill(d.status)}</td>
       <td>${esc(d.summary ?? '')}${(d.problems ?? []).length ? `<ul class="problems">${d.problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}</td>
-      <td><button class="btn small" data-doc="${d.documentId}">View</button>${canReview && d.status === 'NeedsReview' ? ` <button class="btn small primary" data-reprocess="${d.documentId}">Reprocess</button> <button class="btn small" data-reject="${d.documentId}">Reject</button>` : ''}</td></tr>`).join('')}</tbody></table>`;
+      <td><button class="btn small" data-doc="${d.documentId}">View</button>${canReview && d.status === 'NeedsReview' ? ` <button class="btn small primary" data-reprocess="${d.documentId}">Reprocess</button> <button class="btn small" data-close="${d.documentId}">Done</button> <button class="btn small" data-reject="${d.documentId}">Reject</button>` : ''}</td></tr>`).join('')}</tbody></table>`;
 }
 
 export function partnersHtml(partners, { canManage = false } = {}) {
@@ -55,6 +55,14 @@ export function webhooksHtml(hooks, deliveries, { canManage = false } = {}) {
   return list + recent;
 }
 
+/** Each customer's own numbers for our parts, which EDI orders may carry instead of ours. */
+export function customerPartsHtml(parts, { canEdit = false } = {}) {
+  if (!parts?.length) return emptyBlock('No customer part numbers', 'Record a customer\'s own number for one of your parts so their orders map to it. Forge never guesses from similar numbers.');
+  return `<table class="table"><thead><tr><th>Customer</th><th>Their part</th><th>Our part</th><th>Description</th><th></th></tr></thead><tbody>
+    ${parts.map(p => `<tr><td class="mono">${esc(p.customerCode)}</td><td class="mono">${esc(p.customerPart)}</td><td class="mono">${esc(p.partNumber)}</td><td>${esc(p.description ?? '')}</td>
+      <td>${canEdit ? `<button class="btn small" data-cpart-remove="${esc(p.customerCode)}|${esc(p.customerPart)}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table>`;
+}
+
 /** Shown once: the new key or signing secret, with how to use it. */
 export function secretHtml(label, value, usage) {
   return `<p>Copy this ${esc(label)} now. Forge does not show it again.</p><pre class="mono secret">${esc(value)}</pre><p class="faint">${esc(usage)}</p>`;
@@ -62,12 +70,12 @@ export function secretHtml(label, value, usage) {
 
 export async function interchangePage(page, ctx) {
   const me = ctx?.me;
-  const can = { manage: canAction(me, 'interchange.manage'), review: canAction(me, 'interchange.review'), upload: canAction(me, 'interchange.receive') };
+  const can = { manage: canAction(me, 'interchange.manage'), review: canAction(me, 'interchange.review'), upload: canAction(me, 'interchange.receive'), parts: canAction(me, 'sales.read'), partsEdit: canAction(me, 'sales.manage') };
   let filter = '';
   const load = async () => {
-    const [docs, partners, keys, hooks, deliveries] = await Promise.all([
+    const [docs, partners, keys, hooks, deliveries, parts] = await Promise.all([
       tryGet(`/api/interchange/documents${filter ? `?status=${filter}` : ''}`), tryGet('/api/interchange/partners'), tryGet('/api/interchange/keys'),
-      tryGet('/api/interchange/webhooks'), tryGet('/api/interchange/webhooks/deliveries')]);
+      tryGet('/api/interchange/webhooks'), tryGet('/api/interchange/webhooks/deliveries'), can.parts ? tryGet('/api/sales/customer-parts') : Promise.resolve({ data: [] })]);
     const partnerList = partners.data ?? [];
     const events = hooks.data?.events ?? [];
     page.innerHTML = `
@@ -81,8 +89,10 @@ export async function interchangePage(page, ctx) {
       <section class="panel"><header><h2>API keys</h2>${can.manage ? '<span class="spacer"></span><button class="btn" data-key>+ API key</button>' : ''}</header>
         ${keys.error ? errorBlock(keys.error, 'API keys') : keysHtml(keys.data, { canManage: can.manage })}</section>
       <section class="panel"><header><h2>Webhooks</h2>${can.manage ? '<span class="spacer"></span><button class="btn" data-hook="">+ Webhook</button>' : ''}</header>
-        ${hooks.error ? errorBlock(hooks.error, 'webhooks') : webhooksHtml(hooks.data?.webhooks, deliveries.data, { canManage: can.manage })}</section>`;
-    tabifyPanels(page, [{ label: 'Documents', match: ['documents'] }, { label: 'Partners', match: ['partners'] }, { label: 'API keys', match: ['api keys'] }, { label: 'Webhooks', match: ['webhooks'] }]);
+        ${hooks.error ? errorBlock(hooks.error, 'webhooks') : webhooksHtml(hooks.data?.webhooks, deliveries.data, { canManage: can.manage })}</section>
+      ${can.parts ? `<section class="panel"><header><h2>Customer part numbers</h2>${can.partsEdit ? '<span class="spacer"></span><button class="btn" data-cpart="">+ Customer part number</button>' : ''}</header>
+        ${parts.error ? errorBlock(parts.error, 'customer part numbers') : customerPartsHtml(parts.data, { canEdit: can.partsEdit })}</section>` : ''}`;
+    tabifyPanels(page, [{ label: 'Documents', match: ['documents'] }, { label: 'Partners', match: ['partners'] }, { label: 'API keys', match: ['api keys'] }, { label: 'Webhooks', match: ['webhooks'] }, { label: 'Customer part numbers', match: ['customer part numbers'] }]);
 
     $('[data-filter]', page)?.addEventListener('change', e => { filter = e.target.value; load(); });
     for (const b of $$('[data-doc]', page)) b.addEventListener('click', async () => {
@@ -93,6 +103,18 @@ export async function interchangePage(page, ctx) {
     });
     for (const b of $$('[data-reprocess]', page)) b.addEventListener('click', () => confirmWithReason({ title: `Reprocess document ${b.dataset.reprocess}`, detail: 'Fix what it was missing first (the customer, the part, the partner). Forge then reads it again.', confirmLabel: 'Reprocess', reasonRequired: false },
       reason => command(`/api/interchange/documents/${b.dataset.reprocess}/reprocess`, {}, reason)).then(r => { if (r) { toast(r.message ?? 'Done'); load(); } }));
+    for (const b of $$('[data-close]', page)) b.addEventListener('click', () => confirmWithReason({ title: `Close document ${b.dataset.close}`, detail: 'Say what you did (for an order change: the change made on the sales order).', confirmLabel: 'Close' },
+      reason => command(`/api/interchange/documents/${b.dataset.close}/close`, {}, reason)).then(r => { if (r) { toast(r.message ?? 'Closed'); load(); } }));
+    $('[data-cpart]', page)?.addEventListener('click', () => formModal({
+      title: 'Add a customer part number', confirmLabel: 'Save', reasonRequired: false,
+      fields: [{ name: 'customer', label: 'Customer code', code: true, required: true }, { name: 'customerPart', label: 'Their part number', code: true, required: true },
+        { name: 'partNumber', label: 'Our part number', code: true, required: true }, { name: 'description', label: 'Description' }],
+    }, v => command(`/api/sales/customers/${encodeURIComponent(v.customer)}/parts`, { customerPart: v.customerPart, partNumber: v.partNumber, description: v.description || null }), load));
+    for (const b of $$('[data-cpart-remove]', page)) b.addEventListener('click', () => {
+      const [customer, customerPart] = b.dataset.cpartRemove.split('|');
+      confirmWithReason({ title: `Remove ${customer}'s part ${customerPart}`, detail: 'Orders with this number will wait for review until it is recorded again.', confirmLabel: 'Remove', reasonRequired: false },
+        reason => command(`/api/sales/customers/${encodeURIComponent(customer)}/parts`, { customerPart, partNumber: null }, reason)).then(r => { if (r) { toast(r.message ?? 'Removed'); load(); } });
+    });
     for (const b of $$('[data-reject]', page)) b.addEventListener('click', () => confirmWithReason({ title: `Reject document ${b.dataset.reject}`, detail: 'Nothing is made from it. Tell the partner why.', confirmLabel: 'Reject' },
       reason => command(`/api/interchange/documents/${b.dataset.reject}/reject`, {}, reason)).then(r => { if (r) { toast(r.message ?? 'Rejected'); load(); } }));
     $('[data-upload]', page)?.addEventListener('click', () => formModal({

@@ -1,5 +1,15 @@
 # AI_HANDOFF.md
 
+## Claude: connectors ready to use — OPC UA, MQTT TLS/login, encrypted secrets, customer part numbers, EDI 860 (2026-11-01)
+
+- **Owner request (2026-11-01):** "I can't test real machines but please have the capabilities loaded and ready to go. Please add everything as you see fit."
+- **OPC UA** (`Forge.Host/Connectivity/OpcUaConnector.cs`; packages `OPCFoundation.NetStandard.Opc.Ua.Client`/`.Configuration` 1.5.374.158 in `Directory.Packages.props`): endpoint, stateNode (+ runningValue), countNode, scrapNode; security None/Sign/SignAndEncrypt (Forge's certificate created in `Forge:Connectivity:PkiFolder`, default `%LOCALAPPDATA%\JISRN Forge\pki`; server certificates trusted from `pki/trusted`, or `trustServer=true`); optional username/password. Read only; every failure becomes a readable connection error.
+- **MQTT:** `tls=true` (system certificate trust, port 8883 by default), username/password in CONNECT.
+- **Secrets at rest** (`Forge.Host/Security/SecretProtector.cs`): ASP.NET Core data protection, keys in `Forge:Secrets:KeyFolder` (default `%LOCALAPPDATA%\JISRN Forge\keys`, DPAPI-protected on Windows). Webhook signing secrets and connector settings marked `Secret` (passwords) are stored as `enc:…`; the API shows `••••••`, and sending the mask back keeps the stored value. Back up the key folder with the database: without it, stored secrets cannot be decrypted (re-enter them).
+- **Customer part numbers** (Sales `0002_customer_parts.sql`, `CustomerParts.cs`, `GET /api/sales/customer-parts`, `POST /api/sales/customers/{code}/parts`, Integrations page tab): an 850 line with only the buyer's number (BP/IN) maps through it, otherwise it waits for review with the reason; 855/856/810 carry BP alongside VP when recorded.
+- **EDI 860** (purchase order change): read and described line by line, linked to the matching sales order, always NeedsReview — never applied automatically; new "Done" (`/api/interchange/documents/{id}/close`, reason) closes a reviewed document as handled.
+- Migration count 191. Tests: `ConnectorTests` (OPC UA reading + unreachable server, MQTT credentials), `InterchangeTests.Customer_part_numbers_map_buyer_parts_and_an_860_waits_for_a_person_to_apply_it`, webhook secret encrypted in the database, machine password masked/encrypted/kept (`MachineOeeTests`), `tests/ui/interchange-parts.test.mjs`.
+
 ## Claude: machine connections, downtime reporting and OEE per shift (2026-11-01)
 
 - **Owner decisions (2026-11-01):** a plant picks per machine which connector it uses (no controllers yet, so everything is tested against a simulator and fakes); operators report downtime at the terminal, or tell maintenance or the supervisor who enters it on their behalf, with an option to ask maintenance to come; OEE per shift.

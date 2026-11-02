@@ -74,6 +74,8 @@ internal static class InterchangeEndpoints
             Command(http, b.Reason, c => s.ReceiveAsync(new ReceiveDocuments(null, b.FileName, b.Content), c, ct)));
         api.MapPost("/documents/{id:long}/reprocess", (HttpContext http, long id, ReasonRequest b, InterchangeService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.ReprocessAsync(new ReprocessDocument(id), c, ct)));
+        api.MapPost("/documents/{id:long}/close", (HttpContext http, long id, ReasonRequest b, InterchangeService s, CancellationToken ct) =>
+            Command(http, b.Reason, c => s.CloseAsync(new CloseDocument(id), c, ct)));
         api.MapPost("/documents/{id:long}/reject", (HttpContext http, long id, ReasonRequest b, InterchangeService s, CancellationToken ct) =>
             Command(http, b.Reason, c => s.RejectAsync(new RejectDocument(id), c, ct)));
         api.MapPost("/folder/run", (HttpContext http, FolderExchange folder, CancellationToken _) =>
@@ -96,8 +98,10 @@ internal static class InterchangeEndpoints
     private static async Task<IResult> SaveWebhookAsync(HttpContext http, long? id, WebhookRequest b, InterchangeService s, CancellationToken ct)
     {
         var secret = id is null || b.RotateSecret ? NewSecret() : null;
+        var protector = http.RequestServices.GetRequiredService<Forge.Host.Security.ISecretProtector>();
         CommandResult? saved = null;
-        var result = await Command(http, b.Reason, async c => saved = await s.SaveWebhookAsync(new SaveWebhook(id, b.Name, b.Url, b.Events ?? [], b.PartnerCode, b.Active, secret), c, ct));
+        var result = await Command(http, b.Reason, async c => saved = await s.SaveWebhookAsync(new SaveWebhook(id, b.Name, b.Url, b.Events ?? [], b.PartnerCode, b.Active,
+            secret is null ? null : protector.Protect(secret), secret?[..10]), c, ct));
         return saved is { Succeeded: true, Code: "ok" } && secret is not null ? Results.Ok(new { saved.EntityId, saved.Message, secret }) : result;
     }
 

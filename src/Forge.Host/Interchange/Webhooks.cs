@@ -148,7 +148,7 @@ public sealed class WebhookSubscriber(InterchangeService interchange, IKernelUni
 /// webhook's secret, X-Forge-Timestamp the Unix seconds it was sent. A 2xx answer delivers; otherwise it is retried after 1, 5 and 30
 /// minutes, 2 and 12 hours, then marked failed and the integration administrator is told.
 /// </summary>
-public sealed class WebhookDispatcher(InterchangeService interchange, IKernelUnitOfWorkFactory unitOfWork, IWebhookTransport transport, TimeProvider time)
+public sealed class WebhookDispatcher(InterchangeService interchange, IKernelUnitOfWorkFactory unitOfWork, IWebhookTransport transport, TimeProvider time, Forge.Host.Security.ISecretProtector secrets)
 {
     public static string Signature(string secret, long timestamp, string body)
     {
@@ -166,7 +166,7 @@ public sealed class WebhookDispatcher(InterchangeService interchange, IKernelUni
             var lookup = read.Store<IInterchangeLookup>();
             due = await lookup.ListDueDeliveriesAsync(time.GetUtcNow(), take, ct);
             foreach (var hook in (await lookup.ListWebhooksAsync(ct)).Where(h => due.Any(d => d.WebhookId == h.WebhookId)))
-                hooks[hook.WebhookId] = (hook, await lookup.WebhookSecretAsync(hook.WebhookId, ct));
+                hooks[hook.WebhookId] = (hook, await lookup.WebhookSecretAsync(hook.WebhookId, ct) is { } stored ? secrets.Unprotect(stored) : null);
         }
 
         foreach (var d in due)

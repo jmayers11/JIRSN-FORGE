@@ -67,6 +67,7 @@ public sealed partial class ConnectivityService(CommandPipeline pipeline)
     public const string SourceContext = "Connectivity";
     private const string Entity = "MachineConnection";
     private static readonly string[] UrlSettings = ["url"];
+    private static readonly string[] BooleanSettings = ["tls", "trustServer"];
     private static readonly string[] NumberSettings = ["port", "unit", "stateRegister", "runningValue", "countRegister", "scrapRegister", "cycleSeconds", "stopEveryMinutes", "stopMinutes"];
 
     [GeneratedRegex("^[A-Za-z0-9_.-]{1,40}$")]
@@ -102,6 +103,10 @@ public sealed partial class ConnectivityService(CommandPipeline pipeline)
             foreach (var key in NumberSettings.Where(settings.ContainsKey))
                 if (!int.TryParse(settings[key], NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) || n < 0 || n > 65535)
                     throw new CommandRejectedException("invalid_setting", $"{key} must be a whole number from 0 to 65535.");
+            foreach (var key in BooleanSettings.Where(settings.ContainsKey))
+                if (settings[key] is not ("true" or "false")) throw new CommandRejectedException("invalid_setting", $"{key} is true or false.");
+            if (settings.TryGetValue("security", out var mode) && mode is not ("None" or "Sign" or "SignAndEncrypt"))
+                throw new CommandRejectedException("invalid_setting", "security is None, Sign or SignAndEncrypt.");
             var before = await uow.Store<IConnectivityLookup>().FindConnectionAsync(machine, ct);
             var connection = new MachineConnection(machine, c.Kind, settings, c.PollSeconds, c.StopAfterSeconds, c.Active, context.Actor, now);
             await uow.Store<IConnectivityStore>().UpsertConnectionAsync(connection, ct);

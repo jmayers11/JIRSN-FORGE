@@ -4,6 +4,9 @@ using System.Net;
 using System.Net.Sockets;
 using Forge.Connectivity.Contracts;
 using Forge.Host.Connectivity;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Opc.Ua;
 
 namespace Forge.Integration.Tests;
 
@@ -81,6 +84,9 @@ public sealed class ConnectorTests
         Assert.Equal(new byte[] { 0x80, 0x01 }, MqttConnector.RemainingLength(128));
         var connect = MqttConnector.Connect("forge-m1");
         Assert.Equal((0x10, 4, (byte)'M'), (connect[0], connect[3], connect[4]));
+        var secured = MqttConnector.Connect("c", "user", "pw");
+        Assert.Equal(0xC2, secured[9]);
+        Assert.Equal(new byte[] { 0, 2, (byte)'p', (byte)'w' }, secured[^4..]);
         var subscribe = MqttConnector.Subscribe(1, "plant/m1");
         Assert.Equal(0x82, subscribe[0]);
         byte[] publish = [0, 8, .. "plant/m1"u8.ToArray(), .. """{"state":"Alarm","partCount":12,"alarm":"Door open"}"""u8.ToArray()];
@@ -104,9 +110,22 @@ public sealed class ConnectorTests
     }
 
     [Fact]
-    public async Task Opc_ua_says_plainly_that_it_is_not_in_this_build()
+    public async Task Opc_ua_reads_node_values_and_reports_a_server_it_cannot_reach()
     {
-        var ex = await Assert.ThrowsAsync<MachineConnectorException>(() => new OpcUaConnector().ReadAsync(Connection(ConnectorKind.OpcUa), Now, CancellationToken.None));
-        Assert.Contains("OPC Foundation", ex.Message, StringComparison.Ordinal);
+        var values = new Dictionary<string, DataValue>(StringComparer.Ordinal)
+        {
+            ["stateNode"] = new DataValue(new Variant(true)),
+            ["countNode"] = new DataValue(new Variant(1234u)),
+        };
+        Assert.Equal((MachineState.Running, 1234L), (OpcUaConnector.Reading(values, null, Now).State, OpcUaConnector.Reading(values, null, Now).PartCount));
+        Assert.Equal(MachineState.Stopped, OpcUaConnector.Reading(values, "2", Now).State);
+        Assert.Equal(MachineState.Offline, OpcUaConnector.Reading(new Dictionary<string, DataValue>(), null, Now).State);
+
+        var pki = Path.Combine(Path.GetTempPath(), "forge-pki-" + Guid.NewGuid().ToString("N"));
+        var settings = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Forge:Connectivity:PkiFolder"] = pki }).Build();
+        using var connector = new OpcUaConnector(settings, NullLogger<OpcUaConnector>.Instance);
+        var ex = await Assert.ThrowsAsync<MachineConnectorException>(() => connector.ReadAsync(
+            Connection(ConnectorKind.OpcUa, ("endpoint", "opc.tcp://127.0.0.1:1"), ("stateNode", "ns=2;s=Machine.Running")), Now, CancellationToken.None));
+        Assert.Contains("opc.tcp://127.0.0.1:1", ex.Message, StringComparison.Ordinal);
     }
 }

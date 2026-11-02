@@ -209,6 +209,58 @@ public sealed class InterchangeTests(PostgresFixture postgres)
         Assert.Equal(HttpStatusCode.Unauthorized, (await Partner(customerKey, HttpMethod.Get, "/api/partner/v1/orders")).StatusCode);
     }
 
+    [Fact]
+    public async Task Customer_part_numbers_map_buyer_parts_and_an_860_waits_for_a_person_to_apply_it()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "forge-edi-" + Guid.NewGuid().ToString("N"));
+        await using var app = new ForgeApp(await postgres.CreateDatabaseAsync(), configureBuilder: b => b.UseSetting("Forge:Interchange:Folder", folder));
+        var (plant, _) = await SlittingPlant.BuildEngineeredAsync(app);
+        await plant.Person("integ", "IntegrationAdministrator");
+        await plant.Person("rep", "SalesRepresentative");
+        var (integ, rep) = (plant.As("integ"), plant.As("rep"));
+        await plant.Ok(rep, "/api/sales/customers", new { code = "ACME", name = "Acme Corp", paymentTermsDays = 30, taxRatePercent = 0m });
+        await plant.Ok(integ, "/api/interchange/partners", new { code = "ACME", name = "Acme Corp", kind = "Customer", partyCode = "ACME", ediQualifier = "ZZ", ediId = "ACMEEDI", ourQualifier = "ZZ", ourId = "FORGE",
+            outbound = new[] { "855" }, active = true, test = false, reason = "Acme trades by EDI" });
+        Directory.CreateDirectory(Path.Combine(folder, "inbox"));
+        string Order(string po, long control, string buyerPart) => X12.Write("ZZ", "ACMEEDI", "ZZ", "FORGE", control, control, "850",
+            [X12Segment.Of("BEG", "00", "SA", po, null, EdiDay(0)), X12Segment.Of("DTM", "002", EdiDay(5)), X12Segment.Of("PO1", "1", "4", "EA", "25", null, "BP", buyerPart), X12Segment.Of("CTT", "1")], DateTimeOffset.UtcNow);
+
+        // Without the customer's number on record, the order waits for review; recorded, it maps exactly.
+        await File.WriteAllTextAsync(Path.Combine(folder, "inbox", "a.x12"), Order("PO-X-1", 201, "ACME-ROLL"));
+        await plant.Ok(integ, "/api/interchange/folder/run", new { });
+        await PropagateAsync(app);
+        var waiting = Doc(await Get(rep, "/api/interchange/documents"), "850", "Inbound");
+        Assert.Equal("NeedsReview", waiting.GetProperty("status").GetString());
+        Assert.Contains("ACME-ROLL has no Forge part", waiting.GetRawText(), StringComparison.Ordinal);
+        await plant.Ok(rep, "/api/sales/customers/ACME/parts", new { customerPart = "acme-roll", partNumber = "ROLL-100", description = "Their 100 mm roll" });
+        Assert.Equal("ROLL-100", Assert.Single((await Get(rep, "/api/sales/customer-parts?customer=ACME")).EnumerateArray()).GetProperty("partNumber").GetString());
+        await plant.Ok(rep, $"/api/interchange/documents/{waiting.GetProperty("documentId").GetInt64()}/reprocess", new { });
+        await PropagateAsync(app);
+        var mapped = Doc(await Get(rep, "/api/interchange/documents"), "850", "Inbound");
+        Assert.Equal("Processed", mapped.GetProperty("status").GetString());
+        var order = long.Parse(mapped.GetProperty("businessRef").GetString()!.Split(':')[1], CultureInfo.InvariantCulture);
+
+        // The approval's 855 carries both numbers.
+        await plant.Person("mgr", "SalesManager");
+        await plant.Ok(plant.As("mgr"), $"/api/sales/orders/{order}/approve", new { });
+        await PropagateAsync(app);
+        await plant.Ok(integ, "/api/interchange/folder/run", new { });
+        var ack = await File.ReadAllTextAsync(Assert.Single(Directory.GetFiles(Path.Combine(folder, "outbox"), "ACME_855_*.x12")));
+        Assert.Contains("VP*ROLL-100*BP*ACME-ROLL", ack, StringComparison.Ordinal);
+
+        // An 860 is read and described, and waits for a person; it is closed once the change was made.
+        var change = X12.Write("ZZ", "ACMEEDI", "ZZ", "FORGE", 202, 202, "860",
+            [X12Segment.Of("BCH", "04", "SA", "PO-X-1", null, null, EdiDay(0)), X12Segment.Of("POC", "1", "QI", "6", "6", "EA", "25", null, "BP", "ACME-ROLL"), X12Segment.Of("DTM", "002", EdiDay(9)), X12Segment.Of("CTT", "1")], DateTimeOffset.UtcNow);
+        await File.WriteAllTextAsync(Path.Combine(folder, "inbox", "c.x12"), change);
+        await plant.Ok(integ, "/api/interchange/folder/run", new { });
+        await PropagateAsync(app);
+        var asked = Doc(await Get(rep, "/api/interchange/documents"), "860", "Inbound");
+        Assert.Equal(("NeedsReview", $"sales-order:{order}"), (asked.GetProperty("status").GetString(), asked.GetProperty("businessRef").GetString()));
+        Assert.Contains("increase quantity to 6 EA", asked.GetRawText(), StringComparison.Ordinal);
+        await plant.Ok(rep, $"/api/interchange/documents/{asked.GetProperty("documentId").GetInt64()}/close", new { reason = "Raised line 1 to 6 on the sales order" });
+        Assert.Equal("Processed", Doc(await Get(rep, "/api/interchange/documents"), "860", "Inbound").GetProperty("status").GetString());
+    }
+
     private static StringContent JsonContent(object body) => new(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
     private sealed class RecordingTransport : IWebhookTransport
@@ -245,6 +297,16 @@ public sealed class InterchangeTests(PostgresFixture postgres)
         var hook = await plant.Ok(integ, "/api/interchange/webhooks", new { name = "Acme portal", url = "https://hooks.example/forge", events = new[] { "sales_order.changed" }, partnerCode = "ACME", active = true, reason = "Acme portal" });
         var secret = hook.GetProperty("secret").GetString()!;
         Assert.DoesNotContain(secret, (await Get(integ, "/api/interchange/webhooks")).GetRawText(), StringComparison.Ordinal);
+        await using (var db = new NpgsqlConnection(app.ConnectionString))
+        {
+            await db.OpenAsync();
+            await using var stored = new NpgsqlCommand("SELECT secret, secret_prefix FROM interchange.webhook", db);
+            await using var row = await stored.ExecuteReaderAsync();
+            Assert.True(await row.ReadAsync());
+            Assert.StartsWith("enc:", row.GetString(0), StringComparison.Ordinal);
+            Assert.DoesNotContain(secret, row.GetString(0), StringComparison.Ordinal);
+            Assert.Equal(secret[..10], row.GetString(1));
+        }
 
         // Only Acme's order is sent.
         await plant.Ok(rep, "/api/sales/orders", new { customer = "BETA", customerPo = "B-1", lines = new[] { new { partNumber = "ROLL-100", quantity = 1m, unitPrice = 5m, dueDate = Day(5) } } });

@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Globalization;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -157,8 +158,11 @@ public sealed class MqttConnector : IMachineConnector
     public async Task<IReadOnlyList<MachineReading>> ReadAsync(MachineConnection connection, DateTimeOffset now, CancellationToken ct)
     {
         var host = ConnectorCatalog.Setting(connection, "host")!;
-        var port = ConnectorCatalog.IntSetting(connection, "port", 1883);
+        var tls = string.Equals(ConnectorCatalog.Setting(connection, "tls"), "true", StringComparison.OrdinalIgnoreCase);
+        var port = ConnectorCatalog.IntSetting(connection, "port", tls ? 8883 : 1883);
         var topic = ConnectorCatalog.Setting(connection, "topic")!;
+        var user = ConnectorCatalog.Setting(connection, "username");
+        var password = ConnectorCatalog.Setting(connection, "password");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(6));
         var readings = new List<MachineReading>();
@@ -166,8 +170,10 @@ public sealed class MqttConnector : IMachineConnector
         {
             using var client = new TcpClient();
             await client.ConnectAsync(host, port, timeout.Token);
-            var stream = client.GetStream();
-            await stream.WriteAsync(Connect("forge-" + connection.MachineCode.ToLowerInvariant()), timeout.Token);
+            using var ssl = tls ? new SslStream(client.GetStream()) : null;
+            if (ssl is not null) await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions { TargetHost = host }, timeout.Token);
+            Stream stream = ssl is null ? client.GetStream() : ssl;
+            await stream.WriteAsync(Connect("forge-" + connection.MachineCode.ToLowerInvariant(), user, password), timeout.Token);
             var (type, body) = await ReadPacketAsync(stream, timeout.Token);
             if (type != 2 || body.Length < 2 || body[1] != 0) throw new MachineConnectorException($"The MQTT broker refused the connection (code {(body.Length > 1 ? body[1] : -1)}).");
             await stream.WriteAsync(Subscribe(1, topic), timeout.Token);
@@ -189,16 +195,24 @@ public sealed class MqttConnector : IMachineConnector
             await stream.WriteAsync(Disconnect, CancellationToken.None);
         }
         catch (SocketException ex) { throw new MachineConnectorException($"MQTT broker did not answer: {ex.Message}"); }
+        catch (System.Security.Authentication.AuthenticationException ex) { throw new MachineConnectorException($"MQTT TLS failed (is the broker's certificate trusted?): {ex.Message}"); }
         catch (IOException ex) { throw new MachineConnectorException($"MQTT connection broke: {ex.Message}"); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && readings.Count == 0) { throw new MachineConnectorException("MQTT broker did not answer in time."); }
 
         return readings.Count == 0 ? [] : [readings[^1]];
     }
 
-    public static byte[] Connect(string clientId)
+    public static byte[] Connect(string clientId, string? user = null, string? password = null)
     {
-        var id = Encoding.UTF8.GetBytes(clientId);
-        byte[] variable = [0, 4, (byte)'M', (byte)'Q', (byte)'T', (byte)'T', 4, 0x02, 0, 30, (byte)(id.Length >> 8), (byte)id.Length, .. id];
+        static byte[] Field(string value)
+        {
+            var bytes = Encoding.UTF8.GetBytes(value);
+            return [(byte)(bytes.Length >> 8), (byte)bytes.Length, .. bytes];
+        }
+
+        var flags = (byte)(0x02 | (user is null ? 0 : 0x80) | (user is not null && password is not null ? 0x40 : 0));
+        byte[] variable = [0, 4, (byte)'M', (byte)'Q', (byte)'T', (byte)'T', 4, flags, 0, 30, .. Field(clientId),
+            .. (user is null ? Array.Empty<byte>() : Field(user)), .. (user is not null && password is not null ? Field(password) : Array.Empty<byte>())];
         return [0x10, .. RemainingLength(variable.Length), .. variable];
     }
 
@@ -250,7 +264,7 @@ public sealed class MqttConnector : IMachineConnector
         }
     }
 
-    private static async Task<(int Type, byte[] Body)> ReadPacketAsync(NetworkStream stream, CancellationToken ct)
+    private static async Task<(int Type, byte[] Body)> ReadPacketAsync(Stream stream, CancellationToken ct)
     {
         var first = new byte[1];
         await stream.ReadExactlyAsync(first, ct);
@@ -268,15 +282,6 @@ public sealed class MqttConnector : IMachineConnector
         await stream.ReadExactlyAsync(body, ct);
         return (first[0] >> 4, body);
     }
-}
-
-/// <summary>OPC UA needs the OPC Foundation's client library, which this build does not include yet.</summary>
-public sealed class OpcUaConnector : IMachineConnector
-{
-    public ConnectorKind Kind => ConnectorKind.OpcUa;
-
-    public Task<IReadOnlyList<MachineReading>> ReadAsync(MachineConnection connection, DateTimeOffset now, CancellationToken ct) =>
-        throw new MachineConnectorException("OPC UA needs the OPC Foundation client library, which is not part of this build yet. Choose another connector or ask for OPC UA to be added.");
 }
 
 /// <summary>CSV files in a folder: timestamp,state,partCount,scrapCount,alarm. Each read file moves to read/.</summary>

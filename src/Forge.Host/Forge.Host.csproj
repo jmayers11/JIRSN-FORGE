@@ -22,6 +22,8 @@
     <ProjectReference Include="..\Forge.Connectivity\Forge.Connectivity.csproj" />
     <ProjectReference Include="..\Forge.Planning\Forge.Planning.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Client" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Configuration" />
     <PackageReference Include="ZXing.Net" />
   </ItemGroup>
 </Project>

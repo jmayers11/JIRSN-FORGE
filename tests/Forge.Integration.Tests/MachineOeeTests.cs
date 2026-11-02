@@ -122,5 +122,25 @@ public sealed class MachineOeeTests(PostgresFixture postgres)
         Assert.Equal("JAM", shift.GetProperty("reasons")[0].GetProperty("reasonCode").GetString());
         Assert.True(shift.GetProperty("availability").GetDecimal() < 1m);
         Assert.Contains(oee.GetProperty("notes").EnumerateArray(), n => n.GetString()!.Contains("does not measure or rank the people", StringComparison.Ordinal));
+
+        // Passwords for machine connections are stored encrypted, never shown, and kept when the masked value is sent back.
+        await plant.Ok(e, "/api/connectivity/machines/SLITTER-A", new { kind = "OpcUa", settings = new Dictionary<string, string> { ["endpoint"] = "opc.tcp://127.0.0.1:1", ["stateNode"] = "ns=2;s=Run", ["username"] = "forge", ["password"] = "s3cret-pw" },
+            pollSeconds = 5, stopAfterSeconds = 60, active = false, reason = "PLC upgrade" });
+        string Stored()
+        {
+            using var db = new Npgsql.NpgsqlConnection(app.ConnectionString);
+            db.Open();
+            using var cmd = new Npgsql.NpgsqlCommand("SELECT settings->>'password' FROM connectivity.machine_connection WHERE machine_code = 'SLITTER-A'", db);
+            return (string)cmd.ExecuteScalar()!;
+        }
+
+        var encrypted = Stored();
+        Assert.StartsWith("enc:", encrypted, StringComparison.Ordinal);
+        var shown = (await Get(sup, "/api/connectivity/machines")).GetProperty("connections")[0].GetProperty("settings");
+        Assert.Equal("••••••", shown.GetProperty("password").GetString());
+        Assert.DoesNotContain("s3cret-pw", shown.GetRawText(), StringComparison.Ordinal);
+        await plant.Ok(e, "/api/connectivity/machines/SLITTER-A", new { kind = "OpcUa", settings = new Dictionary<string, string> { ["endpoint"] = "opc.tcp://127.0.0.1:1", ["stateNode"] = "ns=2;s=Run", ["username"] = "forge", ["password"] = "••••••" },
+            pollSeconds = 5, stopAfterSeconds = 120, active = false, reason = "Longer threshold" });
+        Assert.Equal(encrypted, Stored());
     }
 }

@@ -17,5 +17,8 @@
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
+    <!-- OPC UA machine connections (owner decisions 2026-11-01). -->
+    <PackageVersion Include="OPCFoundation.NetStandard.Opc.Ua.Client" Version="1.5.374.158" />
+    <PackageVersion Include="OPCFoundation.NetStandard.Opc.Ua.Configuration" Version="1.5.374.158" />
   </ItemGroup>
 </Project>
