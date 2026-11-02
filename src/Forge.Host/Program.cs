@@ -89,6 +89,7 @@ Forge.Sales.Infrastructure.ReceivablesRegistration.AddForgeReceivables(builder.S
 Forge.Procurement.Infrastructure.SupplierInvoiceRegistration.AddForgeSupplierInvoices(builder.Services);
 builder.Services.AddSingleton<Forge.Procurement.Contracts.IPurchaseReceiptSource, Forge.Host.Procurement.PurchaseReceiptSource>();
 builder.Services.AddSingleton<Forge.Inventory.Contracts.IShipmentReleaseCheck, Forge.Host.Sales.CreditShipmentCheck>();
+builder.Services.AddSingleton<Forge.Inventory.Contracts.IWipDemandSource, Forge.Host.Inventory.WipDemandSource>();
 builder.Services.AddSingleton<Forge.Host.Sales.FinanceExport>();
 builder.Services.AddHttpClient("forge-carriers");
 builder.Services.TryAddSingleton<Forge.Host.Shipping.ICarrierTransport, Forge.Host.Shipping.HttpCarrierTransport>();

@@ -182,6 +182,25 @@ internal static class ReservationGate
     public static async Task RequireUnreservedAsync(IKernelUnitOfWork uow, string partNumber, string locationCode, string? lot, decimal quantity,
         ReservationTarget? holderTarget, long? holderKey, DateTimeOffset now, CancellationToken ct)
     {
+        // Owner decision 2026-11-02: a lot an approved allocation set aside for an order (the smallest piece that fits its job) is not
+        // taken for other work while that order still holds material.
+        if (lot is not null)
+        {
+            var execution = uow.Store<IExecutionLookup>();
+            var setAside = new List<LotEarmark>();
+            foreach (var e in (await uow.Store<IAllocationLookup>().ListLotEarmarksAsync(true, ct)).Where(e => e.PartNumber == partNumber && e.LotNumber == lot && e.Outstanding > 0
+                         && !(holderTarget == ReservationTarget.ProductionOrder && e.OrderNumber == holderKey)))
+                if (await execution.FindOrderAsync(e.OrderNumber, ct) is { Status: OrderStatus.Released or OrderStatus.Held }) setAside.Add(e);
+            if (setAside.Count > 0)
+            {
+                var lotQuantity = (await ShelfLifeQueries.PositionsAsync(uow, partNumber, now, ct)).Where(p => p.PartNumber == partNumber && p.LotNumber == lot && p.AvailableForPlanning).Sum(p => p.Quantity);
+                var held = setAside.Sum(e => e.Outstanding);
+                if (quantity > lotQuantity - held)
+                    throw new CommandRejectedException("set_aside_for_other", string.Create(CultureInfo.InvariantCulture,
+                        $"Lot {lot} of {partNumber} is set aside for order {string.Join(", ", setAside.Select(e => e.OrderNumber).Distinct())} (the smallest piece that fits its job); only {Math.Max(0m, lotQuantity - held)} of it is free. A planner can release the set-aside, with a reason."));
+            }
+        }
+
         var balances = await StockReservationQueries.OutstandingAsync(uow, partNumber, ct);
         if (balances.Count == 0) return;
         var positions = await ShelfLifeQueries.PositionsAsync(uow, partNumber, now, ct);

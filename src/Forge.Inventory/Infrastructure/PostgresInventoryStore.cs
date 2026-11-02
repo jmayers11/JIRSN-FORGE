@@ -563,6 +563,7 @@ public static class InventoryRegistration
         services.AddForgeStore<IAllocationLookup>(uow => new PostgresAllocationStore(uow));
         services.AddForgeStore<IAllocationStore>(uow => new PostgresAllocationStore(uow));
         services.AddSingleton<AllocationService>();
+        services.AddSingleton<RemnantService>();
         services.AddForgeStore<ICostingStore>(uow => new PostgresCostingStore(uow));
         services.AddForgeStore<ICostingLookup>(uow => new PostgresCostingStore(uow));
         services.AddSingleton<CostingService>();

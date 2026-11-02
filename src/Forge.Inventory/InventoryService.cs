@@ -687,7 +687,11 @@ public sealed partial class InventoryService(CommandPipeline pipeline, ProductRe
                 }
                 if (item.Serialized)
                 {
-                    return await ReceiveSerialsAsync(uow, store, item, order, quantity, location.Code, c.Serials, context, now, ct);
+                    var serialOutcome = await ReceiveSerialsAsync(uow, store, item, order, quantity, location.Code, c.Serials, context, now, ct);
+                    // Owner decision 2026-11-02: output promised to other orders is reserved for them as it is received.
+                    var (serialWip, serialSaid) = await WipFulfilment.ReceiveAsync(uow, pipeline, context, order.OrderNumber, item.PartNumber, quantity, now, ct);
+                    return serialWip.Count == 0 ? serialOutcome
+                        : serialOutcome with { Result = serialOutcome.Result with { Message = serialOutcome.Result.Message + serialSaid }, Events = [.. serialOutcome.Events, .. serialWip] };
                 }
 
                 if (c.Serials is { Count: > 0 })
@@ -708,9 +712,11 @@ public sealed partial class InventoryService(CommandPipeline pipeline, ProductRe
                 var txn = new NewTransaction(InventoryTransactionKind.ProductionReceipt, item.PartNumber, quantity, null, null, location.Code, outputStatus, lot, OrderNumber: order.OrderNumber, Reason: context.Reason, PartRevision: order.Revision);
                 var txnId = await store.InsertTransactionAsync(txn, now, context.Actor, ct);
                 var id = txnId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // Owner decision 2026-11-02: output promised to other orders is reserved for them as it is received.
+                var (wipEvents, wipSaid) = await WipFulfilment.ReceiveAsync(uow, pipeline, context, order.OrderNumber, item.PartNumber, quantity, now, ct);
                 return new CommandOutcome(
-                    CommandResult.Ok(id, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber} rev {order.Revision} from order {order.OrderNumber} into {location.Code}" + (lot is null ? "." : $", lot {lot}.")),
-                    [pipeline.Event(new InventoryReceived(txnId, item.PartNumber, quantity, location.Code, outputStatus.ToString(), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber)],
+                    CommandResult.Ok(id, $"Received {quantity} {item.UnitOfMeasure} {item.PartNumber} rev {order.Revision} from order {order.OrderNumber} into {location.Code}" + (lot is null ? "." : $", lot {lot}.") + wipSaid),
+                    [pipeline.Event(new InventoryReceived(txnId, item.PartNumber, quantity, location.Code, outputStatus.ToString(), null, order.OrderNumber), context, SourceContext, StockEntity, item.PartNumber), .. wipEvents],
                     new AuditChange("InventoryTransaction", id, null, CanonicalJson.Serialize(txn)));
             },
             ct, async (uow, now) =>

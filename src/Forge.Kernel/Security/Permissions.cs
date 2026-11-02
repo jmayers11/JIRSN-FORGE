@@ -236,6 +236,9 @@ public static class Permissions
 
     /// <summary>Approve allocation proposals into reservations and set the ranking rules (owner decisions 2026-11-02).</summary>
     public const string AllocationApprove = "planning.allocation.approve";
+
+    /// <summary>Set the smallest piece of a component a parent part's job can use (owner decision 2026-11-02).</summary>
+    public const string PieceSizesManage = "inventory.piece-sizes.manage";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -588,6 +591,9 @@ public static class Roles
         // Owner decisions 2026-11-02: planners forecast and approve forecasts; planners and inventory controllers approve allocations.
         Map[Planner] = [.. Map[Planner], Permissions.ForecastManage, Permissions.AllocationApprove];
         Map[InventoryController] = [.. Map[InventoryController], Permissions.AllocationApprove];
+        // Owner decision 2026-11-02: engineers, planners and inventory controllers set minimum piece sizes for leftover-piece allocation.
+        foreach (var role in new[] { ManufacturingEngineer, Planner, InventoryController })
+            Map[role] = [.. Map[role], Permissions.PieceSizesManage];
         // Owner decision 2026-10-27: supervisors and managers answer to several areas, so they can see every area of Forge. Seeing is all
         // this adds; recording, proposing and approving stay with each area's role. People views (attendance, development packets,
         // training requests) go to supervisors and the plant manager only; pay, the audit trail and access administration go to nobody new.

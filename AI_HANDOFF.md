@@ -1850,3 +1850,35 @@ person approves.
 
 Migrations: planning `0011`, inventory `0035`, kernel `0047` (204 in total). Tests: `ForecastAllocationTests` (2), Planning
 `ForecastEngineTests` (5), `tests/ui/forecast-page.test.mjs`.
+
+## Claude: allocation with work in progress and leftover pieces; forecasting for complex items (2026-11-02)
+
+Owner decisions 2026-11-02: only unpegged work in progress is offered; leftover pieces carry a size and the smallest that fits is offered;
+forecasting handles trend + season, new items, families and options, and planner adjustments. Everything still only proposes.
+
+- **Leftover pieces** (`RemnantService`; `inventory.lot_dimension`, `inventory.piece_size_rule`, `inventory.lot_earmark`). Anyone who
+  transacts stock measures a lot (length/width/thickness, mm/cm/m/in/ft). `inventory.piece-sizes.manage` (ManufacturingEngineer, Planner,
+  InventoryController) sets a job's minimum piece of a component (parent part + component, with a reason; no sizes clears it). For an order
+  whose job has a minimum, the optimizer offers only lots that fit (length and width may be turned; thickness may not), smallest first,
+  measured lots before full stock with no size (taken to fit); a recorded remnant with no size is ruled out until measured. Approving such a
+  line reserves as before and sets the lot aside for the order; `ReservationGate` refuses issuing or shipping that lot for other work while
+  the order holds material (`set_aside_for_other`). A planner can release a set-aside, with a reason.
+- **Work in progress** (`AllocationOptimizer.WipSupplyAsync`, `IWipDemandSource` implemented by Host `WipDemandSource`;
+  `inventory.wip_allocation`). Open production orders of the part (FirmPlanned, Released; Held shown and ruled out): projected output =
+  quantity - scrap - received. Free stock, then these orders by due date, cover open independent demand for the part (net of shipped and of
+  stock reserved for it); contract orders stay with their contract; what is left and not already promised is unpegged. After free stock and
+  before alternates, unpegged output is offered to short orders (same program, matching revision), listing every remaining operation
+  (inspections included; nothing is skipped) and saying when it is due after the short order. Approving promises it; receiving the order's
+  output (`ReceiveFromProduction`) reserves the promise for the consuming order in the same transaction, as far as it still needs it. A
+  planner can release a promise, with a reason. A promise counts against the consuming order's shortage until received.
+- **Forecasting**. New methods: damped trend (8+ months), additive Holt-Winters with damped trend (26+ months), Syntetos-Boylan (sparse);
+  a `trend` history flag. `ForecastService.Build`: families first (`planning.forecast_family`, `forecast_family_member`): the family is
+  forecast as a whole (sum of members, or a driver part for configurable items) and split by fixed share, attach rate, or the last 12 months'
+  mix; each member line says its share and what it would be on its own history; the family line (`family:CODE`) is shown, never approved.
+  New items (`planning.forecast_analog`) borrow a like item's forecast, scaled (set, or worked out from 3+ shared months), zero before a
+  launch month, until they have 13 months of their own. Planner adjustments (`planning.forecast_adjustment`: add units, percent, end of
+  life; reason required; cancellable) apply on top; each month keeps `Statistical` and an `Adjusted` note, and approval carries both.
+  Permission `planning.forecast.manage`.
+
+Migrations: planning `0012`, inventory `0036`, kernel `0048` (207 in total). Tests: `RemnantWipAllocationTests` (3), Planning
+`ForecastComplexItemTests` (7), `tests/ui/forecast-complex.test.mjs`.

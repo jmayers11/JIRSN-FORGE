@@ -97,6 +97,110 @@ internal sealed class PostgresForecastStore(PostgresUnitOfWork uow) : IForecastS
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<IReadOnlyList<ForecastAnalog>> ListAnalogsAsync(CancellationToken ct)
+    {
+        var list = new List<ForecastAnalog>();
+        await using var cmd = uow.Command("SELECT part_number, like_part, scale, launch_month, set_by, set_at FROM planning.forecast_analog ORDER BY part_number");
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            list.Add(new ForecastAnalog(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetDecimal(2), r.IsDBNull(3) ? null : r.GetFieldValue<DateOnly>(3), r.GetString(4), r.GetFieldValue<DateTimeOffset>(5)));
+        return list;
+    }
+
+    public async Task UpsertAnalogAsync(ForecastAnalog a, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO planning.forecast_analog (part_number, like_part, scale, launch_month, set_by, set_at) VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (part_number) DO UPDATE SET like_part = EXCLUDED.like_part, scale = EXCLUDED.scale, launch_month = EXCLUDED.launch_month, set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at
+            """, a.PartNumber, a.LikePart, new NpgsqlParameter { Value = (object?)a.Scale ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Numeric },
+            new NpgsqlParameter { Value = (object?)a.LaunchMonth ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Date }, a.SetBy, a.SetAt);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<bool> DeleteAnalogAsync(string partNumber, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("DELETE FROM planning.forecast_analog WHERE part_number = $1", partNumber);
+        return await cmd.ExecuteNonQueryAsync(ct) > 0;
+    }
+
+    public async Task<IReadOnlyList<ForecastFamily>> ListFamiliesAsync(CancellationToken ct)
+    {
+        var members = new List<(string Code, ForecastFamilyMember Member)>();
+        await using (var cmd = uow.Command("SELECT family_code, part_number, share FROM planning.forecast_family_member ORDER BY family_code, position"))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct)) members.Add((r.GetString(0), new ForecastFamilyMember(r.GetString(1), r.IsDBNull(2) ? null : r.GetDecimal(2))));
+        }
+
+        var list = new List<ForecastFamily>();
+        await using (var cmd = uow.Command("SELECT family_code, name, driver_part, set_by, set_at FROM planning.forecast_family ORDER BY family_code"))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct))
+            {
+                var code = r.GetString(0);
+                list.Add(new ForecastFamily(code, r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), members.Where(m => m.Code == code).Select(m => m.Member).ToList(), r.GetString(3),
+                    r.GetFieldValue<DateTimeOffset>(4)));
+            }
+        }
+
+        return list;
+    }
+
+    public async Task ReplaceFamilyAsync(ForecastFamily f, CancellationToken ct)
+    {
+        await DeleteFamilyAsync(f.Code, ct);
+        await using (var cmd = uow.Command("INSERT INTO planning.forecast_family (family_code, name, driver_part, set_by, set_at) VALUES ($1, $2, $3, $4, $5)",
+            f.Code, f.Name, new NpgsqlParameter { Value = (object?)f.DriverPart ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Text }, f.SetBy, f.SetAt))
+        {
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        for (var i = 0; i < f.Members.Count; i++)
+        {
+            await using var cmd = uow.Command("INSERT INTO planning.forecast_family_member (family_code, part_number, share, position) VALUES ($1, $2, $3, $4)",
+                f.Code, f.Members[i].PartNumber, new NpgsqlParameter { Value = (object?)f.Members[i].Share ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Numeric }, i);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    public async Task<bool> DeleteFamilyAsync(string code, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("DELETE FROM planning.forecast_family WHERE family_code = $1", code);
+        return await cmd.ExecuteNonQueryAsync(ct) > 0;
+    }
+
+    public async Task<IReadOnlyList<ForecastAdjustment>> ListAdjustmentsAsync(bool activeOnly, CancellationToken ct)
+    {
+        var list = new List<ForecastAdjustment>();
+        await using var cmd = uow.Command(
+            """
+            SELECT adjustment_id, part_number, from_month, to_month, kind, amount, reason, set_by, set_at, cancelled_by, cancelled_at
+            FROM planning.forecast_adjustment WHERE (NOT $1 OR cancelled_at IS NULL) ORDER BY adjustment_id
+            """, activeOnly);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            list.Add(new ForecastAdjustment(r.GetInt64(0), r.GetString(1), r.GetFieldValue<DateOnly>(2), r.IsDBNull(3) ? null : r.GetFieldValue<DateOnly>(3), Enum.Parse<ForecastAdjustmentKind>(r.GetString(4)),
+                r.GetDecimal(5), r.GetString(6), r.GetString(7), r.GetFieldValue<DateTimeOffset>(8), r.IsDBNull(9) ? null : r.GetString(9), r.IsDBNull(10) ? null : r.GetFieldValue<DateTimeOffset>(10)));
+        return list;
+    }
+
+    public async Task<long> InsertAdjustmentAsync(ForecastAdjustment a, CancellationToken ct)
+    {
+        await using var cmd = uow.Command(
+            """
+            INSERT INTO planning.forecast_adjustment (part_number, from_month, to_month, kind, amount, reason, set_by, set_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING adjustment_id
+            """, a.PartNumber, a.FromMonth, new NpgsqlParameter { Value = (object?)a.ToMonth ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Date }, a.Kind.ToString(), a.Amount, a.Reason, a.SetBy, a.SetAt);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<bool> CancelAdjustmentAsync(long adjustmentId, string actor, DateTimeOffset at, CancellationToken ct)
+    {
+        await using var cmd = uow.Command("UPDATE planning.forecast_adjustment SET cancelled_by = $2, cancelled_at = $3 WHERE adjustment_id = $1 AND cancelled_at IS NULL", adjustmentId, actor, at);
+        return await cmd.ExecuteNonQueryAsync(ct) > 0;
+    }
+
     private async Task<IReadOnlyList<ForecastRun>> RunsAsync(string tail, CancellationToken ct, params object?[] args)
     {
         var list = new List<ForecastRun>();
