@@ -49,6 +49,10 @@ import { supplierScorecardPage } from './pages/supplier-scorecard.js';
 import { interchangePage } from './pages/interchange.js';
 import { oeePage } from './pages/oee.js';
 import { chemicalsPage } from './pages/chemicals.js';
+import { receivablesPage } from './pages/receivables.js';
+import { payablesPage } from './pages/payables.js';
+import { backflushPage } from './pages/backflush.js';
+import { carriersPage } from './pages/carriers.js';
 import { riskRadarPage } from './pages/risk-radar.js';
 import { operationsVisualizationsPage } from './pages/operations-visualizations.js';
 import { loadDirectory } from './people.js';
@@ -106,6 +110,10 @@ const NAV = [
   { route: 'integrations', label: 'Integrations', icon: 'knowledge', page: interchangePage },
   { route: 'oee', label: 'Machines & OEE', icon: 'analytics', page: oeePage },
   { route: 'chemicals', label: 'Chemicals & SDS', icon: 'quality', page: chemicalsPage },
+  { route: 'receivables', label: 'Payments & Credit', icon: 'commercial', page: receivablesPage },
+  { route: 'payables', label: 'Supplier Invoices', icon: 'purchasing', page: payablesPage },
+  { route: 'backflush', label: 'Backflush', icon: 'inventory', page: backflushPage },
+  { route: 'carriers', label: 'Carriers & Labels', icon: 'truck', page: carriersPage },
   { route: 'reports', label: 'Reports', icon: 'reports', page: reportsPage },
   { route: 'analyst', label: 'Forge Analyst', icon: 'knowledge', page: analystPage },
   { route: 'access', label: 'Access Control', icon: 'access', page: accessPage },
@@ -114,8 +122,8 @@ const NAV_GROUPS = [
   ['Daily', ['daily-mission']],
   ['Supervisor', ['supervisor', 'operations-visualizations', 'risk-radar', 'workforce-kanban', 'machine-kanban', 'oee', 'performance']],
   ['Plan', ['home', 'horizon', 'programs', 'projects', 'engineering', 'scheduling', 'scenarios', 'material-plan']],
-  ['Sell', ['sales']],
-  ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'chemicals', 'shift-continuity', 'inventory', 'receiving', 'procurement', 'supplier-scorecard', 'maintenance', 'shipping']],
+  ['Sell', ['sales', 'receivables']],
+  ['Make', ['orders', 'work-centers', 'tools', 'shop-floor', 'plant-setup', 'safety-rules', 'chemicals', 'shift-continuity', 'inventory', 'backflush', 'receiving', 'procurement', 'payables', 'supplier-scorecard', 'maintenance', 'shipping', 'carriers']],
   ['Quality', ['quality', 'spc', 'acceptance', 'investigations', 'qms', 'qms-planning', 'qms-audit', 'qms-review', 'qms-metrics', 'commercial-quality']],
   ['Admin', ['my-work', 'timesheet', 'notifications', 'workforce', 'costing', 'integrations', 'integrity', 'reports', 'analyst', 'access']],
 ];
@@ -127,6 +135,7 @@ const NAV_ACCESS = {
   performance: ['workforce.read'],
   costing: ['costing.read'],
   sales: ['sales.read'],
+  receivables: ['sales.read'], payables: ['procurement.read'], backflush: ['inventory.read'], carriers: ['inventory.read'],
   integrations: ['interchange.read', 'interchange.manage'], oee: ['resources.read'], spc: ['quality.read'], 'supplier-scorecard': ['procurement.read'],
   timesheet: ['timekeeping.record', 'timekeeping.approve', 'timekeeping.read', 'timekeeping.codes.manage'],
   'risk-radar': ['planning.readiness.read'],

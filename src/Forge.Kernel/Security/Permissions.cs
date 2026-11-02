@@ -203,6 +203,33 @@ public static class Permissions
 
     /// <summary>Flag safety data sheet reviews that fall due (the system).</summary>
     public const string HazcomFlag = "hazcom.flag";
+
+    /// <summary>Turn the optional parts of Forge on or off for the plant (owner decision 2026-11-01).</summary>
+    public const string SiteFeaturesManage = "site.features.manage";
+
+    /// <summary>Record and void customer payments (owner decisions 2026-11-01).</summary>
+    public const string SalesPaymentsRecord = "sales.payments.record";
+
+    /// <summary>Set customer credit limits and the credit policy.</summary>
+    public const string SalesCreditManage = "sales.credit.manage";
+
+    /// <summary>Release a sales order or shipment from a customer's credit hold.</summary>
+    public const string SalesCreditRelease = "sales.credit.release";
+
+    /// <summary>Enter, void and mark paid supplier invoices (owner decisions 2026-11-01).</summary>
+    public const string SupplierInvoicesEnter = "procurement.invoices.enter";
+
+    /// <summary>Decide supplier invoices outside the three-way match tolerance, and set the tolerance.</summary>
+    public const string SupplierInvoicesApprove = "procurement.invoices.approve";
+
+    /// <summary>Set up shipping carrier accounts and their credentials (owner decisions 2026-11-01).</summary>
+    public const string CarriersManage = "inventory.carriers.manage";
+
+    /// <summary>Record carrier tracking (the system).</summary>
+    public const string CarriersTrack = "inventory.carriers.track";
+
+    /// <summary>Record what a backflush could not deduct (the system).</summary>
+    public const string InventoryBackflushRecord = "inventory.backflush.record";
     public const string AttendanceScheduleManage = "workforce.attendance-schedule.manage";
     public const string AttendancePolicyManage = "workforce.attendance-policy.manage";
     public const string AttendanceClassificationRecord = "workforce.attendance-classification.record";
@@ -411,6 +438,12 @@ public static class Roles
     /// <summary>Keeps the chemical register and safety data sheets (owner decisions 2026-11-01).</summary>
     public const string EhsCoordinator = "EHSCoordinator";
 
+    /// <summary>Keeps credit limits and the credit policy, records payments and releases credit holds (owner decisions 2026-11-01).</summary>
+    public const string CreditManager = "CreditManager";
+
+    /// <summary>Enters supplier invoices for the three-way match and marks them paid (owner decisions 2026-11-01).</summary>
+    public const string AccountsPayableClerk = "AccountsPayableClerk";
+
     private static readonly Dictionary<string, string[]> Map = new(StringComparer.Ordinal)
     {
         [Employee] = [Permissions.AttendanceCorrectionRequest],
@@ -459,6 +492,8 @@ public static class Roles
         [SalesRepresentative] = [Permissions.SalesRead, Permissions.SalesManage, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.MaterialPlanRead],
         [SalesManager] = [Permissions.SalesRead, Permissions.SalesApprove, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.MaterialPlanRead, Permissions.ReportsSave, Permissions.AnalystUse],
         [BillingClerk] = [Permissions.SalesRead, Permissions.BillingManage, Permissions.AccountingExport, Permissions.InventoryRead],
+        [CreditManager] = [Permissions.SalesRead, Permissions.SalesPaymentsRecord, Permissions.SalesCreditManage, Permissions.SalesCreditRelease, Permissions.InventoryRead, Permissions.AccountingExport],
+        [AccountsPayableClerk] = [Permissions.PurchasingRead, Permissions.SupplierInvoicesEnter, Permissions.InventoryRead, Permissions.EngineeringRead, Permissions.AccountingExport],
         [EhsCoordinator] = [Permissions.HazcomManage, Permissions.HazcomSubmit, Permissions.DocumentsAttach, Permissions.EngineeringRead, Permissions.InventoryRead, Permissions.PurchasingRead, Permissions.CompetencyRead, Permissions.WorkforceRead, Permissions.TrainingRequestsRead, Permissions.TrainingRequestsRequest],
         [IntegrationAdministrator] = [Permissions.InterchangeManage, Permissions.InterchangeRead, Permissions.InterchangeReceive, Permissions.InterchangeReview, Permissions.SalesRead, Permissions.PurchasingRead],
         [ShopFloorTerminal] = [Permissions.ShopFloorRecord, Permissions.ShopFloorRead, Permissions.AttendanceRecord, Permissions.InventoryMaterialRequest, Permissions.QualityReportSuspect, Permissions.ReadinessRead, Permissions.OrdersRead, Permissions.ResourcesRead, Permissions.ScheduleRead],
@@ -479,6 +514,8 @@ public static class Roles
         [StockReservations] = [Permissions.InventoryReserve, Permissions.InventoryRead, Permissions.OrdersRead],
         [SpcMonitor] = [Permissions.SpcRecord, Permissions.QualityRead],
         [Hazcom] = [Permissions.HazcomFlag],
+        [Backflush] = [Permissions.InventoryTransact, Permissions.InventoryBackflushRecord, Permissions.InventoryRead, Permissions.OrdersRead, Permissions.EngineeringRead],
+        [CarrierTracking] = [Permissions.CarriersTrack, Permissions.InventoryRead],
         [Connectivity] = [Permissions.ConnectivityRecord, Permissions.ConnectivityRead, Permissions.DowntimeReport, Permissions.ResourcesRead, Permissions.ShopFloorRead, Permissions.OrdersRead],
         [Interchange] = [Permissions.InterchangeProcess, Permissions.InterchangeReceive, Permissions.InterchangeRead, Permissions.SalesManage, Permissions.SalesRead, Permissions.PurchasingRead, Permissions.InventoryRead, Permissions.EngineeringRead],
     };
@@ -535,6 +572,13 @@ public static class Roles
         // Owner decisions 2026-11-01: those who buy, receive or specify materials may upload a supplier's SDS for the EHS Coordinator.
         foreach (var role in new[] { Buyer, PurchasingManager, ManufacturingEngineer, InventoryController })
             Map[role] = [.. Map[role], Permissions.HazcomSubmit];
+        // Owner decisions 2026-11-01: security administrators turn optional features on or off; billing clerks record payments; sales
+        // managers release credit holds; purchasing managers decide invoice match exceptions; integration administrators keep carrier accounts.
+        Map[SecurityAdministrator] = [.. Map[SecurityAdministrator], Permissions.SiteFeaturesManage];
+        Map[BillingClerk] = [.. Map[BillingClerk], Permissions.SalesPaymentsRecord];
+        Map[SalesManager] = [.. Map[SalesManager], Permissions.SalesCreditRelease];
+        Map[PurchasingManager] = [.. Map[PurchasingManager], Permissions.SupplierInvoicesApprove];
+        Map[IntegrationAdministrator] = [.. Map[IntegrationAdministrator], Permissions.CarriersManage, Permissions.InventoryRead];
         // Owner decision 2026-10-27: supervisors and managers answer to several areas, so they can see every area of Forge. Seeing is all
         // this adds; recording, proposing and approving stay with each area's role. People views (attendance, development packets,
         // training requests) go to supervisors and the plant manager only; pay, the audit trail and access administration go to nobody new.
@@ -596,6 +640,12 @@ public static class Roles
 
     /// <summary>The system role that flags safety data sheet reviews (owner decisions 2026-11-01).</summary>
     public const string Hazcom = "system.Hazcom";
+
+    /// <summary>The system role that deducts backflushed components when production is reported (owner decisions 2026-11-01).</summary>
+    public const string Backflush = "system.Backflush";
+
+    /// <summary>The system role that records carrier tracking (owner decisions 2026-11-01).</summary>
+    public const string CarrierTracking = "system.CarrierTracking";
 
     public static IReadOnlyCollection<string> All => Map.Keys;
 

@@ -221,7 +221,8 @@ public interface IInventoryStore
 /// why and what it relates to. Stock never goes below zero. Adjustments and count variances need a
 /// second person; so does releasing stock from hold or inspection.
 /// </summary>
-public sealed partial class InventoryService(CommandPipeline pipeline, ProductReleaseService productRelease, ICommandSourceResolver sourceAuthority, IReturnAcceptanceBridge? returnAcceptance = null)
+public sealed partial class InventoryService(CommandPipeline pipeline, ProductReleaseService productRelease, ICommandSourceResolver sourceAuthority, IReturnAcceptanceBridge? returnAcceptance = null,
+    IEnumerable<IShipmentReleaseCheck>? releaseChecks = null)
 {
     public const string SourceContext = "Inventory";
     private const string StockEntity = "Stock";

@@ -3,6 +3,7 @@ import { esc, $, $$, errorBlock, emptyBlock, confirmWithReason, toast, fmtDateTi
 import { formModal, canAction } from '../forms.js';
 import { roleTitle, renderLogin } from '../app.js';
 import { who } from '../people.js';
+import { featuresPanel } from './features.js';
 
 export async function settingsPage(page, ctx) {
   const me = ctx.me;
@@ -28,10 +29,12 @@ export async function settingsPage(page, ctx) {
       <div class="panel"><header><h2>Audit trail</h2></header><div id="audit">${canAudit ? 'Checking…' : '<span class="muted">Auditors and security administrators can check the audit chain here.</span>'}</div></div>
     </section>
     ${admin ? '<section class="panel" id="access"><header><h2>Program access</h2><span class="spacer"></span><button class="btn small primary" id="grant">Grant access</button></header><div id="access-body" class="muted">Loading…</div></section>' : ''}
-    <section class="panel" id="delegations"><header><h2>Temporary delegation</h2><span class="spacer"></span><button class="btn small primary" id="propose-delegation">Propose delegation</button></header><div id="delegation-body" class="muted">Loading…</div></section>`;
+    <section class="panel" id="delegations"><header><h2>Temporary delegation</h2><span class="spacer"></span><button class="btn small primary" id="propose-delegation">Propose delegation</button></header><div id="delegation-body" class="muted">Loading…</div></section>
+    <section class="panel" id="features"></section>`;
   $('#signout', page).onclick = () => { signOut(); location.hash = ''; renderLogin(); };
   if (admin) await programAccess(page, me, directory, names);
   await temporaryDelegations(page, me, admin);
+  await featuresPanel($('#features', page), me);
   if (canAudit) await auditExplorer(page);
 }
 

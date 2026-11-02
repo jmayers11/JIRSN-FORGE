@@ -146,6 +146,8 @@ public sealed class SalesOrderService(CommandPipeline pipeline, IKernelUnitOfWor
             var today = await uow.SiteDateAsync(now, ct);
             if (order.Lines.Where(l => l.Status == SalesLineStatus.Open).FirstOrDefault(l => l.DueDate < today) is { } late)
                 throw new CommandRejectedException("due_in_past", $"Line {late.LineNumber} was due {late.DueDate:yyyy-MM-dd}; change its date before approving.");
+            // Owner decision 2026-11-01: a customer on credit hold waits for a credit release of this order.
+            await CreditGate.RequireOrderAsync(uow, order.CustomerCode, order.OrderNumber, order.Total, today, ct);
             await uow.Store<ISalesStore>().SetOrderStatusAsync(order.OrderNumber, SalesOrderStatus.Approved, now, context.Actor, ct);
             return ($"approved at {Amount(order.Total, order.Currency)}; its {order.Lines.Count(l => l.Status == SalesLineStatus.Open)} open line(s) become customer-order demand", "Approved",
                 nameof(SalesOrderStatus.Draft), nameof(SalesOrderStatus.Approved));

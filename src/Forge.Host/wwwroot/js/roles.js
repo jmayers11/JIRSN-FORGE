@@ -13,7 +13,7 @@ export const ROLE_TITLES = {
   DocumentController: 'Document Controller', ChangeBoard: 'Change Board',
   AuditPlanner: 'Audit Planner', InternalAuditor: 'Internal Auditor', AuditApprover: 'Audit Approver',
   TechnicalTrainer: 'Technical Trainer', HumanResources: 'Human Resources', CostAccountant: 'Cost Accountant',
-  SalesRepresentative: 'Sales Representative', SalesManager: 'Sales Manager', BillingClerk: 'Billing Clerk', IntegrationAdministrator: 'Integration Administrator', EHSCoordinator: 'EHS Coordinator',
+  SalesRepresentative: 'Sales Representative', SalesManager: 'Sales Manager', BillingClerk: 'Billing Clerk', IntegrationAdministrator: 'Integration Administrator', EHSCoordinator: 'EHS Coordinator', CreditManager: 'Credit Manager', AccountsPayableClerk: 'Accounts Payable Clerk',
 };
 export const roleTitle = r => ROLE_TITLES[r] ?? r;
 export const ROLE_NAMES = Object.keys(ROLE_TITLES);

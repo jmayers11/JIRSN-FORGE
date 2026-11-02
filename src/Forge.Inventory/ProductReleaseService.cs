@@ -86,6 +86,10 @@ public sealed class ProductReleaseService(CommandPipeline pipeline,IInspectionSu
  }
  private static CommandRejectedException Missing()=>new("product_release_unavailable","The exact independent product release is unavailable.");
  private void Permit(ForgePrincipal p,InspectionSubject subject,string type,long id){foreach(var resource in AcceptanceSubjectResources.All(subject,type,id)){var decision=authorizer.Authorize(p,Permissions.InventoryTransact,resource);if(!decision.IsPermitted)throw new ForgeAuthorizationException(decision,resource);}}
- private static async Task<ForgePrincipal> CurrentPrincipalAsync(IKernelUnitOfWork uow,ForgePrincipal p,CancellationToken ct)=>await uow.People.LoadPrincipalAsync(p.PersonId,ct)??p with{IsActive=false};
+ // A system actor (no person, only system roles that cannot be granted) is Forge itself acting on a person's recorded work, such as a
+ // backflush after a production report (owner decisions 2026-11-01); it has no person record to reload.
+ private static async Task<ForgePrincipal> CurrentPrincipalAsync(IKernelUnitOfWork uow,ForgePrincipal p,CancellationToken ct)=>
+  p.PersonId.Value==Guid.Empty&&p.Roles.Count>0&&p.Roles.All(r=>r.StartsWith("system.",StringComparison.Ordinal))?p
+  :await uow.People.LoadPrincipalAsync(p.PersonId,ct)??p with{IsActive=false};
 }
 

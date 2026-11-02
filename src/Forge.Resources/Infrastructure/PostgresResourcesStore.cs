@@ -294,6 +294,9 @@ public static class ResourcesRegistration
         services.AddForgeStore<IToolLookup>(uow => new PostgresToolStore(uow));
         services.AddForgeStore<IToolStore>(uow => new PostgresToolStore(uow));
         services.AddSingleton<ToolService>();
+        services.AddForgeStore<ISiteFeatureLookup>(uow => new PostgresSiteFeatureStore(uow));
+        services.AddForgeStore<ISiteFeatureStore>(uow => new PostgresSiteFeatureStore(uow));
+        services.AddSingleton<SiteFeatureService>();
         return services;
     }
 }

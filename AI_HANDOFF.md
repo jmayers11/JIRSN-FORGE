@@ -1785,3 +1785,40 @@ Owner decisions 2026-11-01 (hazard communication, OSHA 29 CFR 1910.1200). New co
 
 Migrations: hazcom `0001`, kernel `0045`, competency `0005`, workforce `0016` (195 in total). Tests: `HazcomTests`, `tests/ui/chemicals.test.mjs`;
 `TrainingRequestTests` and `ReworkPlanTests` now expect the seeded HazCom onboarding request.
+
+## Claude: features a plant can turn off, backflush, payments and credit holds, supplier invoices, carriers (2026-11-02)
+
+Owner request 2026-11-01: add customer payments/credit, supplier invoices, shipping carriers and automatic material deduction, each
+something a company can disable. Decisions: credit holds stop new sales order approval and shipments until a Sales Manager or the new
+Credit Manager releases that order or shipment with a reason; supplier invoices are matched three ways (PO price and received quantity)
+with a company tolerance (default 2 % and 50, both must hold), exceptions go to a Purchasing Manager who did not enter them; carriers
+UPS, FedEx, USPS direct plus ShipEngine and EasyPost, and LTL/manual with a bill of lading; backflush at operation reporting, per-part
+opt-in, a shortage is flagged and never blocks production.
+
+- **Feature switches** (Resources `SiteFeatures`, `resources.site_feature`, Settings → Features): `receivables`, `supplier-invoices`,
+  `shipping-carriers`, `backflush`. All start on; a Security Administrator switches them (`site.features.manage`). Off stops the commands
+  and checks; nothing recorded is removed.
+- **Backflush** (Inventory `BackflushService`, `inventory.backflush_setting`/`backflush_exception`; Host `BackflushSubscriber` on
+  `ProductionReported`; page Make → Backflush). Inventory controllers choose the part and location; each report deducts the components the
+  operation consumes ((good + scrap) / order quantity × required), capped at what is still to issue, lots oldest first, as ordinary
+  `IssueToOrder` commands by the system actor `system:backflush`. Anything refused is a backflush exception with the reason; inventory
+  controllers are notified ("Backflush short") and resolve it after issuing by hand. `ProductReleaseService` now lets system actors (no
+  person, only system roles) through its reload of the current principal.
+- **Payments and credit** (Sales `ReceivablesService`, `Receivables`, `CreditGate`; `sales.payment`, `payment_application`,
+  `customer_credit`, `credit_policy`, `credit_release`; page Sell → Payments & Credit). Billing clerks record payments (oldest invoices
+  first unless named; the rest on account). Credit policy: hold after N days past due (default 30) and count open orders toward limits.
+  The gate runs in `ApproveSalesOrder` and, through the host's `CreditShipmentCheck` (`IShipmentReleaseCheck`), in `ShipShipment`.
+- **Supplier invoices** (Procurement `SupplierInvoiceService`, `procurement.supplier_invoice`/`_line`/`invoice_match_policy`; host
+  `PurchaseReceiptSource`; page Make → Supplier Invoices). New role Accounts Payable Clerk. Notification "Supplier invoice outside
+  tolerance" to purchasing managers.
+- **Carriers** (Inventory `CarrierService`, `inventory.carrier_account`/`shipment_carrier`; Host `Shipping/CarrierConnectors.cs`,
+  `CarrierGateway`, `CarrierTrackingMonitor` every two hours; page Make → Carriers & Labels). Credentials are encrypted with the host's
+  DataProtection key and never returned. The connectors follow each carrier's published API (UPS OAuth/Rating Shop/Shipping/Track, FedEx
+  OAuth/Rate/Ship/Track, USPS OAuth/prices/labels with payment authorization/tracking, ShipEngine rates/labels/track, EasyPost
+  shipments/buy/trackers) and are tested only against a simulator: they need real sandbox accounts before use. Notification "Carrier
+  delivery problem" to shippers.
+- **Accounting export** gains `cash-receipts`, `cash-journal`, `supplier-invoices`, `payables-journal` (`FinanceExport`; accounts Cash
+  1000, Accounts payable 2000, Purchase price variance 5300, Freight in 5400, Purchase tax 5410, configurable).
+
+Migrations: resources `0009`, inventory `0033`, `0034`, procurement `0008`, sales `0003`, kernel `0046` (201 in total). Tests:
+`FinanceTests` (4), `tests/ui/finance-pages.test.mjs`.

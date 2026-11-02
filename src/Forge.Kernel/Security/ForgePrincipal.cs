@@ -114,4 +114,8 @@ public static class SystemActors
     public const string Connectivity = "system:machines";
 
     public const string Hazcom = "system:hazcom";
+
+    public const string Backflush = "system:backflush";
+
+    public const string CarrierTracking = "system:carriers";
 }

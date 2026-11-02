@@ -554,6 +554,12 @@ public static class InventoryRegistration
         services.AddForgeStore<IOutsideProcessLookup>(uow => new PostgresInventoryStore(uow));
         services.AddForgeStore<IOutsideProcessStore>(uow => new PostgresInventoryStore(uow));
         services.AddSingleton<InventoryService>();
+        services.AddForgeStore<IBackflushLookup>(uow => new PostgresBackflushStore(uow));
+        services.AddForgeStore<IBackflushStore>(uow => new PostgresBackflushStore(uow));
+        services.AddSingleton<BackflushService>();
+        services.AddForgeStore<ICarrierLookup>(uow => new PostgresCarrierStore(uow));
+        services.AddForgeStore<ICarrierStore>(uow => new PostgresCarrierStore(uow));
+        services.AddSingleton<CarrierService>();
         services.AddForgeStore<ICostingStore>(uow => new PostgresCostingStore(uow));
         services.AddForgeStore<ICostingLookup>(uow => new PostgresCostingStore(uow));
         services.AddSingleton<CostingService>();

@@ -121,6 +121,14 @@ internal static class SalesEndpoints
             var decision = http.RequestServices.GetRequiredService<IForgeAuthorizer>().Authorize(principal, Permissions.AccountingExport, ResourceRef.Of(Permissions.AccountingExport));
             if (!decision.IsPermitted) throw new ForgeAuthorizationException(decision);
             var (start, end) = Period(from, to);
+            if (Forge.Host.Sales.FinanceExport.Files.Contains(file))
+            {
+                // Owner decisions 2026-11-01: customer payments and approved supplier invoices.
+                var finance = await http.RequestServices.GetRequiredService<Forge.Host.Sales.FinanceExport>()
+                    .CsvAsync(principal, http.RequestServices.GetRequiredService<IForgeAuthorizer>(), file, start, end, ct);
+                return Results.File(Encoding.UTF8.GetBytes(finance), "text/csv; charset=utf-8", string.Create(CultureInfo.InvariantCulture, $"forge-{file}-{start:yyyyMMdd}-{end:yyyyMMdd}.csv"));
+            }
+
             var export = await s.BuildAsync(principal, start, end, ct);
             var csv = file switch
             {

@@ -1977,3 +1977,7 @@ Owner chose the views (current, 7 days, 30 days) and bands (High to 6 days, Medi
 ## Claude: SDS and HazCom training - 2026-11-01
 
 Owner asked whether SDS was a gap, then for HazCom training as a site-wide requirement plants can change. Added the Hazcom context (chemical register, SDS approval by a new EHS Coordinator, purchase and receipt gate, kiosk and binder access, three-year reviews) and HazCom training: a seeded Safety qualification renewed every 365 days, a site-wide new-employee requirement, a plant-editable renewal period, a training status view with bulk requests, and a notice when a new hazardous chemical needs a training decision.
+
+## Claude: credit, supplier invoices, carriers and backflush - 2026-11-02
+
+Owner asked to add customer payments and credit holds, supplier invoices with matching, shipping carriers and automatic material deduction, each one a company can turn off, and what demand forecasting and the V5 optimizer need from them. Built all four behind plant feature switches (Settings → Features) with new Credit Manager and Accounts Payable Clerk roles; explained that forecasting needs real demand history and rules, and the optimizer needs scope approval and priority and substitute rules.

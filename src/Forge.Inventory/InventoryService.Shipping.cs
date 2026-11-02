@@ -103,6 +103,8 @@ public sealed partial class InventoryService
             }
 
             await CheckShipmentReleaseAsync(uow, shipment, context.Actor, now, ct);
+            foreach (var check in releaseChecks ?? [])
+                await check.CheckAsync(uow, shipment, now, ct); // owner decision 2026-11-01: credit holds
             foreach (var line in shipment.Lines)
                 await productRelease.RequireReleasedScopeAsync(uow, context.Principal, line.PartNumber, line.LotNumber, line.LocationCode, line.Quantity, now, ct);
             var transactions = new List<long>();

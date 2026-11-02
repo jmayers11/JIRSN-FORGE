@@ -9,7 +9,20 @@ namespace Forge.Integration.Tests;
 public sealed class V318Tests(PostgresFixture postgres)
 {
     private static TimeZoneInfo PlantZone => TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
-    private static DateTime PlantDate => TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, PlantZone).Date.AddDays(-1);
+    // Yesterday at the plant, stepped back past a daylight-saving change so the shift days around it are exactly 24 hours.
+    private static DateTime PlantDate
+    {
+        get
+        {
+            var day = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, PlantZone).Date.AddDays(-1);
+            while (Hours(day.AddDays(-1)) != 24 || Hours(day) != 24 || Hours(day.AddDays(1)) != 24) day = day.AddDays(-1);
+            return day;
+        }
+    }
+
+    private static double Hours(DateTime day) =>
+        (TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(day.AddDays(1), DateTimeKind.Unspecified), PlantZone)
+         - TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(day, DateTimeKind.Unspecified), PlantZone)).TotalHours;
     private static DateTimeOffset LocalShift(int daysBack)
     {
         var local = DateTime.SpecifyKind(PlantDate.AddDays(-daysBack), DateTimeKind.Unspecified);
