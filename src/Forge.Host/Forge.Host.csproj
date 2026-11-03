@@ -23,6 +23,7 @@
     <ProjectReference Include="..\Forge.Hazcom\Forge.Hazcom.csproj" />
     <ProjectReference Include="..\Forge.Planning\Forge.Planning.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Client" />
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Configuration" />
     <PackageReference Include="ZXing.Net" />

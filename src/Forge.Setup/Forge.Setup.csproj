@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The JISRN Forge installer (owner decisions 2026-11-03). Built by tools\package-installer.cmd, which embeds the payload
+       (published Forge and the bundled PostgreSQL). Without a payload it looks for forge-payload.zip beside itself. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>JISRN-Forge-Setup</AssemblyName>
+    <RootNamespace>Forge.Setup</RootNamespace>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <Version Condition="'$(ForgeVersion)' != ''">$(ForgeVersion)</Version>
+    <Product>JISRN Forge</Product>
+    <Company>JIRSN</Company>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(ForgePayload)' != ''">
+    <EmbeddedResource Include="$(ForgePayload)" LogicalName="forge-payload.zip" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+</Project>

@@ -7,3 +7,4 @@ TestResults/
 .forge-logs/
 appsettings.*.local.json
 forge.local.cmd
+dist/

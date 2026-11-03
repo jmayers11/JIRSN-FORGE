@@ -1,4 +1,4 @@
-import { tryGet, command } from '../api.js';
+import { tryGet, command, session } from '../api.js';
 import { esc, $, $$, errorBlock, emptyBlock } from '../ui.js';
 import { formModal, canAction } from '../forms.js';
 import { ROLE_NAMES, roleTitle } from '../roles.js';
@@ -33,7 +33,7 @@ export function thresholdBody(v) {
   return { maximumAmount: v.maximumAmount, currency };
 }
 
-export function peopleRows(people, programs, can) {
+export function peopleRows(people, programs, can, local = false) {
   const programName = id => programs.find(p => p.programId === id)?.name ?? `program ${String(id).slice(0, 8)}`;
   return people.map(p => `<tr>
     <td><b>${esc(p.displayName)}</b><div class="faint mono">${esc(p.idpSubject)}</div></td>
@@ -41,7 +41,7 @@ export function peopleRows(people, programs, can) {
     <td>${p.programs.map(id => `<span class="chip">${esc(programName(id))}${can ? `<button class="chip-x" aria-label="Revoke ${esc(programName(id))} from ${esc(p.displayName)}" data-revoke-program="${id}" data-person="${p.personId}">×</button>` : ''}</span>`).join(' ') || '<span class="muted">None</span>'}</td>
     <td>${p.markings && p.markings !== 'None' ? esc(p.markings) : '—'}</td>
     <td>${p.isActive ? '<span class="pill ok">Active</span>' : '<span class="pill none">Inactive</span>'}</td>
-    <td class="row-actions">${can ? `<button class="btn small" data-grant-role="${p.personId}">Grant role</button><button class="btn small ghost" data-grant-program="${p.personId}">Grant program</button>` : ''}</td></tr>`).join('');
+    <td class="row-actions">${can ? `<button class="btn small" data-grant-role="${p.personId}">Grant role</button><button class="btn small ghost" data-grant-program="${p.personId}">Grant program</button>${local ? `<button class="btn small ghost" data-set-password="${p.personId}">Set password</button>` : ''}` : ''}</td></tr>`).join('');
 }
 
 export async function accessPage(page, ctx) {
@@ -69,7 +69,7 @@ export async function accessPage(page, ctx) {
       <section class="panel"><header><h2>People</h2></header>
         ${people.error ? errorBlock(people.error, 'people') : !(people.data ?? []).length ? emptyBlock('Nobody registered', 'Register a person with their identity-provider subject.') : `
         <div class="table-wrap"><table class="table"><thead><tr><th>Person</th><th>Roles</th><th>Programs</th><th>Markings</th><th>Status</th><th></th></tr></thead>
-          <tbody>${peopleRows(people.data, programs, can)}</tbody></table></div>`}
+          <tbody>${peopleRows(people.data, programs, can, session.config?.authMode === 'Local')}</tbody></table></div>`}
       </section>
       ${can ? `<section class="panel"><header><h2>Role policy</h2></header>
         <div class="muted">Roles and their permissions are part of the audited configuration. Removing access management from every role is refused.</div>
@@ -90,6 +90,7 @@ export async function accessPage(page, ctx) {
     $$('[data-grant-program]', page).forEach(b => b.addEventListener('click', () => grantProgram(person(b.dataset.grantProgram))));
     $$('[data-revoke-role]', page).forEach(b => b.addEventListener('click', () => revoke(person(b.dataset.person), 'roles', b.dataset.revokeRole, roleTitle(b.dataset.revokeRole))));
     $$('[data-revoke-program]', page).forEach(b => b.addEventListener('click', () => revoke(person(b.dataset.person), 'programs', b.dataset.revokeProgram, programs.find(p => p.programId === b.dataset.revokeProgram)?.name ?? 'program')));
+    $$('[data-set-password]', page).forEach(b => b.addEventListener('click', () => setPassword(person(b.dataset.setPassword))));
     $('#create-role', page)?.addEventListener('click', createRole);
     $('#add-permission', page)?.addEventListener('click', () => rolePermission(false));
     $('#remove-permission', page)?.addEventListener('click', () => rolePermission(true));
@@ -108,6 +109,19 @@ export async function accessPage(page, ctx) {
         ...MARKINGS.map(([value, text]) => ({ name: `m_${value}`, label: 'Handling', type: 'check', text: `May see ${text.toLowerCase()} data` }))],
       confirmLabel: 'Register', reasonRequired: true },
     (v, reason) => command(`${API}/people`, { idpSubject: v.idpSubject, displayName: v.displayName, markings: MARKINGS.filter(([value]) => v[`m_${value}`]).map(([value]) => value) }, reason), reload);
+  }
+
+  // Forge accounts: a temporary password the person replaces at their next sign-in. Their username is their subject.
+  function setPassword(p) {
+    formModal({ title: `Set a temporary password for ${p.displayName}`, detail: `They sign in as ${p.idpSubject} with this password and must choose their own straight away. At least 10 characters.`,
+      fields: [{ name: 'password', label: 'Temporary password', type: 'password', required: true }], confirmLabel: 'Set password', reasonRequired: true },
+    async (v, reason) => {
+      const r = await fetch(`${API}/people/${p.personId}/password`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${session.token}` },
+        body: JSON.stringify({ password: v.password, reason }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.detail ?? `Password not set (${r.status}).`);
+      return body;
+    }, reload);
   }
 
   function grantRole(p) {

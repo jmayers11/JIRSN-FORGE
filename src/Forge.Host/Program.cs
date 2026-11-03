@@ -32,7 +32,18 @@ using Forge.Sales.Infrastructure;
 using Forge.Workforce.Infrastructure;
 using Npgsql;
 
-var builder = WebApplication.CreateBuilder(args);
+// Owner decision 2026-11-03: an installed Forge runs as a Windows service. As a service it reads the installer's settings file
+// (%ProgramData%\JISRN Forge\forge.settings.json, or FORGE_SETTINGS) and serves from its own folder.
+var asService = Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService();
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = asService ? AppContext.BaseDirectory : null });
+var machineSettings = Environment.GetEnvironmentVariable("FORGE_SETTINGS")
+    ?? (asService ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "JISRN Forge", "forge.settings.json") : null);
+if (machineSettings is not null)
+{
+    builder.Configuration.AddJsonFile(machineSettings, optional: false, reloadOnChange: false);
+}
+
+builder.Host.UseWindowsService(options => options.ServiceName = "JISRN Forge");
 
 var connectionString = builder.Configuration.GetConnectionString("Forge")
     ?? throw new InvalidOperationException("Connection string 'Forge' is not configured.");
@@ -51,6 +62,7 @@ builder.Services.AddForgeKernel(connectionString);
 builder.Services.AddForgeStore<Forge.Host.Demo.IDemoStore>(uow => new Forge.Host.Demo.DemoStore(uow));
 builder.Services.AddSingleton<Forge.Host.Demo.DemoService>();
 builder.Services.AddForgeStore<INotificationStore>(uow => new NotificationStore(uow));
+builder.Services.AddForgeStore<Forge.Host.Security.ILocalCredentialStore>(uow => new Forge.Host.Security.LocalCredentialStore(uow));
 builder.Services.AddForgeResources();
 builder.Services.AddForgeCompetency();
 builder.Services.AddForgeWorkforce();
@@ -293,6 +305,35 @@ else if (string.Equals(authMode, "Oidc", StringComparison.OrdinalIgnoreCase))
             options.MapInboundClaims = false;
         });
 }
+else if (string.Equals(authMode, "Local", StringComparison.OrdinalIgnoreCase))
+{
+    // Owner decision 2026-11-03: Forge's own accounts, plus an OIDC provider when one is configured. A bearer token Forge signed goes to
+    // the local scheme; any other goes to the provider's.
+    var local = new Forge.Host.Security.LocalAuthenticationOptions(builder.Configuration);
+    builder.Services.AddSingleton(local);
+    builder.Services.AddSingleton<Forge.Host.Security.LocalAccountService>();
+    var oidcAuthority = builder.Configuration["Forge:Authentication:Authority"];
+    var withOidc = !string.IsNullOrWhiteSpace(oidcAuthority);
+    var authentication = builder.Services.AddAuthentication("ForgeLocalOrOidc")
+        .AddJwtBearer(Forge.Host.Security.LocalAuthenticationOptions.Scheme, options =>
+        {
+            options.MapInboundClaims = false;
+            options.TokenValidationParameters = local.Validation();
+        })
+        .AddPolicyScheme("ForgeLocalOrOidc", "Forge accounts or the identity provider", options =>
+            options.ForwardDefaultSelector = context => !withOidc || Forge.Host.Security.LocalAuthenticationOptions.IsLocalToken(context)
+                ? Forge.Host.Security.LocalAuthenticationOptions.Scheme
+                : JwtBearerDefaults.AuthenticationScheme);
+    if (withOidc)
+    {
+        authentication.AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
+        {
+            options.Authority = oidcAuthority;
+            options.Audience = builder.Configuration["Forge:Authentication:Audience"];
+            options.MapInboundClaims = false;
+        });
+    }
+}
 else if (!string.Equals(authMode, "External", StringComparison.OrdinalIgnoreCase))
 {
     // "External" means the caller (for example a test host) registers authentication itself.
@@ -336,6 +377,7 @@ app.UseExceptionHandler();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseAuthentication();
+app.UseMiddleware<Forge.Host.Security.PasswordChangeGate>();
 app.UseMiddleware<StepUpMiddleware>();
 app.UseAuthorization();
 
@@ -355,6 +397,7 @@ app.MapGet("/health/ready", async (NpgsqlDataSource db, CancellationToken ct) =>
 });
 
 app.MapUiEndpoints();
+app.MapAuthSetupEndpoints();
 app.MapIdentificationEndpoints();
 app.MapIdentificationPresentationEndpoints();
 app.MapScanSessionEndpoints();

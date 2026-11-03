@@ -59,6 +59,8 @@ async function handle(response) {
   const text = await response.text();
   let body = null;
   if (text) { try { body = JSON.parse(text); } catch { body = { detail: text }; } }
+  // A request for a fresh sign-in (step-up) keeps the session; any other 401 ends it.
+  if (response.status === 401 && body?.code === 'step_up_required') throw new ApiError(401, body);
   if (response.status === 401) { signOut(); onSignedOut(); throw new ApiError(401, { title: 'Signed out', detail: 'Your sign-in is no longer valid.' }); }
   if (!response.ok) throw new ApiError(response.status, body);
   return body;
@@ -93,9 +95,48 @@ export async function command(path, body = {}, reason, options = {}) {
     commandHeaders['X-Forge-Scan-Session'] = id;
     commandHeaders['X-Forge-Scan-Version'] = String(version);
   }
-  const result = await handle(await fetch(path, { method: 'POST', headers: commandHeaders, body: JSON.stringify(payload) }));
+  let response = await fetch(path, { method: 'POST', headers: commandHeaders, body: JSON.stringify(payload) });
+  // Forge accounts: an action that needs a recent sign-in asks for the password once, then retries with the same idempotency key.
+  if (response.status === 401 && stepUpHandler && session.config?.authMode === 'Local') {
+    const peek = await response.clone().json().catch(() => null);
+    if (peek?.code === 'step_up_required' && await stepUpHandler()) {
+      commandHeaders.Authorization = `Bearer ${session.token}`;
+      response = await fetch(path, { method: 'POST', headers: commandHeaders, body: JSON.stringify(payload) });
+    }
+  }
+  const result = await handle(response);
   for (const listener of commandListeners) { try { listener(); } catch { /* observers cannot change a command result */ } }
   return result;
+}
+
+// ---------- Forge accounts (owner decision 2026-11-03) ----------
+
+let stepUpHandler = null;
+/** Registers what asks the person for their password when an action needs a recent sign-in; it resolves true once they confirmed. */
+export function onStepUp(handler) { stepUpHandler = handler; }
+
+async function localPost(path, body, withToken) {
+  const h = { Accept: 'application/json', 'Content-Type': 'application/json' };
+  if (withToken && session.token) h.Authorization = `Bearer ${session.token}`;
+  const r = await fetch(path, { method: 'POST', headers: h, body: JSON.stringify(body) });
+  const result = await r.json().catch(() => ({}));
+  if (!r.ok || result.succeeded === false) throw new Error(result.error ?? result.detail ?? `Request failed (${r.status}).`);
+  if (result.token) { session.token = result.token; write(TOKEN, session.token); }
+  return result;
+}
+
+export const signInLocal = (username, password) => localPost('/api/auth/local/sign-in', { username, password }, false);
+export const changeLocalPassword = (currentPassword, newPassword) => localPost('/api/auth/local/change-password', { currentPassword, newPassword }, true);
+export const reauthenticateLocal = password => localPost('/api/auth/local/reauthenticate', { password }, true);
+export const runFirstSetup = body => localPost('/api/setup/', body, false);
+
+/** Whether the current Forge-account token was issued with a temporary password. */
+export function mustChangePassword() {
+  try {
+    const part = session.token?.split('.')[1];
+    if (!part) return false;
+    return !!JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/'))).forge_pwd_change;
+  } catch { return false; }
 }
 
 /** Stores a file (at most 50 MB) and returns its SHA-256 reference, which documents and attachments then name. */

@@ -1882,3 +1882,28 @@ forecasting handles trend + season, new items, families and options, and planner
 
 Migrations: planning `0012`, inventory `0036`, kernel `0048` (207 in total). Tests: `RemnantWipAllocationTests` (3), Planning
 `ForecastComplexItemTests` (7), `tests/ui/forecast-complex.test.mjs`.
+
+## Claude: installable server with Forge accounts (2026-11-03)
+
+Owner decisions 2026-11-03: design the installer fresh; bundle PostgreSQL; one plant server, everyone else in a browser; empty start
+with a setup wizard; built-in accounts plus optional OIDC; HTTPS with a self-signed certificate. See `docs/installing-forge.md`.
+
+- **Forge accounts** (`Forge:Authentication:Mode = Local`; Host `Security/LocalAccounts.cs`, `Api/AuthSetupEndpoints.cs`;
+  `kernel.local_credential`). Username = the person's subject; PBKDF2 hashes (ASP.NET `PasswordHasher`); 10+ characters; 5 failures lock
+  15 minutes; tokens are HS256 JWTs Forge signs (`Forge:Authentication:Local:SigningKey`, issuer `urn:forge:local`, 12 h, `acr` from
+  `Local:Assurance`, `auth_time`). With an `Authority` set, a policy scheme sends non-Forge tokens to the OIDC bearer. A security
+  administrator's `POST /api/kernel/people/{id}/password` sets a temporary password (reason required, never one's own); its token only
+  reaches `/api/auth/local/*`, `/api/kernel/me` and `/api/ui/config` until `change-password` (`PasswordChangeGate`).
+  `reauthenticate` gives a fresh `auth_time`; the UI asks for the password on `step_up_required` and retries the command with the same
+  idempotency key. Setup: `GET /api/setup/status`, `POST /api/setup/` with the code in `Forge:Setup:CodeFile`, open only while no active
+  security administrator exists. UI: `js/local-auth.js`, Access control → Set password.
+- **Windows service**: `UseWindowsService`; as a service (or with `FORGE_SETTINGS`) the host also reads
+  `%ProgramData%\JISRN Forge\forge.settings.json` and serves from its own folder.
+- **Installer** (`src/Forge.Setup`, not in `Forge.slnx`; `tools\package-installer.cmd`, `tools\test-installer.cmd`): WinForms wizard,
+  `-quiet`, `-uninstall`, `-selftest FOLDER`. Services `JISRNForgeDb` (PostgreSQL 18 on localhost:5433, Network Service) and
+  `JISRNForge` (HTTPS 5443); role `forge_app` owns database `forge`; random passwords and signing key; settings, pfx and setup code ACL'd
+  to SYSTEM/Administrators/service. Upgrade keeps data; uninstall keeps data unless asked. `pg_ctl start` must not have its output
+  captured (PostgreSQL inherits the handles and the read never ends).
+
+Migrations: kernel `0049` (208 in total). Tests: `LocalAccountTests` (1), `tests/ui/local-auth.test.mjs`; installer self-test passed.
+Not yet: loading the WhiskerWorks demo into an installed server.

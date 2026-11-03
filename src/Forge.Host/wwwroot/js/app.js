@@ -61,6 +61,8 @@ import { roleTitle } from './roles.js';
 import { isKioskMode } from './shell-mode.mjs';
 import { filterNavGroups } from './navigation.mjs';
 import { canAction } from './ui-authority.mjs';
+import { localSignInHtml, bindLocalSignIn, renderFirstSetup, renderPasswordChange, installStepUp } from './local-auth.js';
+import { mustChangePassword } from './api.js';
 
 const NAV = [
   { route: 'daily-mission', label: 'Daily Mission', icon: 'dashboard', page: dailyMissionPage },
@@ -184,6 +186,8 @@ function renderLogin(message) {
       </form>
       <button class="btn ghost big login-kiosk-launch" id="quick-kiosk-launch" type="button">Launch Operator Kiosk →</button>
       <div class="notice warn">Development sign-in trusts the name entered and asks for no password. Badge numbers are scanned on the Shop Floor screen after signing in as <b>kiosk</b>. Use this sign-in only with fictional or sample records.</div>`;
+  } else if (mode === 'Local') {
+    form = localSignInHtml(!!(session.config.authority && session.config.clientId));
   } else if (mode === 'Oidc' && session.config.authority && session.config.clientId) {
     form = `<button class="btn primary big" id="oidc">Sign in with your organization</button>
       <div class="notice">You will sign in with your company account, then return here.</div>`;
@@ -220,6 +224,7 @@ function renderLogin(message) {
     await start();
   });
   $('#oidc')?.addEventListener('click', () => beginOidcSignIn().catch(err => renderLogin(err.message)));
+  if (mode === 'Local') bindLocalSignIn(start, renderLogin);
   $('#employee')?.focus();
 }
 
@@ -392,6 +397,15 @@ async function route() {
 // ---------------------------------------------------------------- start
 
 async function start() {
+  if (session.config?.authMode === 'Local') {
+    if (!signedIn()) {
+      const setup = await tryGet('/api/setup/status');
+      if (setup.data?.needed) return renderFirstSetup(() => renderLogin());
+    } else if (mustChangePassword()) {
+      return renderPasswordChange(start, () => { signOut(); renderLogin(); });
+    }
+    installStepUp();
+  }
   if (!signedIn()) return renderLogin();
   try {
     const me = await get('/api/kernel/me');
@@ -437,7 +451,7 @@ window.addEventListener('hashchange', route);
 (async () => {
   await loadConfig();
   try {
-    if (session.config.authMode === 'Oidc') await completeOidcSignIn();
+    if (session.config.authMode === 'Oidc' || (session.config.authMode === 'Local' && session.config.authority)) await completeOidcSignIn();
   } catch (e) {
     return renderLogin(e.message);
   }
