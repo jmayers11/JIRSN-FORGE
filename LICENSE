@@ -1,0 +1,8 @@
+Copyright (c) 2026 JIRSN. All rights reserved.
+
+This repository is published so that its source code can be viewed. No license is granted to use, copy, modify,
+merge, publish, distribute, sublicense or sell the software or any part of it, in source or binary form, without
+the prior written permission of the copyright holder.
+
+Third-party components keep their own licenses: PostgreSQL (bundled by the installer) is distributed under the
+PostgreSQL License, and the .NET libraries and NuGet packages under their respective licenses.
