@@ -11,6 +11,10 @@ cannot measure is shown as *not yet measured*, never guessed.
 > **Status:** v1.0.0 — installable on a Windows plant server. Sample data: *WhiskerWorks*, a fictional maker of giant cat toys.
 > All rights reserved — see [LICENSE](LICENSE).
 
+![Factory Horizon: every work center at a glance](docs/screenshots/02-factory-horizon.png)
+
+**[Watch the 2-minute tour](docs/media/forge-tour.mp4)** — a click-through of the WhiskerWorks sample plant.
+
 ---
 
 ## What it does
@@ -25,6 +29,16 @@ cannot measure is shown as *not yet measured*, never guessed.
 | **People** | Qualifications and certification (never by yourself), training queue and new-hire checklists, safety staffing rules (e.g. two-person coverage), attendance, DCAA-style timesheets, reviews |
 | **Machines** | Machine readiness, maintenance and outages, OEE per shift, pluggable connectors (OPC UA and others) |
 | **Trust** | Hash-chained audit trail, separation of duties, program access and data markings, step-up sign-in for sensitive approvals, ANSI X12 EDI and signed webhooks |
+
+## Screenshots
+
+| | |
+| --- | --- |
+| ![MRP: what to buy and make, and why](docs/screenshots/06-material-plan.png) **Material plan** — MRP recommendations, each with a *Why?* | ![Allocation optimizer](docs/screenshots/19-allocation.png) **Allocation** — free stock, leftover pieces and work in progress no demand is counting on |
+| ![Production orders](docs/screenshots/04-production-orders.png) **Production orders** — released only by a second person | ![Inventory](docs/screenshots/14-inventory.png) **Inventory** — every quantity is the sum of its ledger |
+| ![Workforce kanban](docs/screenshots/10-workforce.png) **Workforce** — who is on site, qualified and where | ![Training and performance](docs/screenshots/11-training-performance.png) **Training & performance** — qualifications, expiries, attendance |
+| ![Operator kiosk](docs/screenshots/17-shop-floor.png) **Operator kiosk** — badge in; readiness, qualifications and safety staffing checked before work starts | ![Forge Analyst](docs/screenshots/18-forge-analyst.png) **Forge Analyst** — plain-language questions answered from the records, no AI guesswork |
+| ![Sign in](docs/screenshots/01-sign-in.png) **Sign-in** — built-in accounts over HTTPS, or your company sign-in | <img src="docs/screenshots/20-phone.png" alt="Forge on a phone" width="260"> **On a phone** — the same plant in your pocket |
 
 ## Built with
 
